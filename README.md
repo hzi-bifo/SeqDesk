@@ -112,9 +112,51 @@ SeqDesk/
 └── scripts/              # Utility scripts
 ```
 
+## Configuration
+
+SeqDesk can be configured via config file, environment variables, or the Admin UI.
+
+### Quick Setup with Config File
+
+```bash
+# Copy the example config
+cp seqdesk.config.example.json seqdesk.config.json
+
+# Edit for your environment
+vim seqdesk.config.json
+```
+
+### Configuration Priority
+
+1. **Environment variables** (`SEQDESK_*`) - Highest priority
+2. **Config file** (`seqdesk.config.json`) - Project-level settings
+3. **Database** - UI-editable via Admin Settings
+4. **Defaults** - Built-in fallbacks
+
+### Key Environment Variables
+
+```bash
+# Site
+SEQDESK_SITE_NAME="My Facility"
+SEQDESK_DATA_PATH="/data/sequencing"
+
+# Pipelines
+SEQDESK_PIPELINES_ENABLED=true
+SEQDESK_PIPELINE_RUN_DIR="/data/runs"
+SEQDESK_CONDA_ENABLED=true
+SEQDESK_CONDA_PATH="/opt/conda"
+
+# ENA (never put password in config file!)
+SEQDESK_ENA_TEST_MODE=true
+SEQDESK_ENA_PASSWORD="your-webin-password"
+```
+
+See [docs/configuration.md](docs/configuration.md) for the complete configuration reference.
+
 ## Documentation
 
 See the `docs/` folder for detailed documentation:
+- [Configuration](docs/configuration.md) - Complete configuration reference
 - [Adding Pipelines](docs/adding-pipelines.md) - How to add new nf-core pipeline definitions
 - [Backend Features](docs/backend-features.md) - Pipeline system architecture
 - [ENA Integration](docs/ena-integration-plan.md) - ENA submission workflow
