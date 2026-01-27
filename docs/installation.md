@@ -147,6 +147,8 @@ npm start
 ## Conda Setup for Pipelines
 
 SeqDesk can run nf-core pipelines (like MAG) using Conda for dependency management.
+Pipeline execution is supported on Linux only. For macOS or Windows hosts, use a
+Linux/SLURM server to run pipelines.
 
 ### 1. Install Miniconda
 
@@ -172,7 +174,44 @@ Verify installation:
 conda --version
 ```
 
-### 2. Install Nextflow
+If your server cannot use the `defaults` channel, configure channels like this:
+```bash
+conda config --remove channels defaults
+conda config --add channels conda-forge
+conda config --add channels bioconda
+conda config --set channel_priority strict
+```
+
+### Quick setup (recommended)
+
+SeqDesk includes a helper script that configures Conda, creates the pipeline
+environment, writes a config file, and runs sanity tests:
+
+```bash
+./scripts/setup-conda-env.sh --full --yes
+```
+
+Notes:
+- By default the script removes the `defaults` channel (use `--keep-defaults` to skip).
+- It enforces channel order `conda-forge`, `bioconda` and sets strict priority.
+- Environment name defaults to `seqdesk-pipelines` (override with `--env`).
+- Config is written to `seqdesk.config.json` (override with `--config-path`).
+- Data directories default to `./data` and `./pipeline_runs` in the current working directory
+  (override with `--data-path` and `--run-dir`).
+- Pipeline tests run by default on Linux and output to `./pipeline_test_out`
+  (override with `--test-outdir`). Use `--no-test-pipeline` to skip.
+
+If conda is not on PATH, pass the base path:
+```bash
+./scripts/setup-conda-env.sh --full --yes --conda-path "$(conda info --base)"
+```
+
+If you only want to set up the Conda environment:
+```bash
+./scripts/setup-conda-env.sh --yes
+```
+
+### 2. Install Nextflow (manual)
 
 ```bash
 # Install Java (required by Nextflow)
@@ -197,10 +236,10 @@ You can create a dedicated Conda environment:
 
 ```bash
 # Create environment
-conda create -n seqdesk python=3.11 nextflow -c conda-forge -c bioconda
+conda create -n seqdesk-pipelines python=3.11 openjdk=17 nextflow nf-core -c conda-forge -c bioconda
 
 # Activate
-conda activate seqdesk
+conda activate seqdesk-pipelines
 ```
 
 ### 4. Configure SeqDesk for Conda
@@ -226,7 +265,8 @@ Edit `seqdesk.config.json`:
       "runDirectory": "/data/pipeline_runs",
       "conda": {
         "enabled": true,
-        "path": "/home/user/miniconda3"
+        "path": "/home/user/miniconda3",
+        "environment": "seqdesk-pipelines"
       }
     },
     "mag": {
@@ -243,6 +283,7 @@ Or use environment variables:
 export SEQDESK_PIPELINES_ENABLED=true
 export SEQDESK_CONDA_ENABLED=true
 export SEQDESK_CONDA_PATH="$HOME/miniconda3"
+export SEQDESK_CONDA_ENV="seqdesk-pipelines"
 export SEQDESK_PIPELINE_RUN_DIR="/data/pipeline_runs"
 ```
 
