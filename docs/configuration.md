@@ -112,6 +112,14 @@ All settings can be overridden via environment variables with the `SEQDESK_` pre
 | `SEQDESK_CONDA_PATH` | `pipelines.execution.conda.path` | Path to Conda installation |
 | `SEQDESK_CONDA_ENV` | `pipelines.execution.conda.environment` | Conda environment name |
 
+Recommended channel setup (especially when `defaults` is not available):
+```bash
+conda config --remove channels defaults
+conda config --add channels conda-forge
+conda config --add channels bioconda
+conda config --set channel_priority strict
+```
+
 ### SLURM Settings
 
 | Variable | Config Path | Description |
@@ -217,6 +225,7 @@ Pipeline execution configuration.
 - `kubernetes` - Run in Kubernetes (future)
 
 SeqDesk resolves pipeline tools via Conda only; container runtimes are not supported.
+Pipeline execution is supported on Linux hosts.
 
 ### ENA (`ena`)
 

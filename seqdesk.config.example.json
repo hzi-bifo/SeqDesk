@@ -16,7 +16,7 @@
       "conda": {
         "enabled": true,
         "path": "/opt/conda",
-        "environment": "seqdesk"
+        "environment": "seqdesk-pipelines"
       },
       "slurm": {
         "enabled": false,
