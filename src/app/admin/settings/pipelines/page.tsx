@@ -30,30 +30,13 @@ interface ExecutionSettings {
   slurmMemory: string;
   slurmTimeLimit: number;
   slurmOptions: string;
-  runtimeMode: "local" | "conda" | "docker" | "singularity" | "apptainer";
+  runtimeMode: "conda";
   condaPath: string;
   condaEnv: string;
   nextflowProfile: string;
   pipelineRunDir: string;
   weblogUrl: string;
   weblogSecret: string;
-}
-
-interface DockerStatus {
-  available: boolean;
-  daemonRunning: boolean;
-  version?: string;
-  message?: string;
-}
-
-interface PrepullStatus {
-  status: "running" | "completed" | "failed";
-  startedAt: string;
-  completedAt?: string;
-  exitCode?: number;
-  runDir: string;
-  outPath: string;
-  errPath: string;
 }
 
 
@@ -99,21 +82,6 @@ function getCategoryBadge(category: string) {
   }
 }
 
-function getRuntimeLabel(mode: ExecutionSettings["runtimeMode"]) {
-  switch (mode) {
-    case "conda":
-      return "Conda";
-    case "docker":
-      return "Docker";
-    case "singularity":
-      return "Singularity";
-    case "apptainer":
-      return "Apptainer";
-    default:
-      return "Local Tools";
-  }
-}
-
 export default function PipelineSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR(
     "/api/admin/settings/pipelines",
@@ -141,7 +109,7 @@ export default function PipelineSettingsPage() {
     slurmMemory: "64GB",
     slurmTimeLimit: 12,
     slurmOptions: "",
-    runtimeMode: "local",
+    runtimeMode: "conda",
     condaPath: "",
     condaEnv: "seqdesk-pipelines",
     nextflowProfile: "",
@@ -158,13 +126,6 @@ export default function PipelineSettingsPage() {
   const [detectingVersions, setDetectingVersions] = useState(false);
   const [autoDetecting, setAutoDetecting] = useState(false);
   const [autoDetectResult, setAutoDetectResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [showCondaSettings, setShowCondaSettings] = useState(false);
-  const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
-  const [checkingDocker, setCheckingDocker] = useState(false);
-  const [prepullStatus, setPrepullStatus] = useState<PrepullStatus | null>(null);
-  const [prepullOutput, setPrepullOutput] = useState<string | null>(null);
-  const [prepullError, setPrepullError] = useState<string | null>(null);
-  const [prepulling, setPrepulling] = useState(false);
 
   // Test a specific setting
   const testSettingValue = async (setting: string, value?: string) => {
@@ -213,7 +174,6 @@ export default function PipelineSettingsPage() {
 
       setExecSettings((prev) => ({
         ...prev,
-        runtimeMode: "conda",
         condaPath: data.condaBase || prev.condaPath,
         condaEnv: data.condaEnv || prev.condaEnv,
       }));
@@ -231,68 +191,6 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  const fetchDockerStatus = async () => {
-    setCheckingDocker(true);
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/docker/status");
-      const data = await res.json();
-      if (res.ok) {
-        setDockerStatus(data);
-      } else {
-        setDockerStatus({
-          available: false,
-          daemonRunning: false,
-          message: data.error || "Failed to check Docker status",
-        });
-      }
-    } catch {
-      setDockerStatus({
-        available: false,
-        daemonRunning: false,
-        message: "Failed to check Docker status",
-      });
-    } finally {
-      setCheckingDocker(false);
-    }
-  };
-
-  const fetchPrepullStatus = async () => {
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/docker/prepull");
-      const data = await res.json();
-      if (res.ok) {
-        setPrepullStatus(data.status || null);
-        setPrepullOutput(data.outputTail || null);
-        setPrepullError(data.errorTail || null);
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  const startPrepull = async () => {
-    setPrepulling(true);
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/docker/prepull", {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setPrepullStatus(data.status || null);
-        setPrepullOutput(null);
-        setPrepullError(null);
-      } else {
-        setPrepullStatus(null);
-        setPrepullOutput(null);
-        setPrepullError(data.error || "Failed to start pre-pull");
-      }
-    } catch {
-      setPrepullError("Failed to start pre-pull");
-    } finally {
-      setPrepulling(false);
-    }
-  };
-
   // Detect versions on mount
   useEffect(() => {
     detectInstalledVersions();
@@ -305,21 +203,6 @@ export default function PipelineSettingsPage() {
       setExecSettings(execData.settings);
     }
   }, [execData]);
-
-  useEffect(() => {
-    if (execSettings.runtimeMode === "conda") {
-      setShowCondaSettings(true);
-    } else {
-      setShowCondaSettings(false);
-    }
-  }, [execSettings.runtimeMode]);
-
-  useEffect(() => {
-    if (execSettings.runtimeMode === "docker") {
-      fetchDockerStatus();
-      fetchPrepullStatus();
-    }
-  }, [execSettings.runtimeMode]);
 
   const handleSaveExecSettings = async () => {
     setSavingExec(true);
@@ -545,123 +428,14 @@ export default function PipelineSettingsPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
                   <h3 className="font-semibold">Runtime</h3>
-                  <Badge variant="secondary">{getRuntimeLabel(execSettings.runtimeMode)}</Badge>
+                  <Badge variant="secondary">Conda</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Controls how Nextflow resolves tools (local binaries, conda, or containers)
+                  SeqDesk runs nf-core pipelines using conda environments for tool resolution.
                 </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <select
-                    id="runtime-mode"
-                    value={execSettings.runtimeMode}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({
-                        ...prev,
-                        runtimeMode: e.target.value as ExecutionSettings["runtimeMode"],
-                      }))
-                    }
-                    className="w-full px-3 py-2 border rounded-md bg-background"
-                  >
-                    <option value="local">Local tools on PATH</option>
-                    <option value="conda">Conda (nf-core)</option>
-                    <option value="docker">Docker</option>
-                    <option value="singularity">Singularity</option>
-                    <option value="apptainer">Apptainer</option>
-                  </select>
-                  <div className="text-xs text-muted-foreground flex items-center">
-                    {execSettings.runtimeMode === "local"
-                      ? "Requires tools like fastqc on PATH."
-                      : execSettings.runtimeMode === "conda"
-                        ? "Nextflow will create per-process conda envs."
-                        : "Nextflow will run tools in containers."}
-                  </div>
+                <div className="text-xs text-muted-foreground">
+                  Default Nextflow profile: <span className="font-medium">conda</span>
                 </div>
-
-                {execSettings.runtimeMode === "docker" && (
-                  <div className="mt-4 space-y-3 rounded-md border bg-muted/40 p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium">Docker status</div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchDockerStatus}
-                        disabled={checkingDocker}
-                      >
-                        {checkingDocker ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          "Check"
-                        )}
-                      </Button>
-                    </div>
-                    {dockerStatus && (
-                      <div className="text-xs text-muted-foreground space-y-1">
-                        <p className={dockerStatus.daemonRunning ? "text-green-700" : "text-red-600"}>
-                          {dockerStatus.message}
-                        </p>
-                        {dockerStatus.version && <p>{dockerStatus.version}</p>}
-                      </div>
-                    )}
-
-                    <div className="pt-2 border-t space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium">Pre-pull containers (optional)</div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={fetchPrepullStatus}
-                          >
-                            Refresh
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={startPrepull}
-                            disabled={prepulling}
-                          >
-                            {prepulling ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : null}
-                            Pre-pull
-                          </Button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Runs the nf-core/mag test profile with Docker to warm the image cache.
-                      </p>
-                      {prepullStatus && (
-                        <div className="text-xs text-muted-foreground">
-                          Status:{" "}
-                          <span className={`font-medium ${
-                            prepullStatus.status === "completed"
-                              ? "text-green-700"
-                              : prepullStatus.status === "failed"
-                                ? "text-red-600"
-                                : "text-blue-700"
-                          }`}>
-                            {prepullStatus.status}
-                          </span>
-                          {prepullStatus.startedAt && (
-                            <span className="ml-2">Started: {new Date(prepullStatus.startedAt).toLocaleTimeString()}</span>
-                          )}
-                          {prepullStatus.completedAt && (
-                            <span className="ml-2">Completed: {new Date(prepullStatus.completedAt).toLocaleTimeString()}</span>
-                          )}
-                        </div>
-                      )}
-                      {prepullOutput && (
-                        <pre className="text-[11px] bg-background rounded p-2 max-h-40 overflow-auto border">
-{prepullOutput}
-                        </pre>
-                      )}
-                      {prepullError && (
-                        <pre className="text-[11px] bg-red-50 text-red-700 rounded p-2 max-h-40 overflow-auto border border-red-200">
-{prepullError}
-                        </pre>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -786,102 +560,84 @@ export default function PipelineSettingsPage() {
                   Base directory where pipeline outputs will be stored
                 </p>
               </div>
-              {execSettings.runtimeMode !== "conda" && !showCondaSettings && (
-                <div className="text-xs text-muted-foreground flex items-center justify-between gap-3">
-                  <span>
-                    Conda settings are not required for {getRuntimeLabel(execSettings.runtimeMode)}.
-                  </span>
+              <div className="space-y-2">
+                <Label htmlFor="conda-path">Conda/Mamba Installation Path (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="conda-path"
+                    value={execSettings.condaPath}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({
+                        ...prev,
+                        condaPath: e.target.value,
+                      }))
+                    }
+                    placeholder="/opt/homebrew/Caskroom/miniconda/base"
+                    className="flex-1"
+                  />
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    onClick={() => setShowCondaSettings(true)}
+                    onClick={handleAutoDetectConda}
+                    disabled={autoDetecting}
                   >
-                    Show conda settings
+                    {autoDetecting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Auto"
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => testSettingValue("condaPath", execSettings.condaPath)}
+                    disabled={testResults.condaPath?.testing}
+                  >
+                    {testResults.condaPath?.testing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Test"
+                    )}
                   </Button>
                 </div>
-              )}
-              {showCondaSettings && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="conda-path">Conda/Mamba Installation Path (optional)</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="conda-path"
-                        value={execSettings.condaPath}
-                        onChange={(e) =>
-                          setExecSettings((prev) => ({
-                            ...prev,
-                            condaPath: e.target.value,
-                          }))
-                        }
-                        placeholder="/opt/homebrew/Caskroom/miniconda/base"
-                        className="flex-1"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleAutoDetectConda}
-                        disabled={autoDetecting}
-                      >
-                        {autoDetecting ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          "Auto"
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => testSettingValue("condaPath", execSettings.condaPath)}
-                        disabled={testResults.condaPath?.testing}
-                      >
-                        {testResults.condaPath?.testing ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          "Test"
-                        )}
-                      </Button>
-                    </div>
-                    {autoDetectResult && (
-                      <p className={`text-xs flex items-center gap-1 ${autoDetectResult.success ? "text-green-600" : "text-red-600"}`}>
-                        {autoDetectResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                        {autoDetectResult.message}
-                      </p>
-                    )}
-                    {testResults.condaPath && !testResults.condaPath.testing && (
-                      <p className={`text-xs flex items-center gap-1 ${testResults.condaPath.success ? "text-green-600" : "text-red-600"}`}>
-                        {testResults.condaPath.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                        {testResults.condaPath.message}
-                      </p>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      Path to conda/mamba base directory (e.g., /opt/homebrew/Caskroom/miniconda/base)
-                    </p>
-                    {execSettings.runtimeMode === "conda" && !execSettings.condaPath && (
-                      <p className="text-xs text-amber-600">
-                        Conda runtime selected - set the conda path or click Auto.
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="conda-env">Conda Environment Name</Label>
-                    <Input
-                      id="conda-env"
-                      value={execSettings.condaEnv}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({
-                          ...prev,
-                          condaEnv: e.target.value,
-                        }))
-                      }
-                      placeholder="seqdesk-pipelines"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Environment activated when a conda path is configured
-                    </p>
-                  </div>
-                </>
-              )}
+                {autoDetectResult && (
+                  <p className={`text-xs flex items-center gap-1 ${autoDetectResult.success ? "text-green-600" : "text-red-600"}`}>
+                    {autoDetectResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {autoDetectResult.message}
+                  </p>
+                )}
+                {testResults.condaPath && !testResults.condaPath.testing && (
+                  <p className={`text-xs flex items-center gap-1 ${testResults.condaPath.success ? "text-green-600" : "text-red-600"}`}>
+                    {testResults.condaPath.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {testResults.condaPath.message}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Path to conda/mamba base directory (e.g., /opt/homebrew/Caskroom/miniconda/base)
+                </p>
+                {!execSettings.condaPath && (
+                  <p className="text-xs text-amber-600">
+                    Conda path is not set - add the path or click Auto.
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="conda-env">Conda Environment Name</Label>
+                <Input
+                  id="conda-env"
+                  value={execSettings.condaEnv}
+                  onChange={(e) =>
+                    setExecSettings((prev) => ({
+                      ...prev,
+                      condaEnv: e.target.value,
+                    }))
+                  }
+                  placeholder="seqdesk-pipelines"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Environment activated when a conda path is configured
+                </p>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="nextflow-profile">Nextflow Profile Override (optional)</Label>
                 <Input
@@ -893,10 +649,10 @@ export default function PipelineSettingsPage() {
                       nextflowProfile: e.target.value,
                     }))
                   }
-                  placeholder="e.g. conda or slurm,conda"
+                  placeholder="e.g. slurm,conda"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Overrides runtime selection (comma-separated). Leave blank to use runtime default.
+                  Overrides the default conda profile (comma-separated). Leave blank to use conda.
                 </p>
               </div>
             </div>

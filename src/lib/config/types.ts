@@ -22,12 +22,6 @@ export interface CondaConfig {
   environment?: string;
 }
 
-export interface DockerConfig {
-  enabled?: boolean;
-  /** Pre-pull images on startup */
-  prePull?: boolean;
-}
-
 export interface SlurmConfig {
   enabled?: boolean;
   queue?: string;
@@ -44,7 +38,6 @@ export interface PipelineExecutionConfig {
   /** Directory for pipeline run outputs */
   runDirectory?: string;
   conda?: CondaConfig;
-  docker?: DockerConfig;
   slurm?: SlurmConfig;
 }
 

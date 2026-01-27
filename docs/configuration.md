@@ -112,12 +112,6 @@ All settings can be overridden via environment variables with the `SEQDESK_` pre
 | `SEQDESK_CONDA_PATH` | `pipelines.execution.conda.path` | Path to Conda installation |
 | `SEQDESK_CONDA_ENV` | `pipelines.execution.conda.environment` | Conda environment name |
 
-### Docker Settings
-
-| Variable | Config Path | Description |
-|----------|-------------|-------------|
-| `SEQDESK_DOCKER_ENABLED` | `pipelines.execution.docker.enabled` | Use Docker containers |
-
 ### SLURM Settings
 
 | Variable | Config Path | Description |
@@ -206,7 +200,6 @@ Pipeline execution configuration.
       "mode": "local",
       "runDirectory": "/data/runs",
       "conda": { "enabled": true, "path": "/opt/conda" },
-      "docker": { "enabled": false },
       "slurm": { "enabled": false }
     },
     "mag": {
@@ -222,6 +215,8 @@ Pipeline execution configuration.
 - `local` - Run pipelines directly on the server
 - `slurm` - Submit jobs to a SLURM cluster
 - `kubernetes` - Run in Kubernetes (future)
+
+SeqDesk resolves pipeline tools via Conda only; container runtimes are not supported.
 
 ### ENA (`ena`)
 
@@ -300,20 +295,6 @@ Always use environment variables for sensitive data:
 # .env or system environment
 SEQDESK_ENA_PASSWORD=secret
 NEXTAUTH_SECRET=another-secret
-```
-
-### 4. Docker/Kubernetes
-
-Mount the config file and set environment variables:
-
-```yaml
-# docker-compose.yml
-services:
-  seqdesk:
-    volumes:
-      - ./seqdesk.config.json:/app/seqdesk.config.json:ro
-    environment:
-      - SEQDESK_ENA_PASSWORD=${ENA_PASSWORD}
 ```
 
 ## Troubleshooting

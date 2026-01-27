@@ -10,7 +10,7 @@ export interface ExecutionSettings {
   slurmMemory: string;
   slurmTimeLimit: number;
   slurmOptions: string;
-  runtimeMode: 'local' | 'conda' | 'docker' | 'singularity' | 'apptainer';
+  runtimeMode: 'conda';
   condaPath: string;
   condaEnv: string;
   nextflowProfile: string;
@@ -26,7 +26,7 @@ const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   slurmMemory: '64GB',
   slurmTimeLimit: 12,
   slurmOptions: '',
-  runtimeMode: 'local',
+  runtimeMode: 'conda',
   condaPath: '',
   condaEnv: 'seqdesk-pipelines',
   nextflowProfile: '',
@@ -34,20 +34,6 @@ const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   weblogUrl: '',
   weblogSecret: '',
 };
-
-function resolveRuntimeMode(settings: Partial<ExecutionSettings>): ExecutionSettings['runtimeMode'] {
-  const mode = settings.runtimeMode;
-  if (mode && ['local', 'conda', 'docker', 'singularity', 'apptainer'].includes(mode)) {
-    return mode;
-  }
-
-  const profile = (settings.nextflowProfile || '').toLowerCase();
-  if (profile.includes('conda')) return 'conda';
-  if (profile.includes('docker')) return 'docker';
-  if (profile.includes('singularity')) return 'singularity';
-  if (profile.includes('apptainer')) return 'apptainer';
-  return 'local';
-}
 
 async function getExecutionSettings(): Promise<ExecutionSettings> {
   const settings = await db.siteSettings.findUnique({
@@ -66,7 +52,7 @@ async function getExecutionSettings(): Promise<ExecutionSettings> {
       ...(extra.pipelineExecution || {}),
     } as ExecutionSettings;
 
-    merged.runtimeMode = resolveRuntimeMode(merged);
+    merged.runtimeMode = 'conda';
     return merged;
   } catch {
     return DEFAULT_EXECUTION_SETTINGS;
@@ -142,7 +128,7 @@ export async function POST(request: NextRequest) {
       slurmMemory: body.slurmMemory || DEFAULT_EXECUTION_SETTINGS.slurmMemory,
       slurmTimeLimit: body.slurmTimeLimit ?? DEFAULT_EXECUTION_SETTINGS.slurmTimeLimit,
       slurmOptions: body.slurmOptions ?? DEFAULT_EXECUTION_SETTINGS.slurmOptions,
-      runtimeMode: resolveRuntimeMode(body),
+      runtimeMode: 'conda',
       condaPath: body.condaPath ?? DEFAULT_EXECUTION_SETTINGS.condaPath,
       condaEnv: body.condaEnv ?? DEFAULT_EXECUTION_SETTINGS.condaEnv,
       nextflowProfile: body.nextflowProfile ?? DEFAULT_EXECUTION_SETTINGS.nextflowProfile,

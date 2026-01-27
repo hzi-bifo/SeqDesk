@@ -18,10 +18,6 @@
         "path": "/opt/conda",
         "environment": "seqdesk"
       },
-      "docker": {
-        "enabled": false,
-        "prePull": false
-      },
       "slurm": {
         "enabled": false,
         "queue": "cpu",

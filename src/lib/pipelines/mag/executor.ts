@@ -26,7 +26,7 @@ interface ExecutionSettings {
   slurmMemory?: string;
   slurmTimeLimit?: number;
   slurmOptions?: string;
-  runtimeMode?: 'local' | 'conda' | 'docker' | 'singularity' | 'apptainer';
+  runtimeMode?: 'conda';
   condaPath?: string;
   condaEnv?: string;
   nextflowProfile?: string;

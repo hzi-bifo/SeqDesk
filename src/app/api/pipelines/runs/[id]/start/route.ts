@@ -39,36 +39,20 @@ async function resolveCondaBin(condaPath?: string): Promise<string | null> {
   return (await commandExists('conda')) ? 'conda' : null;
 }
 
-async function commandExistsInConda(
-  condaPath: string | undefined,
-  condaEnv: string,
-  command: string
-): Promise<boolean> {
-  const condaBin = await resolveCondaBin(condaPath);
-  if (!condaBin) return false;
-  try {
-    await execAsync(
-      `${condaBin} run -n ${condaEnv} bash -lc "command -v ${command}"`,
-      { timeout: 15000 }
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function resolveEffectiveProfile(
-  runtimeMode?: string,
   profileOverride?: string
 ): string {
   const override = profileOverride?.trim();
-  if (override) return override;
-  const mode = runtimeMode?.toLowerCase();
-  if (!mode || mode === 'local') return '';
-  if (['conda', 'docker', 'singularity', 'apptainer'].includes(mode)) {
-    return mode;
+  if (!override) return 'conda';
+  const parts = override
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const lowerParts = parts.map((part) => part.toLowerCase());
+  if (!lowerParts.includes('conda')) {
+    parts.push('conda');
   }
-  return '';
+  return parts.join(',');
 }
 
 // POST - Start/execute a pipeline run
@@ -202,17 +186,13 @@ export async function POST(
       console.warn('[Start Pipeline] WARNING: condaPath is not configured - nextflow may not be found');
     }
 
-    const effectiveProfile = resolveEffectiveProfile(
-      executionSettings.runtimeMode,
-      executionSettings.nextflowProfile
-    );
+    const effectiveProfile = resolveEffectiveProfile(executionSettings.nextflowProfile);
     const profileParts = effectiveProfile
       ? effectiveProfile.split(',').map((p) => p.trim()).filter(Boolean)
       : [];
-    const usesLocalTools = profileParts.length === 0 || profileParts.some((p) => ['standard', 'local', 'default'].includes(p));
 
     if (executionSettings.runtimeMode === 'conda' && process.platform === 'darwin' && process.arch === 'arm64') {
-      const message = 'Conda runtime on macOS ARM is not supported for nf-core/mag (packages like bowtie2 are unavailable). Use Docker or run on Linux.';
+      const message = 'Conda runtime on macOS ARM is not supported for nf-core/mag (packages like bowtie2 are unavailable). Use a Linux/SLURM server instead.';
       await db.pipelineRun.update({
         where: { id },
         data: {
@@ -224,73 +204,35 @@ export async function POST(
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    // Preflight check for local runs without conda/profile (common failure: missing fastqc)
-    if (!executionSettings.useSlurm && usesLocalTools) {
-      const requiredTools = ['fastqc'];
-      const missing: string[] = [];
-      const condaEnv = executionSettings.condaEnv || 'seqdesk-pipelines';
-      for (const tool of requiredTools) {
-        const exists = executionSettings.condaPath
-          ? await commandExistsInConda(executionSettings.condaPath, condaEnv, tool)
-          : await commandExists(tool);
-        if (!exists) {
-          missing.push(tool);
-        }
-      }
-      if (missing.length > 0) {
-        const message = `Missing required tools for local execution: ${missing.join(', ')}. Configure a Nextflow profile (conda/docker/singularity) or install the tools.`;
-        await db.pipelineRun.update({
-          where: { id },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-          },
-        });
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
+    const forbiddenProfiles = new Set(['docker', 'singularity', 'apptainer', 'podman']);
+    const forbiddenSelected = profileParts
+      .map((part) => part.toLowerCase())
+      .filter((part) => forbiddenProfiles.has(part));
+    if (forbiddenSelected.length > 0) {
+      const message = `Unsupported Nextflow profile(s): ${forbiddenSelected.join(', ')}. SeqDesk only supports conda-based execution.`;
+      await db.pipelineRun.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          errorTail: message,
+          completedAt: new Date(),
+        },
+      });
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    if (!executionSettings.useSlurm && profileParts.length > 0) {
-      if (profileParts.includes('conda') && !(await commandExists('conda'))) {
-        const message = 'Nextflow profile "conda" selected but conda was not found on PATH. Configure a conda path or install conda.';
-        await db.pipelineRun.update({
-          where: { id },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-          },
-        });
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
-
-      if (profileParts.includes('docker') && !(await commandExists('docker'))) {
-        const message = 'Nextflow profile "docker" selected but Docker was not found on PATH.';
-        await db.pipelineRun.update({
-          where: { id },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-          },
-        });
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
-
-      const needsSingularity = profileParts.includes('singularity') || profileParts.includes('apptainer');
-      if (needsSingularity && !(await commandExists('singularity')) && !(await commandExists('apptainer'))) {
-        const message = 'Nextflow profile "singularity/apptainer" selected but neither singularity nor apptainer was found on PATH.';
-        await db.pipelineRun.update({
-          where: { id },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-          },
-        });
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
+    const condaBin = await resolveCondaBin(executionSettings.condaPath);
+    if (!condaBin) {
+      const message = 'Conda profile selected but conda was not found. Configure a conda path or install conda.';
+      await db.pipelineRun.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          errorTail: message,
+          completedAt: new Date(),
+        },
+      });
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
     if (selectedSampleIds && !run.inputSampleIds) {
