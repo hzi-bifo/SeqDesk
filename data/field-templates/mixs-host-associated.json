@@ -1,0 +1,124 @@
+ {
+  "name": "MIxS Host-Associated",
+  "description": "GSC MIxS host-associated environment checklist fields",
+  "version": "6.0.0",
+  "source": "https://genomicsstandardsconsortium.github.io/mixs/",
+  "category": "mixs",
+  "fields": [
+    {
+      "type": "select",
+      "label": "Host (Common Name)",
+      "name": "host_common_name",
+      "required": false,
+      "visible": true,
+      "helpText": "Common name of the host organism (MIxS: host_common_name)",
+      "options": [
+        { "value": "human", "label": "Human" },
+        { "value": "mouse", "label": "Mouse" },
+        { "value": "rat", "label": "Rat" },
+        { "value": "pig", "label": "Pig" },
+        { "value": "chicken", "label": "Chicken" },
+        { "value": "cow", "label": "Cow" },
+        { "value": "sheep", "label": "Sheep" },
+        { "value": "fish", "label": "Fish" },
+        { "value": "plant", "label": "Plant" },
+        { "value": "other", "label": "Other" }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "Host Scientific Name",
+      "name": "host_scientific_name",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Homo sapiens, Mus musculus",
+      "helpText": "Scientific name of the host organism (MIxS: host_scientific_name)",
+      "example": "Homo sapiens",
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A scientific species name in Latin binomial format. Should be two words in italics-style format like 'Homo sapiens', 'Mus musculus', 'Arabidopsis thaliana'.",
+        "strictness": "moderate"
+      }
+    },
+    {
+      "type": "select",
+      "label": "Body Site",
+      "name": "host_body_site",
+      "required": false,
+      "visible": true,
+      "helpText": "Body site where sample was collected (MIxS: host_body_site)",
+      "options": [
+        { "value": "UBERON:0001155", "label": "Colon / Gut" },
+        { "value": "UBERON:0000167", "label": "Oral cavity" },
+        { "value": "UBERON:0001003", "label": "Skin" },
+        { "value": "UBERON:0000996", "label": "Vagina" },
+        { "value": "UBERON:0002048", "label": "Lung" },
+        { "value": "UBERON:0001088", "label": "Urine" },
+        { "value": "UBERON:0001836", "label": "Saliva" },
+        { "value": "UBERON:0001091", "label": "Nasal cavity" },
+        { "value": "UBERON:0000178", "label": "Blood" },
+        { "value": "UBERON:0001052", "label": "Rectum" }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "Host Sex",
+      "name": "host_sex",
+      "required": false,
+      "visible": true,
+      "helpText": "Sex of the host organism (MIxS: host_sex)",
+      "options": [
+        { "value": "male", "label": "Male" },
+        { "value": "female", "label": "Female" },
+        { "value": "neuter", "label": "Neuter" },
+        { "value": "hermaphrodite", "label": "Hermaphrodite" },
+        { "value": "not_determined", "label": "Not determined" },
+        { "value": "not_applicable", "label": "Not applicable" }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "Host Age",
+      "name": "host_age",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 35 years, 6 months",
+      "helpText": "Age of the host organism at sampling (MIxS: host_age)",
+      "example": "35 years"
+    },
+    {
+      "type": "select",
+      "label": "Host Disease Status",
+      "name": "host_disease_stat",
+      "required": false,
+      "visible": true,
+      "helpText": "Disease status of the host (MIxS: host_disease_stat)",
+      "options": [
+        { "value": "healthy", "label": "Healthy" },
+        { "value": "diseased", "label": "Diseased" },
+        { "value": "carrier", "label": "Asymptomatic carrier" },
+        { "value": "unknown", "label": "Unknown" }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "Host Height",
+      "name": "host_height",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 175 cm",
+      "helpText": "Height of the host organism (MIxS: host_height)",
+      "example": "175 cm"
+    },
+    {
+      "type": "text",
+      "label": "Host Weight / Body Mass",
+      "name": "host_body_mass",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 70 kg",
+      "helpText": "Body mass of the host organism (MIxS: host_body_mass)",
+      "example": "70 kg"
+    }
+  ]
+}

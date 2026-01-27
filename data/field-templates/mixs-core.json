@@ -1,0 +1,137 @@
+{
+  "name": "MIxS Core",
+  "description": "GSC MIxS core fields - geographic location, collection, and environmental context",
+  "version": "6.0.0",
+  "source": "https://genomicsstandardsconsortium.github.io/mixs/",
+  "category": "mixs",
+  "fields": [
+    {
+      "type": "text",
+      "label": "Geographic Location (Country)",
+      "name": "geo_loc_name_country",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Germany, USA, Japan",
+      "helpText": "Country where sample was collected (MIxS: geo_loc_name)",
+      "example": "Germany",
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A valid country name. Should be a real country (e.g., Germany, United States, Japan, Brazil). Accept common abbreviations like USA, UK.",
+        "strictness": "moderate"
+      }
+    },
+    {
+      "type": "text",
+      "label": "Geographic Location (Region)",
+      "name": "geo_loc_name_region",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Bavaria, California, Hokkaido",
+      "helpText": "Region/state/province where sample was collected",
+      "example": "Lower Saxony"
+    },
+    {
+      "type": "text",
+      "label": "Latitude/Longitude",
+      "name": "lat_lon",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 52.3759 N 9.7320 E",
+      "helpText": "Geographic coordinates in decimal degrees (MIxS: lat_lon)",
+      "example": "52.3759 N 9.7320 E",
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "Geographic coordinates. Should be latitude and longitude in format like '52.3759 N 9.7320 E' or decimal degrees like '52.3759, 9.7320'. Valid ranges: latitude -90 to 90, longitude -180 to 180.",
+        "strictness": "moderate"
+      }
+    },
+    {
+      "type": "date",
+      "label": "Collection Date",
+      "name": "collection_date",
+      "required": false,
+      "visible": true,
+      "helpText": "Date when sample was collected (MIxS: collection_date)"
+    },
+    {
+      "type": "text",
+      "label": "Depth",
+      "name": "depth",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 10 cm, 0.5 m",
+      "helpText": "Depth at which sample was collected (MIxS: depth)",
+      "example": "10 cm"
+    },
+    {
+      "type": "text",
+      "label": "Elevation",
+      "name": "elev",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 150 m",
+      "helpText": "Elevation above sea level where sample was collected (MIxS: elev)",
+      "example": "150 m"
+    },
+    {
+      "type": "select",
+      "label": "Environment (Biome)",
+      "name": "env_broad_scale",
+      "required": false,
+      "visible": true,
+      "helpText": "Broad environmental context (MIxS: env_broad_scale - ENVO term)",
+      "options": [
+        { "value": "ENVO:00000446", "label": "Terrestrial biome" },
+        { "value": "ENVO:00000447", "label": "Marine biome" },
+        { "value": "ENVO:00000873", "label": "Freshwater biome" },
+        { "value": "ENVO:01000219", "label": "Anthropogenic terrestrial biome" },
+        { "value": "ENVO:01000174", "label": "Forest biome" },
+        { "value": "ENVO:01000177", "label": "Grassland biome" },
+        { "value": "ENVO:01000181", "label": "Mangrove biome" },
+        { "value": "ENVO:01000180", "label": "Tundra biome" },
+        { "value": "ENVO:01000178", "label": "Savanna biome" },
+        { "value": "ENVO:01000179", "label": "Desert biome" }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "Environment (Feature)",
+      "name": "env_local_scale",
+      "required": false,
+      "visible": true,
+      "helpText": "Local environmental feature (MIxS: env_local_scale - ENVO term)",
+      "options": [
+        { "value": "ENVO:00000114", "label": "Agricultural field" },
+        { "value": "ENVO:00000043", "label": "Wetland" },
+        { "value": "ENVO:00000020", "label": "Lake" },
+        { "value": "ENVO:00000022", "label": "River" },
+        { "value": "ENVO:00000215", "label": "Hydrothermal vent" },
+        { "value": "ENVO:00000569", "label": "Soil" },
+        { "value": "ENVO:00002030", "label": "Aquaculture farm" },
+        { "value": "ENVO:01000627", "label": "Compost" },
+        { "value": "ENVO:00002191", "label": "Hospital" },
+        { "value": "ENVO:01000925", "label": "Human body" }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "Environment (Material)",
+      "name": "env_medium",
+      "required": false,
+      "visible": true,
+      "helpText": "Environmental material (MIxS: env_medium - ENVO term)",
+      "options": [
+        { "value": "ENVO:00001998", "label": "Soil" },
+        { "value": "ENVO:00002042", "label": "Surface water" },
+        { "value": "ENVO:00002001", "label": "Wastewater" },
+        { "value": "ENVO:00002007", "label": "Sediment" },
+        { "value": "ENVO:00005774", "label": "Biofilm" },
+        { "value": "ENVO:00002003", "label": "Feces" },
+        { "value": "ENVO:01000060", "label": "Marine sediment" },
+        { "value": "ENVO:00002041", "label": "Compost" },
+        { "value": "ENVO:01001029", "label": "Activated sludge" },
+        { "value": "ENVO:00002005", "label": "Air" }
+      ]
+    }
+  ]
+}

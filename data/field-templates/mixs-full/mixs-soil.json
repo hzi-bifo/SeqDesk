@@ -1,0 +1,2798 @@
+{
+  "name": "GSC MIxS soil",
+  "description": "Genomic Standards Consortium package extension for reporting of measurements and observations obtained from the environment where the sample was obtained. By choosing the environmental package, a selection of fields can be made from a relevant subsets of the GSC terms.",
+  "version": "1.0.0",
+  "source": "https://www.ebi.ac.uk/ena/browser/view/ERC000022",
+  "category": "mixs",
+  "accession": "ERC000022",
+  "fields": [
+    {
+      "type": "text",
+      "label": "slope gradient",
+      "name": "slope_gradient",
+      "required": false,
+      "visible": true,
+      "helpText": "commonly called slope. The angle between ground surface and a horizontal line (in percent). This is the direction that overland water would flow. This measure is usually taken with a hand level meter or clinometer.",
+      "group": "geography",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "%",
+          "label": "%"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "slope aspect",
+      "name": "slope_aspect",
+      "required": false,
+      "visible": true,
+      "helpText": "the direction a slope faces. While looking down a slope use a compass to record the direction you are facing (direction or degrees); e.g., NW or 315°. This measure provides an indication of sun and wind exposure that will influence soil temperature and evapotranspiration.",
+      "group": "geography"
+    },
+    {
+      "type": "select",
+      "label": "profile position",
+      "name": "profile_position",
+      "required": false,
+      "visible": true,
+      "helpText": "cross-sectional position in the hillslope where sample was collected.sample area position in relation to surrounding areas",
+      "group": "geography",
+      "options": [
+        {
+          "value": "backslope",
+          "label": "backslope"
+        },
+        {
+          "value": "footslope",
+          "label": "footslope"
+        },
+        {
+          "value": "shoulder",
+          "label": "shoulder"
+        },
+        {
+          "value": "summit",
+          "label": "summit"
+        },
+        {
+          "value": "toeslope",
+          "label": "toeslope"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "project name",
+      "name": "project_name",
+      "required": true,
+      "visible": true,
+      "helpText": "Name of the project within which the sequencing was organized",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "experimental factor",
+      "name": "experimental_factor",
+      "required": false,
+      "visible": true,
+      "helpText": "Experimental factors are essentially the variable aspects of an experiment design which can be used to describe an experiment, or set of experiments, in an increasingly detailed manner. This field accepts ontology terms from Experimental Factor Ontology (EFO) and/or Ontology for Biomedical Investigations (OBI). For a browser of EFO (v 2.95) terms, please see http://purl.bioontology.org/ontology/EFO; for a browser of OBI (v 2018-02-12) terms please see http://purl.bioontology.org/ontology/OBI. E.g. time series design [EFO:EFO_0001779]",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "ploidy",
+      "name": "ploidy",
+      "required": false,
+      "visible": true,
+      "helpText": "The ploidy level of the genome (e.g. allopolyploid, haploid, diploid, triploid, tetraploid). It has implications for the downstream study of duplicated gene and regions of the genomes (and perhaps for difficulties in assembly). For terms, please select terms listed under class ploidy (PATO:001374) of Phenotypic Quality Ontology (PATO), and for a browser of PATO (v 2018-03-27) please refer to http://purl.bioontology.org/ontology/PATO",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "number of replicons",
+      "name": "number_of_replicons",
+      "required": false,
+      "visible": true,
+      "helpText": "Reports the number of replicons in a nuclear genome of eukaryotes, in the genome of a bacterium or archaea or the number of segments in a segmented virus. Always applied to the haploid chromosome count of a eukaryote. Mandatory for MIGS of eukaryotes, bacteria, archaea and segmented virus.",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "[+-]?[0-9]+",
+        "patternMessage": "Must match pattern: [+-]?[0-9]+"
+      }
+    },
+    {
+      "type": "text",
+      "label": "extrachromosomal elements",
+      "name": "extrachromosomal_elements",
+      "required": false,
+      "visible": true,
+      "helpText": "Do plasmids exist of significant phenotypic consequence (e.g. ones that determine virulence or antibiotic resistance). Megaplasmids? Other plasmids (borrelia has 15+ plasmids).",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "[+-]?[0-9]+",
+        "patternMessage": "Must match pattern: [+-]?[0-9]+"
+      }
+    },
+    {
+      "type": "text",
+      "label": "estimated size",
+      "name": "estimated_size",
+      "required": false,
+      "visible": true,
+      "helpText": "The estimated size of the genome (in bp) prior to sequencing. Of particular importance in the sequencing of (eukaryotic) genome which could remain in draft form for a long or unspecified period. Mandatory for MIGS of eukaryotes.",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "[+-]?[0-9]+",
+        "patternMessage": "Must match pattern: [+-]?[0-9]+"
+      }
+    },
+    {
+      "type": "text",
+      "label": "reference for biomaterial",
+      "name": "reference_for_biomaterial",
+      "required": false,
+      "visible": true,
+      "helpText": "Primary publication if isolated before genome publication; otherwise, primary genome report. Mandatory for MIGS of bacteria and archaea.",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "annotation source",
+      "name": "annotation_source",
+      "required": false,
+      "visible": true,
+      "helpText": "For cases where annotation was provided by a community jamboree or model organism database rather than by a specific submitter",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "sample volume or weight for DNA extraction",
+      "name": "sample_volume_or_weight_for_dna_extraction",
+      "required": false,
+      "visible": true,
+      "helpText": "Volume (ml) or mass (g) of total collected sample processed for DNA extraction. Note: total sample collected should be entered under the term &apos;sample size&apos;.",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "g",
+          "label": "g"
+        },
+        {
+          "value": "mL",
+          "label": "mL"
+        },
+        {
+          "value": "mg",
+          "label": "mg"
+        },
+        {
+          "value": "ng",
+          "label": "ng"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "nucleic acid extraction",
+      "name": "nucleic_acid_extraction",
+      "required": false,
+      "visible": true,
+      "helpText": "A link to a literature reference, electronic resource or a standard operating procedure (SOP), that describes the material separation to recover the nucleic acid fraction from a sample",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "nucleic acid amplification",
+      "name": "nucleic_acid_amplification",
+      "required": false,
+      "visible": true,
+      "helpText": "A link to a literature reference, electronic resource or a standard operating procedure (SOP), that describes the enzymatic amplification (PCR, TMA, NASBA) of specific nucleic acids",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "library size",
+      "name": "library_size",
+      "required": false,
+      "visible": true,
+      "helpText": "Total number of clones in the library prepared for the project",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "[+-]?[0-9]+",
+        "patternMessage": "Must match pattern: [+-]?[0-9]+"
+      }
+    },
+    {
+      "type": "text",
+      "label": "library reads sequenced",
+      "name": "library_reads_sequenced",
+      "required": false,
+      "visible": true,
+      "helpText": "Total number of clones sequenced from the library",
+      "group": "non-sample terms",
+      "simpleValidation": {
+        "pattern": "[+-]?[0-9]+",
+        "patternMessage": "Must match pattern: [+-]?[0-9]+"
+      }
+    },
+    {
+      "type": "text",
+      "label": "library construction method",
+      "name": "library_construction_method",
+      "required": false,
+      "visible": true,
+      "helpText": "Library construction method used for clone libraries",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "library vector",
+      "name": "library_vector",
+      "required": false,
+      "visible": true,
+      "helpText": "Cloning vector type(s) used in construction of libraries",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "library screening strategy",
+      "name": "library_screening_strategy",
+      "required": false,
+      "visible": true,
+      "helpText": "Specific enrichment or screening methods applied before and/or after creating clone libraries in order to select a specific group of sequences",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "target gene",
+      "name": "target_gene",
+      "required": false,
+      "visible": true,
+      "helpText": "Targeted gene or locus name for marker gene studies",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "target subfragment",
+      "name": "target_subfragment",
+      "required": false,
+      "visible": true,
+      "helpText": "Name of subfragment of a gene or locus. Important to e.g. identify special regions on marker genes like V6 on 16S rRNA",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "pcr primers",
+      "name": "pcr_primers",
+      "required": false,
+      "visible": true,
+      "helpText": "PCR primers that were used to amplify the sequence of the targeted gene, locus or subfragment. This field should contain all the primers used for a single PCR reaction if multiple forward or reverse primers are present in a single PCR reaction. The primer sequence should be reported in uppercase letters",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "multiplex identifiers",
+      "name": "multiplex_identifiers",
+      "required": false,
+      "visible": true,
+      "helpText": "Molecular barcodes, called Multiplex Identifiers (MIDs), that are used to specifically tag unique samples in a sequencing run. Sequence should be reported in uppercase letters",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "adapters",
+      "name": "adapters",
+      "required": false,
+      "visible": true,
+      "helpText": "Adapters provide priming sequences for both amplification and sequencing of the sample-library fragments. Both adapters should be reported; in uppercase letters",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "pcr conditions",
+      "name": "pcr_conditions",
+      "required": false,
+      "visible": true,
+      "helpText": "Description of reaction conditions and components for PCR in the form of &apos;initial denaturation:94degC_1.5min; annealing=...&apos;",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "sequencing method",
+      "name": "sequencing_method",
+      "required": false,
+      "visible": true,
+      "helpText": "Sequencing machine used. Where possible the term should be taken from the OBI list of DNA sequencers (http://purl.obolibrary.org/obo/OBI_0400103).",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "select",
+      "label": "sequence quality check",
+      "name": "sequence_quality_check",
+      "required": false,
+      "visible": true,
+      "helpText": "Indicate if the sequence has been called by automatic systems (none) or undergone a manual editing procedure (e.g. by inspecting the raw data or chromatograms). Applied only for sequences that are not submitted to SRA or DRA",
+      "group": "non-sample terms",
+      "options": [
+        {
+          "value": "manual",
+          "label": "manual"
+        },
+        {
+          "value": "none",
+          "label": "none"
+        },
+        {
+          "value": "software",
+          "label": "software"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "chimera check software",
+      "name": "chimera_check_software",
+      "required": false,
+      "visible": true,
+      "helpText": "Tool(s) used for chimera checking, including version number and parameters, to discover and remove chimeric sequences. A chimeric sequence is comprised of two or more phylogenetically distinct parent sequences.",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "relevant electronic resources",
+      "name": "relevant_electronic_resources",
+      "required": false,
+      "visible": true,
+      "helpText": "A related resource that is referenced, cited, or otherwise associated to the sequence in the format of a PMID, DOI or URL",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "relevant standard operating procedures",
+      "name": "relevant_standard_operating_procedures",
+      "required": false,
+      "visible": true,
+      "helpText": "Standard operating procedures used in assembly and/or annotation of genomes, metagenomes or environmental sequences in the format of a PMID, DOI or URL",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "pooling of DNA extracts (if done)",
+      "name": "pooling_of_dna_extracts_if_done",
+      "required": false,
+      "visible": true,
+      "helpText": "were multiple DNA extractions mixed? how many?",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "negative control type",
+      "name": "negative_control_type",
+      "required": false,
+      "visible": true,
+      "helpText": "The substance or equipment used as a negative control in an investigation",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "positive control type",
+      "name": "positive_control_type",
+      "required": false,
+      "visible": true,
+      "helpText": "The substance, mixture, product, or apparatus used to verify that a process which is part of an investigation delivers a true positive.",
+      "group": "non-sample terms"
+    },
+    {
+      "type": "text",
+      "label": "collection date",
+      "name": "collection_date",
+      "required": true,
+      "visible": true,
+      "helpText": "The date the sample was collected with the intention of sequencing, either as an instance (single point in time) or interval. In case no exact time is available, the date/time can be right truncated i.e. all of these are valid ISO8601 compliant times: 2008-01-23T19:23:10+00:00; 2008-01-23T19:23:10; 2008-01-23; 2008-01; 2008.",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "(^[12][0-9]{3}(-(0[1-9]|1[0-2])(-(0[1-9]|[12][0-9]|3[01])(T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z?([+-][0-9]{1,2})?)?)?)?(/[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z?([+-][0-9]{1,2})?)?)?)?)?$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)",
+        "patternMessage": "Must match pattern: (^[12][0-9]{3}(-(0[1-9]|1[0-2])(-(0[1-9]|[12][0-9]|3[01])(T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z?([+-][0-9]{1,2})?)?)?)?(/[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z?([+-][0-9]{1,2})?)?)?)?)?$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)"
+      }
+    },
+    {
+      "type": "text",
+      "label": "altitude",
+      "name": "altitude",
+      "required": false,
+      "visible": true,
+      "helpText": "The altitude of the sample is the vertical distance between Earth&apos;s surface above Sea Level and the sampled position in the air.",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "m",
+          "label": "m"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "geographic location (country and/or sea)",
+      "name": "geographic_location_country_and_or_sea",
+      "required": true,
+      "visible": true,
+      "helpText": "The location the sample was collected from with the intention of sequencing, as defined by the country or sea. Country or sea names should be chosen from the INSDC country list (http://insdc.org/country.html).",
+      "group": "Collection event information",
+      "options": [
+        {
+          "value": "Afghanistan",
+          "label": "Afghanistan"
+        },
+        {
+          "value": "Albania",
+          "label": "Albania"
+        },
+        {
+          "value": "Algeria",
+          "label": "Algeria"
+        },
+        {
+          "value": "American Samoa",
+          "label": "American Samoa"
+        },
+        {
+          "value": "Andorra",
+          "label": "Andorra"
+        },
+        {
+          "value": "Angola",
+          "label": "Angola"
+        },
+        {
+          "value": "Anguilla",
+          "label": "Anguilla"
+        },
+        {
+          "value": "Antarctica",
+          "label": "Antarctica"
+        },
+        {
+          "value": "Antigua and Barbuda",
+          "label": "Antigua and Barbuda"
+        },
+        {
+          "value": "Arctic Ocean",
+          "label": "Arctic Ocean"
+        },
+        {
+          "value": "Argentina",
+          "label": "Argentina"
+        },
+        {
+          "value": "Armenia",
+          "label": "Armenia"
+        },
+        {
+          "value": "Aruba",
+          "label": "Aruba"
+        },
+        {
+          "value": "Ashmore and Cartier Islands",
+          "label": "Ashmore and Cartier Islands"
+        },
+        {
+          "value": "Atlantic Ocean",
+          "label": "Atlantic Ocean"
+        },
+        {
+          "value": "Australia",
+          "label": "Australia"
+        },
+        {
+          "value": "Austria",
+          "label": "Austria"
+        },
+        {
+          "value": "Azerbaijan",
+          "label": "Azerbaijan"
+        },
+        {
+          "value": "Bahamas",
+          "label": "Bahamas"
+        },
+        {
+          "value": "Bahrain",
+          "label": "Bahrain"
+        },
+        {
+          "value": "Baker Island",
+          "label": "Baker Island"
+        },
+        {
+          "value": "Baltic Sea",
+          "label": "Baltic Sea"
+        },
+        {
+          "value": "Bangladesh",
+          "label": "Bangladesh"
+        },
+        {
+          "value": "Barbados",
+          "label": "Barbados"
+        },
+        {
+          "value": "Bassas da India",
+          "label": "Bassas da India"
+        },
+        {
+          "value": "Belarus",
+          "label": "Belarus"
+        },
+        {
+          "value": "Belgium",
+          "label": "Belgium"
+        },
+        {
+          "value": "Belize",
+          "label": "Belize"
+        },
+        {
+          "value": "Benin",
+          "label": "Benin"
+        },
+        {
+          "value": "Bermuda",
+          "label": "Bermuda"
+        },
+        {
+          "value": "Bhutan",
+          "label": "Bhutan"
+        },
+        {
+          "value": "Bolivia",
+          "label": "Bolivia"
+        },
+        {
+          "value": "Borneo",
+          "label": "Borneo"
+        },
+        {
+          "value": "Bosnia and Herzegovina",
+          "label": "Bosnia and Herzegovina"
+        },
+        {
+          "value": "Botswana",
+          "label": "Botswana"
+        },
+        {
+          "value": "Bouvet Island",
+          "label": "Bouvet Island"
+        },
+        {
+          "value": "Brazil",
+          "label": "Brazil"
+        },
+        {
+          "value": "British Virgin Islands",
+          "label": "British Virgin Islands"
+        },
+        {
+          "value": "Brunei",
+          "label": "Brunei"
+        },
+        {
+          "value": "Bulgaria",
+          "label": "Bulgaria"
+        },
+        {
+          "value": "Burkina Faso",
+          "label": "Burkina Faso"
+        },
+        {
+          "value": "Burundi",
+          "label": "Burundi"
+        },
+        {
+          "value": "Cambodia",
+          "label": "Cambodia"
+        },
+        {
+          "value": "Cameroon",
+          "label": "Cameroon"
+        },
+        {
+          "value": "Canada",
+          "label": "Canada"
+        },
+        {
+          "value": "Cape Verde",
+          "label": "Cape Verde"
+        },
+        {
+          "value": "Cayman Islands",
+          "label": "Cayman Islands"
+        },
+        {
+          "value": "Central African Republic",
+          "label": "Central African Republic"
+        },
+        {
+          "value": "Chad",
+          "label": "Chad"
+        },
+        {
+          "value": "Chile",
+          "label": "Chile"
+        },
+        {
+          "value": "China",
+          "label": "China"
+        },
+        {
+          "value": "Christmas Island",
+          "label": "Christmas Island"
+        },
+        {
+          "value": "Clipperton Island",
+          "label": "Clipperton Island"
+        },
+        {
+          "value": "Cocos Islands",
+          "label": "Cocos Islands"
+        },
+        {
+          "value": "Colombia",
+          "label": "Colombia"
+        },
+        {
+          "value": "Comoros",
+          "label": "Comoros"
+        },
+        {
+          "value": "Cook Islands",
+          "label": "Cook Islands"
+        },
+        {
+          "value": "Coral Sea Islands",
+          "label": "Coral Sea Islands"
+        },
+        {
+          "value": "Costa Rica",
+          "label": "Costa Rica"
+        },
+        {
+          "value": "Cote d&apos;Ivoire",
+          "label": "Cote d&apos;Ivoire"
+        },
+        {
+          "value": "Croatia",
+          "label": "Croatia"
+        },
+        {
+          "value": "Cuba",
+          "label": "Cuba"
+        },
+        {
+          "value": "Curacao",
+          "label": "Curacao"
+        },
+        {
+          "value": "Cyprus",
+          "label": "Cyprus"
+        },
+        {
+          "value": "Czech Republic",
+          "label": "Czech Republic"
+        },
+        {
+          "value": "Democratic Republic of the Congo",
+          "label": "Democratic Republic of the Congo"
+        },
+        {
+          "value": "Denmark",
+          "label": "Denmark"
+        },
+        {
+          "value": "Djibouti",
+          "label": "Djibouti"
+        },
+        {
+          "value": "Dominica",
+          "label": "Dominica"
+        },
+        {
+          "value": "Dominican Republic",
+          "label": "Dominican Republic"
+        },
+        {
+          "value": "East Timor",
+          "label": "East Timor"
+        },
+        {
+          "value": "Ecuador",
+          "label": "Ecuador"
+        },
+        {
+          "value": "Egypt",
+          "label": "Egypt"
+        },
+        {
+          "value": "El Salvador",
+          "label": "El Salvador"
+        },
+        {
+          "value": "Equatorial Guinea",
+          "label": "Equatorial Guinea"
+        },
+        {
+          "value": "Eritrea",
+          "label": "Eritrea"
+        },
+        {
+          "value": "Estonia",
+          "label": "Estonia"
+        },
+        {
+          "value": "Ethiopia",
+          "label": "Ethiopia"
+        },
+        {
+          "value": "Europa Island",
+          "label": "Europa Island"
+        },
+        {
+          "value": "Falkland Islands (Islas Malvinas)",
+          "label": "Falkland Islands (Islas Malvinas)"
+        },
+        {
+          "value": "Faroe Islands",
+          "label": "Faroe Islands"
+        },
+        {
+          "value": "Fiji",
+          "label": "Fiji"
+        },
+        {
+          "value": "Finland",
+          "label": "Finland"
+        },
+        {
+          "value": "France",
+          "label": "France"
+        },
+        {
+          "value": "French Guiana",
+          "label": "French Guiana"
+        },
+        {
+          "value": "French Polynesia",
+          "label": "French Polynesia"
+        },
+        {
+          "value": "French Southern and Antarctic Lands",
+          "label": "French Southern and Antarctic Lands"
+        },
+        {
+          "value": "Gabon",
+          "label": "Gabon"
+        },
+        {
+          "value": "Gambia",
+          "label": "Gambia"
+        },
+        {
+          "value": "Gaza Strip",
+          "label": "Gaza Strip"
+        },
+        {
+          "value": "Georgia",
+          "label": "Georgia"
+        },
+        {
+          "value": "Germany",
+          "label": "Germany"
+        },
+        {
+          "value": "Ghana",
+          "label": "Ghana"
+        },
+        {
+          "value": "Gibraltar",
+          "label": "Gibraltar"
+        },
+        {
+          "value": "Glorioso Islands",
+          "label": "Glorioso Islands"
+        },
+        {
+          "value": "Greece",
+          "label": "Greece"
+        },
+        {
+          "value": "Greenland",
+          "label": "Greenland"
+        },
+        {
+          "value": "Grenada",
+          "label": "Grenada"
+        },
+        {
+          "value": "Guadeloupe",
+          "label": "Guadeloupe"
+        },
+        {
+          "value": "Guam",
+          "label": "Guam"
+        },
+        {
+          "value": "Guatemala",
+          "label": "Guatemala"
+        },
+        {
+          "value": "Guernsey",
+          "label": "Guernsey"
+        },
+        {
+          "value": "Guinea",
+          "label": "Guinea"
+        },
+        {
+          "value": "Guinea-Bissau",
+          "label": "Guinea-Bissau"
+        },
+        {
+          "value": "Guyana",
+          "label": "Guyana"
+        },
+        {
+          "value": "Haiti",
+          "label": "Haiti"
+        },
+        {
+          "value": "Heard Island and McDonald Islands",
+          "label": "Heard Island and McDonald Islands"
+        },
+        {
+          "value": "Honduras",
+          "label": "Honduras"
+        },
+        {
+          "value": "Hong Kong",
+          "label": "Hong Kong"
+        },
+        {
+          "value": "Howland Island",
+          "label": "Howland Island"
+        },
+        {
+          "value": "Hungary",
+          "label": "Hungary"
+        },
+        {
+          "value": "Iceland",
+          "label": "Iceland"
+        },
+        {
+          "value": "India",
+          "label": "India"
+        },
+        {
+          "value": "Indian Ocean",
+          "label": "Indian Ocean"
+        },
+        {
+          "value": "Indonesia",
+          "label": "Indonesia"
+        },
+        {
+          "value": "Iran",
+          "label": "Iran"
+        },
+        {
+          "value": "Iraq",
+          "label": "Iraq"
+        },
+        {
+          "value": "Ireland",
+          "label": "Ireland"
+        },
+        {
+          "value": "Isle of Man",
+          "label": "Isle of Man"
+        },
+        {
+          "value": "Israel",
+          "label": "Israel"
+        },
+        {
+          "value": "Italy",
+          "label": "Italy"
+        },
+        {
+          "value": "Jamaica",
+          "label": "Jamaica"
+        },
+        {
+          "value": "Jan Mayen",
+          "label": "Jan Mayen"
+        },
+        {
+          "value": "Japan",
+          "label": "Japan"
+        },
+        {
+          "value": "Jarvis Island",
+          "label": "Jarvis Island"
+        },
+        {
+          "value": "Jersey",
+          "label": "Jersey"
+        },
+        {
+          "value": "Johnston Atoll",
+          "label": "Johnston Atoll"
+        },
+        {
+          "value": "Jordan",
+          "label": "Jordan"
+        },
+        {
+          "value": "Juan de Nova Island",
+          "label": "Juan de Nova Island"
+        },
+        {
+          "value": "Kazakhstan",
+          "label": "Kazakhstan"
+        },
+        {
+          "value": "Kenya",
+          "label": "Kenya"
+        },
+        {
+          "value": "Kerguelen Archipelago",
+          "label": "Kerguelen Archipelago"
+        },
+        {
+          "value": "Kingman Reef",
+          "label": "Kingman Reef"
+        },
+        {
+          "value": "Kiribati",
+          "label": "Kiribati"
+        },
+        {
+          "value": "Kosovo",
+          "label": "Kosovo"
+        },
+        {
+          "value": "Kuwait",
+          "label": "Kuwait"
+        },
+        {
+          "value": "Kyrgyzstan",
+          "label": "Kyrgyzstan"
+        },
+        {
+          "value": "Laos",
+          "label": "Laos"
+        },
+        {
+          "value": "Latvia",
+          "label": "Latvia"
+        },
+        {
+          "value": "Lebanon",
+          "label": "Lebanon"
+        },
+        {
+          "value": "Lesotho",
+          "label": "Lesotho"
+        },
+        {
+          "value": "Liberia",
+          "label": "Liberia"
+        },
+        {
+          "value": "Libya",
+          "label": "Libya"
+        },
+        {
+          "value": "Liechtenstein",
+          "label": "Liechtenstein"
+        },
+        {
+          "value": "Lithuania",
+          "label": "Lithuania"
+        },
+        {
+          "value": "Luxembourg",
+          "label": "Luxembourg"
+        },
+        {
+          "value": "Macau",
+          "label": "Macau"
+        },
+        {
+          "value": "Macedonia",
+          "label": "Macedonia"
+        },
+        {
+          "value": "Madagascar",
+          "label": "Madagascar"
+        },
+        {
+          "value": "Malawi",
+          "label": "Malawi"
+        },
+        {
+          "value": "Malaysia",
+          "label": "Malaysia"
+        },
+        {
+          "value": "Maldives",
+          "label": "Maldives"
+        },
+        {
+          "value": "Mali",
+          "label": "Mali"
+        },
+        {
+          "value": "Malta",
+          "label": "Malta"
+        },
+        {
+          "value": "Marshall Islands",
+          "label": "Marshall Islands"
+        },
+        {
+          "value": "Martinique",
+          "label": "Martinique"
+        },
+        {
+          "value": "Mauritania",
+          "label": "Mauritania"
+        },
+        {
+          "value": "Mauritius",
+          "label": "Mauritius"
+        },
+        {
+          "value": "Mayotte",
+          "label": "Mayotte"
+        },
+        {
+          "value": "Mediterranean Sea",
+          "label": "Mediterranean Sea"
+        },
+        {
+          "value": "Mexico",
+          "label": "Mexico"
+        },
+        {
+          "value": "Micronesia",
+          "label": "Micronesia"
+        },
+        {
+          "value": "Midway Islands",
+          "label": "Midway Islands"
+        },
+        {
+          "value": "Moldova",
+          "label": "Moldova"
+        },
+        {
+          "value": "Monaco",
+          "label": "Monaco"
+        },
+        {
+          "value": "Mongolia",
+          "label": "Mongolia"
+        },
+        {
+          "value": "Montenegro",
+          "label": "Montenegro"
+        },
+        {
+          "value": "Montserrat",
+          "label": "Montserrat"
+        },
+        {
+          "value": "Morocco",
+          "label": "Morocco"
+        },
+        {
+          "value": "Mozambique",
+          "label": "Mozambique"
+        },
+        {
+          "value": "Myanmar",
+          "label": "Myanmar"
+        },
+        {
+          "value": "Namibia",
+          "label": "Namibia"
+        },
+        {
+          "value": "Nauru",
+          "label": "Nauru"
+        },
+        {
+          "value": "Navassa Island",
+          "label": "Navassa Island"
+        },
+        {
+          "value": "Nepal",
+          "label": "Nepal"
+        },
+        {
+          "value": "Netherlands",
+          "label": "Netherlands"
+        },
+        {
+          "value": "New Caledonia",
+          "label": "New Caledonia"
+        },
+        {
+          "value": "New Zealand",
+          "label": "New Zealand"
+        },
+        {
+          "value": "Nicaragua",
+          "label": "Nicaragua"
+        },
+        {
+          "value": "Niger",
+          "label": "Niger"
+        },
+        {
+          "value": "Nigeria",
+          "label": "Nigeria"
+        },
+        {
+          "value": "Niue",
+          "label": "Niue"
+        },
+        {
+          "value": "Norfolk Island",
+          "label": "Norfolk Island"
+        },
+        {
+          "value": "North Korea",
+          "label": "North Korea"
+        },
+        {
+          "value": "North Sea",
+          "label": "North Sea"
+        },
+        {
+          "value": "Northern Mariana Islands",
+          "label": "Northern Mariana Islands"
+        },
+        {
+          "value": "Norway",
+          "label": "Norway"
+        },
+        {
+          "value": "Oman",
+          "label": "Oman"
+        },
+        {
+          "value": "Pacific Ocean",
+          "label": "Pacific Ocean"
+        },
+        {
+          "value": "Pakistan",
+          "label": "Pakistan"
+        },
+        {
+          "value": "Palau",
+          "label": "Palau"
+        },
+        {
+          "value": "Palmyra Atoll",
+          "label": "Palmyra Atoll"
+        },
+        {
+          "value": "Panama",
+          "label": "Panama"
+        },
+        {
+          "value": "Papua New Guinea",
+          "label": "Papua New Guinea"
+        },
+        {
+          "value": "Paracel Islands",
+          "label": "Paracel Islands"
+        },
+        {
+          "value": "Paraguay",
+          "label": "Paraguay"
+        },
+        {
+          "value": "Peru",
+          "label": "Peru"
+        },
+        {
+          "value": "Philippines",
+          "label": "Philippines"
+        },
+        {
+          "value": "Pitcairn Islands",
+          "label": "Pitcairn Islands"
+        },
+        {
+          "value": "Poland",
+          "label": "Poland"
+        },
+        {
+          "value": "Portugal",
+          "label": "Portugal"
+        },
+        {
+          "value": "Puerto Rico",
+          "label": "Puerto Rico"
+        },
+        {
+          "value": "Qatar",
+          "label": "Qatar"
+        },
+        {
+          "value": "Republic of the Congo",
+          "label": "Republic of the Congo"
+        },
+        {
+          "value": "Reunion",
+          "label": "Reunion"
+        },
+        {
+          "value": "Romania",
+          "label": "Romania"
+        },
+        {
+          "value": "Ross Sea",
+          "label": "Ross Sea"
+        },
+        {
+          "value": "Russia",
+          "label": "Russia"
+        },
+        {
+          "value": "Rwanda",
+          "label": "Rwanda"
+        },
+        {
+          "value": "Saint Helena",
+          "label": "Saint Helena"
+        },
+        {
+          "value": "Saint Kitts and Nevis",
+          "label": "Saint Kitts and Nevis"
+        },
+        {
+          "value": "Saint Lucia",
+          "label": "Saint Lucia"
+        },
+        {
+          "value": "Saint Pierre and Miquelon",
+          "label": "Saint Pierre and Miquelon"
+        },
+        {
+          "value": "Saint Vincent and the Grenadines",
+          "label": "Saint Vincent and the Grenadines"
+        },
+        {
+          "value": "Samoa",
+          "label": "Samoa"
+        },
+        {
+          "value": "San Marino",
+          "label": "San Marino"
+        },
+        {
+          "value": "Sao Tome and Principe",
+          "label": "Sao Tome and Principe"
+        },
+        {
+          "value": "Saudi Arabia",
+          "label": "Saudi Arabia"
+        },
+        {
+          "value": "Senegal",
+          "label": "Senegal"
+        },
+        {
+          "value": "Serbia",
+          "label": "Serbia"
+        },
+        {
+          "value": "Seychelles",
+          "label": "Seychelles"
+        },
+        {
+          "value": "Sierra Leone",
+          "label": "Sierra Leone"
+        },
+        {
+          "value": "Singapore",
+          "label": "Singapore"
+        },
+        {
+          "value": "Sint Maarten",
+          "label": "Sint Maarten"
+        },
+        {
+          "value": "Slovakia",
+          "label": "Slovakia"
+        },
+        {
+          "value": "Slovenia",
+          "label": "Slovenia"
+        },
+        {
+          "value": "Solomon Islands",
+          "label": "Solomon Islands"
+        },
+        {
+          "value": "Somalia",
+          "label": "Somalia"
+        },
+        {
+          "value": "South Africa",
+          "label": "South Africa"
+        },
+        {
+          "value": "South Georgia and the South Sandwich Islands",
+          "label": "South Georgia and the South Sandwich Islands"
+        },
+        {
+          "value": "South Korea",
+          "label": "South Korea"
+        },
+        {
+          "value": "Southern Ocean",
+          "label": "Southern Ocean"
+        },
+        {
+          "value": "Spain",
+          "label": "Spain"
+        },
+        {
+          "value": "Spratly Islands",
+          "label": "Spratly Islands"
+        },
+        {
+          "value": "Sri Lanka",
+          "label": "Sri Lanka"
+        },
+        {
+          "value": "Sudan",
+          "label": "Sudan"
+        },
+        {
+          "value": "Suriname",
+          "label": "Suriname"
+        },
+        {
+          "value": "Svalbard",
+          "label": "Svalbard"
+        },
+        {
+          "value": "Swaziland",
+          "label": "Swaziland"
+        },
+        {
+          "value": "Sweden",
+          "label": "Sweden"
+        },
+        {
+          "value": "Switzerland",
+          "label": "Switzerland"
+        },
+        {
+          "value": "Syria",
+          "label": "Syria"
+        },
+        {
+          "value": "Taiwan",
+          "label": "Taiwan"
+        },
+        {
+          "value": "Tajikistan",
+          "label": "Tajikistan"
+        },
+        {
+          "value": "Tanzania",
+          "label": "Tanzania"
+        },
+        {
+          "value": "Tasman Sea",
+          "label": "Tasman Sea"
+        },
+        {
+          "value": "Thailand",
+          "label": "Thailand"
+        },
+        {
+          "value": "Togo",
+          "label": "Togo"
+        },
+        {
+          "value": "Tokelau",
+          "label": "Tokelau"
+        },
+        {
+          "value": "Tonga",
+          "label": "Tonga"
+        },
+        {
+          "value": "Trinidad and Tobago",
+          "label": "Trinidad and Tobago"
+        },
+        {
+          "value": "Tromelin Island",
+          "label": "Tromelin Island"
+        },
+        {
+          "value": "Tunisia",
+          "label": "Tunisia"
+        },
+        {
+          "value": "Turkey",
+          "label": "Turkey"
+        },
+        {
+          "value": "Turkmenistan",
+          "label": "Turkmenistan"
+        },
+        {
+          "value": "Turks and Caicos Islands",
+          "label": "Turks and Caicos Islands"
+        },
+        {
+          "value": "Tuvalu",
+          "label": "Tuvalu"
+        },
+        {
+          "value": "USA",
+          "label": "USA"
+        },
+        {
+          "value": "Uganda",
+          "label": "Uganda"
+        },
+        {
+          "value": "Ukraine",
+          "label": "Ukraine"
+        },
+        {
+          "value": "United Arab Emirates",
+          "label": "United Arab Emirates"
+        },
+        {
+          "value": "United Kingdom",
+          "label": "United Kingdom"
+        },
+        {
+          "value": "Uruguay",
+          "label": "Uruguay"
+        },
+        {
+          "value": "Uzbekistan",
+          "label": "Uzbekistan"
+        },
+        {
+          "value": "Vanuatu",
+          "label": "Vanuatu"
+        },
+        {
+          "value": "Venezuela",
+          "label": "Venezuela"
+        },
+        {
+          "value": "Viet Nam",
+          "label": "Viet Nam"
+        },
+        {
+          "value": "Virgin Islands",
+          "label": "Virgin Islands"
+        },
+        {
+          "value": "Wake Island",
+          "label": "Wake Island"
+        },
+        {
+          "value": "Wallis and Futuna",
+          "label": "Wallis and Futuna"
+        },
+        {
+          "value": "West Bank",
+          "label": "West Bank"
+        },
+        {
+          "value": "Western Sahara",
+          "label": "Western Sahara"
+        },
+        {
+          "value": "Yemen",
+          "label": "Yemen"
+        },
+        {
+          "value": "Zambia",
+          "label": "Zambia"
+        },
+        {
+          "value": "Zimbabwe",
+          "label": "Zimbabwe"
+        },
+        {
+          "value": "missing: control sample",
+          "label": "missing: control sample"
+        },
+        {
+          "value": "missing: data agreement established pre-2023",
+          "label": "missing: data agreement established pre-2023"
+        },
+        {
+          "value": "missing: endangered species",
+          "label": "missing: endangered species"
+        },
+        {
+          "value": "missing: human-identifiable",
+          "label": "missing: human-identifiable"
+        },
+        {
+          "value": "missing: lab stock",
+          "label": "missing: lab stock"
+        },
+        {
+          "value": "missing: sample group",
+          "label": "missing: sample group"
+        },
+        {
+          "value": "missing: synthetic construct",
+          "label": "missing: synthetic construct"
+        },
+        {
+          "value": "missing: third party data",
+          "label": "missing: third party data"
+        },
+        {
+          "value": "not applicable",
+          "label": "not applicable"
+        },
+        {
+          "value": "not collected",
+          "label": "not collected"
+        },
+        {
+          "value": "not provided",
+          "label": "not provided"
+        },
+        {
+          "value": "restricted access",
+          "label": "restricted access"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "geographic location (latitude)",
+      "name": "geographic_location_latitude",
+      "required": true,
+      "visible": true,
+      "helpText": "The geographical origin of the sample as defined by latitude. The values should be reported in decimal degrees and in WGS84 system",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "(^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)",
+        "patternMessage": "Must match pattern: (^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)"
+      },
+      "units": [
+        {
+          "value": "DD",
+          "label": "DD"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "geographic location (longitude)",
+      "name": "geographic_location_longitude",
+      "required": true,
+      "visible": true,
+      "helpText": "The geographical origin of the sample as defined by longitude. The values should be reported in decimal degrees and in WGS84 system",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "(^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)",
+        "patternMessage": "Must match pattern: (^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)"
+      },
+      "units": [
+        {
+          "value": "DD",
+          "label": "DD"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "geographic location (region and locality)",
+      "name": "geographic_location_region_and_locality",
+      "required": false,
+      "visible": true,
+      "helpText": "The geographical origin of the sample as defined by the specific region name followed by the locality name.",
+      "group": "Collection event information"
+    },
+    {
+      "type": "text",
+      "label": "depth",
+      "name": "depth",
+      "required": true,
+      "visible": true,
+      "helpText": "The vertical distance below local surface, e.g. for sediment or soil samples depth is measured from sediment or soil surface, respectively. Depth can be reported as an interval for subsurface samples.",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "m",
+          "label": "m"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "broad-scale environmental context",
+      "name": "broad_scale_environmental_context",
+      "required": true,
+      "visible": true,
+      "helpText": "Report the major environmental system the sample or specimen came from. The system(s) identified should have a coarse spatial grain, to provide the general environmental context of where the sampling was done (e.g. in the desert or a rainforest). We recommend using subclasses of EnvO’s biome class: http://purl.obolibrary.org/obo/ENVO_00000428. EnvO documentation about how to use the field: https://github.com/EnvironmentOntology/envo/wiki/Using-ENVO-with-MIxS.",
+      "group": "Collection event information"
+    },
+    {
+      "type": "text",
+      "label": "local environmental context",
+      "name": "local_environmental_context",
+      "required": true,
+      "visible": true,
+      "helpText": "Report the entity or entities which are in the sample or specimen’s local vicinity and which you believe have significant causal influences on your sample or specimen. We recommend using EnvO terms which are of smaller spatial grain than your entry for &quot;broad-scale environmental context&quot;. Terms, such as anatomical sites, from other OBO Library ontologies which interoperate with EnvO (e.g. UBERON) are accepted in this field. EnvO documentation about how to use the field: https://github.com/EnvironmentOntology/envo/wiki/Using-ENVO-with-MIxS.",
+      "group": "Collection event information"
+    },
+    {
+      "type": "text",
+      "label": "environmental medium",
+      "name": "environmental_medium",
+      "required": true,
+      "visible": true,
+      "helpText": "Report the environmental material(s) immediately surrounding the sample or specimen at the time of sampling. We recommend using subclasses of &apos;environmental material&apos; (http://purl.obolibrary.org/obo/ENVO_00010483). EnvO documentation about how to use the field: https://github.com/EnvironmentOntology/envo/wiki/Using-ENVO-with-MIxS . Terms from other OBO ontologies are permissible as long as they reference mass/volume nouns (e.g. air, water, blood) and not discrete, countable entities (e.g. a tree, a leaf, a table top).",
+      "group": "Collection event information"
+    },
+    {
+      "type": "text",
+      "label": "elevation",
+      "name": "elevation",
+      "required": true,
+      "visible": true,
+      "helpText": "The elevation of the sampling site as measured by the vertical distance from mean sea level.",
+      "group": "Collection event information",
+      "simpleValidation": {
+        "pattern": "[+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: [+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "m",
+          "label": "m"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "source material identifiers",
+      "name": "source_material_identifiers",
+      "required": false,
+      "visible": true,
+      "helpText": "A unique identifier assigned to a material sample (as defined by http://rs.tdwg.org/dwc/terms/materialSampleID, and as opposed to a particular digital record of a material sample) used for extracting nucleic acids, and subsequent sequencing. The identifier can refer either to the original material collected or to any derived sub-samples. The INSDC qualifiers /specimen_voucher, /bio_material, or /culture_collection may or may not share the same value as the source_mat_id field. For instance, the /specimen_voucher qualifier and source_mat_id may both contain &apos;UAM:Herps:14&apos; , referring to both the specimen voucher and sampled tissue with the same identifier. However, the /culture_collection qualifier may refer to a value from an initial culture (e.g. ATCC:11775) while source_mat_id would refer to an identifier from some derived culture from which the nucleic acids were extracted (e.g. xatc123 or ark:/2154/R2).",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "sample material processing",
+      "name": "sample_material_processing",
+      "required": false,
+      "visible": true,
+      "helpText": "A brief description of any processing applied to the sample during or after retrieving the sample from environment, or a link to the relevant protocol(s) performed.",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "isolation and growth condition",
+      "name": "isolation_and_growth_condition",
+      "required": false,
+      "visible": true,
+      "helpText": "Publication reference in the form of pubmed ID (pmid), digital object identifier (doi) or url for isolation and growth condition specifications of the organism/material. Mandatory for MIGS and MIMARKS Specimen.",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "propagation",
+      "name": "propagation",
+      "required": false,
+      "visible": true,
+      "helpText": "The type of reproduction from the parent stock. Values for this field is specific to different taxa. For phage or virus: lytic/lysogenic/temperate/obligately lytic. For plasmids: incompatibility group. For eukaryotes: sexual/asexual. Mandatory for MIGs of eukayotes, plasmids and viruses.",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "amount or size of sample collected",
+      "name": "amount_or_size_of_sample_collected",
+      "required": false,
+      "visible": true,
+      "helpText": "The total amount or size (volume (ml), mass (g) or area (m2) ) of sample collected.",
+      "group": "sample collection",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "L",
+          "label": "L"
+        },
+        {
+          "value": "g",
+          "label": "g"
+        },
+        {
+          "value": "kg",
+          "label": "kg"
+        },
+        {
+          "value": "m2",
+          "label": "m2"
+        },
+        {
+          "value": "m3",
+          "label": "m3"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "composite design/sieving (if any)",
+      "name": "composite_design_sieving_if_any",
+      "required": false,
+      "visible": true,
+      "helpText": "collection design of pooled samples and/or sieve size and amount of sample sieved",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "sample weight for DNA extraction",
+      "name": "sample_weight_for_dna_extraction",
+      "required": false,
+      "visible": true,
+      "helpText": "weight (g) of soil processed",
+      "group": "sample collection",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "g",
+          "label": "g"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "storage conditions (fresh/frozen/other)",
+      "name": "storage_conditions_fresh_frozen_other",
+      "required": false,
+      "visible": true,
+      "helpText": "explain how and for how long the soil sample was stored before DNA extraction.",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "microbial biomass",
+      "name": "microbial_biomass",
+      "required": false,
+      "visible": true,
+      "helpText": "the part of the organic matter in the soil that constitutes living microorganisms smaller than 5-10 µm. IF you keep this, you would need to have correction factors used for conversion to the final units, which should be mg C (or N)/kg soil).",
+      "group": "sample collection",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "g/kg",
+          "label": "g/kg"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "microbial biomass method",
+      "name": "microbial_biomass_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining microbial biomass",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "sample collection device",
+      "name": "sample_collection_device",
+      "required": false,
+      "visible": true,
+      "helpText": "The device used to collect an environmental sample. It is recommended to use terms listed under environmental sampling device (http://purl.obolibrary.org/obo/ENVO) and/or terms listed under specimen collection device (http://purl.obolibrary.org/obo/GENEPIO_0002094).",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "sample collection method",
+      "name": "sample_collection_method",
+      "required": false,
+      "visible": true,
+      "helpText": "The method employed for collecting the sample. Can be provided in the form of a PMID, DOI, url or text.",
+      "group": "sample collection"
+    },
+    {
+      "type": "text",
+      "label": "salinity method",
+      "name": "salinity_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining salinity",
+      "group": "unusual properties"
+    },
+    {
+      "type": "text",
+      "label": "extreme_unusual_properties/heavy metals",
+      "name": "extreme_unusual_properties_heavy_metals",
+      "required": false,
+      "visible": true,
+      "helpText": "heavy metals present and concentrations of any drug used by subject and the frequency of usage; can include multiple heavy metals and concentrations",
+      "group": "unusual properties"
+    },
+    {
+      "type": "text",
+      "label": "extreme_unusual_properties/heavy metals method",
+      "name": "extreme_unusual_properties_heavy_metals_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining heavy metals",
+      "group": "unusual properties"
+    },
+    {
+      "type": "text",
+      "label": "extreme_unusual_properties/Al saturation",
+      "name": "extreme_unusual_properties_al_saturation",
+      "required": false,
+      "visible": true,
+      "helpText": "aluminum saturation (esp. for tropical soils)",
+      "group": "unusual properties",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "%",
+          "label": "%"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "extreme_unusual_properties/Al saturation method",
+      "name": "extreme_unusual_properties_al_saturation_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining Al saturation",
+      "group": "unusual properties"
+    },
+    {
+      "type": "text",
+      "label": "host disease status",
+      "name": "host_disease_status",
+      "required": false,
+      "visible": true,
+      "helpText": "list of diseases with which the host has been diagnosed; can include multiple diagnoses. The value of the field depends on host; for humans the terms should be chosen from DO (Disease Ontology) at http://www.disease-ontology.org, other hosts are free text",
+      "group": "host disorder"
+    },
+    {
+      "type": "text",
+      "label": "host scientific name",
+      "name": "host_scientific_name",
+      "required": false,
+      "visible": true,
+      "helpText": "Scientific name of the natural (as opposed to laboratory) host to the organism from which sample was obtained.",
+      "group": "host description"
+    },
+    {
+      "type": "text",
+      "label": "link to climate information",
+      "name": "link_to_climate_information",
+      "required": false,
+      "visible": true,
+      "helpText": "link to climate resource",
+      "group": "link"
+    },
+    {
+      "type": "text",
+      "label": "link to classification information",
+      "name": "link_to_classification_information",
+      "required": false,
+      "visible": true,
+      "helpText": "link to digitized soil maps or other soil classification information",
+      "group": "link"
+    },
+    {
+      "type": "text",
+      "label": "links to additional analysis",
+      "name": "links_to_additional_analysis",
+      "required": false,
+      "visible": true,
+      "helpText": "link to additional analysis results performed on the sample",
+      "group": "link"
+    },
+    {
+      "type": "text",
+      "label": "current land use",
+      "name": "current_land_use",
+      "required": false,
+      "visible": true,
+      "helpText": "present state of sample site",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "current vegetation",
+      "name": "current_vegetation",
+      "required": false,
+      "visible": true,
+      "helpText": "vegetation classification from one or more standard classification systems, or agricultural crop",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "current vegetation method",
+      "name": "current_vegetation_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in vegetation classification",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "select",
+      "label": "soil horizon",
+      "name": "soil_horizon",
+      "required": false,
+      "visible": true,
+      "helpText": "specific layer in the land area which measures parallel to the soil surface and possesses physical characteristics which differ from the layers above and beneath",
+      "group": "local environment conditions",
+      "options": [
+        {
+          "value": "A horizon",
+          "label": "A horizon"
+        },
+        {
+          "value": "B horizon",
+          "label": "B horizon"
+        },
+        {
+          "value": "C horizon",
+          "label": "C horizon"
+        },
+        {
+          "value": "E horizon",
+          "label": "E horizon"
+        },
+        {
+          "value": "O horizon",
+          "label": "O horizon"
+        },
+        {
+          "value": "Permafrost",
+          "label": "Permafrost"
+        },
+        {
+          "value": "R layer",
+          "label": "R layer"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "soil horizon method",
+      "name": "soil_horizon_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining the horizon",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "mean annual and seasonal temperature",
+      "name": "mean_annual_and_seasonal_temperature",
+      "required": false,
+      "visible": true,
+      "helpText": "mean annual and seasonal temperature (ºC)",
+      "group": "local environment conditions",
+      "simpleValidation": {
+        "pattern": "[+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: [+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "ºC",
+          "label": "ºC"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "mean annual and seasonal precipitation",
+      "name": "mean_annual_and_seasonal_precipitation",
+      "required": false,
+      "visible": true,
+      "helpText": "mean annual and seasonal precipitation (mm)",
+      "group": "local environment conditions",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "mm",
+          "label": "mm"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "soil_taxonomic/FAO classification",
+      "name": "soil_taxonomic_fao_classification",
+      "required": false,
+      "visible": true,
+      "helpText": "soil classification from the FAO World Reference Database for Soil Resources",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "soil_taxonomic/local classification",
+      "name": "soil_taxonomic_local_classification",
+      "required": false,
+      "visible": true,
+      "helpText": "soil classification based on local soil classification system",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "soil_taxonomic/local classification method",
+      "name": "soil_taxonomic_local_classification_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining the local soil classification",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "select",
+      "label": "soil type",
+      "name": "soil_type",
+      "required": false,
+      "visible": true,
+      "helpText": "Description of the soil type or classification. This field accepts terms under soil (http://purl.obolibrary.org/obo/ENVO_00001998). Multiple terms can be separated by pipes.",
+      "group": "local environment conditions",
+      "options": [
+        {
+          "value": "Acrisol",
+          "label": "Acrisol"
+        },
+        {
+          "value": "Albeluvisol",
+          "label": "Albeluvisol"
+        },
+        {
+          "value": "Alisol",
+          "label": "Alisol"
+        },
+        {
+          "value": "Andosol",
+          "label": "Andosol"
+        },
+        {
+          "value": "Anthrosol",
+          "label": "Anthrosol"
+        },
+        {
+          "value": "Arenosol",
+          "label": "Arenosol"
+        },
+        {
+          "value": "Calcisol",
+          "label": "Calcisol"
+        },
+        {
+          "value": "Cambisol",
+          "label": "Cambisol"
+        },
+        {
+          "value": "Chernozem",
+          "label": "Chernozem"
+        },
+        {
+          "value": "Cryosol",
+          "label": "Cryosol"
+        },
+        {
+          "value": "Durisol",
+          "label": "Durisol"
+        },
+        {
+          "value": "Ferralsol",
+          "label": "Ferralsol"
+        },
+        {
+          "value": "Fluvisol",
+          "label": "Fluvisol"
+        },
+        {
+          "value": "Gleysol",
+          "label": "Gleysol"
+        },
+        {
+          "value": "Gypsisol",
+          "label": "Gypsisol"
+        },
+        {
+          "value": "Histosol",
+          "label": "Histosol"
+        },
+        {
+          "value": "Kastanozem",
+          "label": "Kastanozem"
+        },
+        {
+          "value": "Leptosol",
+          "label": "Leptosol"
+        },
+        {
+          "value": "Lixisol",
+          "label": "Lixisol"
+        },
+        {
+          "value": "Luvisol",
+          "label": "Luvisol"
+        },
+        {
+          "value": "Nitisol",
+          "label": "Nitisol"
+        },
+        {
+          "value": "Phaeozem",
+          "label": "Phaeozem"
+        },
+        {
+          "value": "Planosol",
+          "label": "Planosol"
+        },
+        {
+          "value": "Plinthosol",
+          "label": "Plinthosol"
+        },
+        {
+          "value": "Podzol",
+          "label": "Podzol"
+        },
+        {
+          "value": "Regosol",
+          "label": "Regosol"
+        },
+        {
+          "value": "Solonchak",
+          "label": "Solonchak"
+        },
+        {
+          "value": "Solonetz",
+          "label": "Solonetz"
+        },
+        {
+          "value": "Stagnosol",
+          "label": "Stagnosol"
+        },
+        {
+          "value": "Technosol",
+          "label": "Technosol"
+        },
+        {
+          "value": "Umbrisol",
+          "label": "Umbrisol"
+        },
+        {
+          "value": "Vertisol",
+          "label": "Vertisol"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "soil type method",
+      "name": "soil_type_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining soil series name or other lower-level classification",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "select",
+      "label": "drainage classification",
+      "name": "drainage_classification",
+      "required": false,
+      "visible": true,
+      "helpText": "drainage classification from a standard system such as the USDA system",
+      "group": "local environment conditions",
+      "options": [
+        {
+          "value": "excessively drained",
+          "label": "excessively drained"
+        },
+        {
+          "value": "moderately well",
+          "label": "moderately well"
+        },
+        {
+          "value": "poorly",
+          "label": "poorly"
+        },
+        {
+          "value": "somewhat poorly",
+          "label": "somewhat poorly"
+        },
+        {
+          "value": "very poorly",
+          "label": "very poorly"
+        },
+        {
+          "value": "well",
+          "label": "well"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "temperature",
+      "name": "temperature",
+      "required": false,
+      "visible": true,
+      "helpText": "temperature of the sample at time of sampling",
+      "group": "local environment conditions",
+      "simpleValidation": {
+        "pattern": "[+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: [+-]?(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "ºC",
+          "label": "ºC"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "soil texture measurement",
+      "name": "soil_texture_measurement",
+      "required": false,
+      "visible": true,
+      "helpText": "the relative proportion of different grain sizes of mineral particles in a soil, as described using a standard system; express as % sand (50 um to 2 mm), silt (2 um to 50 um), and clay (&lt;2 um) with textural name (e.g., silty clay loam) optional.",
+      "group": "local environment conditions",
+      "units": [
+        {
+          "value": "% sand/silt/clay",
+          "label": "% sand/silt/clay"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "soil texture method",
+      "name": "soil_texture_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining soil texture",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "pH",
+      "name": "ph",
+      "required": false,
+      "visible": true,
+      "helpText": "pH measurement",
+      "group": "local environment conditions",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      }
+    },
+    {
+      "type": "text",
+      "label": "pH method",
+      "name": "ph_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining pH",
+      "group": "local environment conditions"
+    },
+    {
+      "type": "text",
+      "label": "water content method",
+      "name": "water_content_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining the water content of soil",
+      "group": "concentration measurement"
+    },
+    {
+      "type": "text",
+      "label": "total organic C method",
+      "name": "total_organic_c_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining total organic C",
+      "group": "concentration measurement"
+    },
+    {
+      "type": "text",
+      "label": "total nitrogen method",
+      "name": "total_nitrogen_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining the total nitrogen",
+      "group": "concentration measurement"
+    },
+    {
+      "type": "text",
+      "label": "organic matter",
+      "name": "organic_matter",
+      "required": false,
+      "visible": true,
+      "helpText": "concentration of organic matter",
+      "group": "concentration measurement",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "µg/L",
+          "label": "µg/L"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "total organic carbon",
+      "name": "total_organic_carbon",
+      "required": false,
+      "visible": true,
+      "helpText": "Definition for soil: total organic C content of the soil units of g C/kg soil. Definition otherwise: total organic carbon content",
+      "group": "concentration measurement",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "g/kg",
+          "label": "g/kg"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "water content",
+      "name": "water_content",
+      "required": false,
+      "visible": true,
+      "helpText": "water content measurement",
+      "group": "concentration measurement",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "cm3/cm3",
+          "label": "cm3/cm3"
+        },
+        {
+          "value": "g/g",
+          "label": "g/g"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "total nitrogen",
+      "name": "total_nitrogen",
+      "required": false,
+      "visible": true,
+      "helpText": "total nitrogen content of the sample",
+      "group": "concentration measurement",
+      "simpleValidation": {
+        "pattern": "(0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?",
+        "patternMessage": "Must match pattern: (0|((0\\.)|([1-9][0-9]*\\.?))[0-9]*)([Ee][+-]?[0-9]+)?"
+      },
+      "units": [
+        {
+          "value": "µg/L",
+          "label": "µg/L"
+        },
+        {
+          "value": "µmol/L",
+          "label": "µmol/L"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "history/previous land use",
+      "name": "history_previous_land_use",
+      "required": false,
+      "visible": true,
+      "helpText": "previous land use and dates",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "history/previous land use method",
+      "name": "history_previous_land_use_method",
+      "required": false,
+      "visible": true,
+      "helpText": "reference or method used in determining previous land use and dates",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "history/crop rotation",
+      "name": "history_crop_rotation",
+      "required": false,
+      "visible": true,
+      "helpText": "whether or not crop is rotated, and if yes, rotation schedule",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "history/agrochemical additions",
+      "name": "history_agrochemical_additions",
+      "required": false,
+      "visible": true,
+      "helpText": "addition of fertilizers, pesticides, etc. - amount and time of applications",
+      "group": "local environment history"
+    },
+    {
+      "type": "select",
+      "label": "history/tillage",
+      "name": "history_tillage",
+      "required": false,
+      "visible": true,
+      "helpText": "note method(s) used for tilling",
+      "group": "local environment history",
+      "options": [
+        {
+          "value": "chisel",
+          "label": "chisel"
+        },
+        {
+          "value": "cutting disc",
+          "label": "cutting disc"
+        },
+        {
+          "value": "disc plough",
+          "label": "disc plough"
+        },
+        {
+          "value": "drill",
+          "label": "drill"
+        },
+        {
+          "value": "mouldboard",
+          "label": "mouldboard"
+        },
+        {
+          "value": "ridge till",
+          "label": "ridge till"
+        },
+        {
+          "value": "strip tillage",
+          "label": "strip tillage"
+        },
+        {
+          "value": "tined",
+          "label": "tined"
+        },
+        {
+          "value": "zonal tillage",
+          "label": "zonal tillage"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "history/fire",
+      "name": "history_fire",
+      "required": false,
+      "visible": true,
+      "helpText": "historical and/or physical evidence of fire",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "history/flooding",
+      "name": "history_flooding",
+      "required": false,
+      "visible": true,
+      "helpText": "historical and/or physical evidence of flooding",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "history/extreme events",
+      "name": "history_extreme_events",
+      "required": false,
+      "visible": true,
+      "helpText": "unusual physical events that may have affected microbial populations",
+      "group": "local environment history"
+    },
+    {
+      "type": "text",
+      "label": "subspecific genetic lineage",
+      "name": "subspecific_genetic_lineage",
+      "required": false,
+      "visible": true,
+      "helpText": "Information about the genetic distinctness of the sequenced organism below the subspecies level, e.g., serovar, serotype, biotype, ecotype, or any relevant genetic typing schemes like Group I plasmid. Subspecies should not be recorded in this term, but in the NCBI taxonomy. Supply both the lineage name and the lineage rank separated by a colon, e.g., biovar:abc123.",
+      "group": "organism characteristics"
+    },
+    {
+      "type": "select",
+      "label": "trophic level",
+      "name": "trophic_level",
+      "required": false,
+      "visible": true,
+      "helpText": "Trophic levels are the feeding position in a food chain. Microbes can be a range of producers (e.g. chemolithotroph)",
+      "group": "organism characteristics",
+      "options": [
+        {
+          "value": "autotroph",
+          "label": "autotroph"
+        },
+        {
+          "value": "carboxydotroph",
+          "label": "carboxydotroph"
+        },
+        {
+          "value": "chemoautotroph",
+          "label": "chemoautotroph"
+        },
+        {
+          "value": "chemoheterotroph",
+          "label": "chemoheterotroph"
+        },
+        {
+          "value": "chemolithoautotroph",
+          "label": "chemolithoautotroph"
+        },
+        {
+          "value": "chemolithotroph",
+          "label": "chemolithotroph"
+        },
+        {
+          "value": "chemoorganoheterotroph",
+          "label": "chemoorganoheterotroph"
+        },
+        {
+          "value": "chemoorganotroph",
+          "label": "chemoorganotroph"
+        },
+        {
+          "value": "chemosynthetic",
+          "label": "chemosynthetic"
+        },
+        {
+          "value": "chemotroph",
+          "label": "chemotroph"
+        },
+        {
+          "value": "copiotroph",
+          "label": "copiotroph"
+        },
+        {
+          "value": "diazotroph",
+          "label": "diazotroph"
+        },
+        {
+          "value": "facultative autotroph",
+          "label": "facultative autotroph"
+        },
+        {
+          "value": "heterotroph",
+          "label": "heterotroph"
+        },
+        {
+          "value": "lithoautotroph",
+          "label": "lithoautotroph"
+        },
+        {
+          "value": "lithoheterotroph",
+          "label": "lithoheterotroph"
+        },
+        {
+          "value": "lithotroph",
+          "label": "lithotroph"
+        },
+        {
+          "value": "methanotroph",
+          "label": "methanotroph"
+        },
+        {
+          "value": "methylotroph",
+          "label": "methylotroph"
+        },
+        {
+          "value": "mixotroph",
+          "label": "mixotroph"
+        },
+        {
+          "value": "obligate chemoautolithotroph",
+          "label": "obligate chemoautolithotroph"
+        },
+        {
+          "value": "oligotroph",
+          "label": "oligotroph"
+        },
+        {
+          "value": "organoheterotroph",
+          "label": "organoheterotroph"
+        },
+        {
+          "value": "organotroph",
+          "label": "organotroph"
+        },
+        {
+          "value": "photoautotroph",
+          "label": "photoautotroph"
+        },
+        {
+          "value": "photoheterotroph",
+          "label": "photoheterotroph"
+        },
+        {
+          "value": "photolithoautotroph",
+          "label": "photolithoautotroph"
+        },
+        {
+          "value": "photolithotroph",
+          "label": "photolithotroph"
+        },
+        {
+          "value": "photosynthetic",
+          "label": "photosynthetic"
+        },
+        {
+          "value": "phototroph",
+          "label": "phototroph"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "relationship to oxygen",
+      "name": "relationship_to_oxygen",
+      "required": false,
+      "visible": true,
+      "helpText": "Is this organism an aerobe, anaerobe? Please note that aerobic and anaerobic are valid descriptors for microbial environments",
+      "group": "organism characteristics",
+      "options": [
+        {
+          "value": "aerobe",
+          "label": "aerobe"
+        },
+        {
+          "value": "anaerobe",
+          "label": "anaerobe"
+        },
+        {
+          "value": "facultative",
+          "label": "facultative"
+        },
+        {
+          "value": "microaerophilic",
+          "label": "microaerophilic"
+        },
+        {
+          "value": "microanaerobe",
+          "label": "microanaerobe"
+        },
+        {
+          "value": "obligate aerobe",
+          "label": "obligate aerobe"
+        },
+        {
+          "value": "obligate anaerobe",
+          "label": "obligate anaerobe"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "known pathogenicity",
+      "name": "known_pathogenicity",
+      "required": false,
+      "visible": true,
+      "helpText": "To what is the entity pathogenic, for instance plant, fungi, bacteria",
+      "group": "organism characteristics"
+    },
+    {
+      "type": "text",
+      "label": "encoded traits",
+      "name": "encoded_traits",
+      "required": false,
+      "visible": true,
+      "helpText": "Should include key traits like antibiotic resistance or xenobiotic degradation phenotypes for plasmids, converting genes for phage",
+      "group": "organism characteristics"
+    },
+    {
+      "type": "select",
+      "label": "observed biotic relationship",
+      "name": "observed_biotic_relationship",
+      "required": false,
+      "visible": true,
+      "helpText": "Is it free-living or in a host and if the latter what type of relationship is observed",
+      "group": "organism characteristics",
+      "options": [
+        {
+          "value": "commensal",
+          "label": "commensal"
+        },
+        {
+          "value": "free living",
+          "label": "free living"
+        },
+        {
+          "value": "mutualism",
+          "label": "mutualism"
+        },
+        {
+          "value": "parasite",
+          "label": "parasite"
+        },
+        {
+          "value": "symbiont",
+          "label": "symbiont"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "perturbation",
+      "name": "perturbation",
+      "required": false,
+      "visible": true,
+      "helpText": "type of perturbation, e.g. chemical administration, physical disturbance, etc., coupled with time that perturbation occurred; can include multiple perturbation types",
+      "group": "local environment conditions imposed"
+    }
+  ]
+}

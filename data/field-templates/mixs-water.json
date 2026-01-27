@@ -1,0 +1,93 @@
+{
+  "name": "MIxS Water",
+  "description": "GSC MIxS water environment checklist fields",
+  "version": "6.0.0",
+  "source": "https://genomicsstandardsconsortium.github.io/mixs/",
+  "category": "mixs",
+  "fields": [
+    {
+      "type": "text",
+      "label": "Salinity",
+      "name": "salinity",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 35 PSU",
+      "helpText": "Salinity of water sample (MIxS: salinity)",
+      "example": "35 PSU"
+    },
+    {
+      "type": "text",
+      "label": "Dissolved Oxygen",
+      "name": "diss_oxygen",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 8.5 mg/L",
+      "helpText": "Dissolved oxygen concentration (MIxS: diss_oxygen)",
+      "example": "8.5 mg/L"
+    },
+    {
+      "type": "text",
+      "label": "Water Temperature",
+      "name": "water_temp",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 18 C",
+      "helpText": "Water temperature at sampling (MIxS: temp)",
+      "example": "18 C"
+    },
+    {
+      "type": "text",
+      "label": "Water pH",
+      "name": "water_ph",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 7.8",
+      "helpText": "pH of water sample",
+      "example": "7.8",
+      "simpleValidation": {
+        "minValue": 0,
+        "maxValue": 14
+      }
+    },
+    {
+      "type": "text",
+      "label": "Chlorophyll",
+      "name": "chlorophyll",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 2.5 ug/L",
+      "helpText": "Chlorophyll concentration (MIxS: chlorophyll)",
+      "example": "2.5 ug/L"
+    },
+    {
+      "type": "text",
+      "label": "Nitrate",
+      "name": "nitrate",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 0.5 mg/L",
+      "helpText": "Nitrate concentration (MIxS: nitrate)",
+      "example": "0.5 mg/L"
+    },
+    {
+      "type": "text",
+      "label": "Phosphate",
+      "name": "phosphate",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 0.1 mg/L",
+      "helpText": "Phosphate concentration (MIxS: phosphate)",
+      "example": "0.1 mg/L"
+    },
+    {
+      "type": "text",
+      "label": "Turbidity",
+      "name": "turbidity",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 5 NTU",
+      "helpText": "Water turbidity (MIxS: turbidity)",
+      "example": "5 NTU"
+    }
+  ]
+}
