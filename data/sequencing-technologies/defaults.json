@@ -1,0 +1,370 @@
+{
+  "_note": "Default sequencing technology configurations. Verify specs match your equipment.",
+  "version": 1,
+  "lastUpdated": "2025-01-17",
+  "technologies": [
+    {
+      "id": "illumina-novaseq",
+      "name": "NovaSeq 6000/X",
+      "manufacturer": "Illumina",
+      "shortDescription": "High-throughput short-read sequencing for large-scale projects",
+      "description": "The NovaSeq platform delivers high-throughput sequencing with excellent accuracy, ideal for whole genome sequencing, large RNA-seq studies, and population-scale projects.",
+      "color": "#0033A0",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 2x150", "unit": "bp" },
+        { "label": "Output", "value": "Up to 6", "unit": "Tb" },
+        { "label": "Accuracy", "value": ">99.9", "unit": "%" },
+        { "label": "Run Time", "value": "13-44", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "Very high throughput", "tooltip": "Process many samples cost-effectively" },
+        { "text": "Excellent base accuracy", "tooltip": "Q30 scores typically >85%" },
+        { "text": "Cost-effective per gigabase", "tooltip": "Best for large projects" },
+        { "text": "Well-established workflows", "tooltip": "Extensive tool and database support" }
+      ],
+      "cons": [
+        { "text": "Short read lengths", "tooltip": "May struggle with repetitive regions" },
+        { "text": "GC bias in coverage", "tooltip": "Some regions may have lower coverage" },
+        { "text": "Requires larger sample batches", "tooltip": "Most cost-effective with full flow cells" }
+      ],
+      "bestFor": [
+        "Whole genome sequencing (WGS)",
+        "RNA-seq at scale",
+        "Metagenomics",
+        "Population studies",
+        "Variant calling"
+      ],
+      "options": [
+        {
+          "id": "read_length",
+          "label": "Read Length",
+          "type": "select",
+          "options": [
+            { "value": "2x50", "label": "2x50 bp" },
+            { "value": "2x100", "label": "2x100 bp" },
+            { "value": "2x150", "label": "2x150 bp (Recommended)" }
+          ],
+          "default": "2x150",
+          "helpText": "Longer reads improve mapping but cost more"
+        },
+        {
+          "id": "coverage",
+          "label": "Target Coverage",
+          "type": "select",
+          "options": [
+            { "value": "10x", "label": "10x (Screening)" },
+            { "value": "30x", "label": "30x (Standard WGS)" },
+            { "value": "50x", "label": "50x (Clinical)" },
+            { "value": "100x", "label": "100x (Deep)" }
+          ],
+          "default": "30x",
+          "helpText": "Higher coverage increases variant detection sensitivity"
+        }
+      ],
+      "available": true,
+      "priceIndicator": "$$",
+      "turnaroundDays": { "min": 5, "max": 10 },
+      "order": 1,
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/novaseq.html"
+    },
+    {
+      "id": "illumina-miseq",
+      "name": "MiSeq",
+      "manufacturer": "Illumina",
+      "shortDescription": "Benchtop sequencer for targeted and small genome applications",
+      "description": "The MiSeq is ideal for smaller-scale projects requiring longer reads, such as amplicon sequencing, 16S metagenomics, and small genome sequencing.",
+      "color": "#0033A0",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 2x300", "unit": "bp" },
+        { "label": "Output", "value": "Up to 15", "unit": "Gb" },
+        { "label": "Accuracy", "value": ">99.9", "unit": "%" },
+        { "label": "Run Time", "value": "4-55", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "Longest Illumina reads", "tooltip": "2x300bp enables better overlap" },
+        { "text": "Fast turnaround", "tooltip": "Quick runs for urgent samples" },
+        { "text": "Ideal for amplicons", "tooltip": "Perfect for 16S, ITS sequencing" },
+        { "text": "Lower sample requirements", "tooltip": "Good for smaller projects" }
+      ],
+      "cons": [
+        { "text": "Lower throughput", "tooltip": "Not suitable for large genomes" },
+        { "text": "Higher cost per base", "tooltip": "Compared to NovaSeq for large projects" },
+        { "text": "Quality drops at read ends", "tooltip": "Especially for 2x300bp runs" }
+      ],
+      "bestFor": [
+        "16S/ITS amplicon sequencing",
+        "Small genomes (bacteria, viruses)",
+        "Targeted gene panels",
+        "Quick validation runs"
+      ],
+      "options": [
+        {
+          "id": "read_length",
+          "label": "Read Length",
+          "type": "select",
+          "options": [
+            { "value": "2x150", "label": "2x150 bp" },
+            { "value": "2x250", "label": "2x250 bp" },
+            { "value": "2x300", "label": "2x300 bp (Max overlap)" }
+          ],
+          "default": "2x300",
+          "helpText": "Longer reads allow better read merging for amplicons"
+        }
+      ],
+      "available": true,
+      "priceIndicator": "$",
+      "turnaroundDays": { "min": 2, "max": 5 },
+      "order": 2,
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/miseq.html"
+    },
+    {
+      "id": "illumina-nextseq",
+      "name": "NextSeq 2000",
+      "manufacturer": "Illumina",
+      "shortDescription": "Flexible mid-throughput sequencing for diverse applications",
+      "description": "The NextSeq 2000 bridges the gap between MiSeq and NovaSeq, offering flexibility for medium-scale projects with quick turnaround.",
+      "color": "#0033A0",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 2x150", "unit": "bp" },
+        { "label": "Output", "value": "Up to 360", "unit": "Gb" },
+        { "label": "Accuracy", "value": ">99.9", "unit": "%" },
+        { "label": "Run Time", "value": "11-48", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "Flexible throughput", "tooltip": "Multiple flow cell options" },
+        { "text": "Fast turnaround", "tooltip": "On-instrument analysis available" },
+        { "text": "Good for mid-size projects", "tooltip": "Balances cost and speed" }
+      ],
+      "cons": [
+        { "text": "2-color chemistry", "tooltip": "Different error profile than other Illumina" },
+        { "text": "No 2x300 option", "tooltip": "Max 2x150bp reads" }
+      ],
+      "bestFor": [
+        "Exome sequencing",
+        "RNA-seq",
+        "Targeted panels",
+        "Single-cell sequencing"
+      ],
+      "available": true,
+      "priceIndicator": "$$",
+      "turnaroundDays": { "min": 3, "max": 7 },
+      "order": 3,
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/nextseq-2000.html"
+    },
+    {
+      "id": "ont-promethion",
+      "name": "PromethION",
+      "manufacturer": "Oxford Nanopore",
+      "shortDescription": "High-throughput long-read sequencing for comprehensive genome analysis",
+      "description": "PromethION delivers ultra-long reads with high throughput, enabling complete genome assemblies, structural variant detection, and direct methylation calling.",
+      "color": "#00A3E0",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 4", "unit": "Mb" },
+        { "label": "N50", "value": "10-60", "unit": "kb typical" },
+        { "label": "Output", "value": "Up to 290", "unit": "Gb/cell" },
+        { "label": "Accuracy", "value": "99+ (Q20+)", "unit": "%" }
+      ],
+      "pros": [
+        { "text": "Ultra-long reads", "tooltip": "Reads can exceed 1Mb" },
+        { "text": "Real-time sequencing", "tooltip": "Data available during run" },
+        { "text": "Direct methylation detection", "tooltip": "No bisulfite conversion needed" },
+        { "text": "Resolves complex regions", "tooltip": "Excellent for repetitive sequences" },
+        { "text": "Structural variant detection", "tooltip": "Superior SV calling" }
+      ],
+      "cons": [
+        { "text": "Higher error rate than Illumina", "tooltip": "Though improving rapidly with new chemistry" },
+        { "text": "DNA quality critical", "tooltip": "HMW DNA needed for ultra-long reads" },
+        { "text": "Higher cost per accurate base", "tooltip": "Compared to short-read for simple variants" }
+      ],
+      "bestFor": [
+        "De novo genome assembly",
+        "Structural variant detection",
+        "Methylation studies",
+        "Full-length transcript sequencing",
+        "Complex/repetitive regions"
+      ],
+      "options": [
+        {
+          "id": "basecalling",
+          "label": "Basecalling Model",
+          "type": "select",
+          "options": [
+            { "value": "fast", "label": "Fast (lower accuracy)" },
+            { "value": "hac", "label": "High Accuracy (HAC)" },
+            { "value": "sup", "label": "Super Accuracy (SUP, recommended)" }
+          ],
+          "default": "sup",
+          "helpText": "SUP provides highest accuracy but requires more compute"
+        },
+        {
+          "id": "methylation",
+          "label": "Call Methylation",
+          "type": "checkbox",
+          "default": false,
+          "helpText": "Detect 5mC and other modifications directly"
+        }
+      ],
+      "available": true,
+      "priceIndicator": "$$$",
+      "turnaroundDays": { "min": 5, "max": 14 },
+      "order": 4,
+      "sourceUrl": "https://nanoporetech.com/products/promethion"
+    },
+    {
+      "id": "ont-minion",
+      "name": "MinION",
+      "manufacturer": "Oxford Nanopore",
+      "shortDescription": "Portable long-read sequencer for flexible applications",
+      "description": "The MinION is a portable sequencing device ideal for fieldwork, rapid pathogen identification, and smaller long-read projects.",
+      "color": "#00A3E0",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 4", "unit": "Mb" },
+        { "label": "Output", "value": "Up to 50", "unit": "Gb" },
+        { "label": "Accuracy", "value": "99+ (Q20+)", "unit": "%" },
+        { "label": "Size", "value": "Portable", "unit": "" }
+      ],
+      "pros": [
+        { "text": "Highly portable", "tooltip": "USB-powered, fits in pocket" },
+        { "text": "Real-time results", "tooltip": "Immediate data streaming" },
+        { "text": "Low capital cost", "tooltip": "Accessible entry point" },
+        { "text": "Same long-read benefits", "tooltip": "Ultra-long reads possible" }
+      ],
+      "cons": [
+        { "text": "Lower throughput", "tooltip": "Single flow cell at a time" },
+        { "text": "Higher cost per Gb", "tooltip": "Compared to PromethION" }
+      ],
+      "bestFor": [
+        "Field sequencing",
+        "Rapid pathogen ID",
+        "Educational use",
+        "Small genome projects",
+        "Proof of concept"
+      ],
+      "available": true,
+      "priceIndicator": "$",
+      "turnaroundDays": { "min": 1, "max": 3 },
+      "order": 5,
+      "sourceUrl": "https://nanoporetech.com/products/minion"
+    },
+    {
+      "id": "pacbio-revio",
+      "name": "Revio",
+      "manufacturer": "PacBio",
+      "shortDescription": "High-throughput HiFi sequencing with exceptional accuracy",
+      "description": "The Revio system delivers PacBio HiFi reads at scale, combining long read lengths with >99.9% accuracy for the most comprehensive genome analysis.",
+      "color": "#512D6D",
+      "specs": [
+        { "label": "Read Length", "value": "15-25", "unit": "kb HiFi" },
+        { "label": "Accuracy", "value": ">99.9 (Q30+)", "unit": "%" },
+        { "label": "Output", "value": "Up to 90", "unit": "Gb/cell" },
+        { "label": "Run Time", "value": "24", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "Highest long-read accuracy", "tooltip": "HiFi reads are >Q30" },
+        { "text": "Long reads + high accuracy", "tooltip": "Best of both worlds" },
+        { "text": "Excellent for variants", "tooltip": "SNVs, indels, and SVs in one run" },
+        { "text": "Direct methylation", "tooltip": "5mC detection included" },
+        { "text": "Phased assemblies", "tooltip": "Haplotype-resolved genomes" }
+      ],
+      "cons": [
+        { "text": "High capital cost", "tooltip": "Premium instrumentation" },
+        { "text": "DNA quality requirements", "tooltip": "HMW DNA needed" },
+        { "text": "Library prep complexity", "tooltip": "More involved than short-read" }
+      ],
+      "bestFor": [
+        "Reference-quality genomes",
+        "Clinical whole genome",
+        "Variant detection (all types)",
+        "Phased genome assembly",
+        "Rare disease studies"
+      ],
+      "options": [
+        {
+          "id": "library_type",
+          "label": "Library Type",
+          "type": "select",
+          "options": [
+            { "value": "standard", "label": "Standard HiFi" },
+            { "value": "ultra_long", "label": "Ultra-long (experimental)" }
+          ],
+          "default": "standard",
+          "helpText": "Standard HiFi provides best accuracy/length balance"
+        }
+      ],
+      "available": true,
+      "priceIndicator": "$$$$",
+      "turnaroundDays": { "min": 7, "max": 14 },
+      "order": 6,
+      "sourceUrl": "https://www.pacb.com/revio/"
+    },
+    {
+      "id": "pacbio-sequel2",
+      "name": "Sequel II/IIe",
+      "manufacturer": "PacBio",
+      "shortDescription": "Established HiFi platform for long-read sequencing",
+      "description": "The Sequel II system provides high-quality HiFi reads for genome assembly, variant detection, and full-length transcript analysis.",
+      "color": "#512D6D",
+      "specs": [
+        { "label": "Read Length", "value": "15-20", "unit": "kb HiFi" },
+        { "label": "Accuracy", "value": ">99.9 (Q30+)", "unit": "%" },
+        { "label": "Output", "value": "Up to 30", "unit": "Gb/cell" },
+        { "label": "Run Time", "value": "30", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "Proven HiFi technology", "tooltip": "Well-established workflows" },
+        { "text": "High accuracy long reads", "tooltip": "Same great HiFi quality" },
+        { "text": "Broad application support", "tooltip": "Many published methods" }
+      ],
+      "cons": [
+        { "text": "Lower throughput than Revio", "tooltip": "Being superseded by Revio" },
+        { "text": "Longer run times", "tooltip": "30 hours per SMRT cell" }
+      ],
+      "bestFor": [
+        "Genome assembly",
+        "Iso-Seq (full-length transcripts)",
+        "Targeted sequencing",
+        "Smaller scale projects"
+      ],
+      "available": true,
+      "priceIndicator": "$$$",
+      "turnaroundDays": { "min": 7, "max": 14 },
+      "order": 7,
+      "sourceUrl": "https://www.pacb.com/technology/hifi-sequencing/"
+    },
+    {
+      "id": "mgi-dnbseq-t7",
+      "name": "DNBSEQ-T7",
+      "manufacturer": "MGI / BGI",
+      "shortDescription": "High-throughput short-read alternative to Illumina",
+      "description": "The DNBSEQ-T7 offers high-throughput short-read sequencing using DNA nanoball technology, providing a cost-effective alternative for large-scale projects.",
+      "color": "#00A651",
+      "specs": [
+        { "label": "Read Length", "value": "Up to 2x150", "unit": "bp" },
+        { "label": "Output", "value": "Up to 7", "unit": "Tb" },
+        { "label": "Accuracy", "value": ">99", "unit": "%" },
+        { "label": "Run Time", "value": "24", "unit": "hours" }
+      ],
+      "pros": [
+        { "text": "High throughput", "tooltip": "Comparable to NovaSeq" },
+        { "text": "Cost-effective", "tooltip": "Often lower cost per Gb" },
+        { "text": "Low duplicate rate", "tooltip": "DNA nanoball technology" }
+      ],
+      "cons": [
+        { "text": "Different chemistry", "tooltip": "May require workflow adjustments" },
+        { "text": "Smaller user community", "tooltip": "Fewer published protocols" },
+        { "text": "Regional availability", "tooltip": "Limited in some regions" }
+      ],
+      "bestFor": [
+        "Large-scale WGS",
+        "Cost-sensitive projects",
+        "Population sequencing"
+      ],
+      "available": false,
+      "comingSoon": true,
+      "priceIndicator": "$$",
+      "turnaroundDays": { "min": 7, "max": 14 },
+      "order": 8,
+      "sourceUrl": "https://www.mgi-tech.com/products/"
+    }
+  ]
+}

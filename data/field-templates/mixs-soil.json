@@ -1,0 +1,108 @@
+{
+  "name": "MIxS Soil",
+  "description": "GSC MIxS soil environment checklist fields",
+  "version": "6.0.0",
+  "source": "https://genomicsstandardsconsortium.github.io/mixs/",
+  "category": "mixs",
+  "fields": [
+    {
+      "type": "text",
+      "label": "Soil pH",
+      "name": "ph",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 6.5",
+      "helpText": "pH of soil sample (MIxS: ph)",
+      "example": "6.5",
+      "simpleValidation": {
+        "minValue": 0,
+        "maxValue": 14
+      }
+    },
+    {
+      "type": "text",
+      "label": "Soil Texture",
+      "name": "soil_texture",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Sandy loam, Clay",
+      "helpText": "Texture of soil sample (MIxS: soil_texture)",
+      "example": "Sandy loam"
+    },
+    {
+      "type": "text",
+      "label": "Temperature",
+      "name": "temp",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 25 C",
+      "helpText": "Temperature at sampling (MIxS: temp)",
+      "example": "25 C"
+    },
+    {
+      "type": "text",
+      "label": "Soil Horizon",
+      "name": "soil_horizon",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., A horizon, O horizon",
+      "helpText": "Soil horizon layer (MIxS: soil_horizon)",
+      "example": "A horizon"
+    },
+    {
+      "type": "text",
+      "label": "Total Organic Carbon",
+      "name": "tot_org_carb",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 2.5 %",
+      "helpText": "Total organic carbon content (MIxS: tot_org_carb)",
+      "example": "2.5 %"
+    },
+    {
+      "type": "text",
+      "label": "Total Nitrogen",
+      "name": "tot_nitro",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 0.15 %",
+      "helpText": "Total nitrogen content (MIxS: tot_nitro)",
+      "example": "0.15 %"
+    },
+    {
+      "type": "select",
+      "label": "Drainage Classification",
+      "name": "drainage_class",
+      "required": false,
+      "visible": true,
+      "helpText": "Soil drainage classification (MIxS: drainage_class)",
+      "options": [
+        { "value": "very_poorly", "label": "Very poorly drained" },
+        { "value": "poorly", "label": "Poorly drained" },
+        { "value": "somewhat_poorly", "label": "Somewhat poorly drained" },
+        { "value": "moderately_well", "label": "Moderately well drained" },
+        { "value": "well", "label": "Well drained" },
+        { "value": "somewhat_excessively", "label": "Somewhat excessively drained" },
+        { "value": "excessively", "label": "Excessively drained" }
+      ]
+    },
+    {
+      "type": "select",
+      "label": "Land Use",
+      "name": "cur_land_use",
+      "required": false,
+      "visible": true,
+      "helpText": "Current land use classification (MIxS: cur_land_use)",
+      "options": [
+        { "value": "crop", "label": "Cropland" },
+        { "value": "forest", "label": "Forest" },
+        { "value": "grassland", "label": "Grassland" },
+        { "value": "pasture", "label": "Pasture" },
+        { "value": "urban", "label": "Urban" },
+        { "value": "wetland", "label": "Wetland" },
+        { "value": "desert", "label": "Desert" },
+        { "value": "other", "label": "Other" }
+      ]
+    }
+  ]
+}
