@@ -8,7 +8,8 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle } from "lucide-react";
+import { Settings, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 const DEFAULT_POST_SUBMISSION_INSTRUCTIONS = `## Thank you for your submission!
@@ -89,10 +90,35 @@ export default function SettingsPage() {
   const [generatingTestFiles, setGeneratingTestFiles] = useState(false);
   const [testFilesResult, setTestFilesResult] = useState<TestFilesResult | null>(null);
 
+  // Config status
+  const [configStatus, setConfigStatus] = useState<{
+    config: Record<string, unknown>;
+    sources: Record<string, string>;
+    filePath?: string;
+    loadedAt?: string;
+  } | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+
   useEffect(() => {
     fetchSettings();
     fetchSequencingFilesSettings();
+    fetchConfigStatus();
   }, []);
+
+  const fetchConfigStatus = async () => {
+    setLoadingConfig(true);
+    try {
+      const res = await fetch("/api/admin/config/status");
+      if (res.ok) {
+        const data = await res.json();
+        setConfigStatus(data);
+      }
+    } catch (error) {
+      console.error("Failed to load config status:", error);
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -607,6 +633,206 @@ export default function SettingsPage() {
           </div>
         </div>
       </GlassCard>
+
+      {/* Configuration Status */}
+      <GlassCard className="p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center">
+              <FileJson className="h-5 w-5 text-slate-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Configuration Status</h2>
+              <p className="text-sm text-muted-foreground">
+                View current configuration and sources
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchConfigStatus}
+            disabled={loadingConfig}
+          >
+            {loadingConfig ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        <div className="border-t pt-4">
+          {configStatus ? (
+            <div className="space-y-4">
+              {/* Config File Info */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Config file:</span>
+                {configStatus.filePath ? (
+                  <code className="bg-muted px-2 py-0.5 rounded text-xs">
+                    {configStatus.filePath}
+                  </code>
+                ) : (
+                  <span className="text-muted-foreground italic">
+                    No config file found (using defaults)
+                  </span>
+                )}
+              </div>
+
+              {/* Source Legend */}
+              <div className="flex items-center gap-4 text-xs">
+                <span className="text-muted-foreground">Sources:</span>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">ENV</Badge>
+                  <span>Environment</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">FILE</Badge>
+                  <span>Config file</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="bg-violet-50 text-violet-700 border-violet-200">DB</Badge>
+                  <span>Database</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">DEFAULT</Badge>
+                  <span>Built-in</span>
+                </div>
+              </div>
+
+              {/* Config Overview */}
+              <div className="space-y-3">
+                <ConfigSection
+                  title="Site"
+                  config={configStatus.config.site as Record<string, unknown>}
+                  sources={configStatus.sources}
+                  prefix="site"
+                />
+                <ConfigSection
+                  title="Pipelines"
+                  config={configStatus.config.pipelines as Record<string, unknown>}
+                  sources={configStatus.sources}
+                  prefix="pipelines"
+                />
+                <ConfigSection
+                  title="ENA"
+                  config={configStatus.config.ena as Record<string, unknown>}
+                  sources={configStatus.sources}
+                  prefix="ena"
+                />
+                <ConfigSection
+                  title="Sequencing Files"
+                  config={configStatus.config.sequencingFiles as Record<string, unknown>}
+                  sources={configStatus.sources}
+                  prefix="sequencingFiles"
+                />
+              </div>
+
+              {/* Docs Link */}
+              <p className="text-xs text-muted-foreground pt-2">
+                See{" "}
+                <a
+                  href="https://github.com/hzi-bifo/SeqDesk/blob/main/docs/configuration.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  docs/configuration.md
+                </a>{" "}
+                for configuration options.
+              </p>
+            </div>
+          ) : loadingConfig ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Failed to load configuration status.
+            </p>
+          )}
+        </div>
+      </GlassCard>
     </PageContainer>
+  );
+}
+
+function ConfigSection({
+  title,
+  config,
+  sources,
+  prefix,
+}: {
+  title: string;
+  config: Record<string, unknown> | undefined;
+  sources: Record<string, string>;
+  prefix: string;
+}) {
+  if (!config) return null;
+
+  const getSourceBadge = (path: string) => {
+    const source = sources[path] || "default";
+    const styles: Record<string, string> = {
+      env: "bg-blue-50 text-blue-700 border-blue-200",
+      file: "bg-green-50 text-green-700 border-green-200",
+      database: "bg-violet-50 text-violet-700 border-violet-200",
+      default: "bg-slate-50 text-slate-700 border-slate-200",
+    };
+    return (
+      <Badge variant="outline" className={`text-[10px] px-1 py-0 ${styles[source] || styles.default}`}>
+        {source.toUpperCase()}
+      </Badge>
+    );
+  };
+
+  const renderValue = (value: unknown): string => {
+    if (value === null || value === undefined) return "-";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (Array.isArray(value)) return value.join(", ");
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  };
+
+  const flattenConfig = (
+    obj: Record<string, unknown>,
+    parentKey: string = ""
+  ): Array<{ key: string; path: string; value: unknown }> => {
+    const items: Array<{ key: string; path: string; value: unknown }> = [];
+
+    for (const [key, value] of Object.entries(obj)) {
+      const fullPath = parentKey ? `${parentKey}.${key}` : key;
+      const displayKey = parentKey ? key : key;
+
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        items.push(...flattenConfig(value as Record<string, unknown>, fullPath));
+      } else {
+        items.push({ key: displayKey, path: fullPath, value });
+      }
+    }
+
+    return items;
+  };
+
+  const items = flattenConfig(config, prefix);
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <div className="bg-muted/50 px-3 py-2 border-b">
+        <h3 className="text-sm font-medium">{title}</h3>
+      </div>
+      <div className="divide-y">
+        {items.map(({ key, path, value }) => (
+          <div key={path} className="flex items-center justify-between px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              <code className="text-xs text-muted-foreground">{key}</code>
+              {getSourceBadge(path)}
+            </div>
+            <span className="text-right truncate max-w-[50%]" title={renderValue(value)}>
+              {renderValue(value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

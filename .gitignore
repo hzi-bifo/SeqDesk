@@ -56,3 +56,7 @@ next-env.d.ts
 
 # internal notes
 agents.md
+
+# config file (may contain sensitive paths)
+seqdesk.config.json
+!seqdesk.config.example.json
