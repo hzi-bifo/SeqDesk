@@ -34,10 +34,6 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
         enabled: false,
         path: '/opt/conda',
       },
-      docker: {
-        enabled: false,
-        prePull: false,
-      },
       slurm: {
         enabled: false,
         queue: 'default',
@@ -90,9 +86,6 @@ const ENV_MAPPINGS: Record<string, string> = {
   SEQDESK_CONDA_ENABLED: 'pipelines.execution.conda.enabled',
   SEQDESK_CONDA_PATH: 'pipelines.execution.conda.path',
   SEQDESK_CONDA_ENV: 'pipelines.execution.conda.environment',
-
-  // Docker
-  SEQDESK_DOCKER_ENABLED: 'pipelines.execution.docker.enabled',
 
   // SLURM
   SEQDESK_SLURM_ENABLED: 'pipelines.execution.slurm.enabled',

@@ -28,7 +28,7 @@ export interface PrerequisiteResult {
 interface ExecutionSettings {
   useSlurm: boolean;
   slurmQueue?: string;
-  runtimeMode?: 'local' | 'conda' | 'docker' | 'singularity' | 'apptainer';
+  runtimeMode?: 'conda';
   condaPath?: string;
   condaEnv?: string;
   nextflowProfile?: string;
@@ -39,82 +39,6 @@ interface ExecutionSettings {
 
 function resolveCondaEnvName(condaEnv?: string): string {
   return condaEnv?.trim() || 'seqdesk-pipelines';
-}
-
-function resolveRuntimeMode(settings: ExecutionSettings): NonNullable<ExecutionSettings['runtimeMode']> {
-  const mode = settings.runtimeMode;
-  if (mode && ['local', 'conda', 'docker', 'singularity', 'apptainer'].includes(mode)) {
-    return mode;
-  }
-  const profile = (settings.nextflowProfile || '').toLowerCase();
-  if (profile.includes('conda')) return 'conda';
-  if (profile.includes('docker')) return 'docker';
-  if (profile.includes('singularity')) return 'singularity';
-  if (profile.includes('apptainer')) return 'apptainer';
-  return 'local';
-}
-
-async function checkLocalTools(condaPath?: string, condaEnv?: string): Promise<PrerequisiteCheck> {
-  const check: PrerequisiteCheck = {
-    id: 'local_tools',
-    name: 'Local Tools',
-    description: 'Required when running without conda or containers',
-    status: 'unchecked',
-    message: '',
-    required: true,
-  };
-
-  const tools = ['fastqc', 'fastp'];
-  const missing: string[] = [];
-  let condaBin = '';
-  if (condaPath) {
-    const possiblePaths = [
-      path.join(condaPath, 'condabin', 'conda'),
-      path.join(condaPath, 'bin', 'conda'),
-    ];
-    for (const p of possiblePaths) {
-      try {
-        await fs.access(p);
-        condaBin = p;
-        break;
-      } catch {
-        // Try next
-      }
-    }
-  }
-
-  for (const tool of tools) {
-    if (condaBin) {
-      try {
-        const envName = resolveCondaEnvName(condaEnv);
-        await execAsync(
-          `${condaBin} run -n ${envName} bash -lc "command -v ${tool}"`,
-          { timeout: 10000 }
-        );
-        continue;
-      } catch {
-        // fall back to PATH check
-      }
-    }
-
-    try {
-      await execAsync(`command -v ${tool}`, { timeout: 5000 });
-    } catch {
-      missing.push(tool);
-    }
-  }
-
-  if (missing.length === 0) {
-    check.status = 'pass';
-    check.message = 'Core tools found on PATH';
-    check.details = tools.join(', ');
-    return check;
-  }
-
-  check.status = 'fail';
-  check.message = `Missing tools: ${missing.join(', ')}`;
-  check.details = 'Install tools or switch to conda/docker/singularity runtime';
-  return check;
 }
 
 async function checkCondaChannels(condaPath?: string): Promise<PrerequisiteCheck> {
@@ -210,7 +134,7 @@ async function checkCondaPlatform(): Promise<PrerequisiteCheck> {
   if (process.platform === 'darwin' && process.arch === 'arm64') {
     check.status = 'fail';
     check.message = 'Conda envs for nf-core often fail on macOS ARM';
-    check.details = 'Use Docker/Apptainer or run on a Linux/SLURM server instead.';
+    check.details = 'Use a Linux/SLURM server instead.';
     return check;
   }
 
@@ -385,7 +309,7 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
     description: 'Package manager for pipeline dependencies',
     status: 'unchecked',
     message: '',
-    required: false, // Not required if using Docker/Singularity
+    required: true,
   };
 
   // Check configured conda path first
@@ -433,86 +357,15 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
       check.details = stdout.trim();
       return check;
     } catch {
-      check.status = 'warning';
+      check.status = 'fail';
       check.message = 'Not found';
-      check.details = 'Install Conda/Mamba or use Docker/Singularity instead';
+      check.details = 'Install Conda/Mamba to run pipelines';
     }
   }
 
   return check;
 }
 
-/**
- * Check if Docker is available (alternative to Conda)
- */
-async function checkDocker(): Promise<PrerequisiteCheck> {
-  const check: PrerequisiteCheck = {
-    id: 'docker',
-    name: 'Docker',
-    description: 'Container runtime (alternative to Conda)',
-    status: 'unchecked',
-    message: '',
-    required: false,
-  };
-
-  try {
-    const { stdout } = await execAsync('docker --version', { timeout: 10000 });
-
-    // Also check if Docker daemon is running
-    try {
-      await execAsync('docker info', { timeout: 10000 });
-      check.status = 'pass';
-      check.message = 'Installed and running';
-      check.details = stdout.trim();
-    } catch {
-      check.status = 'warning';
-      check.message = 'Installed but not running';
-      check.details = `${stdout.trim()}\nDocker daemon is not running`;
-    }
-  } catch {
-    check.status = 'warning';
-    check.message = 'Not installed';
-    check.details = 'Docker can be used as an alternative to Conda';
-  }
-
-  return check;
-}
-
-/**
- * Check if Singularity is available (alternative to Docker)
- */
-async function checkSingularity(): Promise<PrerequisiteCheck> {
-  const check: PrerequisiteCheck = {
-    id: 'singularity',
-    name: 'Singularity/Apptainer',
-    description: 'Container runtime for HPC (alternative to Docker)',
-    status: 'unchecked',
-    message: '',
-    required: false,
-  };
-
-  try {
-    // Try singularity first
-    const { stdout } = await execAsync('singularity --version', { timeout: 10000 });
-    check.status = 'pass';
-    check.message = 'Installed';
-    check.details = stdout.trim();
-  } catch {
-    // Try apptainer (successor to Singularity)
-    try {
-      const { stdout } = await execAsync('apptainer --version', { timeout: 10000 });
-      check.status = 'pass';
-      check.message = 'Apptainer installed';
-      check.details = stdout.trim();
-    } catch {
-      check.status = 'warning';
-      check.message = 'Not installed';
-      check.details = 'Singularity/Apptainer is useful for HPC environments';
-    }
-  }
-
-  return check;
-}
 
 /**
  * Check if SLURM is available (when configured)
@@ -735,7 +588,6 @@ export async function checkAllPrerequisites(
   dataBasePath?: string
 ): Promise<PrerequisiteResult> {
   const checks: PrerequisiteCheck[] = [];
-  const runtimeMode = resolveRuntimeMode(executionSettings);
 
   // Run checks in parallel for speed
   // Use conda-aware checks for Nextflow and Java
@@ -743,51 +595,38 @@ export async function checkAllPrerequisites(
     nextflowCheck,
     javaCheck,
     condaCheck,
-    dockerCheck,
-    singularityCheck,
     slurmCheck,
     runDirCheck,
     dataPathCheck,
     nfcoreCheck,
+    condaChannelsCheck,
+    condaPlatformCheck,
   ] = await Promise.all([
     checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
     checkJava(executionSettings.condaPath, executionSettings.condaEnv),
     checkConda(executionSettings.condaPath),
-    checkDocker(),
-    checkSingularity(),
     checkSlurm(executionSettings.useSlurm),
     checkRunDirectory(executionSettings.pipelineRunDir),
     checkDataBasePath(dataBasePath),
     checkNfcoreTools(executionSettings.condaPath, executionSettings.condaEnv),
+    checkCondaChannels(executionSettings.condaPath),
+    checkCondaPlatform(),
   ]);
 
   checks.push(
     nextflowCheck,
     javaCheck,
     condaCheck,
-    dockerCheck,
-    singularityCheck,
     slurmCheck,
     runDirCheck,
     dataPathCheck,
-    nfcoreCheck
+    nfcoreCheck,
+    condaChannelsCheck,
+    condaPlatformCheck
   );
 
-  if (runtimeMode === 'conda') {
-    condaCheck.required = true;
-    if (condaCheck.status === 'warning') condaCheck.status = 'fail';
-    checks.push(await checkCondaChannels(executionSettings.condaPath));
-    checks.push(await checkCondaPlatform());
-  } else if (runtimeMode === 'docker') {
-    dockerCheck.required = true;
-    if (dockerCheck.status === 'warning') dockerCheck.status = 'fail';
-  } else if (runtimeMode === 'singularity' || runtimeMode === 'apptainer') {
-    singularityCheck.required = true;
-    if (singularityCheck.status === 'warning') singularityCheck.status = 'fail';
-  } else if (runtimeMode === 'local') {
-    const localToolsCheck = await checkLocalTools(executionSettings.condaPath, executionSettings.condaEnv);
-    checks.push(localToolsCheck);
-  }
+  condaCheck.required = true;
+  if (condaCheck.status === 'warning') condaCheck.status = 'fail';
 
   // Calculate results
   const requiredChecks = checks.filter(c => c.required);
@@ -910,23 +749,12 @@ export async function quickPrerequisiteCheck(
 ): Promise<{ ready: boolean; summary: string }> {
   try {
     // Just check the critical requirements
-    const runtimeMode = resolveRuntimeMode(executionSettings);
     const baseChecks = await Promise.all([
       checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
       checkRunDirectory(executionSettings.pipelineRunDir),
       checkDataBasePath(dataBasePath),
     ]);
-
-    let runtimeCheck: PrerequisiteCheck | null = null;
-    if (runtimeMode === 'local') {
-      runtimeCheck = await checkLocalTools(executionSettings.condaPath, executionSettings.condaEnv);
-    } else if (runtimeMode === 'conda') {
-      runtimeCheck = await checkConda(executionSettings.condaPath);
-    } else if (runtimeMode === 'docker') {
-      runtimeCheck = await checkDocker();
-    } else if (runtimeMode === 'singularity' || runtimeMode === 'apptainer') {
-      runtimeCheck = await checkSingularity();
-    }
+    const runtimeCheck = await checkConda(executionSettings.condaPath);
 
     const [nextflow, runDir, dataPath] = baseChecks;
 
@@ -934,7 +762,7 @@ export async function quickPrerequisiteCheck(
       nextflow.status === 'pass' &&
       runDir.status === 'pass' &&
       dataPath.status === 'pass' &&
-      (!runtimeCheck || runtimeCheck.status === 'pass');
+      runtimeCheck.status === 'pass';
 
     if (criticalPassed) {
       return { ready: true, summary: 'Ready to run pipelines' };

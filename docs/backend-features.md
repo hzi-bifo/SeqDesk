@@ -2009,7 +2009,7 @@ sample1,group1,/path/R1.fastq.gz,/path/R2.fastq.gz,
 source /net/conda/bin/activate broker
 nextflow run hzi-bifo/mag -w /tmp \
   --input samplesheet.csv \
-  -profile singularity \
+  -profile conda \
   -c cluster_config.cfg \
   --outdir /path/to/output
 ```

@@ -26,7 +26,6 @@ This guide covers installing SeqDesk on a fresh machine, including setting up Co
 
 - **Conda** (Miniconda or Anaconda) - For nf-core pipeline dependencies
 - **Nextflow** - Workflow engine
-- **Docker** - Alternative to Conda for containerized execution
 
 ---
 
@@ -368,31 +367,6 @@ Enable and start:
 ```bash
 sudo systemctl enable seqdesk
 sudo systemctl start seqdesk
-```
-
-### Using Docker
-
-```dockerfile
-# Dockerfile
-FROM node:20-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-```bash
-# Build and run
-docker build -t seqdesk .
-docker run -d -p 3000:3000 \
-  -v ./seqdesk.config.json:/app/seqdesk.config.json \
-  -e NEXTAUTH_SECRET="your-secret" \
-  seqdesk
 ```
 
 ### Reverse Proxy (nginx)
