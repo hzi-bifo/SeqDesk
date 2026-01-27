@@ -156,7 +156,8 @@ See [docs/configuration.md](docs/configuration.md) for the complete configuratio
 ## Documentation
 
 See the `docs/` folder for detailed documentation:
-- [Configuration](docs/configuration.md) - Complete configuration reference
+- [Installation Guide](docs/installation.md) - Complete setup including Conda for pipelines
+- [Configuration](docs/configuration.md) - Configuration file and environment variables
 - [Adding Pipelines](docs/adding-pipelines.md) - How to add new nf-core pipeline definitions
 - [Backend Features](docs/backend-features.md) - Pipeline system architecture
 - [ENA Integration](docs/ena-integration-plan.md) - ENA submission workflow
