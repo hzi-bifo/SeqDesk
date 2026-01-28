@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw } from "lucide-react";
+import { Settings, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw, Download, ArrowUpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
@@ -99,10 +99,26 @@ export default function SettingsPage() {
   } | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
 
+  // Update system
+  const [updateInfo, setUpdateInfo] = useState<{
+    currentVersion: string;
+    updateAvailable: boolean;
+    latest?: {
+      version: string;
+      releaseNotes?: string;
+      downloadUrl?: string;
+    };
+    error?: string;
+  } | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
+
   useEffect(() => {
     fetchSettings();
     fetchSequencingFilesSettings();
     fetchConfigStatus();
+    checkForUpdates();
   }, []);
 
   const fetchConfigStatus = async () => {
@@ -117,6 +133,64 @@ export default function SettingsPage() {
       console.error("Failed to load config status:", error);
     } finally {
       setLoadingConfig(false);
+    }
+  };
+
+  const checkForUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch("/api/admin/updates");
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateInfo(data);
+      }
+    } catch (error) {
+      console.error("Failed to check for updates:", error);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const performUpdate = async () => {
+    if (!updateInfo?.updateAvailable || !updateInfo.latest) return;
+
+    const confirmed = window.confirm(
+      `Update to v${updateInfo.latest.version}?\n\n` +
+      `This will:\n` +
+      `1. Download the new version\n` +
+      `2. Backup your database\n` +
+      `3. Install the update\n` +
+      `4. Restart the server\n\n` +
+      `The app will be unavailable for a few seconds during restart.`
+    );
+
+    if (!confirmed) return;
+
+    setUpdating(true);
+    setUpdateProgress("Starting update...");
+
+    try {
+      const res = await fetch("/api/admin/updates/install", {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Update failed");
+      }
+
+      setUpdateProgress("Update installed! Restarting server...");
+      toast.success("Update installed! The page will reload shortly.");
+
+      // Wait for server to restart, then reload
+      setTimeout(() => {
+        window.location.reload();
+      }, 5000);
+    } catch (error) {
+      console.error("Update failed:", error);
+      toast.error(error instanceof Error ? error.message : "Update failed");
+      setUpdateProgress(null);
+      setUpdating(false);
     }
   };
 
@@ -631,6 +705,120 @@ export default function SettingsPage() {
               {seqFilesSaved ? "Saved!" : "Save Settings"}
             </Button>
           </div>
+        </div>
+      </GlassCard>
+
+      {/* Software Updates */}
+      <GlassCard className="p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+              updateInfo?.updateAvailable ? "bg-blue-100" : "bg-slate-100"
+            }`}>
+              <ArrowUpCircle className={`h-5 w-5 ${
+                updateInfo?.updateAvailable ? "text-blue-600" : "text-slate-600"
+              }`} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Software Updates</h2>
+              <p className="text-sm text-muted-foreground">
+                Check for and install SeqDesk updates
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={checkForUpdates}
+            disabled={checkingUpdate || updating}
+          >
+            {checkingUpdate ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        <div className="border-t pt-4">
+          {updateInfo ? (
+            <div className="space-y-4">
+              {/* Current Version */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Current version</span>
+                <Badge variant="outline">v{updateInfo.currentVersion}</Badge>
+              </div>
+
+              {/* Latest Version */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Latest version</span>
+                <Badge variant={updateInfo.updateAvailable ? "default" : "outline"}>
+                  v{updateInfo.latest?.version || updateInfo.currentVersion}
+                </Badge>
+              </div>
+
+              {/* Update Status */}
+              {updateInfo.updateAvailable && updateInfo.latest ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <Download className="h-5 w-5 text-blue-600 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-medium text-blue-900">
+                        Update available: v{updateInfo.latest.version}
+                      </p>
+                      {updateInfo.latest.releaseNotes && (
+                        <p className="text-sm text-blue-700 mt-1">
+                          {updateInfo.latest.releaseNotes}
+                        </p>
+                      )}
+                      <div className="mt-3">
+                        <Button
+                          onClick={performUpdate}
+                          disabled={updating}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          {updating ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              {updateProgress || "Updating..."}
+                            </>
+                          ) : (
+                            <>
+                              <Download className="h-4 w-4 mr-2" />
+                              Install Update
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    <p className="text-green-900">
+                      SeqDesk is up to date
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Warning */}
+              <p className="text-xs text-muted-foreground">
+                Updates will backup your database before installing.
+                The server will restart automatically after the update.
+              </p>
+            </div>
+          ) : checkingUpdate ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Failed to check for updates. Click refresh to try again.
+            </p>
+          )}
         </div>
       </GlassCard>
 
