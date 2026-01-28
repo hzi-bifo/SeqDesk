@@ -5,10 +5,21 @@
  */
 
 import type { UpdateCheckResult, ReleaseInfo } from './types';
-import packageJson from '../../../../package.json';
+import fs from 'fs';
+import path from 'path';
 
 // Get current version from package.json
-const CURRENT_VERSION = packageJson.version || '0.0.0';
+function getVersion(): string {
+  try {
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    return pkg.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const CURRENT_VERSION = getVersion();
 
 // Update server URL
 const UPDATE_SERVER = process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
