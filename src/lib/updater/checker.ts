@@ -5,9 +5,10 @@
  */
 
 import type { UpdateCheckResult, ReleaseInfo } from './types';
+import packageJson from '../../../../package.json';
 
 // Get current version from package.json
-const CURRENT_VERSION = process.env.npm_package_version || '0.1.0';
+const CURRENT_VERSION = packageJson.version || '0.0.0';
 
 // Update server URL
 const UPDATE_SERVER = process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
