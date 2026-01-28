@@ -53,6 +53,17 @@ next-env.d.ts
 /reads/
 /runs_out/
 /pipeline_output/
+/pipeline_test_out/
+/null/
+/work/
+
+# Nextflow
+.nextflow/
+.nextflow.log*
+
+# Release artifacts
+seqdesk-*.tar.gz
+seqdesk-*/
 
 # internal notes
 agents.md
