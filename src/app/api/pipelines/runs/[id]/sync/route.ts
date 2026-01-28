@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { parseTraceFile, findTraceFile } from '@/lib/pipelines/nextflow';
-import { getAllMagSteps, getStepByProcess } from '@/lib/pipelines/mag/steps';
+import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 
 // POST - Sync run status from Nextflow trace file
 export async function POST(
@@ -53,7 +53,6 @@ export async function POST(
 
     const traceResult = await parseTraceFile(tracePath);
 
-    const isMag = run.pipelineId === 'mag';
     const steps = new Map<string, {
       stepName: string;
       status: 'pending' | 'running' | 'completed' | 'failed';
@@ -62,7 +61,7 @@ export async function POST(
     }>();
 
     for (const task of traceResult.tasks) {
-      const stepDef = isMag ? getStepByProcess(task.process) : undefined;
+      const stepDef = findStepByProcess(run.pipelineId, task.process);
       const stepId = stepDef?.id || task.process;
       const stepName = stepDef?.name || task.process;
 
@@ -128,7 +127,8 @@ export async function POST(
         : 'Processing...';
 
     // Update run with progress
-    const totalSteps = isMag ? getAllMagSteps().length : 0;
+    const pipelineSteps = getStepsForPipeline(run.pipelineId);
+    const totalSteps = pipelineSteps.length;
     const completedSteps = Array.from(steps.values()).filter(s => s.status === 'completed').length;
     const progress = totalSteps > 0
       ? Math.min(99, Math.round((completedSteps / totalSteps) * 100))

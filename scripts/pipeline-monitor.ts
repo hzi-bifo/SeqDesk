@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { db } from '../src/lib/db';
 import { parseTraceFile, findTraceFile, readTail } from '../src/lib/pipelines/nextflow';
-import { getAllMagSteps, getStepByProcess } from '../src/lib/pipelines/mag/steps';
+import { findStepByProcess, getStepsForPipeline } from '../src/lib/pipelines/definitions';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -88,8 +88,8 @@ async function syncRun(run: {
   let currentStep: string | null = null;
   let progress: number | null = null;
 
-  const isMag = run.pipelineId === 'mag';
-  const totalSteps = isMag ? getAllMagSteps().length : 0;
+  const pipelineSteps = getStepsForPipeline(run.pipelineId);
+  const totalSteps = pipelineSteps.length;
 
   if (run.runFolder) {
     const tracePath = await findTraceFile(run.runFolder);
@@ -103,7 +103,7 @@ async function syncRun(run: {
       }>();
 
       for (const task of trace.tasks) {
-        const stepDef = isMag ? getStepByProcess(task.process) : undefined;
+        const stepDef = findStepByProcess(run.pipelineId, task.process);
         const stepId = stepDef?.id || task.process;
         const stepName = stepDef?.name || task.process;
 

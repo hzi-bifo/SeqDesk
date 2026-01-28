@@ -125,8 +125,8 @@ SeqDesk/
 │   └── lib/              # Utilities, Prisma client
 ├── prisma/               # Database schema and seed
 ├── data/                 # JSON data files
-│   ├── field-templates/  # MIxS field templates
-│   └── pipeline-definitions/  # nf-core pipeline DAGs
+│   └── field-templates/  # MIxS field templates
+├── pipelines/            # Pipeline packages (manifest/definition/registry)
 ├── docs/                 # Documentation
 └── scripts/              # Utility scripts
 ```

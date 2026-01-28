@@ -1,0 +1,16 @@
+parser:
+  id: checkm_parser
+  type: tsv
+  description: Parse CheckM bin quality metrics
+  trigger:
+    filePattern: "GenomeBinning/QC/checkm_summary.tsv"
+  skipHeader: true
+  columns:
+    - name: bin_name
+      index: 0
+    - name: completeness
+      index: 1
+      type: float
+    - name: contamination
+      index: 2
+      type: float

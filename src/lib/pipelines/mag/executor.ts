@@ -2,8 +2,10 @@
 // Handles running nf-core/mag pipeline
 
 import { db } from '@/lib/db';
-import { generateMagSamplesheet } from './samplesheet';
-import { parseMagResults } from './results';
+import { getAdapter } from '@/lib/pipelines/adapters';
+// Import to trigger adapter registration
+import '@/lib/pipelines/adapters/mag';
+import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -328,8 +330,14 @@ export async function prepareMagRun(
       executionSettings.pipelineRunDir
     );
 
-    // Generate samplesheet
-    const samplesheet = await generateMagSamplesheet({
+    // Generate samplesheet using adapter
+    const adapter = getAdapter('mag');
+    if (!adapter) {
+      errors.push('MAG adapter not registered');
+      return { success: false, runId, errors };
+    }
+
+    const samplesheet = await adapter.generateSamplesheet({
       studyId,
       sampleIds,
       dataBasePath: executionSettings.dataBasePath,
@@ -436,6 +444,7 @@ export async function updateRunStatus(
 
 /**
  * Process completed MAG run and create database records
+ * Uses the adapter + output resolver pattern
  */
 export async function processCompletedRun(runId: string): Promise<{
   success: boolean;
@@ -443,12 +452,27 @@ export async function processCompletedRun(runId: string): Promise<{
   binsCreated: number;
   errors: string[];
 }> {
+  const adapter = getAdapter('mag');
+  if (!adapter) {
+    return {
+      success: false,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      errors: ['MAG adapter not registered'],
+    };
+  }
+
   const run = await db.pipelineRun.findUnique({
     where: { id: runId },
     include: {
       study: {
         include: {
-          samples: true,
+          samples: {
+            select: {
+              id: true,
+              sampleId: true,
+            },
+          },
         },
       },
     },
@@ -465,9 +489,23 @@ export async function processCompletedRun(runId: string): Promise<{
 
   const outputDir = path.join(run.runFolder, 'output');
 
-  return parseMagResults({
+  // Discover outputs using adapter
+  const discovered = await adapter.discoverOutputs({
     runId,
     outputDir,
     samples: run.study.samples,
   });
+
+  // Resolve outputs to DB records
+  const result = await resolveOutputs('mag', runId, discovered);
+
+  // Save results summary to run
+  await saveRunResults(runId, result);
+
+  return {
+    success: result.success,
+    assembliesCreated: result.assembliesCreated,
+    binsCreated: result.binsCreated,
+    errors: result.errors,
+  };
 }

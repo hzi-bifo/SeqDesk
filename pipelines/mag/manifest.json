@@ -1,0 +1,129 @@
+{
+  "package": {
+    "id": "mag",
+    "name": "nf-core/mag",
+    "version": "3.0.0",
+    "description": "Metagenome assembly and binning",
+    "website": "https://nf-co.re/mag",
+    "provider": "nf-core"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "parsers": [
+      "parsers/checkm.yaml",
+      "parsers/gtdbtk.yaml"
+    ],
+    "readme": "README.md"
+  },
+  "inputs": [
+    {
+      "id": "paired_reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true,
+      "filters": {
+        "paired": true
+      }
+    },
+    {
+      "id": "platform",
+      "scope": "order",
+      "source": "order.platform",
+      "required": true,
+      "transform": {
+        "type": "map_value",
+        "mapping": {
+          "illumina": "ILLUMINA",
+          "ILLUMINA": "ILLUMINA",
+          "hiseq": "ILLUMINA",
+          "miseq": "ILLUMINA",
+          "novaseq": "ILLUMINA",
+          "nextseq": "ILLUMINA",
+          "ont": "OXFORD",
+          "nanopore": "OXFORD"
+        }
+      }
+    },
+    {
+      "id": "long_reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": false,
+      "filters": {
+        "paired": false
+      }
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "nf-core/mag",
+    "version": "3.0.0",
+    "profiles": ["conda"],
+    "defaultParams": {
+      "skip_spades": true,
+      "skip_prokka": true,
+      "skip_megahit": false,
+      "skip_binqc": false,
+      "skip_quast": false,
+      "skip_gtdbtk": false
+    }
+  },
+  "outputs": [
+    {
+      "id": "assemblies",
+      "scope": "sample",
+      "destination": "sample_assemblies",
+      "discovery": {
+        "pattern": "Assembly/*/*.contigs.fa.gz",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "bins",
+      "scope": "sample",
+      "destination": "sample_bins",
+      "discovery": {
+        "pattern": "GenomeBinning/DASTool/bins/**/*.fa",
+        "fallbackPattern": "GenomeBinning/{MetaBAT2,MaxBin2}/**/*.fa",
+        "matchSampleBy": "parent_dir"
+      },
+      "parsed": {
+        "from": "checkm_parser",
+        "matchBy": "bin_name",
+        "map": {
+          "completeness": "completeness",
+          "contamination": "contamination"
+        }
+      }
+    },
+    {
+      "id": "taxonomy",
+      "scope": "sample",
+      "destination": "sample_metadata",
+      "discovery": {
+        "dependsOn": "bins",
+        "pattern": "Taxonomy/GTDB-Tk/*.summary.tsv"
+      },
+      "parsed": {
+        "from": "gtdbtk_parser",
+        "matchBy": "bin_name",
+        "map": {
+          "taxonomy": "classification"
+        }
+      }
+    },
+    {
+      "id": "multiqc_report",
+      "scope": "study",
+      "destination": "study_report",
+      "discovery": {
+        "pattern": "multiqc/multiqc_report.html"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": ["Assembly", "Bin", "PipelineArtifact"]
+  }
+}

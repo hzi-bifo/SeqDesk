@@ -12,7 +12,7 @@
  * 2. Fetches the pipeline's metro map / workflow description
  * 3. Generates a JSON definition file
  *
- * Output is saved to: data/pipeline-definitions/{pipeline}.json
+ * Output is saved to: pipelines/{pipeline}/definition.json
  */
 
 import fs from 'fs';
@@ -306,12 +306,12 @@ Examples:
   };
 
   // Save to file
-  const outDir = path.join(process.cwd(), 'data', 'pipeline-definitions');
+  const outDir = path.join(process.cwd(), 'pipelines', pipeline);
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
 
-  const outPath = path.join(outDir, `${pipeline}.json`);
+  const outPath = path.join(outDir, 'definition.json');
   fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
 
   console.log(`\nSaved to: ${outPath}`);

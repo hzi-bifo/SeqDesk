@@ -1,9 +1,79 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getExecutionSettings } from '@/app/api/admin/settings/pipelines/execution/route';
-import { getAllMagSteps, getStepByProcess } from '@/lib/pipelines/mag/steps';
+import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
+import { getAdapter } from '@/lib/pipelines/adapters';
+// Import to trigger adapter registration
+import '@/lib/pipelines/adapters/mag';
+import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+/**
+ * Process a completed pipeline run - discover outputs and write to DB
+ */
+async function processCompletedRun(runId: string, pipelineId: string): Promise<void> {
+  // Get the adapter for this pipeline
+  const adapter = getAdapter(pipelineId);
+  if (!adapter) {
+    console.log(`[Pipeline Weblog] No adapter registered for pipeline: ${pipelineId}`);
+    return;
+  }
+
+  // Fetch run details including output path and samples
+  const run = await db.pipelineRun.findUnique({
+    where: { id: runId },
+    include: {
+      study: {
+        include: {
+          samples: {
+            select: {
+              id: true,
+              sampleId: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!run || !run.runFolder) {
+    console.log(`[Pipeline Weblog] Run ${runId} has no run folder`);
+    return;
+  }
+
+  const samples = run.study?.samples || [];
+  if (samples.length === 0) {
+    console.log(`[Pipeline Weblog] Run ${runId} has no samples`);
+    return;
+  }
+
+  // Discover outputs - MAG executor creates output at runFolder/output
+  const outputDir = `${run.runFolder}/output`;
+  const discovered = await adapter.discoverOutputs({
+    runId,
+    outputDir,
+    samples: samples.map((s) => ({ id: s.id, sampleId: s.sampleId })),
+  });
+
+  console.log(
+    `[Pipeline Weblog] Discovered outputs for run ${runId}:`,
+    discovered.summary
+  );
+
+  // Resolve outputs to DB records
+  const result = await resolveOutputs(pipelineId, runId, discovered);
+
+  // Save results summary to run
+  await saveRunResults(runId, result);
+
+  console.log(`[Pipeline Weblog] Output resolution complete for run ${runId}:`, {
+    assemblies: result.assembliesCreated,
+    bins: result.binsCreated,
+    artifacts: result.artifactsCreated,
+    errors: result.errors.length,
+  });
+}
 
 function parseDate(value: unknown): Date | undefined {
   if (!value) return undefined;
@@ -112,10 +182,9 @@ export async function POST(request: NextRequest) {
       parseDate(trace?.complete);
 
     const processName = getProcessName(trace, payload);
-    const stepDefinition =
-      run.pipelineId === 'mag' && processName
-        ? getStepByProcess(processName)
-        : undefined;
+    const stepDefinition = processName
+      ? findStepByProcess(run.pipelineId, processName)
+      : null;
     const stepId = stepDefinition?.id || processName || null;
     const stepName = stepDefinition?.name || processName || undefined;
 
@@ -198,6 +267,11 @@ export async function POST(request: NextRequest) {
       runUpdates.currentStep = 'Completed';
       runUpdates.completedAt = eventTime || new Date();
       runUpdates.progress = 100;
+
+      // Trigger output resolution asynchronously
+      processCompletedRun(runId, run.pipelineId).catch((err) => {
+        console.error('[Pipeline Weblog] Output resolution failed:', err);
+      });
     }
 
     if (event.includes('workflow_error') || event.includes('workflow_fail')) {
@@ -207,7 +281,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (stepStatus === 'completed' || stepStatus === 'failed') {
-      const totalSteps = run.pipelineId === 'mag' ? getAllMagSteps().length : 0;
+      const pipelineSteps = getStepsForPipeline(run.pipelineId);
+      const totalSteps = pipelineSteps.length;
       const completedCount = await db.pipelineRunStep.count({
         where: { pipelineRunId: runId, status: 'completed' },
       });

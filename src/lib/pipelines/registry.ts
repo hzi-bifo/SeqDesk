@@ -1,166 +1,76 @@
 // Pipeline Registry - defines available pipelines
-// Currently only MAG pipeline is implemented
+//
+// This module uses the package-loader as the single source of truth.
 
 import { PipelineDefinition } from './types';
+import {
+  getAllPackages,
+  getAllPackageIds,
+  packageToPipelineDefinition,
+} from './package-loader';
 
-export const PIPELINE_REGISTRY: Record<string, PipelineDefinition> = {
-  mag: {
-    id: 'mag',
-    name: 'MAG Pipeline',
-    description: 'Metagenome assembly and binning using nf-core/mag',
-    category: 'analysis',
-    version: '3.0.0',
-    website: 'https://nf-co.re/mag',
+/**
+ * Build the pipeline registry from loaded packages
+ */
+function buildRegistry(): Record<string, PipelineDefinition> {
+  const registry: Record<string, PipelineDefinition> = {};
 
-    requires: {
-      reads: true,
-      assemblies: false,
-      bins: false,
-      checksums: false,
-      studyAccession: false,
-      sampleMetadata: false,
-    },
+  // Load from packages (takes precedence over fallback)
+  for (const pkg of getAllPackages()) {
+    const def = packageToPipelineDefinition(pkg.id);
+    if (def) {
+      registry[pkg.id] = def;
+    }
+  }
 
-    outputs: [
-      {
-        type: 'data',
-        name: 'assemblies',
-        description: 'MEGAHIT assemblies',
-        model: 'Assembly',
-        visibility: 'both',
-        downloadable: true,
-      },
-      {
-        type: 'data',
-        name: 'bins',
-        description: 'Genome bins from MaxBin2',
-        model: 'Bin',
-        visibility: 'both',
-        downloadable: true,
-      },
-      {
-        type: 'data',
-        name: 'alignments',
-        description: 'Read alignments (BAM files)',
-        visibility: 'admin',
-        downloadable: false,
-      },
-      {
-        type: 'metric',
-        name: 'bin_quality',
-        description: 'CheckM completeness and contamination scores',
-        model: 'Bin',
-        visibility: 'both',
-      },
-      {
-        type: 'report',
-        name: 'qc_report',
-        description: 'MultiQC report',
-        visibility: 'both',
-        downloadable: true,
-      },
-    ],
+  return registry;
+}
 
-    visibility: {
-      showToUser: true,
-      userCanStart: false,  // Only admins can start
-    },
+// Lazy-initialized registry
+let _registry: Record<string, PipelineDefinition> | null = null;
 
-    input: {
-      supportedScopes: ['study', 'samples'],
-      minSamples: 1,
-      perSample: {
-        reads: true,
-        pairedEnd: true,  // Requires paired-end reads
-      },
-    },
+function getRegistry(): Record<string, PipelineDefinition> {
+  if (!_registry) {
+    _registry = buildRegistry();
+  }
+  return _registry;
+}
 
-    samplesheet: {
-      format: 'csv',
-      generator: 'generateMagSamplesheet',
-    },
+/**
+ * Clear the registry cache (useful for hot-reloading)
+ */
+export function clearRegistryCache(): void {
+  _registry = null;
+}
 
-    configSchema: {
-      type: 'object',
-      properties: {
-        stubMode: {
-          type: 'boolean',
-          title: 'Stub Mode',
-          description: 'Run in stub mode (for testing, skips actual processing)',
-          default: false,
-        },
-        skipMegahit: {
-          type: 'boolean',
-          title: 'Skip MEGAHIT',
-          description: 'Skip MEGAHIT assembler',
-          default: false,
-        },
-        skipSpades: {
-          type: 'boolean',
-          title: 'Skip SPAdes',
-          description: 'Skip SPAdes assembler (enabled by default)',
-          default: true,
-        },
-        skipProkka: {
-          type: 'boolean',
-          title: 'Skip Prokka',
-          description: 'Skip annotation',
-          default: true,
-        },
-        skipBinQc: {
-          type: 'boolean',
-          title: 'Skip Bin QC',
-          description: 'Skip bin quality control',
-          default: false,
-        },
-        skipQuast: {
-          type: 'boolean',
-          title: 'Skip QUAST',
-          description: 'Skip QUAST bin summary (auto-skipped when Bin QC is skipped)',
-          default: false,
-        },
-        skipGtdb: {
-          type: 'boolean',
-          title: 'Skip GTDB-Tk',
-          description: 'Skip GTDB-Tk classification and database download',
-          default: false,
-        },
-        gtdbDb: {
-          type: 'string',
-          title: 'GTDB-Tk Database Path',
-          description: 'Path to a GTDB-Tk database directory or .tar.gz archive (optional)',
-          default: '',
-        },
-      },
-    },
-
-    defaultConfig: {
-      stubMode: false,
-      skipMegahit: false,
-      skipSpades: true,
-      skipProkka: true,
-      skipBinQc: false,
-      skipQuast: false,
-      skipGtdb: false,
-      gtdbDb: '',
-    },
-
-    icon: 'Dna',
+// Export the registry for backward compatibility
+export const PIPELINE_REGISTRY = new Proxy({} as Record<string, PipelineDefinition>, {
+  get(target, prop: string) {
+    return getRegistry()[prop];
   },
-
-  // Future pipelines can be added here:
-  // fastqc: { ... },
-  // submg: { ... },
-};
+  ownKeys() {
+    return Object.keys(getRegistry());
+  },
+  getOwnPropertyDescriptor(target, prop: string) {
+    const value = getRegistry()[prop];
+    if (value) {
+      return { configurable: true, enumerable: true, value };
+    }
+    return undefined;
+  },
+  has(target, prop: string) {
+    return prop in getRegistry();
+  },
+});
 
 // Get pipeline definition by ID
 export function getPipelineDefinition(pipelineId: string): PipelineDefinition | undefined {
-  return PIPELINE_REGISTRY[pipelineId];
+  return packageToPipelineDefinition(pipelineId);
 }
 
 // Get all enabled pipelines (based on PipelineConfig in database)
 export function getAllPipelineIds(): string[] {
-  return Object.keys(PIPELINE_REGISTRY);
+  return getAllPackageIds();
 }
 
 // Check if a pipeline can run on a study

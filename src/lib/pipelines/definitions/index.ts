@@ -1,13 +1,15 @@
 // Pipeline Definitions Loader
-// Loads pipeline DAG definitions from JSON files in data/pipeline-definitions/
 //
-// To add a new pipeline:
-// 1. Run: npx ts-node scripts/generate-pipeline-def.ts <pipeline-name>
-// 2. Edit the generated JSON in data/pipeline-definitions/<pipeline>.json
-// 3. The app will automatically load it
+// Definitions are loaded exclusively from pipeline packages (pipelines/<id>/).
 
-import fs from 'fs';
-import path from 'path';
+import {
+  findStepByProcessFromPackage,
+  getAllPackageIds,
+  getPackageDefinition as getPackageDefinitionFromPackage,
+  getStepsFromPackage,
+  hasPackage,
+  packageToDagData,
+} from '../package-loader';
 
 export type StepCategory =
   | 'qc'
@@ -26,6 +28,7 @@ export interface PipelineStepDef {
   description: string;
   category: StepCategory;
   dependsOn: string[];
+  processMatchers?: string[]; // Nextflow process names to match this step
   tools?: string[];           // Tools/software used in this step
   outputs?: string[];         // File types produced by this step
   docs?: string;              // URL to documentation
@@ -61,13 +64,16 @@ export type SeqDeskSource =
   | 'manual';            // User provides manually
 
 export type SeqDeskDestination =
+  | 'sample_reads'       // Per-sample read files
   | 'sample_qc'          // Updates sample QC status
   | 'sample_metadata'    // Updates sample metadata fields
-  | 'order_files'        // Stored as order output files
-  | 'order_report'       // Linked as order report
   | 'sample_assemblies'  // Stored as sample assemblies
   | 'sample_bins'        // Stored as sample genome bins
   | 'sample_annotations' // Stored as sample annotations
+  | 'study_report'       // Study-level report
+  | 'order_files'        // Stored as order output files
+  | 'order_report'       // Linked as order report
+  | 'run_artifact'       // Artifacts tied to pipeline run
   | 'download_only';     // Available for download only
 
 export interface PipelineInput {
@@ -144,238 +150,90 @@ export interface DagData {
   };
 }
 
-// Cache for loaded definitions
-const definitionCache = new Map<string, PipelineDefinition>();
-
-/**
- * Get the path to pipeline definitions directory
- */
-function getDefinitionsDir(): string {
-  // In Next.js, we need to handle both dev and production
-  const possiblePaths = [
-    path.join(process.cwd(), 'data', 'pipeline-definitions'),
-    path.join(process.cwd(), '..', 'data', 'pipeline-definitions'),
-  ];
-
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
-  return possiblePaths[0];
-}
-
-/**
- * Load a pipeline definition from JSON file
- */
-function loadDefinition(pipelineId: string): PipelineDefinition | null {
-  // Check cache first
-  if (definitionCache.has(pipelineId)) {
-    return definitionCache.get(pipelineId)!;
-  }
-
-  const defDir = getDefinitionsDir();
-  const filePath = path.join(defDir, `${pipelineId}.json`);
-
-  try {
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const definition = JSON.parse(content) as PipelineDefinition;
-
-    // Cache it
-    definitionCache.set(pipelineId, definition);
-
-    return definition;
-  } catch (error) {
-    console.error(`Failed to load pipeline definition for ${pipelineId}:`, error);
-    return null;
-  }
-}
-
-/**
- * Convert pipeline definition to DAG data with proper ordering
- */
-function definitionToDag(definition: PipelineDefinition): DagData {
-  const steps = definition.steps;
-  const inputs = definition.inputs || [];
-  const outputs = definition.outputs || [];
-
-  // Assign order based on topological sort
-  const order = new Map<string, number>();
-  const inDegree = new Map<string, number>();
-  const adj = new Map<string, string[]>();
-
-  steps.forEach((s) => {
-    inDegree.set(s.id, 0);
-    adj.set(s.id, []);
-  });
-
-  steps.forEach((s) => {
-    s.dependsOn.forEach((dep) => {
-      adj.get(dep)?.push(s.id);
-      inDegree.set(s.id, (inDegree.get(s.id) || 0) + 1);
-    });
-  });
-
-  const queue: string[] = [];
-  inDegree.forEach((deg, id) => {
-    if (deg === 0) queue.push(id);
-  });
-
-  let orderNum = 1;
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    order.set(current, orderNum++);
-    adj.get(current)?.forEach((next) => {
-      const newDeg = (inDegree.get(next) || 1) - 1;
-      inDegree.set(next, newDeg);
-      if (newDeg === 0) queue.push(next);
-    });
-  }
-
-  const maxOrder = Math.max(...Array.from(order.values()), 0);
-
-  const nodes: DagNode[] = [];
-  const edges: DagEdge[] = [];
-
-  // Build a map of step outputs for edge labels
-  const stepOutputs = new Map<string, string[]>();
-  steps.forEach((s) => {
-    if (s.outputs) {
-      stepOutputs.set(s.id, s.outputs);
-    }
-  });
-
-  // Add input nodes (order 0, before all steps)
-  inputs.forEach((input, idx) => {
-    nodes.push({
-      id: `input_${input.id}`,
-      name: input.name,
-      description: input.description,
-      category: 'input',
-      order: 0,
-      nodeType: 'input',
-      fileTypes: input.fileTypes,
-      source: input.source,
-      sourceDescription: input.sourceDescription,
-    });
-    // Connect input to the first step (input validation)
-    const firstStep = steps.find((s) => s.dependsOn.length === 0);
-    if (firstStep) {
-      const label = input.fileTypes?.join(', ');
-      edges.push({ from: `input_${input.id}`, to: firstStep.id, label });
-    }
-  });
-
-  // Add step nodes
-  steps.forEach((s) => {
-    nodes.push({
-      id: s.id,
-      name: s.name,
-      description: s.description,
-      category: s.category,
-      order: order.get(s.id) || 0,
-      nodeType: 'step',
-      tools: s.tools,
-      outputs: s.outputs,
-      docs: s.docs,
-      parameters: s.parameters,
-    });
-  });
-
-  // Add step edges with labels from source step outputs
-  steps.forEach((s) => {
-    s.dependsOn.forEach((dep) => {
-      const depOutputs = stepOutputs.get(dep);
-      const label = depOutputs?.join(', ');
-      edges.push({ from: dep, to: s.id, label });
-    });
-  });
-
-  // Add output nodes (after their source steps)
-  outputs.forEach((output, idx) => {
-    const sourceStep = steps.find((s) => s.id === output.fromStep);
-    const sourceOrder = sourceStep ? (order.get(sourceStep.id) || 0) : maxOrder;
-
-    nodes.push({
-      id: `output_${output.id}`,
-      name: output.name,
-      description: output.description,
-      category: 'output',
-      order: maxOrder + 1,
-      nodeType: 'output',
-      fileTypes: output.fileTypes,
-      destination: output.destination,
-      destinationField: output.destinationField,
-      destinationDescription: output.destinationDescription,
-    });
-    // Connect from source step with file types as label
-    if (output.fromStep) {
-      const label = output.fileTypes?.join(', ');
-      edges.push({ from: output.fromStep, to: `output_${output.id}`, label });
-    }
-  });
-
-  return {
-    nodes,
-    edges,
-    pipeline: {
-      name: definition.name,
-      description: definition.description,
-      url: definition.url,
-      version: definition.version,
-      minNextflowVersion: definition.minNextflowVersion,
-      authors: definition.authors,
-      parameterGroups: definition.parameterGroups,
-    },
-  };
-}
-
 /**
  * Get DAG data for a pipeline
  */
 export function getPipelineDag(pipelineId: string): DagData | null {
-  const definition = loadDefinition(pipelineId);
-  if (!definition) return null;
-  return definitionToDag(definition);
+  return packageToDagData(pipelineId);
 }
 
 /**
  * Get full pipeline definition
  */
 export function getPipelineDefinition(pipelineId: string): PipelineDefinition | null {
-  return loadDefinition(pipelineId);
+  const definition = getPackageDefinitionFromPackage(pipelineId);
+  return (definition as PipelineDefinition) || null;
 }
 
 /**
  * Get list of all available pipeline definitions
  */
 export function getAvailablePipelineDefinitions(): string[] {
-  const defDir = getDefinitionsDir();
-
-  try {
-    if (!fs.existsSync(defDir)) {
-      return [];
-    }
-
-    const files = fs.readdirSync(defDir);
-    return files
-      .filter((f) => f.endsWith('.json'))
-      .map((f) => f.replace('.json', ''));
-  } catch {
-    return [];
-  }
+  return getAllPackageIds();
 }
 
 /**
  * Check if a pipeline has a definition
  */
 export function hasPipelineDefinition(pipelineId: string): boolean {
-  const defDir = getDefinitionsDir();
-  const filePath = path.join(defDir, `${pipelineId}.json`);
-  return fs.existsSync(filePath);
+  return hasPackage(pipelineId);
+}
+
+/**
+ * Extract the process name from a Nextflow trace process string.
+ * Nextflow process names come in formats like:
+ * - "NFCORE_MAG:MAG:FASTQC_RAW (sample1)"
+ * - "NFCORE_MAG:MAG:BINNING_PREP:BOWTIE2_ASSEMBLY_ALIGN (sample1)"
+ * - "FASTQC"
+ *
+ * This function extracts the last process name component (e.g., "FASTQC_RAW", "BOWTIE2_ASSEMBLY_ALIGN")
+ */
+export function extractProcessName(traceProcessName: string): string {
+  // Remove sample suffix like " (sample1)" if present
+  const withoutSuffix = traceProcessName.split(' ')[0];
+
+  // Get the last part after the final colon
+  const parts = withoutSuffix.split(':');
+  return parts[parts.length - 1];
+}
+
+/**
+ * Find a step in a pipeline definition by matching a Nextflow process name.
+ * This is the definition-driven replacement for MAG-specific step mapping.
+ *
+ * @param pipelineId - The pipeline ID (e.g., "mag")
+ * @param processName - The Nextflow process name from trace/weblog
+ * @returns The matching step definition, or null if not found
+ */
+export function findStepByProcess(
+  pipelineId: string,
+  processName: string
+): PipelineStepDef | null {
+  return findStepByProcessFromPackage(pipelineId, processName);
+}
+
+/**
+ * Get all steps for a pipeline, sorted by dependency order.
+ * This is used for initializing step progress when a run starts.
+ *
+ * @param pipelineId - The pipeline ID (e.g., "mag")
+ * @returns Array of steps sorted by execution order, or empty array if not found
+ */
+export function getStepsForPipeline(pipelineId: string): PipelineStepDef[] {
+  return getStepsFromPackage(pipelineId);
+}
+
+/**
+ * Get a specific step by ID from a pipeline definition.
+ *
+ * @param pipelineId - The pipeline ID (e.g., "mag")
+ * @param stepId - The step ID (e.g., "assembly")
+ * @returns The step definition, or null if not found
+ */
+export function getStepById(
+  pipelineId: string,
+  stepId: string
+): PipelineStepDef | null {
+  const definition = getPackageDefinitionFromPackage(pipelineId);
+  return definition?.steps.find((s) => s.id === stepId) as PipelineStepDef || null;
 }

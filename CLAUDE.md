@@ -109,7 +109,7 @@ Default login credentials after seeding:
 
 ### Adding nf-core Pipelines
 
-Pipeline workflow definitions are stored as JSON files in `data/pipeline-definitions/`.
+Pipeline packages live under `pipelines/<id>/` (manifest + definition + registry + samplesheet).
 See **[docs/adding-pipelines.md](docs/adding-pipelines.md)** for the full guide.
 
 **Quick start:**
@@ -118,11 +118,10 @@ See **[docs/adding-pipelines.md](docs/adding-pipelines.md)** for the full guide.
 npx ts-node scripts/generate-pipeline-def.ts <pipeline-name>
 
 # 2. Edit the generated JSON to fix workflow dependencies
-vim data/pipeline-definitions/<pipeline-name>.json
+vim pipelines/<pipeline-name>/definition.json
 
-# 3. Done! The app automatically loads it
+# 3. Add manifest + registry + samplesheet in the same folder
 ```
 
 **Available pipelines:**
 - `mag` - Metagenome assembly and binning
-- (add more by creating JSON files)
