@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { Footer } from "@/components/layout/Footer";
+import { UpdateBanner } from "@/components/admin/UpdateBanner";
 
 export default async function AdminLayout({
   children,
@@ -21,6 +22,7 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen bg-stone-50">
+      <UpdateBanner />
       <DashboardShell user={session.user}>
         {children}
       </DashboardShell>

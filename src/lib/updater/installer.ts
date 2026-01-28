@@ -16,9 +16,13 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import type { ReleaseInfo, UpdateProgress } from './types';
 
 const execAsync = promisify(exec);
+
+// Minimum required disk space in bytes (150MB)
+const MIN_DISK_SPACE = 150 * 1024 * 1024;
 
 // Progress callback type
 type ProgressCallback = (progress: UpdateProgress) => void;
@@ -27,6 +31,29 @@ type ProgressCallback = (progress: UpdateProgress) => void;
 const INSTALL_DIR = process.cwd();
 const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
+
+/**
+ * Check available disk space
+ */
+async function checkDiskSpace(): Promise<{ free: number; required: number; sufficient: boolean }> {
+  try {
+    if (os.platform() === 'darwin' || os.platform() === 'linux') {
+      const { stdout } = await execAsync(`df -k "${INSTALL_DIR}" | tail -1 | awk '{print $4}'`);
+      const freeKB = parseInt(stdout.trim(), 10);
+      const freeBytes = freeKB * 1024;
+      return {
+        free: freeBytes,
+        required: MIN_DISK_SPACE,
+        sufficient: freeBytes >= MIN_DISK_SPACE,
+      };
+    }
+    // Windows or unknown - skip check
+    return { free: MIN_DISK_SPACE * 2, required: MIN_DISK_SPACE, sufficient: true };
+  } catch {
+    // If check fails, assume sufficient space
+    return { free: MIN_DISK_SPACE * 2, required: MIN_DISK_SPACE, sufficient: true };
+  }
+}
 
 /**
  * Install an update
@@ -40,6 +67,15 @@ export async function installUpdate(
   };
 
   try {
+    // Step 0: Check disk space
+    report('downloading', 5, 'Checking disk space...');
+    const diskSpace = await checkDiskSpace();
+    if (!diskSpace.sufficient) {
+      const freeMB = Math.round(diskSpace.free / 1024 / 1024);
+      const requiredMB = Math.round(diskSpace.required / 1024 / 1024);
+      throw new Error(`Insufficient disk space: ${freeMB}MB free, ${requiredMB}MB required`);
+    }
+
     // Step 1: Download
     report('downloading', 10, `Downloading SeqDesk ${release.version}...`);
     const tarballPath = await downloadRelease(release);
