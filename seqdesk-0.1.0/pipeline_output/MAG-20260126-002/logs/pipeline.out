@@ -1,0 +1,6 @@
+Starting MAG pipeline at Tue Jan 27 00:27:58 CET 2026
+
+[1m[38;5;232m[48;5;43m N E X T F L O W [0;2m  ~  [mversion 25.10.3[m
+[K
+Pulling nf-core/mag ...
+WARN: Cannot read project manifest -- Cause: Remote resource not found: https://api.github.com/repos/nf-core/mag/contents/nextflow.config?ref=latest

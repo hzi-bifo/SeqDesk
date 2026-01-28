@@ -1,0 +1,2 @@
+2026-01-27 18:19:11	-	maniac_ekeblad	-	ccfb744aab0c00a805a2dfbf7d9c9d8729c30805	adbbc627-7831-4eaa-915e-e5293a0adf2c	nextflow run nf-core/mag -profile test,conda -stub
+2026-01-27 18:24:30	57.1s	focused_dijkstra	ERR	ccfb744aab0c00a805a2dfbf7d9c9d8729c30805	19da1d0a-0d1e-48d1-9734-a55e1e86f44c	nextflow run nf-core/mag -profile test,conda -stub --outdir ./pipeline_test_out

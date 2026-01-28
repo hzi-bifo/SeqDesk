@@ -1,0 +1,96 @@
+{
+  "name": "MIxS Sequencing",
+  "description": "GSC MIxS sequencing and nucleic acid processing fields",
+  "version": "6.0.0",
+  "source": "https://genomicsstandardsconsortium.github.io/mixs/",
+  "category": "mixs",
+  "fields": [
+    {
+      "type": "text",
+      "label": "Sequencing Method",
+      "name": "seq_meth",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Illumina MiSeq, Oxford Nanopore",
+      "helpText": "Sequencing method/technology used (MIxS: seq_meth)",
+      "example": "Illumina MiSeq"
+    },
+    {
+      "type": "text",
+      "label": "Target Gene",
+      "name": "target_gene",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 16S rRNA, ITS, 18S rRNA",
+      "helpText": "Target gene or locus for amplicon sequencing (MIxS: target_gene)",
+      "example": "16S rRNA V3-V4 region"
+    },
+    {
+      "type": "text",
+      "label": "Target Subfragment",
+      "name": "target_subfragment",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., V3-V4, V1-V3",
+      "helpText": "Targeted subfragment of the gene (MIxS: target_subfragment)",
+      "example": "V3-V4"
+    },
+    {
+      "type": "text",
+      "label": "PCR Primers",
+      "name": "pcr_primers",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 515F/806R",
+      "helpText": "PCR primers used for amplification (MIxS: pcr_primers)",
+      "example": "FWD:GTGCCAGCMGCCGCGGTAA; REV:GGACTACHVGGGTWTCTAAT"
+    },
+    {
+      "type": "text",
+      "label": "PCR Conditions",
+      "name": "pcr_cond",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 95C for 3min, 30 cycles of...",
+      "helpText": "PCR cycling conditions used (MIxS: pcr_cond)"
+    },
+    {
+      "type": "text",
+      "label": "Nucleic Acid Extraction",
+      "name": "nucl_acid_ext",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Qiagen PowerSoil kit",
+      "helpText": "DNA/RNA extraction method or kit (MIxS: nucl_acid_ext)",
+      "example": "Qiagen PowerSoil DNA isolation kit"
+    },
+    {
+      "type": "text",
+      "label": "Nucleic Acid Amplification",
+      "name": "nucl_acid_amp",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., PCR, MDA",
+      "helpText": "Amplification method used (MIxS: nucl_acid_amp)",
+      "example": "PCR"
+    },
+    {
+      "type": "select",
+      "label": "Library Construction Method",
+      "name": "lib_const_meth",
+      "required": false,
+      "visible": true,
+      "helpText": "Library construction method (MIxS: lib_const_meth)",
+      "options": [
+        { "value": "nextera", "label": "Nextera" },
+        { "value": "truseq", "label": "TruSeq" },
+        { "value": "kapa", "label": "KAPA" },
+        { "value": "nebnext", "label": "NEBNext" },
+        { "value": "smrt", "label": "SMRTbell" },
+        { "value": "ligation", "label": "Ligation sequencing" },
+        { "value": "rapid", "label": "Rapid sequencing" },
+        { "value": "other", "label": "Other" }
+      ]
+    }
+  ]
+}

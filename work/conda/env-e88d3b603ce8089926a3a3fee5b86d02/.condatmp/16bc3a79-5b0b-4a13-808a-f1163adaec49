@@ -1,0 +1,16 @@
+prefix=/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+sysconfdir=/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02/etc
+localstatedir=/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02/var
+confdir=/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02/etc/fonts
+cachedir=/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02/var/cache/fontconfig
+
+Name: Fontconfig
+Description: Font configuration and customization library
+Version: 2.15.0
+Requires: freetype2 >=  21.0.15
+Requires.private: expat
+Libs: -L${libdir} -lfontconfig
+Cflags: -I${includedir}
