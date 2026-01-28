@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Standalone output for distribution
+  // Creates minimal deployment without node_modules
+  output: "standalone",
 };
 
 export default nextConfig;
