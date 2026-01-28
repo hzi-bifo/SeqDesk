@@ -1,0 +1,1303 @@
+Jan-27 18:24:27.181 [main] DEBUG nextflow.cli.Launcher - $> nextflow run nf-core/mag -profile test,conda -stub --outdir ./pipeline_test_out
+Jan-27 18:24:27.215 [main] DEBUG nextflow.cli.CmdRun - N E X T F L O W  ~  version 25.10.3
+Jan-27 18:24:27.225 [main] DEBUG nextflow.plugin.PluginsFacade - Setting up plugin manager > mode=prod; embedded=false; plugins-dir=/Users/pmu15/.nextflow/plugins; core-plugins: nf-amazon@3.4.3,nf-azure@1.20.2,nf-cloudcache@0.5.0,nf-codecommit@0.5.0,nf-console@1.3.0,nf-google@1.23.4,nf-k8s@1.2.2,nf-tower@1.17.4,nf-wave@1.16.1
+Jan-27 18:24:27.236 [main] INFO  o.pf4j.DefaultPluginStatusProvider - Enabled plugins: []
+Jan-27 18:24:27.236 [main] INFO  o.pf4j.DefaultPluginStatusProvider - Disabled plugins: []
+Jan-27 18:24:27.238 [main] INFO  org.pf4j.DefaultPluginManager - PF4J version 3.12.0 in 'deployment' mode
+Jan-27 18:24:27.243 [main] DEBUG nextflow.util.RetryConfig - Missing nextflow session - using default retry config
+Jan-27 18:24:27.299 [main] INFO  org.pf4j.AbstractPluginManager - No plugins
+Jan-27 18:24:27.304 [main] DEBUG nextflow.scm.ProviderConfig - Using SCM config path: /Users/pmu15/.nextflow/scm
+Jan-27 18:24:27.637 [main] DEBUG nextflow.scm.AssetManager - Git config: /Users/pmu15/.nextflow/assets/nf-core/mag/.git/config; branch: main; remote: origin; url: https://github.com/nf-core/mag.git
+Jan-27 18:24:27.650 [main] DEBUG nextflow.scm.RepositoryFactory - Found Git repository result: [RepositoryFactory]
+Jan-27 18:24:27.654 [main] DEBUG nextflow.scm.AssetManager - Git config: /Users/pmu15/.nextflow/assets/nf-core/mag/.git/config; branch: main; remote: origin; url: https://github.com/nf-core/mag.git
+Jan-27 18:24:28.783 [main] DEBUG nextflow.config.ConfigBuilder - Found config base: /Users/pmu15/.nextflow/assets/nf-core/mag/nextflow.config
+Jan-27 18:24:28.784 [main] DEBUG nextflow.config.ConfigBuilder - Parsing config file: /Users/pmu15/.nextflow/assets/nf-core/mag/nextflow.config
+Jan-27 18:24:28.789 [main] DEBUG nextflow.config.ConfigBuilder - Applying config profile: `test,conda`
+Jan-27 18:24:29.814 [main] DEBUG nextflow.config.ConfigBuilder - Available config profiles: [bih, cfc_dev, uzl_omics, ifb_core, embl_hd, denbi_qbic, alice, mjolnir_globe, uppmax, giga, incliva, ilifu, ki_luria, uge, icr_alma, rosalind_uge, lugh, mccleary, unibe_ibu, vai, czbiohub_aws, jax, roslin, iris, tes, scw, unc_longleaf, tigem, tubingen_apg, apollo, ipop_up, vsc_calcua, pdc_kth, ceci_nic5, ccga_cau, humantechnopole, stjude, daisybio, eddie, medair, biowulf, apptainer, bi, test_minimal, bigpurple, adcra, cedars, pawsey_setonix, vsc_kul_uhasselt, pawsey_nimbus, rki, ucl_myriad, utd_ganymede, charliecloud, fred_hutch, seattlechildrens, icr_davros, ceres, munin, rosalind, hasta, cfc, emulate_amd64, uzh, shu_bmrc, ebi_codon_slurm, test_alternatives, ebc, ccga_dx, test_hybrid, crick, ku_sund_danhead, marvin, lrz_cm4, shifter, biohpc_gen, mana, mamba, york_viking, unc_lccc, wehi, awsbatch, wustl_htcf, arcc, ceci_dragon2, imperial, maestro, software_license, cannon, genotoul, nci_gadi, abims, eva_grace, janelia, nu_genomics, googlebatch, oist, sahmri, kaust, alliance_canada, arm64, mpcdf, leicester, vsc_ugent, create, sage, cambridge, jex, test_assembly_input, podman, ebi_codon, cheaha, xanadu, nyu_hpc, test, marjorie, test_longreadonly_alternatives, computerome, ucd_sonic, gpu, test_single_end, seg_globe, mssm, sanger, dkfz, bluebear, pasteur, einstein, ethz_euler, m3c, test_full, imb, ucl_cscluster, tuos_stanage, azurebatch, seadragon, crukmi, csiro_petrichor, qmul_apocrita, wave, docker, engaging, gis, hypatia, psmn, eva, unity, cropdiversityhpc, nygc, fgcz, conda, crg, singularity, mpcdf_viper, pe2, dirac, self_hosted_runner, tufts, uw_hyak_pedslabs, binac2, debug, hki_genie, genouest, cbe, unsw_katana, utd_juno, phoenix, seawulf, test_longreadonly, uod_hpc, fub_curta, lovelace, uct_hpc, aws_tower, binac, fsu_draco]
+Jan-27 18:24:29.847 [main] DEBUG nextflow.plugin.PluginsFacade - Plugins declared=[nf-schema@2.5.1]
+Jan-27 18:24:29.848 [main] DEBUG nextflow.plugin.PluginsFacade - Plugins default=[]
+Jan-27 18:24:29.848 [main] DEBUG nextflow.plugin.PluginsFacade - Plugins resolved requirement=[nf-schema@2.5.1]
+Jan-27 18:24:30.113 [main] DEBUG n.plugin.HttpPluginRepository - Registry request: https://registry.nextflow.io/api/v1/plugins/dependencies?plugins=nf-schema%402.5.1&nextflowVersion=25.10.3
+- code: 200
+- body: {"plugins":[{"id":"nf-schema","downloadCount":147670,"downloadGhCount":516708,"releases":[{"version":"2.5.1","url":"https://registry.nextflow.io/api/v1/plugins/nf-schema/2.5.1/download/nf-schema-2.5.1.zip","date":"2025-09-02T14:48:39.714892Z","sha512sum":"82c9c17a9f77319386e670e7b52cf79b067320001f083ccdfec77dada9fd53499506200fd10b493cf8f6fc0420f42e2314481c353ca14b3a92f354bf07ad5c13","requires":">=25.04.0","dependsOn":[],"downloadCount":77663,"downloadGhCount":34342,"status":"PUBLISHED","spec":null,"description":null}],"projectUrl":"https://github.com/nextflow-io/nf-schema","provider":"nextflow-io","description":null}]}
+Jan-27 18:24:30.128 [main] DEBUG nextflow.plugin.PluginUpdater - Installing plugin nf-schema version: 2.5.1
+Jan-27 18:24:30.136 [main] INFO  org.pf4j.AbstractPluginManager - Plugin 'nf-schema@2.5.1' resolved
+Jan-27 18:24:30.136 [main] INFO  org.pf4j.AbstractPluginManager - Start plugin 'nf-schema@2.5.1'
+Jan-27 18:24:30.144 [main] DEBUG nextflow.plugin.BasePlugin - Plugin started nf-schema@2.5.1
+Jan-27 18:24:30.146 [main] DEBUG n.secret.LocalSecretsProvider - Secrets store: /Users/pmu15/.nextflow/secrets/store.json
+Jan-27 18:24:30.147 [main] DEBUG nextflow.secret.SecretsLoader - Discovered secrets providers: [nextflow.secret.LocalSecretsProvider@1f70bce5] - activable => nextflow.secret.LocalSecretsProvider@1f70bce5
+Jan-27 18:24:30.148 [main] DEBUG nextflow.cli.CmdRun - Applied DSL=2 by global default
+Jan-27 18:24:30.148 [main] DEBUG nextflow.cli.CmdRun - Launching `https://github.com/nf-core/mag` [focused_dijkstra] DSL2 - revision: ccfb744aab [main]
+Jan-27 18:24:30.168 [main] DEBUG nextflow.Session - Session UUID: 19da1d0a-0d1e-48d1-9734-a55e1e86f44c
+Jan-27 18:24:30.168 [main] DEBUG nextflow.Session - Run name: focused_dijkstra
+Jan-27 18:24:30.168 [main] DEBUG nextflow.Session - Executor pool size: 14
+Jan-27 18:24:30.171 [main] DEBUG nextflow.file.FilePorter - File porter settings maxRetries=3; maxTransfers=50; pollTimeout=null
+Jan-27 18:24:30.172 [main] DEBUG nextflow.util.ThreadPoolBuilder - Creating thread pool 'FileTransfer' minSize=10; maxSize=42; workQueue=LinkedBlockingQueue[-1]; allowCoreThreadTimeout=false
+Jan-27 18:24:30.181 [main] DEBUG nextflow.cli.CmdRun - 
+  Version: 25.10.3 build 10983
+  Created: 22-01-2026 15:34 UTC (16:34 CEST)
+  System: Mac OS X 15.7.3
+  Runtime: Groovy 4.0.28 on OpenJDK 64-Bit Server VM 17.0.17+10-LTS
+  Encoding: UTF-8 (UTF-8)
+  Process: 59127@BIFO-MBP003 [172.17.188.61]
+  CPUs: 14 - Mem: 48 GB (12.1 GB) - Swap: 7 GB (1 GB)
+Jan-27 18:24:30.185 [main] DEBUG nextflow.Session - Work-dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work [Mac OS X]
+Jan-27 18:24:30.196 [main] DEBUG nextflow.executor.ExecutorFactory - Extension executors providers=[]
+Jan-27 18:24:30.200 [main] DEBUG nextflow.Session - Observer factory (v2): LinObserverFactory
+Jan-27 18:24:30.201 [main] DEBUG nextflow.Session - Observer factory (v2): DefaultObserverFactory
+Jan-27 18:24:30.207 [main] DEBUG nextflow.Session - Observer factory (v2): ValidationObserverFactory
+Jan-27 18:24:30.225 [main] DEBUG nextflow.cache.CacheFactory - Using Nextflow cache factory: nextflow.cache.DefaultCacheFactory
+Jan-27 18:24:30.229 [main] DEBUG nextflow.util.CustomThreadPool - Creating default thread pool > poolSize: 15; maxThreads: 1000
+Jan-27 18:24:30.250 [main] DEBUG nextflow.Session - Session start
+Jan-27 18:24:30.253 [main] DEBUG nextflow.trace.TraceFileObserver - Workflow started -- trace file: ./pipeline_test_out/pipeline_info/execution_trace_2026-01-27_18-24-28.txt
+Jan-27 18:24:30.302 [main] DEBUG nextflow.script.ScriptRunner - > Launching execution
+Jan-27 18:24:30.677 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsSummaryMap:paramsSummaryMap]; plugin Id: nf-schema
+Jan-27 18:24:30.680 [main] DEBUG n.validation.config.ValidationConfig - Set `validation.monochromeLogs` to false
+Jan-27 18:24:30.681 [main] DEBUG n.validation.config.ValidationConfig - Added the following parameters to the ignored parameters: [genomes]
+Jan-27 18:24:30.951 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsSummaryLog:paramsSummaryLog]; plugin Id: nf-schema
+Jan-27 18:24:30.951 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [validateParameters:validateParameters]; plugin Id: nf-schema
+Jan-27 18:24:30.951 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsHelp:paramsHelp]; plugin Id: nf-schema
+Jan-27 18:24:30.953 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsSummaryMap:paramsSummaryMap]; plugin Id: nf-schema
+Jan-27 18:24:30.953 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [samplesheetToList:samplesheetToList]; plugin Id: nf-schema
+Jan-27 18:24:30.953 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsHelp:paramsHelp]; plugin Id: nf-schema
+Jan-27 18:24:34.442 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsSummaryLog:paramsSummaryLog]; plugin Id: nf-schema
+Jan-27 18:24:34.442 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [validateParameters:validateParameters]; plugin Id: nf-schema
+Jan-27 18:24:34.442 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsHelp:paramsHelp]; plugin Id: nf-schema
+Jan-27 18:24:34.443 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsSummaryMap:paramsSummaryMap]; plugin Id: nf-schema
+Jan-27 18:24:34.443 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [samplesheetToList:samplesheetToList]; plugin Id: nf-schema
+Jan-27 18:24:34.443 [main] DEBUG nextflow.script.IncludeDef - Loading included plugin extensions with names: [paramsHelp:paramsHelp]; plugin Id: nf-schema
+Jan-27 18:24:34.808 [main] INFO  nextflow.Nextflow - 
+-[2m----------------------------------------------------[0m-
+                                        [0;32m,--.[0;30m/[0;32m,-.[0m
+[0;34m        ___     __   __   __   ___     [0;32m/,-._.--~'[0m
+[0;34m  |\ | |__  __ /  ` /  \ |__) |__         [0;33m}  {[0m
+[0;34m  | \| |       \__, \__/ |  \ |___     [0;32m\`-._,-`-,[0m
+                                        [0;32m`._,._,'[0m
+[0;35m  nf-core/mag 5.3.0[0m
+-[2m----------------------------------------------------[0m-
+
+Jan-27 18:24:34.823 [main] INFO  nextflow.Nextflow - [1mInput/output options[0m
+  [0;34minput                      : [0;32mhttps://raw.githubusercontent.com/nf-core/test-datasets/mag/samplesheets/samplesheet.multirun.v4.csv[0m
+  [0;34moutdir                     : [0;32m./pipeline_test_out[0m
+
+[1mInstitutional config options[0m
+  [0;34mconfig_profile_name        : [0;32mTest profile[0m
+  [0;34mconfig_profile_description : [0;32mMinimal test dataset to check pipeline function[0m
+
+[1mGeneric options[0m
+  [0;34mtrace_report_suffix        : [0;32m2026-01-27_18-24-28[0m
+
+[1mReproducibility options[0m
+  [0;34mmegahit_fix_cpu_1          : [0;32mtrue[0m
+  [0;34mspades_fix_cpus            : [0;32m1[0m
+
+[1mTaxonomic profiling options[0m
+  [0;34mcat_db                     : [0;32mhttps://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/cat/minigut_cat.tar.gz[0m
+  [0;34mcat_no_suggestive_asterisks: [0;32mtrue[0m
+  [0;34mgtdb_db                    : [0;32mhttps://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/gtdbtk/gtdbtk_mockup_20250422.tar.gz[0m
+  [0;34mgtdbtk_min_completeness    : [0;32m0.01[0m
+  [0;34mgtdbtk_max_contamination   : [0;32m10.0[0m
+  [0;34mgtdbtk_use_full_tree       : [0;32mtrue[0m
+  [0;34mgtdbtk_skip_aniscreen      : [0;32mtrue[0m
+
+[1mGene prediction and annotation options[0m
+  [0;34mprokka_fast_mode           : [0;32mtrue[0m
+
+[1mBinning options[0m
+  [0;34mskip_concoct               : [0;32mtrue[0m
+  [0;34mskip_comebin               : [0;32mtrue[0m
+  [0;34mskip_metabinner            : [0;32mtrue[0m
+  [0;34mmin_length_unbinned_contigs: [0;32m1[0m
+  [0;34mmax_unbinned_contigs       : [0;32m2[0m
+
+[1mBin quality check options[0m
+  [0;34mrun_busco                  : [0;32mtrue[0m
+  [0;34mbusco_db                   : [0;32mhttps://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/busco/bacteria_odb10.2024-01-08.tar.gz[0m
+  [0;34mbusco_db_lineage           : [0;32mbacteria_odb10[0m
+  [0;34mbusco_clean                : [0;32mtrue[0m
+
+[1mCore Nextflow options[0m
+  [0;34mrevision                   : [0;32mmain[0m
+  [0;34mrunName                    : [0;32mfocused_dijkstra[0m
+  [0;34mlaunchDir                  : [0;32m/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk[0m
+  [0;34mworkDir                    : [0;32m/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work[0m
+  [0;34mprojectDir                 : [0;32m/Users/pmu15/.nextflow/assets/nf-core/mag[0m
+  [0;34muserName                   : [0;32mpmu15[0m
+  [0;34mprofile                    : [0;32mtest,conda[0m
+  [0;34mconfigFiles                : [0;32m/Users/pmu15/.nextflow/assets/nf-core/mag/nextflow.config[0m
+
+!! Only displaying parameters that differ from the pipeline defaults !!
+-[2m----------------------------------------------------[0m-
+Jan-27 18:24:34.823 [main] INFO  nextflow.Nextflow - 
+* The pipeline
+    https://doi.org/10.1093/nargab/lqac007
+
+* The nf-core framework
+    https://doi.org/10.1038/s41587-020-0439-x
+
+* Software dependencies
+    https://github.com/nf-core/mag/blob/main/CITATIONS.md
+
+Jan-27 18:24:34.825 [main] DEBUG n.v.parameters.ParameterValidator - Starting parameters validation
+Jan-27 18:24:35.479 [main] DEBUG n.v.v.evaluators.SchemaEvaluator - Started validating /nf-core/test-datasets/mag/samplesheets/samplesheet.multirun.v4.csv
+Jan-27 18:24:36.220 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:36.422 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:36.679 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:36.873 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:37.665 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:37.965 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:38.394 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:38.665 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:38.887 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:39.148 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:39.331 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:39.546 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:39.805 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:39.979 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:40.333 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:40.525 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:41.056 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:24:41.357 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:24:41.538 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:24:41.898 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:24:42.365 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:24:42.650 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:24:42.917 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:24:43.114 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:24:43.255 [main] DEBUG n.v.v.evaluators.SchemaEvaluator - Validation of file 'https://raw.githubusercontent.com/nf-core/test-datasets/mag/samplesheets/samplesheet.multirun.v4.csv' passed!
+Jan-27 18:24:43.971 [main] DEBUG n.plugin.HttpPluginRepository - Registry request: https://registry.nextflow.io/api/v1/plugins/dependencies?plugins=nf-amazon%403.4.3&nextflowVersion=25.10.3
+- code: 200
+- body: {"plugins":[{"id":"nf-amazon","downloadCount":81864,"downloadGhCount":1419264,"releases":[{"version":"3.4.3","url":"https://registry.nextflow.io/api/v1/plugins/nf-amazon/3.4.3/download/nf-amazon-3.4.3.zip","date":"2026-01-22T15:37:57.648851Z","sha512sum":"762bc2b9efbbd88e674e99a97d7c212d8665946c902f61ce7a0f073728dbb7d9295ad9bc27e3d36dab94db2bfa9f22fc58bc0f066709ba0a5d3094c94123c0a1","requires":">=25.09.2-edge","dependsOn":[],"downloadCount":902,"downloadGhCount":0,"status":"PUBLISHED","spec":null,"description":null}],"projectUrl":"https://github.com/nextflow-io/nf-amazon","provider":"nextflow-io","description":null}]}
+Jan-27 18:24:43.972 [main] DEBUG nextflow.plugin.PluginUpdater - Installing plugin nf-amazon version: 3.4.3
+Jan-27 18:24:43.977 [main] INFO  org.pf4j.AbstractPluginManager - Plugin 'nf-amazon@3.4.3' resolved
+Jan-27 18:24:43.977 [main] INFO  org.pf4j.AbstractPluginManager - Start plugin 'nf-amazon@3.4.3'
+Jan-27 18:24:43.990 [main] DEBUG nextflow.plugin.BasePlugin - Plugin started nf-amazon@3.4.3
+Jan-27 18:24:43.996 [main] DEBUG nextflow.file.FileHelper - > Added 'S3FileSystemProvider' to list of installed providers [s3]
+Jan-27 18:24:43.996 [main] DEBUG nextflow.file.FileHelper - Started plugin 'nf-amazon' required to handle file: s3://ngi-igenomes/igenomes/
+Jan-27 18:24:43.999 [main] DEBUG nextflow.file.FileHelper - Creating a file system instance for provider: S3FileSystemProvider; config=[:]
+Jan-27 18:24:44.004 [main] DEBUG nextflow.cloud.aws.config.AwsConfig - AWS S3 config properties: {max_error_retry=5}
+Jan-27 18:24:46.055 [main] DEBUG nextflow.cloud.aws.AwsClientFactory - No AWS credentials available - falling back to anonymous access
+Jan-27 18:24:47.030 [main] DEBUG nextflow.cloud.aws.nio.S3Client - Unable to fetch caller account - (Service: S3, Status Code: 307, Request ID: A20JHS85DXYQJX95, Extended Request ID: 89iqaUUIoyIqExQTrZzJ63Drc1wHGALkhNGjK60CuOiPORobDNr1vWh/RDLxqjSX8k2xDpjhDfM=) (SDK Attempt Count: 1) 
+Jan-27 18:24:58.361 [main] DEBUG n.v.parameters.ParameterValidator - Finishing parameters validation
+Jan-27 18:24:58.363 [main] WARN  nextflow.Nextflow - nf-core pipelines do not accept positional arguments. The positional argument `true` has been detected.
+HINT: A common mistake is to provide multiple values separated by spaces e.g. `-profile test, docker`.
+
+Jan-27 18:24:58.932 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:59.112 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:59.290 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:59.487 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:24:59.741 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:24:59.927 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:00.164 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:00.854 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:01.018 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:01.284 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:01.478 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:01.821 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:02.001 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:02.260 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:02.436 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:02.624 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:02.892 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:03.150 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:03.477 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:03.641 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:03.906 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:04.082 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:04.418 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:04.584 [main] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:06.311 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW
+Jan-27 18:25:06.314 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:FASTQC_RAW` matches process NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW
+Jan-27 18:25:06.318 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.318 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.323 [main] DEBUG nextflow.executor.Executor - [warm up] executor > local
+Jan-27 18:25:06.327 [main] DEBUG n.processor.LocalPollingMonitor - Creating local task monitor for executor 'local' > cpus=14; memory=48 GB; capacity=14; pollInterval=100ms; dumpInterval=5m
+Jan-27 18:25:06.328 [main] DEBUG n.processor.TaskPollingMonitor - >>> barrier register (monitor: local)
+Jan-27 18:25:06.336 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.350 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP
+Jan-27 18:25:06.350 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:FASTP` matches process NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP
+Jan-27 18:25:06.353 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.353 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.353 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.364 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.364 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.364 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_BUILD': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.367 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:BOWTIE2_PHIX_REMOVAL_ALIGN` matches process NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_ALIGN
+Jan-27 18:25:06.369 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.369 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.369 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_ALIGN': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.372 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_TRIMMED
+Jan-27 18:25:06.373 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:FASTQC_TRIMMED` matches process NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_TRIMMED
+Jan-27 18:25:06.374 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.374 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.374 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_TRIMMED': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.379 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:CAT_FASTQ
+Jan-27 18:25:06.381 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.381 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.381 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:CAT_FASTQ': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.389 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_RAW
+Jan-27 18:25:06.390 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:NANOPLOT_RAW` matches process NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_RAW
+Jan-27 18:25:06.391 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.392 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.392 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_RAW': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.394 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:PORECHOP_ABI
+Jan-27 18:25:06.395 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:PORECHOP_ABI` matches process NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:PORECHOP_ABI
+Jan-27 18:25:06.396 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.396 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.397 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:PORECHOP_ABI': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.399 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOLYSE
+Jan-27 18:25:06.399 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:NANOLYSE` matches process NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOLYSE
+Jan-27 18:25:06.401 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.401 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.401 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOLYSE': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.405 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:FILTLONG
+Jan-27 18:25:06.406 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:FILTLONG` matches process NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:FILTLONG
+Jan-27 18:25:06.407 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.407 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.407 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:FILTLONG': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.409 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_FILTERED
+Jan-27 18:25:06.410 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:NANOPLOT_FILTERED` matches process NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_FILTERED
+Jan-27 18:25:06.411 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.411 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.411 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_FILTERED': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.414 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:CAT_FASTQ_LONGREADS
+Jan-27 18:25:06.416 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.416 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.416 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:CAT_FASTQ_LONGREADS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.424 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:ASSEMBLY:POOL_LONG_READS
+Jan-27 18:25:06.425 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.426 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.426 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:POOL_LONG_READS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.430 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high` matches labels `process_high` for process with name NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:METASPADES
+Jan-27 18:25:06.431 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METASPADES` matches process NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:METASPADES
+Jan-27 18:25:06.432 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.432 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.433 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:METASPADES': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.437 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high` matches labels `process_high` for process with name NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:MEGAHIT
+Jan-27 18:25:06.437 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MEGAHIT` matches process NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:MEGAHIT
+Jan-27 18:25:06.439 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.439 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.439 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:MEGAHIT': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.444 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high` matches labels `process_high` for process with name NFCORE_MAG:MAG:ASSEMBLY:HYBRID_ASSEMBLY:METASPADESHYBRID
+Jan-27 18:25:06.445 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METASPADESHYBRID` matches process NFCORE_MAG:MAG:ASSEMBLY:HYBRID_ASSEMBLY:METASPADESHYBRID
+Jan-27 18:25:06.446 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.446 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.446 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:HYBRID_ASSEMBLY:METASPADESHYBRID': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.452 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high` matches labels `process_high` for process with name NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:FLYE
+Jan-27 18:25:06.453 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:FLYE` matches process NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:FLYE
+Jan-27 18:25:06.454 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.454 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.454 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:FLYE': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.458 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:METAMDBG_ASM
+Jan-27 18:25:06.459 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METAMDBG_ASM` matches process NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:METAMDBG_ASM
+Jan-27 18:25:06.460 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.460 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.460 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:METAMDBG_ASM': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.464 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_SHORTREAD_ASSEMBLIES
+Jan-27 18:25:06.466 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.466 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.466 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_SHORTREAD_ASSEMBLIES': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.467 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_LONGREAD_ASSEMBLIES
+Jan-27 18:25:06.469 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.469 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.469 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_LONGREAD_ASSEMBLIES': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.471 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:QUAST` matches process NFCORE_MAG:MAG:QUAST
+Jan-27 18:25:06.472 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.472 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.472 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:QUAST': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.474 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:PRODIGAL
+Jan-27 18:25:06.474 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:PRODIGAL` matches process NFCORE_MAG:MAG:PRODIGAL
+Jan-27 18:25:06.475 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.475 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.475 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:PRODIGAL': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.480 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.480 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.480 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_BUILD': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.485 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:BOWTIE2_ASSEMBLY_ALIGN` matches process NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_ALIGN
+Jan-27 18:25:06.486 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.486 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.487 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_ALIGN': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.491 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_INDEX
+Jan-27 18:25:06.494 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.494 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.494 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_INDEX': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.501 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high` matches labels `process_high` for process with name NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN
+Jan-27 18:25:06.502 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MINIMAP2_ASSEMBLY_ALIGN` matches process NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN
+Jan-27 18:25:06.503 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.503 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.503 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.513 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD
+Jan-27 18:25:06.513 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD` matches process NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD
+Jan-27 18:25:06.514 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.514 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.515 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.517 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD
+Jan-27 18:25:06.517 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD` matches process NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD
+Jan-27 18:25:06.518 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.519 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.519 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.525 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.525 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.525 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:CONVERT_DEPTHS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.529 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BINNING:METABAT2_METABAT2
+Jan-27 18:25:06.529 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:METABAT2_METABAT2` matches process NFCORE_MAG:MAG:BINNING:METABAT2_METABAT2
+Jan-27 18:25:06.530 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.530 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.530 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:METABAT2_METABAT2': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.537 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BINNING:MAXBIN2
+Jan-27 18:25:06.537 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MAXBIN2` matches process NFCORE_MAG:MAG:BINNING:MAXBIN2
+Jan-27 18:25:06.538 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.538 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.538 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:MAXBIN2': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.541 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:BINNING:ADJUST_MAXBIN2_EXT
+Jan-27 18:25:06.541 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:ADJUST_MAXBIN2_EXT` matches process NFCORE_MAG:MAG:BINNING:ADJUST_MAXBIN2_EXT
+Jan-27 18:25:06.542 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.542 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.542 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:ADJUST_MAXBIN2_EXT': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.546 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BINNING:SEMIBIN_SINGLEEASYBIN
+Jan-27 18:25:06.547 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:SEMIBIN_SINGLEEASYBIN` matches process NFCORE_MAG:MAG:BINNING:SEMIBIN_SINGLEEASYBIN
+Jan-27 18:25:06.547 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.547 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.548 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:SEMIBIN_SINGLEEASYBIN': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.551 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:BINNING:SEQKIT_STATS
+Jan-27 18:25:06.551 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:SEQKIT_STATS` matches process NFCORE_MAG:MAG:BINNING:SEQKIT_STATS
+Jan-27 18:25:06.552 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.552 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.552 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:SEQKIT_STATS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.562 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:BINNING:SPLIT_FASTA
+Jan-27 18:25:06.562 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:SPLIT_FASTA` matches process NFCORE_MAG:MAG:BINNING:SPLIT_FASTA
+Jan-27 18:25:06.563 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.563 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.563 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:SPLIT_FASTA': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.566 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:BINNING:GUNZIP_BINS
+Jan-27 18:25:06.567 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.567 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.567 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:GUNZIP_BINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.569 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:BINNING:GUNZIP_UNBINS
+Jan-27 18:25:06.570 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.570 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.570 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BINNING:GUNZIP_UNBINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.580 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MAG_DEPTHS` matches process NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS
+Jan-27 18:25:06.581 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.581 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.581 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.590 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MAG_DEPTHS_PLOT` matches process NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_PLOT
+Jan-27 18:25:06.591 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MAG_DEPTHS_PLOT|MAG_DEPTHS_SUMMARY` matches process NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_PLOT
+Jan-27 18:25:06.592 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.592 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.592 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_PLOT': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.597 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MAG_DEPTHS_PLOT|MAG_DEPTHS_SUMMARY` matches process NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_SUMMARY
+Jan-27 18:25:06.598 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.598 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.598 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_SUMMARY': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.734 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR
+Jan-27 18:25:06.735 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:BUSCO_UNTAR` matches process NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR
+Jan-27 18:25:06.735 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.736 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.736 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.740 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:BIN_QC:BUSCO_BUSCO
+Jan-27 18:25:06.740 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:BUSCO_BUSCO` matches process NFCORE_MAG:MAG:BIN_QC:BUSCO_BUSCO
+Jan-27 18:25:06.741 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.741 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.742 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BIN_QC:BUSCO_BUSCO': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.751 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:BIN_QC:CONCAT_BUSCO_TSV
+Jan-27 18:25:06.752 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:CONCAT_BUSCO_TSV|CONCAT_CHECKM_TSV|CONCAT_CHECKM2_TSV` matches process NFCORE_MAG:MAG:BIN_QC:CONCAT_BUSCO_TSV
+Jan-27 18:25:06.754 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.754 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.755 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BIN_QC:CONCAT_BUSCO_TSV': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.763 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:QUAST_BINS|QUAST_BINS_SUMMARY` matches process NFCORE_MAG:MAG:QUAST_BINS
+Jan-27 18:25:06.764 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.764 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.764 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:QUAST_BINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.768 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:QUAST_BINS|QUAST_BINS_SUMMARY` matches process NFCORE_MAG:MAG:QUAST_BINS_SUMMARY
+Jan-27 18:25:06.768 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.768 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.769 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:QUAST_BINS_SUMMARY': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.986 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR
+Jan-27 18:25:06.988 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.988 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.988 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR': maxForks=0; fair=false; array=0
+Jan-27 18:25:06.994 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_medium` matches labels `process_medium` for process with name NFCORE_MAG:MAG:CATPACK:CATPACK_BINS
+Jan-27 18:25:06.995 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:CATPACK_BINS` matches process NFCORE_MAG:MAG:CATPACK:CATPACK_BINS
+Jan-27 18:25:06.996 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:06.996 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:06.996 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:CATPACK:CATPACK_BINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.000 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:CATPACK:CATPACK_ADDNAMES_BINS
+Jan-27 18:25:07.001 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:CATPACK_ADDNAMES_BINS` matches process NFCORE_MAG:MAG:CATPACK:CATPACK_ADDNAMES_BINS
+Jan-27 18:25:07.002 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.002 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.002 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:CATPACK:CATPACK_ADDNAMES_BINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.008 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:CATPACK:CATPACK_SUMMARISE_BINS
+Jan-27 18:25:07.008 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:CATPACK_SUMMARISE_BINS` matches process NFCORE_MAG:MAG:CATPACK:CATPACK_SUMMARISE_BINS
+Jan-27 18:25:07.009 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.009 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.009 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:CATPACK:CATPACK_SUMMARISE_BINS': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.021 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.021 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.021 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:GTDBTK:GTDBTK_DB_PREPARATION': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.026 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_high_memory` matches labels `process_high_memory` for process with name NFCORE_MAG:MAG:GTDBTK:GTDBTK_CLASSIFYWF
+Jan-27 18:25:07.026 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:GTDBTK_CLASSIFYWF` matches process NFCORE_MAG:MAG:GTDBTK:GTDBTK_CLASSIFYWF
+Jan-27 18:25:07.027 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.027 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.027 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:GTDBTK:GTDBTK_CLASSIFYWF': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.041 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:GTDBTK_SUMMARY` matches process NFCORE_MAG:MAG:GTDBTK:GTDBTK_SUMMARY
+Jan-27 18:25:07.042 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.042 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.042 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:GTDBTK:GTDBTK_SUMMARY': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.051 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:BIN_SUMMARY` matches process NFCORE_MAG:MAG:BIN_SUMMARY
+Jan-27 18:25:07.051 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.052 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.052 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:BIN_SUMMARY': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.057 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_low` matches labels `process_low` for process with name NFCORE_MAG:MAG:PROKKA
+Jan-27 18:25:07.058 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:PROKKA` matches process NFCORE_MAG:MAG:PROKKA
+Jan-27 18:25:07.059 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.059 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.059 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:PROKKA': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.111 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withLabel:process_single` matches labels `process_single` for process with name NFCORE_MAG:MAG:MULTIQC
+Jan-27 18:25:07.111 [main] DEBUG n.script.dsl.ProcessConfigBuilder - Config settings `withName:MULTIQC` matches process NFCORE_MAG:MAG:MULTIQC
+Jan-27 18:25:07.112 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Jan-27 18:25:07.112 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Jan-27 18:25:07.112 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'NFCORE_MAG:MAG:MULTIQC': maxForks=0; fair=false; array=0
+Jan-27 18:25:07.120 [main] DEBUG nextflow.Session - Config process names validation disabled as requested
+Jan-27 18:25:07.122 [main] DEBUG nextflow.Session - Igniting dataflow network (110)
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_BUILD
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_ALIGN
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_TRIMMED
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:CAT_FASTQ
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_RAW
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:PORECHOP_ABI
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOLYSE
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:FILTLONG
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_FILTERED
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:CAT_FASTQ_LONGREADS
+Jan-27 18:25:07.123 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:POOL_LONG_READS
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:METASPADES
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:MEGAHIT
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:HYBRID_ASSEMBLY:METASPADESHYBRID
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:FLYE
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:METAMDBG_ASM
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_SHORTREAD_ASSEMBLIES
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_LONGREAD_ASSEMBLIES
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:QUAST
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:PRODIGAL
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_BUILD
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_ALIGN
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_INDEX
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD
+Jan-27 18:25:07.124 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:CONVERT_DEPTHS
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:METABAT2_METABAT2
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:MAXBIN2
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:ADJUST_MAXBIN2_EXT
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:SEMIBIN_SINGLEEASYBIN
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:SEQKIT_STATS
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:SPLIT_FASTA
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:GUNZIP_BINS
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BINNING:GUNZIP_UNBINS
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_PLOT
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_SUMMARY
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR
+Jan-27 18:25:07.125 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BIN_QC:BUSCO_BUSCO
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BIN_QC:CONCAT_BUSCO_TSV
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:QUAST_BINS
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:QUAST_BINS_SUMMARY
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:CATPACK:CATPACK_BINS
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:CATPACK:CATPACK_ADDNAMES_BINS
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:CATPACK:CATPACK_SUMMARISE_BINS
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:GTDBTK:GTDBTK_DB_PREPARATION
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:GTDBTK:GTDBTK_CLASSIFYWF
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:GTDBTK:GTDBTK_SUMMARY
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:BIN_SUMMARY
+Jan-27 18:25:07.129 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:PROKKA
+Jan-27 18:25:07.132 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > NFCORE_MAG:MAG:MULTIQC
+Jan-27 18:25:07.133 [main] DEBUG nextflow.script.ScriptRunner - Parsed script files:
+  Script_8251928f53ed1e0e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/multiqc/main.nf
+  Script_dd0ed63eca067f78: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/porechop/porechop/main.nf
+  Script_657f9677ab6f5bab: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/nanolyse/main.nf
+  Script_ebeae4d7d4cc3739: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bowtie2_removal_build/main.nf
+  Script_70439736a1e82cbd: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/bbmap/bbnorm/main.nf
+  Script_b150cf969b83c25c: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/concoct/concoct/main.nf
+  Script_9e61b79b569950a4: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/fastqc/main.nf
+  Script_662f3a1abb073f82: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/bins/main.nf
+  Script_a780234b47eb3af3: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/gunzip/main.nf
+  Script_4025689c3a6538fe: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/quast_run/main.nf
+  Script_4194fa5c869cc45e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/tiara/tiara/main.nf
+  Script_41e96a0d16f0d8ff: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/dastool/fastatocontig2bin/main.nf
+  Script_3bf7f154d84f5c84: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/metaeuk/easypredict/main.nf
+  Script_7514ea371afe940e: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/domain_classification/main.nf
+  Script_0dc6e56b9ad870f8: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/depths/main.nf
+  Script_91dc0e2bf71ccbd5: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/samtools/index/main.nf
+  Script_a30e01e4c5daf8d3: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/gunc/mergecheckm/main.nf
+  Script_f9b92fd2f5e3dc64: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/quast_bins_summary/main.nf
+  Script_6ad5c748a98a6dff: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/metamdbg/asm/main.nf
+  Script_efe58f48004f5040: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/genomad/download/main.nf
+  Script_212dbd25fd780c86: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/virus_identification/main.nf
+  Script_c37b17fdb817b5bb: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning_preparation/main.nf
+  Script_d528be07f57947da: /Users/pmu15/.nextflow/assets/nf-core/mag/main.nf
+  Script_bb4e65cd6032cf4c: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/genomad/endtoend/main.nf
+  Script_0f34fafa78b47e29: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/bcftools/consensus/main.nf
+  Script_f6d38642093dbada: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/metabinner_bins/main.nf
+  Script_63cdd9b01cccc42b: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/nf-core/fasta_binning_concoct/main.nf
+  Script_e93df427c124c36f: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/checkm2/databasedownload/main.nf
+  Script_bace9cdec1116a15: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/dastool/dastool/main.nf
+  Script_b3b461fa5bd7a897: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/concoct/concoctcoveragetable/main.nf
+  Script_2cfdc1c6875129ad: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/samtools/stats/main.nf
+  Script_81f205bf73e1c71b: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/gtdbtk/main.nf
+  Script_df0239fdae301a8f: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/main.nf
+  Script_b8b62a34d287bdc9: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/adjust_maxbin2_ext/main.nf
+  Script_6eeb1af847bda27f: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/samtools_unmapped/main.nf
+  Script_db164bad42e517c1: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/concoct/cutupfasta/main.nf
+  Script_0d109a154882f7e8: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning_metabinner/main.nf
+  Script_813e94ec303a525f: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/metabat2/metabat2/main.nf
+  Script_b6d0813b09b6ca8a: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/semibin/singleeasybin/main.nf
+  Script_db1972f38147b3af: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/checkm2/predict/main.nf
+  Script_7a2713b22124d60a: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/mmseqs/databases/main.nf
+  Script_6410fd0eca0904d6: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/porechop/abi/main.nf
+  Script_e74d725da9a5a8b6: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/utils_nfcore_mag_pipeline/main.nf
+  Script_7957a57dfe21d7fe: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/dastool_rename_post/main.nf
+  Script_14b00020b4ade65c: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/metabinner_kmer/main.nf
+  Script_b4270ad5e23c436e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/busco/busco/main.nf
+  Script_65af6306252bcdd8: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/fastp/main.nf
+  Script_40116f323c6ad0c6: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/minimap2/index/main.nf
+  Script_266804253673db68: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/tiara/main.nf
+  Script_6deb43439613eab0: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/trimmomatic/main.nf
+  Script_20843753a8cd6739: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/summarise/main.nf
+  Script_4aba19d34066bf38: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/catpack/main.nf
+  Script_1955679f7c9f1ae5: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/chopper/main.nf
+  Script_f843d7ba3ed6fbd6: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/pydamage/analyze/main.nf
+  Script_06363cf71021ec61: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/assembly/main.nf
+  Script_5977f542cd315b9b: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/nf-core/utils_nfcore_pipeline/main.nf
+  Script_33a0d7c4dda22918: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/prokka/main.nf
+  Script_5ff9eb1b3a5204c8: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/concoct/mergecutupclustering/main.nf
+  Script_56671e7eb97988f1: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/assembly_hybrid/main.nf
+  Script_28ac14b407a6961a: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/qsv/cat/main.nf
+  Script_4779b6382e5427ab: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/cat/fastq/main.nf
+  Script_4821fb75ee0f2f86: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/spades/main.nf
+  Script_e88099979b0dc296: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/metabinner_metabinner/main.nf
+  Script_f9211ae55c6b16d3: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/gunc/run/main.nf
+  Script_23affc3ebac1b76d: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/mag_depths/main.nf
+  Script_c1b2357227a88ecb: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/hostremoval_longread/main.nf
+  Script_91f093f8fa020b21: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/preprocessing_shortread/main.nf
+  Script_0fe15fa61b14c664: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning_preparation_longread/main.nf
+  Script_1cc890cf593d0c7d: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/nanoplot/main.nf
+  Script_0bda468c90074740: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/bin_qc/main.nf
+  Script_db0156ba853576e7: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/megahit/main.nf
+  Script_7980eeb2bd5b6b62: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/gtdbtk_summary/main.nf
+  Script_b7dadd61d296a4e5: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/mag_depths_plot/main.nf
+  Script_67daa6ceb8b6ffc7: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/metabat2/jgisummarizebamcontigdepths/main.nf
+  Script_67898bd06725ed49: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/tiara_classify/main.nf
+  Script_6376ecee437dba61: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/bcftools/index/main.nf
+  Script_18859c9c1fd5b262: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bowtie2_assembly_align/main.nf
+  Script_f99a723b0cb72db5: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bin_summary/main.nf
+  Script_26b8873bf995475d: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/mag_depths_summary/main.nf
+  Script_dda9bf2b9386c53e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/prodigal/main.nf
+  Script_cf56eeee381ccdd0: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bigmag_summary/main.nf
+  Script_52e48ae8eff41df3: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bowtie2_removal_align/main.nf
+  Script_cd6dfe9a263c2e4a: /Users/pmu15/.nextflow/assets/nf-core/mag/workflows/mag.nf
+  Script_506879f771734a14: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/gtdbtk_db_preparation/main.nf
+  Script_3d42c4742b2bee98: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/samtools/faidx/main.nf
+  Script_3b6d187f886ac6f1: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/bcftools/view/main.nf
+  Script_64de01d227e3b201: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/bowtie2_assembly_build/main.nf
+  Script_1f22cbf03c5f9be9: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/gunc/downloaddb/main.nf
+  Script_f1971722a53971bb: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/ancient_dna/main.nf
+  Script_3b6a023d0cd9454f: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/comebin/runcomebin/main.nf
+  Script_7db1bb188e84be6d: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/mag_depths_convert/main.nf
+  Script_8c6cd303ae812c8b: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/minimap2/align/main.nf
+  Script_b14e0cd8589072ea: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning_refinement/main.nf
+  Script_f295035081b79947: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/concoct/extractfastabins/main.nf
+  Script_4471055256c8528a: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/download/main.nf
+  Script_cb6f7bf8062184a5: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning/main.nf
+  Script_4003276f9cf44671: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/addnames/main.nf
+  Script_c212a94dc596b68c: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/split_fasta/main.nf
+  Script_fe7c72f9826fe609: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/seqtk/mergepe/main.nf
+  Script_bb60c3e169955274: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/gtdbtk/classifywf/main.nf
+  Script_030d8cefcf7d8f97: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/dastool_rename_pre/main.nf
+  Script_f93ae1b28ada1448: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/adapterremoval/main.nf
+  Script_62d89200d0221fda: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/prepare/main.nf
+  Script_a75fdad29f24c934: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/metabinner_tooshort/main.nf
+  Script_934a7424f97f4b93: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/nf-core/utils_nfschema_plugin/main.nf
+  Script_db69602f7b4d7564: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/flye/main.nf
+  Script_4f612cfd8c52e8cd: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/nf-core/utils_nextflow_pipeline/main.nf
+  Script_3f47818806fdcf2b: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/checkm/lineagewf/main.nf
+  Script_029dc9a3afba34cb: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/filtlong/main.nf
+  Script_092a1ba31635ac51: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/checkm/qa/main.nf
+  Script_6f398201f7966305: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/catpack/contigs/main.nf
+  Script_880834d3bf2a3a3b: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/seqkit/stats/main.nf
+  Script_3e0ed4611d74a2b5: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/maxbin2/main.nf
+  Script_6a4dece39a7a25da: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/pydamage/filter/main.nf
+  Script_c00e1ff9da61057b: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/binning_preparation_shortread/main.nf
+  Script_ec1daa6037d5f73e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/nanoq/main.nf
+  Script_9698f32bb5e5b60a: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/preprocessing_longread/main.nf
+  Script_5c67bd65d9a2be6c: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/local/quast_bins/main.nf
+  Script_f526ea333b3ea25e: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/freebayes/main.nf
+  Script_d4e9fdb559faa90b: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/assembly_shortread/main.nf
+  Script_24a7367e95a7d52e: /Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/local/assembly_longread/main.nf
+Jan-27 18:25:07.133 [main] DEBUG nextflow.script.ScriptRunner - > Awaiting termination 
+Jan-27 18:25:07.133 [main] DEBUG nextflow.Session - Session await
+Jan-27 18:25:07.166 [Actor Thread 6] DEBUG nextflow.sort.BigSort - Sort completed -- entries: 1; slices: 1; internal sort time: 0.0 s; external sort time: 0.005 s; total time: 0.005 s
+Jan-27 18:25:07.166 [Actor Thread 17] DEBUG nextflow.sort.BigSort - Sort completed -- entries: 1; slices: 1; internal sort time: 0.0 s; external sort time: 0.005 s; total time: 0.005 s
+Jan-27 18:25:07.168 [Actor Thread 17] DEBUG nextflow.file.FileCollector - Saved collect-files list to: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/collect-file/b06721159ef5d3b35794e9be04f06f75
+Jan-27 18:25:07.168 [Actor Thread 6] DEBUG nextflow.file.FileCollector - Saved collect-files list to: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/collect-file/bc2b04bbf2c639f42fc88d2d0d6a79a0
+Jan-27 18:25:07.172 [Actor Thread 6] DEBUG nextflow.file.FileCollector - Deleting file collector temp dir: /var/folders/m5/fd9___z57vs85pf6nlyqzmlm0000gr/T/nxf-1266730203091820260
+Jan-27 18:25:07.172 [Actor Thread 17] DEBUG nextflow.file.FileCollector - Deleting file collector temp dir: /var/folders/m5/fd9___z57vs85pf6nlyqzmlm0000gr/T/nxf-5539003039344799074
+Jan-27 18:25:07.180 [Actor Thread 14] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:07.682 [Actor Thread 10] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:07.868 [Actor Thread 11] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:08.129 [Actor Thread 21] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:08.510 [Actor Thread 7] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:08.691 [Actor Thread 13] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:08.874 [Actor Thread 14] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:09.123 [FileTransfer-1] DEBUG nextflow.file.FilePorter - Copying foreign file https://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/busco/bacteria_odb10.2024-01-08.tar.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/b7/f436783911f9daaba6dce985ff2fa4/bacteria_odb10.2024-01-08.tar.gz
+Jan-27 18:25:09.123 [FileTransfer-2] DEBUG nextflow.file.FilePorter - Copying foreign file https://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/cat/minigut_cat.tar.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/b9/9df02df2107fbc0486a408a2e51dd4/minigut_cat.tar.gz
+Jan-27 18:25:09.165 [Actor Thread 10] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:09.334 [Actor Thread 11] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:09.610 [Actor Thread 21] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:09.793 [FileTransfer-3] DEBUG nextflow.file.FilePorter - Copying foreign file https://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/gtdbtk/gtdbtk_mockup_20250422.tar.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/f5/7aa433a1bae6594e6898cce0f2ade9/gtdbtk_mockup_20250422.tar.gz
+Jan-27 18:25:09.832 [Actor Thread 7] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:10.118 [Actor Thread 13] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:10.270 [FileTransfer-4] DEBUG nextflow.file.FilePorter - Copying foreign file https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_sample2_R1.fastq.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/1d/04bf002da5a40d0366640557f10ea4/test_minigut_sample2_R1.fastq.gz
+Jan-27 18:25:10.270 [FileTransfer-5] DEBUG nextflow.file.FilePorter - Copying foreign file https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_sample2_R2.fastq.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/10/26a01d1f5fd37af41b66453b4c8c1f/test_minigut_sample2_R2.fastq.gz
+Jan-27 18:25:10.271 [FileTransfer-6] DEBUG nextflow.file.FilePorter - Copying foreign file https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_R1.fastq.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/29/86a78ee394a63487b52614f1c7234e/test_minigut_R1.fastq.gz
+Jan-27 18:25:10.271 [FileTransfer-7] DEBUG nextflow.file.FilePorter - Copying foreign file https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_R2.fastq.gz to work dir: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/stage-19da1d0a-0d1e-48d1-9734-a55e1e86f44c/16/46481d4ac89cbe95f5724d72201714/test_minigut_R2.fastq.gz
+Jan-27 18:25:10.300 [Actor Thread 17] INFO  nextflow.conda.CondaCache - Creating env using conda: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml [cache /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9]
+Jan-27 18:25:10.314 [FileTransfer-4] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:10.405 [FileTransfer-7] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:10.406 [FileTransfer-6] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:10.406 [FileTransfer-5] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:10.409 [FileTransfer-4] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R1.fastq.gz; attempt=0
+Jan-27 18:25:10.909 [FileTransfer-5] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_sample2_R2.fastq.gz; attempt=0
+Jan-27 18:25:10.994 [FileTransfer-6] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R1.fastq.gz; attempt=0
+Jan-27 18:25:11.001 [FileTransfer-7] DEBUG n.file.http.XFileSystemProvider - Remote redirect location=https://raw.githubusercontent.com/nf-core/test-datasets/mag/test_data/test_minigut_R2.fastq.gz; attempt=0
+Jan-27 18:25:11.127 [Actor Thread 20] INFO  nextflow.file.FilePorter - Staging foreign file: https://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/busco/bacteria_odb10.2024-01-08.tar.gz
+Jan-27 18:25:11.798 [Actor Thread 3] INFO  nextflow.file.FilePorter - Staging foreign file: https://raw.githubusercontent.com/nf-core/test-datasets/mag/databases/gtdbtk/gtdbtk_mockup_20250422.tar.gz
+Jan-27 18:25:12.272 [Actor Thread 10] INFO  nextflow.file.FilePorter - Staging foreign file: https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_sample2_R1.fastq.gz
+Jan-27 18:25:12.274 [Actor Thread 13] INFO  nextflow.file.FilePorter - Staging foreign file: https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_R1.fastq.gz
+Jan-27 18:25:14.274 [Actor Thread 10] INFO  nextflow.file.FilePorter - Staging foreign file: https://github.com/nf-core/test-datasets/raw/mag/test_data/test_minigut_sample2_R2.fastq.gz
+Jan-27 18:25:19.780 [Actor Thread 16] INFO  nextflow.conda.CondaCache - Creating env using conda: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/fastp/environment.yml [cache /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-16f81c2d4bd7c1b7c6728e895927777c]
+Jan-27 18:25:19.780 [Actor Thread 6] INFO  nextflow.conda.CondaCache - Creating env using conda: /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/fastqc/environment.yml [cache /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-e88d3b603ce8089926a3a3fee5b86d02]
+Jan-27 18:25:25.842 [Actor Thread 5] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR; work-dir=null
+  error [java.lang.IllegalStateException]: java.lang.IllegalStateException: Failed to create Conda environment
+  command: conda env create --prefix /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9 --file /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml
+  status : 1
+  message:
+    Channels:
+     - conda-forge
+     - bioconda
+    Platform: osx-arm64
+    Collecting package metadata (repodata.json): - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - done
+    Solving environment: | / failed
+    
+    PackagesNotFoundError: The following packages are not available from current channels:
+    
+      - lbzip2=2.5
+    
+    Current channels:
+    
+      - https://conda.anaconda.org/conda-forge
+      - https://conda.anaconda.org/bioconda
+    
+    To search for alternate channels that may provide the conda package you're
+    looking for, navigate to
+    
+        https://anaconda.org
+    
+    and use the search bar at the top of the page.
+
+Jan-27 18:25:25.846 [Actor Thread 5] ERROR nextflow.processor.TaskProcessor - Error executing process > 'NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR'
+
+Caused by:
+  Failed to create Conda environment
+    command: conda env create --prefix /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9 --file /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml
+    status : 1
+    message:
+      Channels:
+       - conda-forge
+       - bioconda
+      Platform: osx-arm64
+      Collecting package metadata (repodata.json): - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - done
+      Solving environment: | / failed
+      
+      PackagesNotFoundError: The following packages are not available from current channels:
+      
+        - lbzip2=2.5
+      
+      Current channels:
+      
+        - https://conda.anaconda.org/conda-forge
+        - https://conda.anaconda.org/bioconda
+      
+      To search for alternate channels that may provide the conda package you're
+      looking for, navigate to
+      
+          https://anaconda.org
+      
+      and use the search bar at the top of the page.
+
+
+java.lang.IllegalStateException: java.lang.IllegalStateException: Failed to create Conda environment
+  command: conda env create --prefix /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9 --file /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml
+  status : 1
+  message:
+    Channels:
+     - conda-forge
+     - bioconda
+    Platform: osx-arm64
+    Collecting package metadata (repodata.json): - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - done
+    Solving environment: | / failed
+    
+    PackagesNotFoundError: The following packages are not available from current channels:
+    
+      - lbzip2=2.5
+    
+    Current channels:
+    
+      - https://conda.anaconda.org/conda-forge
+      - https://conda.anaconda.org/bioconda
+    
+    To search for alternate channels that may provide the conda package you're
+    looking for, navigate to
+    
+        https://anaconda.org
+    
+    and use the search bar at the top of the page.
+
+	at nextflow.conda.CondaCache.getCachePathFor(CondaCache.groovy:383)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)
+	at nextflow.processor.TaskRun.getCondaEnv0(TaskRun.groovy:672)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.codehaus.groovy.reflection.CachedMethod.invoke(CachedMethod.java:343)
+	at groovy.lang.MetaMethod.doMethodInvoke(MetaMethod.java:328)
+	at groovy.lang.MetaClassImpl.doInvokeMethod(MetaClassImpl.java:1339)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1094)
+	at org.codehaus.groovy.runtime.ScriptBytecodeAdapter.invokeMethodOnCurrentN(ScriptBytecodeAdapter.java:97)
+	at nextflow.processor.TaskRun.this$dist$invoke$1(TaskRun.groovy)
+	at nextflow.processor.TaskRun$1.methodMissing(TaskRun.groovy)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.codehaus.groovy.reflection.CachedMethod.invoke(CachedMethod.java:343)
+	at groovy.lang.MetaClassImpl.invokeMissingMethod(MetaClassImpl.java:924)
+	at groovy.lang.MetaClassImpl.invokePropertyOrMissing(MetaClassImpl.java:1419)
+	at groovy.lang.MetaClassImpl.doInvokeMethod(MetaClassImpl.java:1341)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1094)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1007)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)
+	at nextflow.processor.TaskRun$1.apply(TaskRun.groovy:663)
+	at nextflow.processor.TaskRun$1.apply(TaskRun.groovy)
+	at java.base/java.util.concurrent.ConcurrentHashMap.computeIfAbsent(ConcurrentHashMap.java:1708)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)
+	at nextflow.processor.TaskRun.getCondaEnv(TaskRun.groovy:660)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)
+	at nextflow.processor.TaskProcessor.createTaskHashKey(TaskProcessor.groovy:2065)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)
+	at nextflow.processor.TaskProcessor.invokeTask(TaskProcessor.groovy:687)
+	at nextflow.processor.InvokeTaskAdapter.call(InvokeTaskAdapter.groovy:52)
+	at groovyx.gpars.dataflow.operator.DataflowOperatorActor.startTask(DataflowOperatorActor.java:120)
+	at groovyx.gpars.dataflow.operator.ForkingDataflowOperatorActor.access$001(ForkingDataflowOperatorActor.java:35)
+	at groovyx.gpars.dataflow.operator.ForkingDataflowOperatorActor$1.run(ForkingDataflowOperatorActor.java:58)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: java.lang.IllegalStateException: Failed to create Conda environment
+  command: conda env create --prefix /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9 --file /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml
+  status : 1
+  message:
+    Channels:
+     - conda-forge
+     - bioconda
+    Platform: osx-arm64
+    Collecting package metadata (repodata.json): - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - done
+    Solving environment: | / failed
+    
+    PackagesNotFoundError: The following packages are not available from current channels:
+    
+      - lbzip2=2.5
+    
+    Current channels:
+    
+      - https://conda.anaconda.org/conda-forge
+      - https://conda.anaconda.org/bioconda
+    
+    To search for alternate channels that may provide the conda package you're
+    looking for, navigate to
+    
+        https://anaconda.org
+    
+    and use the search bar at the top of the page.
+
+	at nextflow.conda.CondaCache.runCommand(CondaCache.groovy:331)
+	at nextflow.conda.CondaCache.createLocalCondaEnv0(CondaCache.groovy:302)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.codehaus.groovy.reflection.CachedMethod.invoke(CachedMethod.java:343)
+	at groovy.lang.MetaMethod.doMethodInvoke(MetaMethod.java:328)
+	at groovy.lang.MetaClassImpl.doInvokeMethod(MetaClassImpl.java:1339)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1094)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1007)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokePogoMethod(InvokerHelper.java:645)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokeMethod(InvokerHelper.java:628)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokeMethodSafe(InvokerHelper.java:82)
+	at nextflow.conda.CondaCache$_createLocalCondaEnv_closure1.doCall(CondaCache.groovy:252)
+	at nextflow.conda.CondaCache$_createLocalCondaEnv_closure1.call(CondaCache.groovy)
+	at nextflow.file.FileMutex.lock(FileMutex.groovy:106)
+	at nextflow.conda.CondaCache.createLocalCondaEnv(CondaCache.groovy:252)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.codehaus.groovy.reflection.CachedMethod.invoke(CachedMethod.java:343)
+	at groovy.lang.MetaMethod.doMethodInvoke(MetaMethod.java:328)
+	at groovy.lang.MetaClassImpl.doInvokeMethod(MetaClassImpl.java:1339)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1094)
+	at groovy.lang.MetaClassImpl.invokeMethod(MetaClassImpl.java:1007)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokePogoMethod(InvokerHelper.java:645)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokeMethod(InvokerHelper.java:628)
+	at org.codehaus.groovy.runtime.InvokerHelper.invokeMethodSafe(InvokerHelper.java:82)
+	at nextflow.conda.CondaCache$_getLazyImagePath_closure3.doCall(CondaCache.groovy:360)
+	at nextflow.conda.CondaCache$_getLazyImagePath_closure3.call(CondaCache.groovy)
+	at groovyx.gpars.dataflow.LazyDataflowVariable$1.run(LazyDataflowVariable.java:70)
+	... 3 common frames omitted
+Jan-27 18:25:25.848 [Actor Thread 5] DEBUG nextflow.Session - Session aborted -- Cause: java.lang.IllegalStateException: Failed to create Conda environment
+  command: conda env create --prefix /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/conda/env-4e7a2806bf21778d59d5eb71300de9f9 --file /Users/pmu15/.nextflow/assets/nf-core/mag/modules/nf-core/untar/environment.yml
+  status : 1
+  message:
+    Channels:
+     - conda-forge
+     - bioconda
+    Platform: osx-arm64
+    Collecting package metadata (repodata.json): - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - \ | / - done
+    Solving environment: | / failed
+    
+    PackagesNotFoundError: The following packages are not available from current channels:
+    
+      - lbzip2=2.5
+    
+    Current channels:
+    
+      - https://conda.anaconda.org/conda-forge
+      - https://conda.anaconda.org/bioconda
+    
+    To search for alternate channels that may provide the conda package you're
+    looking for, navigate to
+    
+        https://anaconda.org
+    
+    and use the search bar at the top of the page.
+
+Jan-27 18:25:25.863 [Actor Thread 5] DEBUG nextflow.Session - The following nodes are still active:
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW
+  status=ACTIVE
+  port 0: (queue) closed; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP
+  status=ACTIVE
+  port 0: (queue) closed; channel: -
+  port 1: (value) bound ; channel: discard_trimmed_pass
+  port 2: (value) bound ; channel: save_trimmed_fail
+  port 3: (value) bound ; channel: save_merged
+  port 4: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_BUILD
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: fasta
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:BOWTIE2_PHIX_REMOVAL_ALIGN
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) OPEN  ; channel: index
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_TRIMMED
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:CAT_FASTQ
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:FILTLONG
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:NANOPLOT_FILTERED
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:LONGREAD_PREPROCESSING:CAT_FASTQ_LONGREADS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:POOL_LONG_READS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:METASPADES
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: yml
+  port 2: (value) bound ; channel: hmm
+  port 3: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:SHORTREAD_ASSEMBLY:MEGAHIT
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:HYBRID_ASSEMBLY:METASPADESHYBRID
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: yml
+  port 2: (value) bound ; channel: hmm
+  port 3: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:FLYE
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (queue) OPEN  ; channel: mode
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:LONGREAD_ASSEMBLY:METAMDBG_ASM
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (queue) OPEN  ; channel: input_type
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_SHORTREAD_ASSEMBLIES
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:ASSEMBLY:GUNZIP_LONGREAD_ASSEMBLIES
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:QUAST
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:PRODIGAL
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: output_format
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_BUILD
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING_PREPARATION:SHORTREAD_BINNING_PREPARATION:BOWTIE2_ASSEMBLY_ALIGN
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_INDEX
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (queue) OPEN  ; channel: -
+  port 2: (value) bound ; channel: bam_format
+  port 3: (value) bound ; channel: bam_index_extension
+  port 4: (value) bound ; channel: cigar_paf_format
+  port 5: (value) bound ; channel: cigar_bam
+  port 6: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_LONGREAD
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:METABAT2_JGISUMMARIZEBAMCONTIGDEPTHS_SHORTREAD
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:CONVERT_DEPTHS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:METABAT2_METABAT2
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:MAXBIN2
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:ADJUST_MAXBIN2_EXT
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:SEMIBIN_SINGLEEASYBIN
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:SEQKIT_STATS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:SPLIT_FASTA
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:GUNZIP_BINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BINNING:GUNZIP_UNBINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_PLOT
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) OPEN  ; channel: sample_groups
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:DEPTHS:MAG_DEPTHS_SUMMARY
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: mag_depths
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR
+  status=ACTIVE
+  port 0: (value) bound ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BIN_QC:BUSCO_BUSCO
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: mode
+  port 2: (value) bound ; channel: lineage
+  port 3: (value) OPEN  ; channel: busco_lineages_path
+  port 4: (value) bound ; channel: config_file
+  port 5: (value) bound ; channel: clean_intermediates
+  port 6: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BIN_QC:CONCAT_BUSCO_TSV
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: mode
+  port 2: (value) bound ; channel: out_format
+  port 3: (value) bound ; channel: skip_input_format_check
+  port 4: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:QUAST_BINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:QUAST_BINS_SUMMARY
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: summaries
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR
+  status=ACTIVE
+  port 0: (value) bound ; channel: -
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:CATPACK:CATPACK_BINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) OPEN  ; channel: -
+  port 2: (value) OPEN  ; channel: -
+  port 3: (value) bound ; channel: -
+  port 4: (value) bound ; channel: -
+  port 5: (value) bound ; channel: bin_suffix
+  port 6: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:CATPACK:CATPACK_ADDNAMES_BINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) OPEN  ; channel: -
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:CATPACK:CATPACK_SUMMARISE_BINS
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: -
+  port 2: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:GTDBTK:GTDBTK_DB_PREPARATION
+  status=ACTIVE
+  port 0: (value) bound ; channel: database
+  port 1: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:GTDBTK:GTDBTK_CLASSIFYWF
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) OPEN  ; channel: -
+  port 2: (value) bound ; channel: use_pplacer_scratch_dir
+  port 3: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:GTDBTK:GTDBTK_SUMMARY
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: qc_discarded_bins
+  port 1: (value) OPEN  ; channel: gtdbtk_summaries
+  port 2: (value) bound ; channel: filtered_bins
+  port 3: (value) bound ; channel: failed_bins
+  port 4: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:BIN_SUMMARY
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: bin_depths
+  port 1: (value) OPEN  ; channel: quast_sum
+  port 2: (value) OPEN  ; channel: gtdbtk_sum
+  port 3: (queue) OPEN  ; channel: cat_sum
+  port 4: (queue) OPEN  ; channel: busco_sum
+  port 5: (queue) OPEN  ; channel: checkm_sum
+  port 6: (queue) OPEN  ; channel: checkm2_sum
+  port 7: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:PROKKA
+  status=ACTIVE
+  port 0: (queue) OPEN  ; channel: -
+  port 1: (value) bound ; channel: proteins
+  port 2: (value) bound ; channel: prodigal_tf
+  port 3: (cntrl) -     ; channel: $
+
+[process] NFCORE_MAG:MAG:MULTIQC
+  status=ACTIVE
+  port 0: (value) OPEN  ; channel: multiqc_files
+  port 1: (value) bound ; channel: multiqc_config
+  port 2: (value) bound ; channel: extra_multiqc_config
+  port 3: (value) bound ; channel: multiqc_logo
+  port 4: (value) bound ; channel: replace_names
+  port 5: (value) bound ; channel: sample_names
+  port 6: (cntrl) -     ; channel: $
+
+Jan-27 18:25:25.865 [Actor Thread 5] INFO  nextflow.Nextflow - -[0;35m[nf-core/mag][0;31m Pipeline completed with errors[0m-
+Jan-27 18:25:25.868 [Actor Thread 5] DEBUG n.trace.WorkflowStatsObserver - Workflow completed > WorkflowStats[succeededCount=0; failedCount=0; ignoredCount=0; cachedCount=0; pendingCount=0; submittedCount=0; runningCount=0; retriesCount=0; abortedCount=0; succeedDuration=0ms; failedDuration=0ms; cachedDuration=0ms;loadCpus=0; loadMemory=0; peakRunning=0; peakCpus=0; peakMemory=0; ]
+Jan-27 18:25:25.953 [Task monitor] DEBUG n.processor.TaskPollingMonitor - <<< barrier arrives (monitor: local) - terminating tasks monitor poll loop
+Jan-27 18:25:26.093 [Actor Thread 5] DEBUG nextflow.trace.ReportObserver - Workflow completed -- rendering execution report
+Jan-27 18:25:26.538 [Actor Thread 5] DEBUG nextflow.trace.TimelineObserver - Workflow completed -- rendering execution timeline
+Jan-27 18:25:26.581 [Actor Thread 5] DEBUG nextflow.trace.TraceFileObserver - Workflow completed -- saving trace file
+Jan-27 18:25:26.583 [Actor Thread 5] ERROR nextflow.Nextflow - Pipeline failed. Please refer to troubleshooting docs: https://nf-co.re/docs/usage/troubleshooting
+Jan-27 18:25:26.583 [main] DEBUG nextflow.Session - Session await > all processes finished
+Jan-27 18:25:26.583 [main] DEBUG nextflow.Session - Session await > all barriers passed
+Jan-27 18:25:26.583 [main] DEBUG n.trace.WorkflowStatsObserver - Workflow completed > WorkflowStats[succeededCount=0; failedCount=0; ignoredCount=0; cachedCount=0; pendingCount=0; submittedCount=0; runningCount=0; retriesCount=0; abortedCount=0; succeedDuration=0ms; failedDuration=0ms; cachedDuration=0ms;loadCpus=0; loadMemory=0; peakRunning=0; peakCpus=0; peakMemory=0; ]
+Jan-27 18:25:26.584 [Actor Thread 8] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTP; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.584 [Actor Thread 15] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:SHORTREAD_PREPROCESSING:FASTQC_RAW; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.585 [Actor Thread 34] DEBUG nextflow.file.SortFileCollector - FileCollector temp dir not removed: null
+Jan-27 18:25:26.586 [Actor Thread 17] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:BINNING_PREPARATION:LONGREAD_BINNING_PREPARATION:MINIMAP2_ASSEMBLY_ALIGN; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.587 [Actor Thread 19] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:BIN_QC:BUSCO_UNTAR; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.587 [Actor Thread 24] DEBUG nextflow.file.SortFileCollector - FileCollector temp dir not removed: null
+Jan-27 18:25:26.587 [Actor Thread 29] DEBUG nextflow.file.SortFileCollector - FileCollector temp dir not removed: null
+Jan-27 18:25:26.587 [Actor Thread 26] DEBUG nextflow.file.SortFileCollector - FileCollector temp dir not removed: null
+Jan-27 18:25:26.588 [Actor Thread 4] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:GTDBTK:GTDBTK_DB_PREPARATION; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.589 [Actor Thread 18] DEBUG nextflow.processor.TaskProcessor - Handling unexpected condition for
+  task: name=NFCORE_MAG:MAG:CATPACK:CAT_DB_UNTAR; work-dir=null
+  error [java.lang.InterruptedException]: java.lang.InterruptedException
+Jan-27 18:25:26.589 [Actor Thread 19] DEBUG nextflow.sort.BigSort - Sort completed -- entries: 1; slices: 1; internal sort time: 0.0 s; external sort time: 0.0 s; total time: 0.0 s
+Jan-27 18:25:26.590 [Actor Thread 19] DEBUG nextflow.file.FileCollector - Saved collect-files list to: /Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk/work/collect-file/c96a8b666a956f5e07a6670a8b68164f
+Jan-27 18:25:26.592 [Actor Thread 19] DEBUG nextflow.file.FileCollector - Deleting file collector temp dir: /var/folders/m5/fd9___z57vs85pf6nlyqzmlm0000gr/T/nxf-15842448790977319226
+Jan-27 18:25:26.606 [main] DEBUG nextflow.trace.ReportObserver - Workflow completed -- rendering execution report
+Jan-27 18:25:27.031 [main] WARN  nextflow.trace.ReportObserver - Failed to render execution report -- see the log file for details
+nextflow.exception.AbortOperationException: Report file already exists: ./pipeline_test_out/pipeline_info/execution_report_2026-01-27_18-24-28.html -- enable the 'report.overwrite' option in your config file to overwrite existing files
+	at nextflow.trace.TraceHelper.newFileWriter(TraceHelper.groovy:67)
+	at nextflow.trace.ReportObserver.renderHtml(ReportObserver.groovy:243)
+	at nextflow.trace.ReportObserver.onFlowComplete(ReportObserver.groovy:129)
+	at nextflow.Session$_notifyFlowComplete_lambda39.doCall(Session.groovy:1121)
+	at nextflow.Session.notifyEvent(Session.groovy:1151)
+	at nextflow.Session.notifyFlowComplete(Session.groovy:1121)
+	at nextflow.Session.shutdown0(Session.groovy:779)
+	at nextflow.Session.destroy(Session.groovy:724)
+	at nextflow.script.ScriptRunner.shutdown(ScriptRunner.groovy:263)
+	at nextflow.script.ScriptRunner.execute(ScriptRunner.groovy:147)
+	at nextflow.cli.CmdRun.run(CmdRun.groovy:429)
+	at nextflow.cli.Launcher.run(Launcher.groovy:515)
+	at nextflow.cli.Launcher.main(Launcher.groovy:675)
+Caused by: java.nio.file.FileAlreadyExistsException: ./pipeline_test_out/pipeline_info/execution_report_2026-01-27_18-24-28.html
+	at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:94)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)
+	at java.base/sun.nio.fs.UnixFileSystemProvider.newByteChannel(UnixFileSystemProvider.java:218)
+	at java.base/java.nio.file.spi.FileSystemProvider.newOutputStream(FileSystemProvider.java:484)
+	at java.base/java.nio.file.Files.newOutputStream(Files.java:228)
+	at java.base/java.nio.file.Files.newBufferedWriter(Files.java:3008)
+	at nextflow.trace.TraceHelper.newFileWriter(TraceHelper.groovy:64)
+	... 12 common frames omitted
+Jan-27 18:25:27.031 [main] DEBUG nextflow.trace.TimelineObserver - Workflow completed -- rendering execution timeline
+Jan-27 18:25:27.072 [main] WARN  nextflow.trace.TimelineObserver - Failed to render execution timeline -- see the log file for details
+nextflow.exception.AbortOperationException: Timeline file already exists: ./pipeline_test_out/pipeline_info/execution_timeline_2026-01-27_18-24-28.html -- enable the 'timeline.overwrite' option in your config file to overwrite existing files
+	at nextflow.trace.TraceHelper.newFileWriter(TraceHelper.groovy:67)
+	at nextflow.trace.TimelineObserver.renderHtml(TimelineObserver.groovy:164)
+	at nextflow.trace.TimelineObserver.onFlowComplete(TimelineObserver.groovy:91)
+	at nextflow.Session$_notifyFlowComplete_lambda39.doCall(Session.groovy:1121)
+	at nextflow.Session.notifyEvent(Session.groovy:1151)
+	at nextflow.Session.notifyFlowComplete(Session.groovy:1121)
+	at nextflow.Session.shutdown0(Session.groovy:779)
+	at nextflow.Session.destroy(Session.groovy:724)
+	at nextflow.script.ScriptRunner.shutdown(ScriptRunner.groovy:263)
+	at nextflow.script.ScriptRunner.execute(ScriptRunner.groovy:147)
+	at nextflow.cli.CmdRun.run(CmdRun.groovy:429)
+	at nextflow.cli.Launcher.run(Launcher.groovy:515)
+	at nextflow.cli.Launcher.main(Launcher.groovy:675)
+Caused by: java.nio.file.FileAlreadyExistsException: ./pipeline_test_out/pipeline_info/execution_timeline_2026-01-27_18-24-28.html
+	at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:94)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)
+	at java.base/sun.nio.fs.UnixFileSystemProvider.newByteChannel(UnixFileSystemProvider.java:218)
+	at java.base/java.nio.file.spi.FileSystemProvider.newOutputStream(FileSystemProvider.java:484)
+	at java.base/java.nio.file.Files.newOutputStream(Files.java:228)
+	at java.base/java.nio.file.Files.newBufferedWriter(Files.java:3008)
+	at nextflow.trace.TraceHelper.newFileWriter(TraceHelper.groovy:64)
+	... 12 common frames omitted
+Jan-27 18:25:27.072 [main] DEBUG nextflow.trace.TraceFileObserver - Workflow completed -- saving trace file
+Jan-27 18:25:27.073 [main] DEBUG nextflow.cache.CacheDB - Closing CacheDB done
+Jan-27 18:25:27.149 [main] INFO  org.pf4j.AbstractPluginManager - Stop plugin 'nf-amazon@3.4.3'
+Jan-27 18:25:27.150 [main] DEBUG nextflow.plugin.BasePlugin - Plugin stopped nf-amazon
+Jan-27 18:25:27.150 [main] INFO  org.pf4j.AbstractPluginManager - Stop plugin 'nf-schema@2.5.1'
+Jan-27 18:25:27.150 [main] DEBUG nextflow.plugin.BasePlugin - Plugin stopped nf-schema
+Jan-27 18:25:27.151 [main] DEBUG nextflow.script.ScriptRunner - > Execution complete -- Goodbye

@@ -1,0 +1,8 @@
+
+[0;31mThe following invalid input values have been detected:
+
+* --input (/Users/pmu15/Documents/github.com/hzi-bifo/Broker4Microbiota/v2/pipeline_output/MAG-20260126-003/samplesheet.csv): Validation of file failed:
+	-> Entry 1: Object does not have some of the required properties [[short_reads_platform]]
+	-> Entry 2: Object does not have some of the required properties [[short_reads_platform]]
+[0m
+ -- Check script '/Users/pmu15/.nextflow/assets/nf-core/mag/subworkflows/nf-core/utils_nfschema_plugin/main.nf' at line: 68 or see '.nextflow.log' file for more details

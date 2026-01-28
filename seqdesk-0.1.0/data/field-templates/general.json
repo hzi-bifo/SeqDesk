@@ -1,0 +1,220 @@
+{
+  "name": "General",
+  "description": "Common fields for sequencing orders",
+  "version": "1.0.0",
+  "fields": [
+    {
+      "type": "textarea",
+      "label": "Research Description",
+      "name": "research_description",
+      "required": false,
+      "visible": true,
+      "placeholder": "Describe your research project and goals...",
+      "helpText": "Brief description of your research objectives",
+      "simpleValidation": {
+        "minLength": 20,
+        "maxLength": 1000
+      },
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A scientific research description. Should describe a research project, study goals, or experimental objectives. Should be written in professional/academic language and mention biological or scientific concepts.",
+        "strictness": "moderate"
+      }
+    },
+    {
+      "type": "text",
+      "label": "Target Organism",
+      "name": "target_organism",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Escherichia coli, Homo sapiens",
+      "helpText": "The organism(s) being studied",
+      "example": "Escherichia coli K-12",
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A scientific organism name. Should be a valid species name (Latin binomial like 'Escherichia coli'), common name ('human gut bacteria'), or taxonomic group ('Proteobacteria'). Can include strain names.",
+        "strictness": "moderate"
+      }
+    },
+    {
+      "type": "text",
+      "label": "Sample Type",
+      "name": "sample_type",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Soil, Blood, Stool",
+      "helpText": "Type of biological sample",
+      "example": "Environmental soil sample",
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A biological sample type. Should be a valid sample material like: soil, water, blood, tissue, stool, saliva, swab, culture, environmental sample, etc.",
+        "strictness": "lenient"
+      }
+    },
+    {
+      "type": "text",
+      "label": "PI / Lab Head",
+      "name": "pi_name",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Dr. Jane Smith",
+      "helpText": "Principal investigator or lab head name",
+      "simpleValidation": {
+        "minLength": 2,
+        "maxLength": 100
+      },
+      "aiValidation": {
+        "enabled": true,
+        "prompt": "A person's name, likely a scientist or professor. Should look like a real name with optional title (Dr., Prof., etc.). Examples: Dr. Jane Smith, Prof. John Doe, Maria Garcia PhD",
+        "strictness": "lenient"
+      }
+    },
+    {
+      "type": "number",
+      "label": "Number of Samples",
+      "name": "number_of_samples",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 48",
+      "helpText": "Total number of samples in this order",
+      "simpleValidation": {
+        "minValue": 1,
+        "maxValue": 10000
+      }
+    },
+    {
+      "type": "date",
+      "label": "Desired Completion Date",
+      "name": "desired_completion_date",
+      "required": false,
+      "visible": true,
+      "helpText": "When do you need the results?"
+    },
+    {
+      "type": "select",
+      "label": "Priority Level",
+      "name": "priority_level",
+      "required": false,
+      "visible": true,
+      "helpText": "How urgent is this order?",
+      "options": [
+        { "value": "standard", "label": "Standard" },
+        { "value": "high", "label": "High Priority" },
+        { "value": "rush", "label": "Rush (additional fees may apply)" }
+      ]
+    },
+    {
+      "type": "text",
+      "label": "Project Code",
+      "name": "project_code",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., PROJ-2024-001",
+      "helpText": "Internal project or tracking code",
+      "simpleValidation": {
+        "minLength": 2,
+        "maxLength": 64
+      }
+    },
+    {
+      "type": "select",
+      "label": "Read Layout",
+      "name": "read_layout",
+      "required": false,
+      "visible": true,
+      "helpText": "Single-end or paired-end sequencing",
+      "options": [
+        { "value": "SE", "label": "Single-end (SE)" },
+        { "value": "PE", "label": "Paired-end (PE)" }
+      ]
+    },
+    {
+      "type": "number",
+      "label": "Read Length (bp)",
+      "name": "read_length_bp",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 150",
+      "helpText": "Read length in base pairs",
+      "simpleValidation": {
+        "minValue": 30,
+        "maxValue": 1000
+      }
+    },
+    {
+      "type": "number",
+      "label": "Target Yield (Gb)",
+      "name": "target_yield_gb",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 30",
+      "helpText": "Target data yield in gigabases",
+      "simpleValidation": {
+        "minValue": 0.1,
+        "maxValue": 5000
+      }
+    },
+    {
+      "type": "number",
+      "label": "Expected Genome Size (Mb)",
+      "name": "expected_genome_size_mb",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 5",
+      "helpText": "Approximate genome size in megabases",
+      "simpleValidation": {
+        "minValue": 0.1,
+        "maxValue": 100000
+      }
+    },
+    {
+      "type": "text",
+      "label": "Library Prep Kit",
+      "name": "library_prep_kit",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., Nextera XT",
+      "helpText": "Library preparation kit or protocol"
+    },
+    {
+      "type": "text",
+      "label": "Data Delivery Email",
+      "name": "data_delivery_email",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., team@example.org",
+      "helpText": "Email for data delivery notifications",
+      "simpleValidation": {
+        "patternPreset": "email",
+        "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+        "patternMessage": "Please enter a valid email address"
+      }
+    },
+    {
+      "type": "text",
+      "label": "Primer Set",
+      "name": "primer_set",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 515F/806R",
+      "helpText": "Primer set for amplicon sequencing"
+    },
+    {
+      "type": "text",
+      "label": "Target Region",
+      "name": "target_region",
+      "required": false,
+      "visible": true,
+      "placeholder": "e.g., 16S V4",
+      "helpText": "Target region for amplicon sequencing"
+    },
+    {
+      "type": "checkbox",
+      "label": "Data Sharing Consent",
+      "name": "data_sharing_consent",
+      "required": false,
+      "visible": true,
+      "helpText": "I agree that anonymized data may be used for quality improvement"
+    }
+  ]
+}

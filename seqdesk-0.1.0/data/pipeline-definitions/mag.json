@@ -1,0 +1,395 @@
+{
+  "pipeline": "mag",
+  "name": "nf-core/mag",
+  "description": "Assembly, binning and annotation of metagenomes",
+  "url": "https://nf-co.re/mag",
+  "version": "3.0.0",
+  "minNextflowVersion": "23.04.0",
+  "authors": ["Hadrien Gourlé", "Daniel Straub", "Sabrina Krakau", "James Fellows Yates"],
+  "inputs": [
+    {
+      "id": "reads",
+      "name": "FASTQ Reads",
+      "description": "Paired-end or single-end sequencing reads",
+      "fileTypes": ["fastq.gz", "fq.gz"],
+      "source": "order_reads",
+      "sourceDescription": "Sequencing files from Order → Files tab"
+    },
+    {
+      "id": "samplesheet",
+      "name": "Samplesheet",
+      "description": "CSV with sample information (auto-generated)",
+      "fileTypes": ["csv"],
+      "source": "samplesheet",
+      "sourceDescription": "Auto-generated from Order samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "raw_qc",
+      "name": "Raw Read QC",
+      "description": "FastQC reports for raw reads",
+      "fromStep": "fastqc_raw",
+      "fileTypes": ["html", "zip"],
+      "destination": "sample_qc",
+      "destinationField": "raw_qc_status",
+      "destinationDescription": "Updates Sample → QC Status (raw reads)"
+    },
+    {
+      "id": "trimmed_qc",
+      "name": "Trimmed Read QC",
+      "description": "FastQC reports after preprocessing",
+      "fromStep": "fastqc_trimmed",
+      "fileTypes": ["html", "zip"],
+      "destination": "sample_qc",
+      "destinationField": "trimmed_qc_status",
+      "destinationDescription": "Updates Sample → QC Status (trimmed)"
+    },
+    {
+      "id": "assemblies",
+      "name": "Assemblies",
+      "description": "Assembled contigs per sample",
+      "fromStep": "assembly",
+      "fileTypes": ["fasta.gz"],
+      "destination": "sample_assemblies",
+      "destinationDescription": "Stored in Sample → Assemblies"
+    },
+    {
+      "id": "assembly_qc",
+      "name": "Assembly QC",
+      "description": "QUAST assembly statistics",
+      "fromStep": "assembly_qc",
+      "fileTypes": ["tsv", "html"],
+      "destination": "sample_metadata",
+      "destinationField": "assembly_stats",
+      "destinationDescription": "Updates Sample → Assembly N50, contigs, etc."
+    },
+    {
+      "id": "bins",
+      "name": "Genome Bins (MAGs)",
+      "description": "Metagenome-assembled genomes",
+      "fromStep": "bin_refinement",
+      "fileTypes": ["fasta"],
+      "destination": "sample_bins",
+      "destinationDescription": "Stored in Sample → Genome Bins"
+    },
+    {
+      "id": "bin_qc",
+      "name": "Bin Quality",
+      "description": "CheckM/BUSCO completeness & contamination",
+      "fromStep": "bin_qc",
+      "fileTypes": ["tsv"],
+      "destination": "sample_metadata",
+      "destinationField": "bin_quality",
+      "destinationDescription": "Updates Sample → Bin completeness, contamination"
+    },
+    {
+      "id": "taxonomy_report",
+      "name": "Taxonomy",
+      "description": "GTDB-Tk taxonomic classification",
+      "fromStep": "taxonomy",
+      "fileTypes": ["tsv", "summary.tsv"],
+      "destination": "sample_metadata",
+      "destinationField": "taxonomy",
+      "destinationDescription": "Updates Sample → Taxonomic classification"
+    },
+    {
+      "id": "annotations",
+      "name": "Annotations",
+      "description": "Prokka/MetaEuk gene annotations",
+      "fromStep": "annotation",
+      "fileTypes": ["gff", "gbk", "faa"],
+      "destination": "sample_annotations",
+      "destinationDescription": "Stored in Sample → Annotations"
+    },
+    {
+      "id": "multiqc_report",
+      "name": "MultiQC Report",
+      "description": "Aggregated QC metrics and visualizations",
+      "fromStep": "multiqc",
+      "fileTypes": ["html"],
+      "destination": "order_report",
+      "destinationDescription": "Linked as Order → Analysis Report"
+    }
+  ],
+  "parameterGroups": [
+    {
+      "name": "Input/Output",
+      "description": "Define input data and output locations",
+      "parameters": [
+        { "name": "input", "type": "path", "description": "Path to comma-separated file containing information about the samples", "required": true },
+        { "name": "outdir", "type": "path", "description": "The output directory where the results will be saved", "default": "./results", "required": true },
+        { "name": "single_end", "type": "boolean", "description": "Specifies that the input is single-end reads", "default": false },
+        { "name": "email", "type": "string", "description": "Email address for completion summary", "pattern": "^([a-zA-Z0-9_\\-\\.]+)@([a-zA-Z0-9_\\-\\.]+)\\.([a-zA-Z]{2,5})$" }
+      ]
+    },
+    {
+      "name": "Quality Control",
+      "description": "Read quality control and filtering options",
+      "parameters": [
+        { "name": "skip_fastqc", "type": "boolean", "description": "Skip FastQC", "default": false },
+        { "name": "clip_tool", "type": "string", "description": "Tool for read clipping", "default": "fastp", "enum": ["fastp", "adapterremoval"] },
+        { "name": "reads_minlength", "type": "integer", "description": "Minimum read length after clipping", "default": 15, "minimum": 1 },
+        { "name": "fastp_qualified_quality", "type": "integer", "description": "Minimum quality value for qualified bases (fastp)", "default": 15, "minimum": 1, "maximum": 40 },
+        { "name": "fastp_cut_mean_quality", "type": "integer", "description": "Mean quality requirement for sliding window (fastp)", "default": 15, "minimum": 1, "maximum": 40 },
+        { "name": "adapterremoval_minquality", "type": "integer", "description": "Minimum quality for trimming (AdapterRemoval)", "default": 2, "minimum": 0 },
+        { "name": "adapterremoval_trim_quality_stretch", "type": "boolean", "description": "Trim from 5' end also (AdapterRemoval)", "default": false },
+        { "name": "keep_phix", "type": "boolean", "description": "Keep reads mapping to PhiX genome", "default": false }
+      ]
+    },
+    {
+      "name": "Host Removal",
+      "description": "Remove host contamination from reads",
+      "parameters": [
+        { "name": "host_fasta", "type": "path", "description": "Path to host genome FASTA file for removal" },
+        { "name": "host_genome", "type": "string", "description": "Name of iGenomes host reference", "enum": ["GRCh38", "GRCh37", "GRCm39", "GRCm38", "BDGP6", "WBcel235", "CanFam3.1"] },
+        { "name": "host_removal_verysensitive", "type": "boolean", "description": "Use very sensitive mode for host removal", "default": false },
+        { "name": "host_removal_save_ids", "type": "boolean", "description": "Save IDs of removed host reads", "default": false }
+      ]
+    },
+    {
+      "name": "Assembly",
+      "description": "Metagenome assembly parameters",
+      "parameters": [
+        { "name": "assembler", "type": "string", "description": "Assembler to use", "default": "megahit", "enum": ["megahit", "spades", "spadeshybrid"] },
+        { "name": "skip_spades", "type": "boolean", "description": "Skip SPAdes assembly", "default": true },
+        { "name": "skip_megahit", "type": "boolean", "description": "Skip MEGAHIT assembly", "default": false },
+        { "name": "skip_quast", "type": "boolean", "description": "Skip QUAST assembly QC", "default": false },
+        { "name": "megahit_fix_cpu_1", "type": "boolean", "description": "Fix CPU to 1 for MEGAHIT (reproducibility)", "default": false },
+        { "name": "megahit_options", "type": "string", "description": "Additional MEGAHIT options" },
+        { "name": "spades_options", "type": "string", "description": "Additional SPAdes options" },
+        { "name": "spades_fix_cpus", "type": "integer", "description": "Fixed CPUs for SPAdes", "default": -1 },
+        { "name": "coassemble_group", "type": "boolean", "description": "Co-assemble samples in the same group", "default": false }
+      ]
+    },
+    {
+      "name": "Binning",
+      "description": "Genome binning parameters",
+      "parameters": [
+        { "name": "binning_map_mode", "type": "string", "description": "Mapping mode for binning coverage", "default": "group", "enum": ["all", "group", "own"] },
+        { "name": "skip_binning", "type": "boolean", "description": "Skip all binning steps", "default": false },
+        { "name": "skip_metabat2", "type": "boolean", "description": "Skip MetaBAT2 binning", "default": false },
+        { "name": "skip_maxbin2", "type": "boolean", "description": "Skip MaxBin2 binning", "default": false },
+        { "name": "skip_concoct", "type": "boolean", "description": "Skip CONCOCT binning", "default": false },
+        { "name": "min_contig_size", "type": "integer", "description": "Minimum contig size for binning", "default": 1500, "minimum": 1000 },
+        { "name": "min_length_unbinned_contigs", "type": "integer", "description": "Minimum length to retain unbinned contigs", "default": 1000000 },
+        { "name": "max_unbinned_contigs", "type": "integer", "description": "Maximum number of unbinned contigs to retain", "default": 100 },
+        { "name": "bowtie2_mode", "type": "string", "description": "Bowtie2 alignment mode", "default": "", "enum": ["", "--very-fast", "--fast", "--sensitive", "--very-sensitive"] }
+      ]
+    },
+    {
+      "name": "Bin Refinement",
+      "description": "Bin refinement and quality control",
+      "parameters": [
+        { "name": "refine_bins_dastool", "type": "boolean", "description": "Use DAS Tool for bin refinement", "default": true },
+        { "name": "refine_bins_dastool_threshold", "type": "number", "description": "DAS Tool score threshold", "default": 0.5, "minimum": 0, "maximum": 1 },
+        { "name": "postbinning_input", "type": "string", "description": "Input for post-binning steps", "default": "refined_bins_only", "enum": ["raw_bins_only", "refined_bins_only", "both"] },
+        { "name": "skip_busco", "type": "boolean", "description": "Skip BUSCO quality assessment", "default": false },
+        { "name": "busco_db", "type": "path", "description": "Path to BUSCO database" },
+        { "name": "busco_auto_lineage_prok", "type": "boolean", "description": "Use BUSCO auto-lineage for prokaryotes", "default": false },
+        { "name": "skip_checkm", "type": "boolean", "description": "Skip CheckM quality assessment", "default": false },
+        { "name": "checkm_db", "type": "path", "description": "Path to CheckM database" },
+        { "name": "skip_gunc", "type": "boolean", "description": "Skip GUNC chimerism check", "default": false },
+        { "name": "gunc_db", "type": "path", "description": "Path to GUNC database" }
+      ]
+    },
+    {
+      "name": "Taxonomy",
+      "description": "Taxonomic classification parameters",
+      "parameters": [
+        { "name": "skip_gtdbtk", "type": "boolean", "description": "Skip GTDB-Tk classification", "default": false },
+        { "name": "gtdb_db", "type": "path", "description": "Path to GTDB database (required for GTDB-Tk)" },
+        { "name": "gtdbtk_min_completeness", "type": "number", "description": "Minimum bin completeness for GTDB-Tk", "default": 50.0, "minimum": 0, "maximum": 100 },
+        { "name": "gtdbtk_max_contamination", "type": "number", "description": "Maximum contamination for GTDB-Tk", "default": 10.0, "minimum": 0, "maximum": 100 },
+        { "name": "gtdbtk_min_perc_aa", "type": "number", "description": "Minimum amino acid percentage for GTDB-Tk", "default": 10.0, "minimum": 0, "maximum": 100 },
+        { "name": "gtdbtk_pplacer_cpus", "type": "integer", "description": "CPUs for pplacer in GTDB-Tk", "default": 1, "minimum": 1 },
+        { "name": "skip_cat", "type": "boolean", "description": "Skip CAT/BAT classification", "default": true },
+        { "name": "cat_db", "type": "path", "description": "Path to CAT database" },
+        { "name": "cat_db_generate", "type": "boolean", "description": "Generate CAT database", "default": false }
+      ]
+    },
+    {
+      "name": "Annotation",
+      "description": "Functional annotation parameters",
+      "parameters": [
+        { "name": "skip_prokka", "type": "boolean", "description": "Skip Prokka annotation", "default": false },
+        { "name": "prokka_args", "type": "string", "description": "Additional Prokka arguments" },
+        { "name": "skip_metaeuk", "type": "boolean", "description": "Skip MetaEuk annotation", "default": true },
+        { "name": "metaeuk_mmseqs_db", "type": "path", "description": "Path to MetaEuk MMseqs2 database" },
+        { "name": "metaeuk_db", "type": "path", "description": "Path to MetaEuk database" }
+      ]
+    },
+    {
+      "name": "Reproducibility",
+      "description": "Options for reproducible results",
+      "parameters": [
+        { "name": "megahit_fix_cpu_1", "type": "boolean", "description": "Fix MEGAHIT CPU to 1 for reproducibility", "default": false },
+        { "name": "spades_fix_cpus", "type": "integer", "description": "Fixed CPUs for SPAdes reproducibility", "default": -1 },
+        { "name": "metabat_rng_seed", "type": "integer", "description": "Random seed for MetaBAT2", "default": 1 }
+      ]
+    },
+    {
+      "name": "Resource Limits",
+      "description": "Computational resource configuration",
+      "parameters": [
+        { "name": "max_cpus", "type": "integer", "description": "Maximum CPUs per process", "default": 16, "minimum": 1 },
+        { "name": "max_memory", "type": "string", "description": "Maximum memory per process", "default": "128.GB" },
+        { "name": "max_time", "type": "string", "description": "Maximum time per process", "default": "240.h" }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "input",
+      "name": "Input Validation",
+      "description": "Validate samplesheet format and check input files exist",
+      "category": "qc",
+      "dependsOn": [],
+      "tools": ["nf-validation"],
+      "outputs": ["fastq.gz"],
+      "docs": "https://nf-co.re/mag/usage#samplesheet-input",
+      "parameters": ["input", "single_end"]
+    },
+    {
+      "id": "fastqc_raw",
+      "name": "Raw Read QC",
+      "description": "Quality metrics of raw sequencing reads before any processing",
+      "category": "qc",
+      "dependsOn": ["input"],
+      "tools": ["FastQC v0.12.1"],
+      "outputs": ["html", "zip"],
+      "docs": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/",
+      "parameters": ["skip_fastqc"]
+    },
+    {
+      "id": "trimming",
+      "name": "Read Trimming",
+      "description": "Remove adapters and low-quality bases from reads",
+      "category": "preprocessing",
+      "dependsOn": ["input"],
+      "tools": ["fastp v0.23.4", "AdapterRemoval v2.3.3"],
+      "outputs": ["fastq.gz"],
+      "docs": "https://github.com/OpenGene/fastp",
+      "parameters": ["clip_tool", "reads_minlength", "fastp_qualified_quality", "fastp_cut_mean_quality", "adapterremoval_minquality"]
+    },
+    {
+      "id": "host_removal",
+      "name": "Host Removal",
+      "description": "Remove reads mapping to host genome and PhiX spike-in",
+      "category": "preprocessing",
+      "dependsOn": ["trimming"],
+      "tools": ["Bowtie2 v2.5.1", "SAMtools v1.18"],
+      "outputs": ["fastq.gz"],
+      "docs": "https://bowtie-bio.sourceforge.net/bowtie2/",
+      "parameters": ["host_fasta", "host_genome", "host_removal_verysensitive", "keep_phix"]
+    },
+    {
+      "id": "fastqc_trimmed",
+      "name": "Trimmed Read QC",
+      "description": "Quality metrics after preprocessing to verify improvement",
+      "category": "qc",
+      "dependsOn": ["host_removal"],
+      "tools": ["FastQC v0.12.1"],
+      "outputs": ["html", "zip"],
+      "docs": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/"
+    },
+    {
+      "id": "assembly",
+      "name": "Assembly",
+      "description": "De novo assembly of metagenome reads into contigs",
+      "category": "assembly",
+      "dependsOn": ["host_removal"],
+      "tools": ["MEGAHIT v1.2.9", "SPAdes v3.15.5", "MetaSPAdes"],
+      "outputs": ["fasta.gz", "log"],
+      "docs": "https://github.com/voutcn/megahit",
+      "parameters": ["assembler", "skip_megahit", "skip_spades", "megahit_options", "spades_options", "coassemble_group"]
+    },
+    {
+      "id": "assembly_qc",
+      "name": "Assembly QC",
+      "description": "Assess assembly quality: N50, number of contigs, total length",
+      "category": "qc",
+      "dependsOn": ["assembly"],
+      "tools": ["QUAST v5.2.0"],
+      "outputs": ["tsv", "html"],
+      "docs": "https://quast.sourceforge.net/",
+      "parameters": ["skip_quast"]
+    },
+    {
+      "id": "binning_prep",
+      "name": "Binning Prep",
+      "description": "Map reads back to assembly to calculate coverage depth",
+      "category": "binning",
+      "dependsOn": ["assembly"],
+      "tools": ["Bowtie2 v2.5.1", "SAMtools v1.18"],
+      "outputs": ["bam", "bai", "depth.txt"],
+      "docs": "https://bowtie-bio.sourceforge.net/bowtie2/",
+      "parameters": ["binning_map_mode", "bowtie2_mode"]
+    },
+    {
+      "id": "binning",
+      "name": "Genome Binning",
+      "description": "Cluster contigs into genome bins using multiple algorithms",
+      "category": "binning",
+      "dependsOn": ["binning_prep"],
+      "tools": ["MetaBAT2 v2.15", "MaxBin2 v2.2.7", "CONCOCT v1.1.0"],
+      "outputs": ["fasta"],
+      "docs": "https://bitbucket.org/berkeleylab/metabat/",
+      "parameters": ["skip_binning", "skip_metabat2", "skip_maxbin2", "skip_concoct", "min_contig_size"]
+    },
+    {
+      "id": "bin_refinement",
+      "name": "Bin Refinement",
+      "description": "Consolidate bins from multiple tools using DAS Tool",
+      "category": "binning",
+      "dependsOn": ["binning"],
+      "tools": ["DAS Tool v1.1.6"],
+      "outputs": ["fasta", "tsv"],
+      "docs": "https://github.com/cmks/DAS_Tool",
+      "parameters": ["refine_bins_dastool", "refine_bins_dastool_threshold", "postbinning_input"]
+    },
+    {
+      "id": "bin_qc",
+      "name": "Bin Quality",
+      "description": "Assess bin completeness, contamination, and chimerism",
+      "category": "qc",
+      "dependsOn": ["bin_refinement"],
+      "tools": ["CheckM v1.2.2", "BUSCO v5.5.0", "GUNC v1.0.5"],
+      "outputs": ["tsv", "summary.txt"],
+      "docs": "https://ecogenomics.github.io/CheckM/",
+      "parameters": ["skip_busco", "busco_db", "skip_checkm", "checkm_db", "skip_gunc", "gunc_db"]
+    },
+    {
+      "id": "taxonomy",
+      "name": "Taxonomy",
+      "description": "Classify bins taxonomically using marker genes",
+      "category": "annotation",
+      "dependsOn": ["bin_qc"],
+      "tools": ["GTDB-Tk v2.3.2", "CAT/BAT v5.2.3"],
+      "outputs": ["tsv", "summary.tsv", "tree"],
+      "docs": "https://ecogenomics.github.io/GTDBTk/",
+      "parameters": ["skip_gtdbtk", "gtdb_db", "gtdbtk_min_completeness", "gtdbtk_max_contamination", "skip_cat", "cat_db"]
+    },
+    {
+      "id": "annotation",
+      "name": "Annotation",
+      "description": "Predict and annotate genes in genome bins",
+      "category": "annotation",
+      "dependsOn": ["bin_qc"],
+      "tools": ["Prokka v1.14.6", "MetaEuk"],
+      "outputs": ["gff", "faa", "ffn", "gbk"],
+      "docs": "https://github.com/tseemann/prokka",
+      "parameters": ["skip_prokka", "prokka_args", "skip_metaeuk", "metaeuk_db"]
+    },
+    {
+      "id": "multiqc",
+      "name": "MultiQC Report",
+      "description": "Aggregate all QC metrics into interactive HTML report",
+      "category": "reporting",
+      "dependsOn": ["bin_qc", "taxonomy"],
+      "tools": ["MultiQC v1.17"],
+      "outputs": ["html", "data"],
+      "docs": "https://multiqc.info/"
+    }
+  ]
+}

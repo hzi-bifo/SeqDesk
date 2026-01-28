@@ -1,0 +1,56 @@
+{
+  "$schema": "./docs/seqdesk-config-schema.json",
+  "_comment": "Copy this file to seqdesk.config.json and adjust values for your environment",
+
+  "site": {
+    "name": "My Sequencing Facility",
+    "dataBasePath": "/data/sequencing",
+    "contactEmail": "sequencing@example.com"
+  },
+
+  "pipelines": {
+    "enabled": true,
+    "execution": {
+      "mode": "local",
+      "runDirectory": "/data/pipeline_runs",
+      "conda": {
+        "enabled": true,
+        "path": "/opt/conda",
+        "environment": "seqdesk-pipelines"
+      },
+      "slurm": {
+        "enabled": false,
+        "queue": "cpu",
+        "cores": 4,
+        "memory": "64GB",
+        "timeLimit": 24,
+        "options": ""
+      }
+    },
+    "mag": {
+      "enabled": true,
+      "version": "3.4.0",
+      "stubMode": false,
+      "skipProkka": true,
+      "skipConcoct": true
+    }
+  },
+
+  "ena": {
+    "testMode": true,
+    "centerName": "My Center"
+  },
+
+  "sequencingFiles": {
+    "extensions": [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
+    "scanDepth": 2,
+    "allowSingleEnd": false,
+    "ignorePatterns": ["**/tmp/**", "**/undetermined/**"]
+  },
+
+  "auth": {
+    "allowRegistration": true,
+    "requireEmailVerification": false,
+    "sessionTimeout": 24
+  }
+}
