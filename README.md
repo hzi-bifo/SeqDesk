@@ -21,16 +21,35 @@ A modern sequencing facility management system built with Next.js for managing s
 - **UI**: Tailwind CSS + shadcn/ui components
 - **Visualization**: React Flow for pipeline DAGs
 
-## Getting Started
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+```
+
+This will download SeqDesk, install dependencies, and set up the database.
+
+Options:
+```bash
+# Custom install directory
+SEQDESK_DIR=/opt/seqdesk curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+
+# Include Conda for pipeline support
+SEQDESK_WITH_CONDA=1 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+```
+
+## Manual Installation
 
 ### Prerequisites
 
 - Node.js 18+
 - npm or yarn
 
-### 1. Install dependencies
+### 1. Clone and install
 
 ```bash
+git clone https://github.com/hzi-bifo/SeqDesk.git
+cd SeqDesk
 npm install
 ```
 
