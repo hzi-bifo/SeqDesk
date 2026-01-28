@@ -6,6 +6,51 @@
   "version": "3.0.0",
   "minNextflowVersion": "23.04.0",
   "authors": ["Hadrien Gourlé", "Daniel Straub", "Sabrina Krakau", "James Fellows Yates"],
+
+  "samplesheet": {
+    "description": "Defines how to generate the pipeline samplesheet from SeqDesk data",
+    "columns": [
+      {
+        "name": "sample",
+        "source": "sample.sampleId",
+        "description": "Sample identifier"
+      },
+      {
+        "name": "group",
+        "source": "study.id",
+        "description": "Group for co-assembly (uses study ID)"
+      },
+      {
+        "name": "short_reads_1",
+        "source": "sample.reads[paired].file1",
+        "required": true,
+        "description": "Path to forward reads (R1)"
+      },
+      {
+        "name": "short_reads_2",
+        "source": "sample.reads[paired].file2",
+        "required": true,
+        "description": "Path to reverse reads (R2)"
+      },
+      {
+        "name": "short_reads_platform",
+        "source": "order.platform",
+        "transform": "mapPlatform",
+        "description": "Sequencing platform (ILLUMINA, OXFORD, PACBIO)"
+      },
+      {
+        "name": "long_reads",
+        "source": "sample.reads[long].file1",
+        "default": "",
+        "description": "Optional long reads file"
+      }
+    ],
+    "validation": {
+      "requirePairedReads": true,
+      "requirePlatform": true
+    }
+  },
+
   "inputs": [
     {
       "id": "reads",
@@ -24,6 +69,35 @@
       "sourceDescription": "Auto-generated from Order samples"
     }
   ],
+  "outputDiscovery": {
+    "_comment": "Track what we've learned from actual pipeline runs",
+    "lastInspected": null,
+    "outputStructure": {
+      "documented": false,
+      "notes": "Need to run pipeline and inspect actual output folder structure"
+    },
+    "pendingIntegration": [
+      {
+        "path": "Assembly/MEGAHIT/*.contigs.fa.gz",
+        "description": "Assembly contigs - need to decide: store file path or import sequences?",
+        "proposedDestination": "sample_assemblies",
+        "status": "needs_review"
+      },
+      {
+        "path": "GenomeBinning/QC/checkm_summary.tsv",
+        "description": "Bin quality metrics - should these be columns on Bin table or separate QC table?",
+        "proposedDestination": "bin_qc_metrics",
+        "status": "needs_db_design"
+      },
+      {
+        "path": "Taxonomy/GTDB-Tk/*.summary.tsv",
+        "description": "Taxonomic classifications - need new Taxonomy table or add to Bin?",
+        "proposedDestination": "bin_taxonomy",
+        "status": "needs_db_design"
+      }
+    ]
+  },
+
   "outputs": [
     {
       "id": "raw_qc",
@@ -33,7 +107,8 @@
       "fileTypes": ["html", "zip"],
       "destination": "sample_qc",
       "destinationField": "raw_qc_status",
-      "destinationDescription": "Updates Sample → QC Status (raw reads)"
+      "destinationDescription": "Updates Sample → QC Status (raw reads)",
+      "integrationStatus": "planned"
     },
     {
       "id": "trimmed_qc",
@@ -43,7 +118,8 @@
       "fileTypes": ["html", "zip"],
       "destination": "sample_qc",
       "destinationField": "trimmed_qc_status",
-      "destinationDescription": "Updates Sample → QC Status (trimmed)"
+      "destinationDescription": "Updates Sample → QC Status (trimmed)",
+      "integrationStatus": "planned"
     },
     {
       "id": "assemblies",
@@ -52,7 +128,9 @@
       "fromStep": "assembly",
       "fileTypes": ["fasta.gz"],
       "destination": "sample_assemblies",
-      "destinationDescription": "Stored in Sample → Assemblies"
+      "destinationDescription": "Stored in Sample → Assemblies",
+      "integrationStatus": "implemented",
+      "_implementationNote": "Creates Assembly record with filePath, detected in adapter via findAssemblyFiles()"
     },
     {
       "id": "assembly_qc",
@@ -62,6 +140,8 @@
       "fileTypes": ["tsv", "html"],
       "destination": "sample_metadata",
       "destinationField": "assembly_stats",
+      "integrationStatus": "planned",
+      "_designNote": "Need to parse QUAST TSV and store N50, num_contigs, total_length on Assembly record",
       "destinationDescription": "Updates Sample → Assembly N50, contigs, etc."
     },
     {
@@ -71,7 +151,9 @@
       "fromStep": "bin_refinement",
       "fileTypes": ["fasta"],
       "destination": "sample_bins",
-      "destinationDescription": "Stored in Sample → Genome Bins"
+      "destinationDescription": "Stored in Sample → Genome Bins",
+      "integrationStatus": "implemented",
+      "_implementationNote": "Creates Bin record with filePath, completeness, contamination from CheckM"
     },
     {
       "id": "bin_qc",
@@ -81,7 +163,9 @@
       "fileTypes": ["tsv"],
       "destination": "sample_metadata",
       "destinationField": "bin_quality",
-      "destinationDescription": "Updates Sample → Bin completeness, contamination"
+      "destinationDescription": "Updates Sample → Bin completeness, contamination",
+      "integrationStatus": "partial",
+      "_implementationNote": "CheckM metrics parsed and stored on Bin record, BUSCO/GUNC not yet integrated"
     },
     {
       "id": "taxonomy_report",
@@ -91,7 +175,9 @@
       "fileTypes": ["tsv", "summary.tsv"],
       "destination": "sample_metadata",
       "destinationField": "taxonomy",
-      "destinationDescription": "Updates Sample → Taxonomic classification"
+      "destinationDescription": "Updates Sample → Taxonomic classification",
+      "integrationStatus": "planned",
+      "_designNote": "Need to decide: add taxonomy fields to Bin table or create separate BinTaxonomy table"
     },
     {
       "id": "annotations",
@@ -100,7 +186,9 @@
       "fromStep": "annotation",
       "fileTypes": ["gff", "gbk", "faa"],
       "destination": "sample_annotations",
-      "destinationDescription": "Stored in Sample → Annotations"
+      "destinationDescription": "Stored in Sample → Annotations",
+      "integrationStatus": "planned",
+      "_designNote": "Need new Annotation table or store as PipelineArtifact with type=annotation"
     },
     {
       "id": "multiqc_report",
@@ -109,7 +197,9 @@
       "fromStep": "multiqc",
       "fileTypes": ["html"],
       "destination": "order_report",
-      "destinationDescription": "Linked as Order → Analysis Report"
+      "destinationDescription": "Linked as Order → Analysis Report",
+      "integrationStatus": "implemented",
+      "_implementationNote": "Stored as PipelineArtifact with type=report"
     }
   ],
   "parameterGroups": [
@@ -245,6 +335,7 @@
       "description": "Validate samplesheet format and check input files exist",
       "category": "qc",
       "dependsOn": [],
+      "processMatchers": ["SAMPLESHEET_CHECK", "INPUT_CHECK"],
       "tools": ["nf-validation"],
       "outputs": ["fastq.gz"],
       "docs": "https://nf-co.re/mag/usage#samplesheet-input",
@@ -256,6 +347,7 @@
       "description": "Quality metrics of raw sequencing reads before any processing",
       "category": "qc",
       "dependsOn": ["input"],
+      "processMatchers": ["FASTQC", "FASTQC_RAW"],
       "tools": ["FastQC v0.12.1"],
       "outputs": ["html", "zip"],
       "docs": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/",
@@ -267,6 +359,7 @@
       "description": "Remove adapters and low-quality bases from reads",
       "category": "preprocessing",
       "dependsOn": ["input"],
+      "processMatchers": ["FASTP", "ADAPTERREMOVAL"],
       "tools": ["fastp v0.23.4", "AdapterRemoval v2.3.3"],
       "outputs": ["fastq.gz"],
       "docs": "https://github.com/OpenGene/fastp",
@@ -278,6 +371,7 @@
       "description": "Remove reads mapping to host genome and PhiX spike-in",
       "category": "preprocessing",
       "dependsOn": ["trimming"],
+      "processMatchers": ["BOWTIE2_HOST_REMOVAL", "BOWTIE2_PHIX_REMOVAL", "BBMAP_BBSPLIT"],
       "tools": ["Bowtie2 v2.5.1", "SAMtools v1.18"],
       "outputs": ["fastq.gz"],
       "docs": "https://bowtie-bio.sourceforge.net/bowtie2/",
@@ -289,6 +383,7 @@
       "description": "Quality metrics after preprocessing to verify improvement",
       "category": "qc",
       "dependsOn": ["host_removal"],
+      "processMatchers": ["FASTQC_TRIMMED"],
       "tools": ["FastQC v0.12.1"],
       "outputs": ["html", "zip"],
       "docs": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/"
@@ -299,6 +394,7 @@
       "description": "De novo assembly of metagenome reads into contigs",
       "category": "assembly",
       "dependsOn": ["host_removal"],
+      "processMatchers": ["MEGAHIT", "SPADES", "SPADESHYBRID"],
       "tools": ["MEGAHIT v1.2.9", "SPAdes v3.15.5", "MetaSPAdes"],
       "outputs": ["fasta.gz", "log"],
       "docs": "https://github.com/voutcn/megahit",
@@ -310,6 +406,7 @@
       "description": "Assess assembly quality: N50, number of contigs, total length",
       "category": "qc",
       "dependsOn": ["assembly"],
+      "processMatchers": ["QUAST", "QUAST_BINS", "QUAST_BINS_SUMMARY"],
       "tools": ["QUAST v5.2.0"],
       "outputs": ["tsv", "html"],
       "docs": "https://quast.sourceforge.net/",
@@ -321,6 +418,7 @@
       "description": "Map reads back to assembly to calculate coverage depth",
       "category": "binning",
       "dependsOn": ["assembly"],
+      "processMatchers": ["BOWTIE2_ASSEMBLY_BUILD", "BOWTIE2_ASSEMBLY_ALIGN", "MINIMAP2_ALIGN"],
       "tools": ["Bowtie2 v2.5.1", "SAMtools v1.18"],
       "outputs": ["bam", "bai", "depth.txt"],
       "docs": "https://bowtie-bio.sourceforge.net/bowtie2/",
@@ -332,6 +430,7 @@
       "description": "Cluster contigs into genome bins using multiple algorithms",
       "category": "binning",
       "dependsOn": ["binning_prep"],
+      "processMatchers": ["METABAT2", "MAXBIN2", "CONCOCT"],
       "tools": ["MetaBAT2 v2.15", "MaxBin2 v2.2.7", "CONCOCT v1.1.0"],
       "outputs": ["fasta"],
       "docs": "https://bitbucket.org/berkeleylab/metabat/",
@@ -343,6 +442,7 @@
       "description": "Consolidate bins from multiple tools using DAS Tool",
       "category": "binning",
       "dependsOn": ["binning"],
+      "processMatchers": ["DASTOOL", "DASTOOL_SCAFFOLDS2BIN"],
       "tools": ["DAS Tool v1.1.6"],
       "outputs": ["fasta", "tsv"],
       "docs": "https://github.com/cmks/DAS_Tool",
@@ -354,6 +454,7 @@
       "description": "Assess bin completeness, contamination, and chimerism",
       "category": "qc",
       "dependsOn": ["bin_refinement"],
+      "processMatchers": ["CHECKM", "CHECKM_QA", "BUSCO", "GUNC"],
       "tools": ["CheckM v1.2.2", "BUSCO v5.5.0", "GUNC v1.0.5"],
       "outputs": ["tsv", "summary.txt"],
       "docs": "https://ecogenomics.github.io/CheckM/",
@@ -365,6 +466,7 @@
       "description": "Classify bins taxonomically using marker genes",
       "category": "annotation",
       "dependsOn": ["bin_qc"],
+      "processMatchers": ["GTDBTK", "GTDBTK_CLASSIFY", "CAT", "CAT_SUMMARY"],
       "tools": ["GTDB-Tk v2.3.2", "CAT/BAT v5.2.3"],
       "outputs": ["tsv", "summary.tsv", "tree"],
       "docs": "https://ecogenomics.github.io/GTDBTk/",
@@ -376,6 +478,7 @@
       "description": "Predict and annotate genes in genome bins",
       "category": "annotation",
       "dependsOn": ["bin_qc"],
+      "processMatchers": ["PROKKA", "BAKTA", "METAEUK"],
       "tools": ["Prokka v1.14.6", "MetaEuk"],
       "outputs": ["gff", "faa", "ffn", "gbk"],
       "docs": "https://github.com/tseemann/prokka",
@@ -387,6 +490,7 @@
       "description": "Aggregate all QC metrics into interactive HTML report",
       "category": "reporting",
       "dependsOn": ["bin_qc", "taxonomy"],
+      "processMatchers": ["MULTIQC", "CUSTOM_DUMPSOFTWAREVERSIONS"],
       "tools": ["MultiQC v1.17"],
       "outputs": ["html", "data"],
       "docs": "https://multiqc.info/"

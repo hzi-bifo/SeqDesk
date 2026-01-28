@@ -1,0 +1,14 @@
+parser:
+  id: gtdbtk_parser
+  type: tsv
+  description: Parse GTDB-Tk taxonomy summary
+  trigger:
+    filePattern: "Taxonomy/GTDB-Tk/*.summary.tsv"
+  skipHeader: true
+  columns:
+    - name: bin_name
+      index: 0
+    - name: classification
+      index: 1
+    - name: fastani_reference
+      index: 2

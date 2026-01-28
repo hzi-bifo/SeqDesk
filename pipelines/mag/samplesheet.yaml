@@ -1,0 +1,49 @@
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample
+  columns:
+    - name: sample
+      source: sample.sampleId
+
+    - name: group
+      source: study.id
+      description: Used for co-assembly grouping
+
+    - name: short_reads_1
+      source: read.file1
+      filters:
+        paired: true
+      transform:
+        type: prepend_path
+        base: "${DATA_BASE_PATH}"
+      required: true
+
+    - name: short_reads_2
+      source: read.file2
+      filters:
+        paired: true
+      transform:
+        type: prepend_path
+        base: "${DATA_BASE_PATH}"
+      required: true
+
+    - name: short_reads_platform
+      source: order.platform
+      transform:
+        type: map_value
+        mapping:
+          illumina: ILLUMINA
+          ILLUMINA: ILLUMINA
+          hiseq: ILLUMINA
+          miseq: ILLUMINA
+          novaseq: ILLUMINA
+          nextseq: ILLUMINA
+          ont: OXFORD
+          nanopore: OXFORD
+      required: true
+
+    - name: long_reads
+      source: null
+      default: ""

@@ -35,7 +35,7 @@ import {
   Copy,
   FileCode,
 } from "lucide-react";
-import { RunPipelineSection } from "@/components/pipelines/RunPipelineSection";
+import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 
 interface Sample {
   id: string;
@@ -961,9 +961,9 @@ export default function StudyDetailPage({
         </div>
       )}
 
-      {/* Run Analysis - only for admins with samples */}
+      {/* Pipelines Section - only for admins with samples */}
       {isAdmin && totalSamples > 0 && (
-        <RunPipelineSection studyId={study.id} samples={study.samples} />
+        <StudyPipelinesSection studyId={study.id} samples={study.samples} />
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
