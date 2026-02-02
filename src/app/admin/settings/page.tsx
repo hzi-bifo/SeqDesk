@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw, Download, ArrowUpCircle } from "lucide-react";
+import { Settings, Settings2, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw, Download, ArrowUpCircle, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
@@ -45,6 +45,22 @@ interface SequencingFilesConfig {
   ignorePatterns: string[];
   allowSingleEnd: boolean;
   autoAssign: boolean;
+}
+
+interface ExecutionSettings {
+  useSlurm: boolean;
+  slurmQueue: string;
+  slurmCores: number;
+  slurmMemory: string;
+  slurmTimeLimit: number;
+  slurmOptions: string;
+  runtimeMode: "conda";
+  condaPath: string;
+  condaEnv: string;
+  nextflowProfile: string;
+  pipelineRunDir: string;
+  weblogUrl: string;
+  weblogSecret: string;
 }
 
 interface PathTestResult {
@@ -90,6 +106,30 @@ export default function SettingsPage() {
   const [generatingTestFiles, setGeneratingTestFiles] = useState(false);
   const [testFilesResult, setTestFilesResult] = useState<TestFilesResult | null>(null);
 
+  // Pipeline execution settings
+  const [execSettings, setExecSettings] = useState<ExecutionSettings>({
+    useSlurm: false,
+    slurmQueue: "cpu",
+    slurmCores: 4,
+    slurmMemory: "64GB",
+    slurmTimeLimit: 12,
+    slurmOptions: "",
+    runtimeMode: "conda",
+    condaPath: "",
+    condaEnv: "seqdesk-pipelines",
+    nextflowProfile: "",
+    pipelineRunDir: "/data/pipeline_runs",
+    weblogUrl: "",
+    weblogSecret: "",
+  });
+  const [savingExec, setSavingExec] = useState(false);
+  const [execSaved, setExecSaved] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; testing?: boolean }>>({});
+  const [detectedVersions, setDetectedVersions] = useState<{ nextflow?: string; nfcore?: string; conda?: string; java?: string; condaEnv?: string }>({});
+  const [detectingVersions, setDetectingVersions] = useState(false);
+  const [autoDetecting, setAutoDetecting] = useState(false);
+  const [autoDetectResult, setAutoDetectResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // Config status
   const [configStatus, setConfigStatus] = useState<{
     config: Record<string, unknown>;
@@ -117,6 +157,8 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSettings();
     fetchSequencingFilesSettings();
+    fetchExecSettings();
+    detectInstalledVersions();
     fetchConfigStatus();
     checkForUpdates();
   }, []);
@@ -365,6 +407,101 @@ export default function SettingsPage() {
     } finally {
       setGeneratingTestFiles(false);
     }
+  };
+
+  // Pipeline execution settings
+  const fetchExecSettings = async () => {
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/execution");
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.settings) {
+          setExecSettings(data.settings);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load pipeline execution settings:", error);
+    }
+  };
+
+  const testSettingValue = async (setting: string, value?: string) => {
+    setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Testing...", testing: true } }));
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/test-setting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setting, value }),
+      });
+      const data = await res.json();
+      setTestResults((prev) => ({ ...prev, [setting]: { success: data.success, message: data.message, testing: false } }));
+    } catch {
+      setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Test failed", testing: false } }));
+    }
+  };
+
+  const detectInstalledVersions = async () => {
+    setDetectingVersions(true);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/test-setting");
+      if (res.ok) {
+        const data = await res.json();
+        setDetectedVersions(data.versions || {});
+      }
+    } catch {
+      // Ignore
+    }
+    setDetectingVersions(false);
+  };
+
+  const handleAutoDetectConda = async () => {
+    setAutoDetecting(true);
+    setAutoDetectResult(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/auto-detect");
+      const data = await res.json();
+      if (!res.ok || !data?.detected) {
+        setAutoDetectResult({
+          success: false,
+          message: data?.message || "No conda environment detected in the server process.",
+        });
+        return;
+      }
+
+      setExecSettings((prev) => ({
+        ...prev,
+        condaPath: data.condaBase || prev.condaPath,
+        condaEnv: data.condaEnv || prev.condaEnv,
+      }));
+      setAutoDetectResult({
+        success: true,
+        message: `Detected ${data.condaEnv || "conda env"} at ${data.condaBase || "unknown path"}`,
+      });
+    } catch {
+      setAutoDetectResult({
+        success: false,
+        message: "Auto-detect failed. Check server logs.",
+      });
+    } finally {
+      setAutoDetecting(false);
+    }
+  };
+
+  const handleSaveExecSettings = async () => {
+    setSavingExec(true);
+    setExecSaved(false);
+    try {
+      await fetch("/api/admin/settings/pipelines/execution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(execSettings),
+      });
+      setExecSaved(true);
+      setTimeout(() => setExecSaved(false), 3000);
+      detectInstalledVersions();
+    } catch (error) {
+      console.error("Failed to save execution settings:", error);
+    }
+    setSavingExec(false);
   };
 
   if (loading) {
@@ -707,6 +844,335 @@ export default function SettingsPage() {
           </div>
         </div>
       </GlassCard>
+
+      {/* Compute & Pipelines */}
+      <section id="compute">
+        <GlassCard className="p-6 mt-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Server className="h-5 w-5 text-slate-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Compute & Pipelines</h2>
+              <p className="text-sm text-muted-foreground">
+                Configure Nextflow runtime, scheduler, and diagnostics for pipeline execution
+              </p>
+            </div>
+          </div>
+
+          <div className="border-t pt-4 space-y-6">
+            {/* Scheduler */}
+            <div className="flex items-start gap-4 pb-4 border-b">
+              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                {execSettings.useSlurm ? (
+                  <Server className="h-5 w-5" />
+                ) : (
+                  <HardDrive className="h-5 w-5" />
+                )}
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <h3 className="font-semibold">Scheduler</h3>
+                  <Badge variant={execSettings.useSlurm ? "default" : "secondary"}>
+                    {execSettings.useSlurm ? "SLURM Cluster" : "Local"}
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted-foreground mb-3">
+                  {execSettings.useSlurm
+                    ? "Jobs will be submitted to the SLURM queue"
+                    : "Pipelines will run directly on this server"}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="compute-use-slurm"
+                    checked={execSettings.useSlurm}
+                    onCheckedChange={(checked) =>
+                      setExecSettings((prev) => ({ ...prev, useSlurm: checked }))
+                    }
+                  />
+                  <Label htmlFor="compute-use-slurm">Use SLURM</Label>
+                </div>
+              </div>
+            </div>
+
+            {/* Runtime */}
+            <div className="flex items-start gap-4 pb-4 border-b">
+              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                <Settings2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <h3 className="font-semibold">Runtime</h3>
+                  <Badge variant="secondary">Conda</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  SeqDesk runs nf-core pipelines using conda environments for tool resolution.
+                </p>
+              </div>
+            </div>
+
+            {/* SLURM Settings */}
+            {execSettings.useSlurm && (
+              <div className="grid gap-4 sm:grid-cols-2 pb-4 border-b">
+                <div className="space-y-2">
+                  <Label htmlFor="slurm-queue">Queue/Partition</Label>
+                  <Input
+                    id="slurm-queue"
+                    value={execSettings.slurmQueue}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, slurmQueue: e.target.value }))
+                    }
+                    placeholder="cpu"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="slurm-cores">CPU Cores</Label>
+                  <Input
+                    id="slurm-cores"
+                    type="number"
+                    min={1}
+                    value={execSettings.slurmCores}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, slurmCores: parseInt(e.target.value) || 4 }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="slurm-memory">Memory</Label>
+                  <Input
+                    id="slurm-memory"
+                    value={execSettings.slurmMemory}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, slurmMemory: e.target.value }))
+                    }
+                    placeholder="64GB"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="slurm-time">Time Limit (hours)</Label>
+                  <Input
+                    id="slurm-time"
+                    type="number"
+                    min={1}
+                    value={execSettings.slurmTimeLimit}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, slurmTimeLimit: parseInt(e.target.value) || 12 }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="slurm-options">Additional SLURM Options</Label>
+                  <Input
+                    id="slurm-options"
+                    value={execSettings.slurmOptions}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, slurmOptions: e.target.value }))
+                    }
+                    placeholder="--constraint=avx2 --account=mylab"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Paths */}
+            <div className="space-y-4 pb-4 border-b">
+              <div className="space-y-2">
+                <Label htmlFor="compute-run-dir">Pipeline Run Directory</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="compute-run-dir"
+                    value={execSettings.pipelineRunDir}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, pipelineRunDir: e.target.value }))
+                    }
+                    placeholder="/data/pipeline_runs"
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => testSettingValue("pipelineRunDir", execSettings.pipelineRunDir)}
+                    disabled={testResults.pipelineRunDir?.testing}
+                  >
+                    {testResults.pipelineRunDir?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+                  </Button>
+                </div>
+                {testResults.pipelineRunDir && !testResults.pipelineRunDir.testing && (
+                  <p className={`text-xs flex items-center gap-1 ${testResults.pipelineRunDir.success ? "text-green-600" : "text-red-600"}`}>
+                    {testResults.pipelineRunDir.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {testResults.pipelineRunDir.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="compute-conda-path">Conda Installation Path</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="compute-conda-path"
+                    value={execSettings.condaPath}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, condaPath: e.target.value }))
+                    }
+                    placeholder="/opt/homebrew/Caskroom/miniconda/base"
+                    className="flex-1"
+                  />
+                  <Button variant="outline" size="sm" onClick={handleAutoDetectConda} disabled={autoDetecting}>
+                    {autoDetecting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Auto"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => testSettingValue("condaPath", execSettings.condaPath)}
+                    disabled={testResults.condaPath?.testing}
+                  >
+                    {testResults.condaPath?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+                  </Button>
+                </div>
+                {autoDetectResult && (
+                  <p className={`text-xs flex items-center gap-1 ${autoDetectResult.success ? "text-green-600" : "text-red-600"}`}>
+                    {autoDetectResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {autoDetectResult.message}
+                  </p>
+                )}
+                {testResults.condaPath && !testResults.condaPath.testing && (
+                  <p className={`text-xs flex items-center gap-1 ${testResults.condaPath.success ? "text-green-600" : "text-red-600"}`}>
+                    {testResults.condaPath.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {testResults.condaPath.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="compute-conda-env">Conda Environment Name</Label>
+                <Input
+                  id="compute-conda-env"
+                  value={execSettings.condaEnv}
+                  onChange={(e) =>
+                    setExecSettings((prev) => ({ ...prev, condaEnv: e.target.value }))
+                  }
+                  placeholder="seqdesk-pipelines"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="compute-nextflow-profile">Nextflow Profile Override</Label>
+                <Input
+                  id="compute-nextflow-profile"
+                  value={execSettings.nextflowProfile}
+                  onChange={(e) =>
+                    setExecSettings((prev) => ({ ...prev, nextflowProfile: e.target.value }))
+                  }
+                  placeholder="e.g. slurm,conda"
+                />
+              </div>
+            </div>
+
+            {/* Weblog Settings */}
+            <div className="space-y-4 pb-4 border-b">
+              <div className="space-y-2">
+                <Label htmlFor="compute-weblog-url">Nextflow Weblog URL</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="compute-weblog-url"
+                    value={execSettings.weblogUrl}
+                    onChange={(e) =>
+                      setExecSettings((prev) => ({ ...prev, weblogUrl: e.target.value }))
+                    }
+                    placeholder="https://your-app.domain/api/pipelines/weblog"
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      testSettingValue(
+                        "weblogUrl",
+                        JSON.stringify({ url: execSettings.weblogUrl, secret: execSettings.weblogSecret })
+                      )
+                    }
+                    disabled={testResults.weblogUrl?.testing}
+                  >
+                    {testResults.weblogUrl?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+                  </Button>
+                </div>
+                {testResults.weblogUrl && !testResults.weblogUrl.testing && (
+                  <p className={`text-xs flex items-center gap-1 ${testResults.weblogUrl.success ? "text-green-600" : "text-red-600"}`}>
+                    {testResults.weblogUrl.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {testResults.weblogUrl.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="compute-weblog-secret">Weblog Secret</Label>
+                <Input
+                  id="compute-weblog-secret"
+                  type="password"
+                  value={execSettings.weblogSecret}
+                  onChange={(e) =>
+                    setExecSettings((prev) => ({ ...prev, weblogSecret: e.target.value }))
+                  }
+                  placeholder="shared secret token"
+                />
+              </div>
+            </div>
+
+            {/* Detected Versions */}
+            <div className="space-y-3 pb-4 border-b">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-2">
+                  Detected Tool Versions
+                  {detectingVersions && <Loader2 className="h-3 w-3 animate-spin" />}
+                </Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={detectInstalledVersions}
+                  disabled={detectingVersions}
+                  className="h-7 text-xs"
+                >
+                  <RefreshCw className={`h-3 w-3 mr-1 ${detectingVersions ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
+              {detectedVersions.condaEnv && (
+                <p className="text-xs text-muted-foreground mb-2">
+                  Using: <span className="font-mono font-medium">{detectedVersions.condaEnv}</span>
+                </p>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                <div className={`p-2 rounded ${detectedVersions.nextflow ? "bg-green-50" : "bg-muted"}`}>
+                  <p className="text-xs text-muted-foreground">Nextflow</p>
+                  <p className="font-mono">{detectedVersions.nextflow || "Not found"}</p>
+                </div>
+                <div className={`p-2 rounded ${detectedVersions.java ? "bg-green-50" : "bg-muted"}`}>
+                  <p className="text-xs text-muted-foreground">Java</p>
+                  <p className="font-mono">{detectedVersions.java ? `Java ${detectedVersions.java}` : "Not found"}</p>
+                </div>
+                <div className={`p-2 rounded ${detectedVersions.nfcore ? "bg-green-50" : "bg-muted"}`}>
+                  <p className="text-xs text-muted-foreground">nf-core</p>
+                  <p className="font-mono">{detectedVersions.nfcore || "Not found"}</p>
+                </div>
+                <div className={`p-2 rounded ${detectedVersions.conda ? "bg-green-50" : "bg-muted"}`}>
+                  <p className="text-xs text-muted-foreground">Conda</p>
+                  <p className="font-mono">{detectedVersions.conda || "Not found"}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <div className="flex items-center gap-3">
+              <Button onClick={handleSaveExecSettings} disabled={savingExec}>
+                {savingExec ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Save Settings
+              </Button>
+              {execSaved && (
+                <span className="text-sm text-green-600 flex items-center gap-1">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Saved
+                </span>
+              )}
+            </div>
+          </div>
+        </GlassCard>
+      </section>
 
       {/* Software Updates */}
       <GlassCard className="p-6 mt-6">

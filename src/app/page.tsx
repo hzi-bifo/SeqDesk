@@ -83,7 +83,7 @@ export default function HomePage() {
               className="text-xs font-medium px-2 py-0.5 rounded-full"
               style={{ background: '#171717', color: '#ffffff' }}
             >
-              v0.1.7
+              v0.1.8
             </span>
           </div>
 
@@ -160,7 +160,7 @@ export default function HomePage() {
 
         {/* Footer */}
         <div className="text-xs" style={{ color: '#a3a3a3' }}>
-          SeqDesk v0.1.7 — Modern UI release
+          SeqDesk v0.1.8 — Install flow improvements
         </div>
       </div>
 
