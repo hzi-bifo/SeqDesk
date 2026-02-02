@@ -10,9 +10,11 @@
 #   SEQDESK_VERSION=x.x.x          - Specific version (default: latest)
 #   SEQDESK_WITH_PIPELINES=1       - Install pipeline dependencies (Conda + Nextflow)
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
+#   SEQDESK_SKIP_DEPS=1            - Skip dependency install (Node)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Sequencing data base path
 #   SEQDESK_RUN_DIR=/data/runs     - Pipeline run directory
+#   SEQDESK_PORT=3000              - App port (default: 3000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
@@ -34,13 +36,18 @@ SEQDESK_VERSION="${SEQDESK_VERSION:-}"
 SEQDESK_API="https://seqdesk.com/api"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
+SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
+SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 
+MIN_NODE_VERSION=18
+INSTALL_START_TS=$(date +%s)
+INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
 TOTAL_STEPS=7
 CURRENT_STEP=0
 
@@ -173,6 +180,202 @@ prompt_yes_no() {
     esac
 }
 
+print_kv() {
+    printf "  %-24s %s\n" "$1" "$2"
+}
+
+resolve_parent_dir() {
+    local target="$1"
+    local parent
+    parent="$(dirname "$target")"
+    if [[ "$target" != /* ]]; then
+        parent="${PWD}/${parent}"
+    fi
+    if [ -d "$parent" ]; then
+        printf '%s' "$parent"
+    else
+        printf '%s' "$PWD"
+    fi
+}
+
+format_kb() {
+    local kb="${1:-0}"
+    local mb=$((kb / 1024))
+    if [ "$mb" -ge 1024 ]; then
+        printf '%sG' $((mb / 1024))
+    else
+        printf '%sM' "$mb"
+    fi
+}
+
+get_disk_info() {
+    local target="$1"
+    if ! command_exists df; then
+        printf 'unknown'
+        return 0
+    fi
+
+    local line
+    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2')
+    if [ -z "$line" ]; then
+        printf 'unknown'
+        return 0
+    fi
+
+    local avail_kb
+    local mount_point
+    avail_kb=$(echo "$line" | awk '{print $4}')
+    mount_point=$(echo "$line" | awk '{print $6}')
+    printf '%s free on %s' "$(format_kb "$avail_kb")" "$mount_point"
+}
+
+is_writable_target() {
+    local target="$1"
+    local parent
+    parent="$(resolve_parent_dir "$target")"
+    if [ -d "$target" ]; then
+        [ -w "$target" ]
+        return $?
+    fi
+    [ -w "$parent" ]
+}
+
+print_preflight_summary() {
+    local target_status="new"
+    if [ -d "$SEQDESK_DIR" ]; then
+        target_status="exists"
+    fi
+
+    local writable="no"
+    if is_writable_target "$SEQDESK_DIR"; then
+        writable="${GREEN}yes${NC}"
+    else
+        writable="${RED}no${NC}"
+    fi
+
+    local parent_dir
+    parent_dir="$(resolve_parent_dir "$SEQDESK_DIR")"
+
+    local conda_status="${YELLOW}not found${NC}"
+    if command_exists conda; then
+        conda_status="${GREEN}found${NC}"
+    fi
+
+    local nextflow_status="${YELLOW}not found${NC}"
+    if command_exists nextflow; then
+        nextflow_status="${GREEN}found${NC}"
+    fi
+
+    local pipelines_status="pending"
+    if [ "$PIPELINES_ENABLED" = "true" ]; then
+        pipelines_status="enabled"
+    elif [ "$PIPELINES_ENABLED" = "false" ]; then
+        pipelines_status="disabled"
+    fi
+
+    print_header "Preflight Summary"
+    print_kv "Target directory" "$SEQDESK_DIR ($target_status)"
+    print_kv "Writable" "$writable"
+    print_kv "Disk available" "$(get_disk_info "$parent_dir")"
+    print_kv "Node.js" "v$NODE_VERSION"
+    print_kv "npm" "$NPM_VERSION"
+    print_kv "Conda" "$conda_status"
+    print_kv "Nextflow" "$nextflow_status"
+    print_kv "Pipelines" "$pipelines_status"
+}
+
+print_config_summary() {
+    local env_status="will create"
+    local config_status="will create"
+    if [ -f ".env" ]; then
+        env_status="exists (will update)"
+    fi
+    if [ -f "seqdesk.config.json" ]; then
+        config_status="exists (will update)"
+    fi
+
+    local pipeline_label="disabled"
+    if [ "$PIPELINES_ENABLED" = "true" ]; then
+        pipeline_label="enabled"
+    fi
+
+    print_header "Configuration Summary"
+    print_kv "Pipelines" "$pipeline_label"
+    print_kv "Data path" "${SEQDESK_DATA_PATH:-./data}"
+    if [ "$PIPELINES_ENABLED" = "true" ]; then
+        print_kv "Run directory" "${SEQDESK_RUN_DIR:-./pipeline_runs}"
+    else
+        print_kv "Run directory" "not used"
+    fi
+    print_kv "Port" "${SEQDESK_PORT:-3000}"
+    print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-<not set>}"
+    print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-<not set>}"
+    print_kv ".env" "$env_status"
+    print_kv "seqdesk.config.json" "$config_status"
+}
+
+confirm_config() {
+    if is_truthy "$SEQDESK_YES"; then
+        return 0
+    fi
+    local reply
+    reply=$(read_input "Continue with these settings? (Y/n): ")
+    reply=${reply:-Y}
+    case "$reply" in
+        n|N|no|NO)
+            print_error "Installation cancelled."
+            exit 1
+            ;;
+    esac
+}
+
+install_node() {
+    print_info "Installing Node.js 20..."
+    if [[ "$OS" == "macos" ]]; then
+        if command_exists brew; then
+            brew install node
+        else
+            print_error "Homebrew not found. Install Node.js manually: https://nodejs.org"
+            exit 1
+        fi
+        return 0
+    fi
+
+    if [ "$EUID" -ne 0 ] && ! command_exists sudo; then
+        print_error "sudo is required to install Node.js. Install it manually: https://nodejs.org"
+        exit 1
+    fi
+
+    if [[ "$DISTRO" == "debian" ]]; then
+        if [ "$EUID" -eq 0 ]; then
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            apt-get install -y nodejs
+        else
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+        fi
+    elif [[ "$DISTRO" == "redhat" ]]; then
+        if [ "$EUID" -eq 0 ]; then
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+            if command_exists dnf; then
+                dnf install -y nodejs
+            else
+                yum install -y nodejs
+            fi
+        else
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            if command_exists dnf; then
+                sudo dnf install -y nodejs
+            else
+                sudo yum install -y nodejs
+            fi
+        fi
+    else
+        print_error "Unsupported distro for auto-install. Install Node.js manually: https://nodejs.org"
+        exit 1
+    fi
+}
+
 sed_inplace() {
     local expr="$1"
     local file="$2"
@@ -190,15 +393,20 @@ run_wizard() {
     if [ ! -f scripts/install-wizard.mjs ]; then
         return 1
     fi
+    if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ]; then
+        return 1
+    fi
     local wizard_out
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
     SEQDESK_WIZARD_DEFAULT_DATA_PATH="${SEQDESK_DATA_PATH:-./data}" \
     SEQDESK_WIZARD_DEFAULT_RUN_DIR="${SEQDESK_RUN_DIR:-./pipeline_runs}" \
+    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-3000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \
     SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}" \
+    SEQDESK_PORT="${SEQDESK_PORT:-}" \
     SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
     node scripts/install-wizard.mjs
@@ -279,10 +487,16 @@ NODE
 on_error() {
     local exit_code=$?
     set +e
-    print_error "Command failed (exit ${exit_code}): ${BASH_COMMAND}"
+    echo ""
+    print_error "Installer failed."
+    print_info "Command: ${BASH_COMMAND}"
+    print_info "Exit code: ${exit_code}"
     if [ -n "$SEQDESK_LOG" ]; then
-        print_error "See log: $SEQDESK_LOG"
+        print_info "Log: $SEQDESK_LOG"
+    else
+        print_info "Tip: re-run with SEQDESK_LOG=/tmp/seqdesk-install.log"
     fi
+    print_info "Common fixes: check network access, sudo permissions, and disk space."
     exit $exit_code
 }
 
@@ -308,6 +522,10 @@ echo "  ___) |  __/ (_| | |_| |  __/\\__ \\   < "
 echo " |____/ \\___|\\__, |____/ \\___||___/_|\\_\\"
 echo "                |_|                      "
 echo -e "${NC}"
+echo ""
+echo "SeqDesk Installer (Distribution)"
+echo "Requested version: ${SEQDESK_VERSION:-latest}"
+echo "Started: ${INSTALL_STARTED_AT}"
 echo ""
 
 # System detection
@@ -338,16 +556,50 @@ print_success "Architecture: $ARCH"
 # Dependencies
 print_step "Checking dependencies"
 
+node_install_reason=""
 if ! command_exists node; then
-    print_error "Node.js is required but not installed."
-    print_error "Install Node.js 18+ from https://nodejs.org"
+    node_install_reason="missing"
+else
+    NODE_VERSION=$(node -v | sed 's/v//')
+    NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
+    if [ "$NODE_MAJOR" -lt "$MIN_NODE_VERSION" ]; then
+        node_install_reason="outdated"
+    fi
+fi
+
+if [ -n "$node_install_reason" ]; then
+    if is_truthy "$SEQDESK_SKIP_DEPS"; then
+        print_error "Node.js $MIN_NODE_VERSION+ is required but not installed."
+        print_error "Install Node.js from https://nodejs.org and re-run the installer."
+        exit 1
+    fi
+
+    if is_truthy "$SEQDESK_YES"; then
+        install_node
+    else
+        if [ "$node_install_reason" = "missing" ]; then
+            prompt_yes_no INSTALL_NODE "Node.js not found. Install Node.js 20 now? (requires sudo)" "y"
+        else
+            prompt_yes_no INSTALL_NODE "Node.js is too old. Upgrade to Node.js 20 now? (requires sudo)" "y"
+        fi
+        if [ "$INSTALL_NODE" = "true" ]; then
+            install_node
+        else
+            print_error "Node.js $MIN_NODE_VERSION+ is required to continue."
+            exit 1
+        fi
+    fi
+fi
+
+if ! command_exists node; then
+    print_error "Node.js installation failed or is not on PATH."
     exit 1
 fi
 
 NODE_VERSION=$(node -v | sed 's/v//')
 NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
-if [ "$NODE_MAJOR" -lt 18 ]; then
-    print_error "Node.js 18+ is required (found v$NODE_VERSION)"
+if [ "$NODE_MAJOR" -lt "$MIN_NODE_VERSION" ]; then
+    print_error "Node.js ${MIN_NODE_VERSION}+ is required (found v$NODE_VERSION)"
     exit 1
 fi
 print_success "Node.js $NODE_VERSION"
@@ -356,7 +608,8 @@ if ! command_exists npm; then
     print_error "npm is required but not installed."
     exit 1
 fi
-print_success "npm $(npm -v)"
+NPM_VERSION=$(npm -v)
+print_success "npm $NPM_VERSION"
 
 # Pipeline support
 print_step "Pipeline support"
@@ -379,6 +632,8 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
 else
     print_info "Pipeline support disabled"
 fi
+
+print_preflight_summary
 
 if [ "$PIPELINES_ENABLED" = "true" ] && ! command_exists conda; then
     print_header "Installing Miniconda"
@@ -422,10 +677,10 @@ if [ -z "$VERSION_INFO" ]; then
     exit 1
 fi
 
-LATEST_VERSION=$(echo "$VERSION_INFO" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4)
-DOWNLOAD_URL=$(echo "$VERSION_INFO" | grep -o '"downloadUrl":"[^"]*"' | head -1 | cut -d'"' -f4)
-CHECKSUM=$(echo "$VERSION_INFO" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4)
-FILE_SIZE=$(echo "$VERSION_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d':' -f2)
+LATEST_VERSION=$(echo "$VERSION_INFO" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+DOWNLOAD_URL=$(echo "$VERSION_INFO" | grep -o '"downloadUrl":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+CHECKSUM=$(echo "$VERSION_INFO" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+FILE_SIZE=$(echo "$VERSION_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d':' -f2 || true)
 
 if [ -z "$LATEST_VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
     print_error "Could not fetch version info"
@@ -455,13 +710,17 @@ print_success "Downloaded successfully"
 
 if [ -n "$CHECKSUM" ]; then
     print_info "Verifying checksum..."
+    EXPECTED_CHECKSUM="$CHECKSUM"
+    if [[ "$EXPECTED_CHECKSUM" == sha256:* ]]; then
+        EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM#sha256:}"
+    fi
     if command -v sha256sum &> /dev/null; then
         ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | cut -d' ' -f1)
     else
         ACTUAL_CHECKSUM=$(shasum -a 256 "$TEMP_FILE" | cut -d' ' -f1)
     fi
 
-    if [ "$ACTUAL_CHECKSUM" = "$CHECKSUM" ]; then
+    if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
         print_success "Checksum verified"
     else
         print_error "Checksum mismatch"
@@ -503,10 +762,11 @@ cd "$SEQDESK_DIR"
 print_step "Configuring environment"
 
 wizard_status=1
-set +e
-run_wizard
-wizard_status=$?
-set -e
+if run_wizard; then
+    wizard_status=0
+else
+    wizard_status=$?
+fi
 if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
@@ -516,9 +776,13 @@ elif [ $wizard_status -ne 0 ]; then
         prompt_value SEQDESK_RUN_DIR "Pipeline run directory" "./pipeline_runs"
     fi
 
+    prompt_value SEQDESK_PORT "App port" "3000"
     prompt_optional SEQDESK_NEXTAUTH_URL "NEXTAUTH_URL (optional)" ""
     prompt_optional SEQDESK_DATABASE_URL "DATABASE_URL (optional)" ""
 fi
+
+print_config_summary
+confirm_config
 
 if [ ! -f ".env" ]; then
     cp .env.example .env
@@ -531,12 +795,32 @@ fi
 
 set_env_var "NEXTAUTH_URL" "$SEQDESK_NEXTAUTH_URL"
 set_env_var "DATABASE_URL" "$SEQDESK_DATABASE_URL"
+set_env_var "PORT" "$SEQDESK_PORT"
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 
 # Initialize database
 print_info "Initializing database..."
-npx prisma db push --skip-generate
+PRISMA_CLI="./node_modules/.bin/prisma"
+PRISMA_VERSION=""
+PRISMA_SKIP_GENERATE=""
+if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
+    PRISMA_SKIP_GENERATE="--skip-generate"
+fi
+if [ -x "$PRISMA_CLI" ]; then
+    "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
+else
+    if command_exists node && [ -f package.json ]; then
+        PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
+        PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
+    fi
+    if [ -n "$PRISMA_VERSION" ]; then
+        print_info "Using Prisma CLI v$PRISMA_VERSION"
+        npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
+    else
+        npx prisma db push $PRISMA_SKIP_GENERATE
+    fi
+fi
 print_success "Database initialized"
 
 # Pipeline environment
@@ -563,6 +847,12 @@ echo -e "${GREEN}SeqDesk $LATEST_VERSION installed successfully!${NC}"
 echo ""
 echo "App directory: $SEQDESK_DIR"
 echo "Node: v$NODE_VERSION"
+if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then
+    CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}' || true)
+    if [ -n "$CONDA_VERSION" ]; then
+        echo "Conda: v$CONDA_VERSION"
+    fi
+fi
 echo "Pipelines: ${PIPELINES_ENABLED}" | sed 's/true/enabled/; s/false/disabled/'
 if [ -n "$SEQDESK_DATA_PATH" ]; then
     echo "Data path: $SEQDESK_DATA_PATH"
@@ -570,6 +860,18 @@ fi
 if [ -n "$SEQDESK_RUN_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
     echo "Run directory: $SEQDESK_RUN_DIR"
 fi
+if [ -f "$SEQDESK_DIR/.env" ]; then
+    echo "Env file: $SEQDESK_DIR/.env"
+fi
+if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
+    echo "Config file: $SEQDESK_DIR/seqdesk.config.json"
+fi
+INSTALL_END_TS=$(date +%s)
+INSTALL_FINISHED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
+ELAPSED=$((INSTALL_END_TS - INSTALL_START_TS))
+printf 'Started: %s\n' "$INSTALL_STARTED_AT"
+printf 'Finished: %s\n' "$INSTALL_FINISHED_AT"
+printf 'Elapsed: %dm%ds\n' $((ELAPSED / 60)) $((ELAPSED % 60))
 if [ -n "$SEQDESK_LOG" ]; then
     echo "Install log: $SEQDESK_LOG"
 fi
@@ -580,7 +882,7 @@ echo ""
 echo -e "  ${CYAN}cd $SEQDESK_DIR${NC}"
 echo -e "  ${CYAN}./start.sh${NC}"
 echo ""
-echo "Then open http://localhost:3000"
+echo "Then open http://localhost:${SEQDESK_PORT:-3000}"
 echo ""
 echo "Default login:"
 echo "  Email:    admin@example.com"
