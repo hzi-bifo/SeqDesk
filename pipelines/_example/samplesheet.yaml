@@ -1,0 +1,59 @@
+# Samplesheet Configuration
+# This file defines how to generate the pipeline samplesheet from SeqDesk data
+
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample  # One row per sample
+
+  columns:
+    - name: sample
+      source: sample.sampleId
+      description: Sample identifier
+      required: true
+
+    - name: group
+      source: study.id
+      description: Group/study identifier for co-assembly
+      required: true
+
+    - name: fastq_1
+      source: read.file1
+      description: Path to R1 reads
+      required: true
+      filters:
+        paired: true
+      transform:
+        type: prepend_path
+        base: "${DATA_BASE_PATH}"
+
+    - name: fastq_2
+      source: read.file2
+      description: Path to R2 reads
+      required: true
+      filters:
+        paired: true
+      transform:
+        type: prepend_path
+        base: "${DATA_BASE_PATH}"
+
+    - name: platform
+      source: order.platform
+      description: Sequencing platform
+      required: true
+      transform:
+        type: map_value
+        mapping:
+          illumina: ILLUMINA
+          ILLUMINA: ILLUMINA
+          hiseq: ILLUMINA
+          miseq: ILLUMINA
+          novaseq: ILLUMINA
+          nextseq: ILLUMINA
+
+    - name: strandedness
+      source: null
+      description: Library strandedness (optional)
+      required: false
+      default: ""

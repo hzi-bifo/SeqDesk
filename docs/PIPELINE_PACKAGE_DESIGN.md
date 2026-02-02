@@ -1,6 +1,9 @@
 # Pipeline Package Design (Scope-Aware, Self-Contained)
 
-A SeqDesk pipeline should be **self-contained**, but that does **not** mean “one file”.
+> **Note:** The pipeline registry/store (for browsing and installation) now lives in the **landing-page repo** (`hzi-bifo/SeqDesk.com`).
+> This repo only loads **local packages** from `pipelines/`. The public registry is at `seqdesk.com/api/registry`.
+
+A SeqDesk pipeline should be **self-contained**, but that does **not** mean "one file".
 Instead, each pipeline lives in its **own folder** with a small manifest and
 optional supporting files (DAG, samplesheet rules, parsers, scripts). The manifest
 is the source of truth and declares **how the pipeline reads from SeqDesk and
@@ -156,6 +159,7 @@ This enables the **same DAG view** in the admin UI and on the website.
 - visibility / permissions
 
 This is used by the admin pipeline settings UI.
+It is **not** the public pipeline store registry (that lives in the landing-page repo).
 
 ---
 
@@ -300,3 +304,93 @@ This keeps the package portable but allows SeqDesk to extend its schema when nee
 2. **Parser library**: which built-in parsers are allowed?
 3. **Schema updates**: are we comfortable auto-migrating for new pipeline fields?
 4. **Execution profiles**: should packages enforce allowed profiles strictly?
+
+---
+
+## Generic Execution System
+
+The manifest is now the source of truth for pipeline execution. New pipelines can be added without writing custom TypeScript code.
+
+### Execution Configuration
+
+The `execution` section in manifest.json controls Nextflow command generation:
+
+```json
+{
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "nf-core/mag",
+    "version": "3.0.0",
+    "profiles": ["conda"],
+    "defaultParams": {
+      "skip_spades": true,
+      "skip_prokka": true
+    },
+    "paramMap": {
+      "skipMegahit": "--skip_megahit",
+      "skipBinQc": "--skip_binqc",
+      "gtdbDb": "--gtdb_db"
+    },
+    "paramRules": [
+      {
+        "when": { "skipBinQc": true },
+        "add": [
+          "--skip_quast",
+          "--skip_gtdbtk",
+          "--run_busco false",
+          "--run_checkm false"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### paramMap
+
+Maps UI configuration keys to Nextflow flags:
+
+- **Boolean true**: Adds the flag (e.g., `skipBinQc: true` → `--skip_binqc`)
+- **Boolean false/null/undefined**: Skips the flag
+- **Other values**: Adds flag with value (e.g., `gtdbDb: "/path"` → `--gtdb_db /path`)
+
+### paramRules
+
+Conditional parameter logic applied after paramMap:
+
+```json
+{
+  "when": { "keyName": expectedValue },
+  "add": [
+    "--simple_flag",
+    { "flag": "--with_value", "value": "something" }
+  ]
+}
+```
+
+Rules are evaluated in order. All matching rules are applied.
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/pipelines/generic-executor.ts` | Command building, script generation |
+| `src/lib/pipelines/generic-adapter.ts` | Validation, samplesheet, output discovery |
+| `src/lib/pipelines/parser-runtime.ts` | Execute YAML-defined parsers |
+| `src/lib/pipelines/package-loader.ts` | Load and validate packages |
+
+### Adding a New Pipeline
+
+1. Create `pipelines/<id>/` directory
+2. Add required files:
+   - `manifest.json` - Package metadata, inputs, execution, outputs
+   - `definition.json` - DAG steps and process matchers
+   - `registry.json` - UI configuration
+   - `samplesheet.yaml` - Samplesheet generation rules
+3. Add parser files in `parsers/` if needed
+4. Run `npm run pipeline:validate` to check configuration
+5. Restart the dev server - pipeline is automatically loaded
+
+### Template Package
+
+See `pipelines/_example/` for a complete example with all configuration options. This folder is not loaded (folders starting with `_` are ignored).

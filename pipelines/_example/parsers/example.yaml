@@ -1,0 +1,17 @@
+parser:
+  id: "example_parser"
+  type: "tsv"
+  description: "Example metrics parser"
+  trigger:
+    filePattern: "qc/metrics.tsv"
+  skipHeader: true
+  columns:
+    - name: "sample_name"
+      index: 0
+      type: "string"
+    - name: "quality"
+      index: 1
+      type: "float"
+    - name: "reads"
+      index: 2
+      type: "int"
