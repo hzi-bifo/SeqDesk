@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { HelpCircle } from "lucide-react";
+import { useState, useEffect, useContext } from "react";
 import { useHelpText } from "@/lib/useHelpText";
+import { SidebarContext } from "./SidebarContext";
 
 export function Footer() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
+  const sidebarContext = useContext(SidebarContext);
+  const collapsed = sidebarContext?.collapsed ?? false;
 
   useEffect(() => {
     setCurrentTime(new Date());
@@ -34,18 +36,21 @@ export function Footer() {
   };
 
   return (
-    <footer className="fixed bottom-0 left-64 right-0 border-t border-stone-200/60 bg-stone-50 px-6 py-1.5 z-30">
-      <div className="flex items-center justify-between text-[11px] text-stone-400">
+    <footer
+      className="fixed bottom-0 right-0 border-t border-border bg-background px-4 py-1.5 z-30 transition-all duration-300"
+      style={{ left: collapsed ? '64px' : '256px' }}
+    >
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <div className="flex items-center gap-4">
           {isLoaded && (
             <button
               onClick={toggleHelpText}
-              className={`flex items-center gap-1.5 hover:text-stone-600 transition-colors ${
-                showHelpText ? "text-primary" : ""
+              className={`flex items-center gap-1.5 hover:text-foreground transition-colors ${
+                showHelpText ? "text-foreground" : ""
               }`}
               title={showHelpText ? "Hide help text" : "Show help text"}
             >
-              <HelpCircle className="h-3 w-3" />
+              <span className={`h-1.5 w-1.5 rounded-full ${showHelpText ? "bg-foreground" : "bg-muted-foreground"}`} />
               <span>Help tips {showHelpText ? "on" : "off"}</span>
             </button>
           )}

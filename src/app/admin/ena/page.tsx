@@ -191,7 +191,7 @@ export default function ENASettingsPage() {
   };
 
   return (
-    <PageContainer maxWidth="medium">
+    <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-bold">ENA Settings</h1>
         <p className="text-muted-foreground mt-1">

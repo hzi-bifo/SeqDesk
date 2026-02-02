@@ -37,11 +37,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  FlaskConical,
-  X,
   Loader2,
   Check,
-  AlertCircle,
   User,
   Mail,
   Building2,
@@ -59,6 +56,8 @@ import {
   Table as TableIcon,
   Plus,
   Trash2,
+  FlaskConical,
+  AlertCircle,
 } from "lucide-react";
 import {
   FormFieldDefinition,
@@ -79,6 +78,7 @@ import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { toast } from "sonner";
 import { OrganismCell } from "@/lib/field-types/organism";
+import { InlineFieldError } from "@/components/ui/inline-field-error";
 
 // Extend TanStack Table meta types for the wizard
 declare module "@tanstack/react-table" {
@@ -235,7 +235,7 @@ function EditableCell({
           disabled={!isEditable}
           className={cn(
             "w-full h-full px-2 py-1.5 border-0 outline-none bg-transparent text-sm resize-none",
-            "focus:bg-blue-50 focus:ring-1 focus:ring-blue-300",
+            "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
             error && "bg-red-50"
           )}
         />
@@ -252,7 +252,7 @@ function EditableCell({
           disabled={!isEditable}
           className={cn(
             "w-full h-full px-2 py-1.5 border-0 outline-none bg-transparent text-sm",
-            "focus:bg-blue-50 focus:ring-1 focus:ring-blue-300",
+            "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
             error && "bg-red-50"
           )}
         />
@@ -317,7 +317,7 @@ function SelectCell({
           disabled={!isEditable}
           className={cn(
             "w-full h-full px-2 py-1 text-sm text-left bg-white flex items-center justify-between",
-            isEditable ? "hover:bg-blue-50 cursor-pointer" : "cursor-not-allowed opacity-70"
+            isEditable ? "hover:bg-secondary cursor-pointer" : "cursor-not-allowed opacity-70"
           )}
         >
           <span className={value ? "" : "text-muted-foreground"}>
@@ -448,7 +448,7 @@ function MultiSelectCell({
       disabled={!isEditable}
       className={cn(
         "w-full h-full px-2 py-1 text-sm bg-white border-0 outline-none",
-        "focus:bg-blue-50 focus:ring-1 focus:ring-blue-300",
+        "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
         !isEditable && "cursor-not-allowed opacity-70"
       )}
     >
@@ -1476,15 +1476,29 @@ export default function NewOrderPage() {
   };
 
   const validateStep = (stepId: string): boolean => {
+    // Clear previous field errors
+    setFieldErrors({});
+    setError("");
+
+    // Helper to set field error and focus
+    const setFieldError = (fieldName: string, message: string) => {
+      setFieldErrors(prev => ({ ...prev, [fieldName]: message }));
+      // Try to focus the field
+      setTimeout(() => {
+        const input = document.querySelector(`[name="${fieldName}"], #${fieldName}`) as HTMLElement;
+        input?.focus();
+      }, 100);
+    };
+
     // MIxS step - no required validation (checklist selection is optional)
     if (stepId === "mixs") {
       if (mixsFieldDef?.required && !selectedMixsChecklist) {
-        setError("Select a MIxS checklist");
+        toast.error("Select a MIxS checklist");
         return false;
       }
 
       if (selectedMixsChecklist && selectedMixsFields.length === 0) {
-        setError("Select at least one MIxS field to collect per sample");
+        toast.error("Select at least one MIxS field to collect per sample");
         return false;
       }
 
@@ -1496,20 +1510,19 @@ export default function NewOrderPage() {
             .map((field) => field.name);
           const missingRequired = requiredNames.filter((name) => !selectedMixsFields.includes(name));
           if (missingRequired.length > 0) {
-            setError(`MIxS requires selected fields: ${missingRequired.join(", ")}`);
+            toast.error(`MIxS requires selected fields: ${missingRequired.join(", ")}`);
             return false;
           }
         }
       }
 
-      setError("");
       return true;
     }
 
     // Samples step - require at least one sample and validate required per-sample fields
     if (stepId === "samples") {
       if (samples.length === 0) {
-        setError("Please add at least one sample");
+        toast.error("Please add at least one sample");
         return false;
       }
 
@@ -1530,7 +1543,7 @@ export default function NewOrderPage() {
               value = sample[field.name];
             }
             if (isMissingRequiredValue(field, value)) {
-              setError(`Sample ${i + 1}: ${field.label} is required`);
+              toast.error(`Sample ${i + 1}: ${field.label} is required`);
               return false;
             }
           }
@@ -1547,17 +1560,15 @@ export default function NewOrderPage() {
           .map((alias) => alias.toLowerCase());
         const duplicates = aliases.filter((alias, index) => aliases.indexOf(alias) !== index);
         if (duplicates.length > 0) {
-          setError("Sample Alias values must be unique");
+          toast.error("Sample Alias values must be unique");
           return false;
         }
       }
-      setError("");
       return true;
     }
 
     // Review step - no validation needed
     if (stepId === "review") {
-      setError("");
       return true;
     }
 
@@ -1567,12 +1578,11 @@ export default function NewOrderPage() {
         if (field.required) {
           const value = fieldValues[field.name];
           if (isMissingRequiredValue(field, value)) {
-            setError(`${field.label} is required`);
+            setFieldError(field.name, "Required");
             return false;
           }
         }
       }
-      setError("");
       return true;
     }
 
@@ -1583,13 +1593,12 @@ export default function NewOrderPage() {
       if (field.required) {
         const value = fieldValues[field.name];
         if (isMissingRequiredValue(field, value)) {
-          setError(`${field.label} is required`);
+          setFieldError(field.name, "Required");
           return false;
         }
       }
     }
 
-    setError("");
     return true;
   };
 
@@ -1630,7 +1639,7 @@ export default function NewOrderPage() {
     const aiResult = aiResults[field.name];
     const hasError = fieldErrors[field.name];
 
-    if (hasError) return "border-destructive focus:ring-destructive/30";
+    if (hasError) return "input-error";
     if (aiResult && !aiResult.checking) {
       if (aiResult.valid) return "border-green-500 focus:ring-green-500/30";
       return "border-amber-500 focus:ring-amber-500/30";
@@ -1792,7 +1801,7 @@ export default function NewOrderPage() {
               <AIIndicator field={field} />
             </div>
             {fieldErrors[field.name] && (
-              <p className="text-sm text-destructive">{fieldErrors[field.name]}</p>
+              <InlineFieldError message={fieldErrors[field.name]} />
             )}
             <AIStatusBar field={field} />
             <AIResultMessage field={field} />
@@ -1855,7 +1864,7 @@ export default function NewOrderPage() {
               )}
             </div>
             {fieldErrors[field.name] && (
-              <p className="text-sm text-destructive">{fieldErrors[field.name]}</p>
+              <InlineFieldError message={fieldErrors[field.name]} />
             )}
             <AIStatusBar field={field} />
             <AIResultMessage field={field} />
@@ -1879,10 +1888,10 @@ export default function NewOrderPage() {
               placeholder={field.placeholder}
               required={field.required}
               disabled={saving}
-              className={`max-w-xs ${fieldErrors[field.name] ? "border-destructive" : ""}`}
+              className={`max-w-xs ${fieldErrors[field.name] ? "input-error" : ""}`}
             />
             {fieldErrors[field.name] && (
-              <p className="text-sm text-destructive">{fieldErrors[field.name]}</p>
+              <InlineFieldError message={fieldErrors[field.name]} />
             )}
           </div>
         );
@@ -2775,48 +2784,38 @@ export default function NewOrderPage() {
 
         {/* Contact Information - shown on first group step */}
         {showContactInfo && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-base">Contact Information</Label>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/dashboard/settings">
-                  Change
-                  <ExternalLink className="h-3 w-3 ml-2" />
-                </Link>
-              </Button>
-            </div>
-
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">Contact</Label>
             {loadingProfile ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <div className="flex items-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <div className="bg-muted/30 rounded-lg p-5 space-y-3 max-w-md">
-                <div className="flex items-center gap-3">
-                  <User className="h-5 w-5 text-muted-foreground" />
-                  <span className="font-medium">
-                    {userProfile?.firstName} {userProfile?.lastName}
-                  </span>
+              <div
+                className="inline-flex items-center gap-4 px-4 py-3 rounded-lg text-sm"
+                style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
+              >
+                <div className="font-medium">
+                  {userProfile?.firstName} {userProfile?.lastName}
                 </div>
-                <div className="flex items-center gap-3">
-                  <Mail className="h-5 w-5 text-muted-foreground" />
-                  <span>{userProfile?.email || session?.user?.email}</span>
-                </div>
+                <span className="text-muted-foreground">
+                  {userProfile?.email || session?.user?.email}
+                </span>
                 {(userProfile?.institution || userProfile?.department) && (
-                  <div className="flex items-center gap-3">
-                    <Building2 className="h-5 w-5 text-muted-foreground" />
-                    <span>
-                      {[userProfile?.department?.name, userProfile?.institution]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </span>
-                  </div>
+                  <span className="text-muted-foreground">
+                    {[userProfile?.department?.name, userProfile?.institution]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </span>
                 )}
+                <Link
+                  href="/dashboard/settings"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-2"
+                >
+                  Edit
+                </Link>
               </div>
             )}
-            <p className="text-sm text-muted-foreground">
-              This information is taken from your account profile.
-            </p>
           </div>
         )}
       </div>
@@ -2835,20 +2834,15 @@ export default function NewOrderPage() {
     <div className="p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <FlaskConical className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold">New Sequencing Order</h1>
-            <p className="text-muted-foreground">
-              Step {currentStep + 1} of {steps.length}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-semibold">New Sequencing Order</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Step {currentStep + 1} of {steps.length}
+          </p>
         </div>
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="outline" size="sm" asChild>
           <Link href="/dashboard/orders">
-            <X className="h-5 w-5" />
+            Cancel
           </Link>
         </Button>
       </div>
@@ -2857,10 +2851,10 @@ export default function NewOrderPage() {
       <div>
           {/* Progress bar with integrated steps */}
           <div className="mb-6">
-            <div className="relative h-8 bg-muted rounded-lg overflow-hidden">
+            <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
               {/* Progress fill */}
               <div
-                className="absolute inset-y-0 left-0 bg-primary transition-all duration-300 ease-out"
+                className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
                 style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
               />
               {/* Step labels */}
@@ -2883,12 +2877,12 @@ export default function NewOrderPage() {
                       }}
                       disabled={!isClickable}
                       style={{ width: `${100 / steps.length}%` }}
-                      className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1 ${
+                      className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
                         isInFilledArea
-                          ? "text-primary-foreground"
+                          ? "text-background"
                           : "text-muted-foreground"
                       } ${
-                        isClickable ? "hover:bg-black/10 cursor-pointer" : ""
+                        isClickable ? "hover:bg-white/10 cursor-pointer" : ""
                       } ${
                         isCurrent ? "font-semibold" : ""
                       }`}
@@ -2902,13 +2896,6 @@ export default function NewOrderPage() {
               </div>
             </div>
           </div>
-
-          {error && (
-            <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 flex-shrink-0" />
-              {error}
-            </div>
-          )}
 
           {/* Main form content - full width, help is in sidebar */}
           <div>

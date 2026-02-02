@@ -102,7 +102,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   };
 
   return (
-    <PageContainer maxWidth="medium">
+    <PageContainer>
       {/* Header */}
       <div className="mb-8">
         <Link

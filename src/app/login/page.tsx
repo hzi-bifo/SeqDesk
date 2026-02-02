@@ -4,10 +4,6 @@ import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { GlassCard } from "@/components/ui/glass-card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   ArrowRight,
   Loader2,
@@ -21,7 +17,6 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [checkingDb, setCheckingDb] = useState(true);
 
-  // Check database status on mount
   useEffect(() => {
     const checkDatabase = async () => {
       try {
@@ -32,7 +27,7 @@ export default function LoginPage() {
           return;
         }
       } catch {
-        // If check fails, still allow login attempt (error will show on submit)
+        // If check fails, still allow login attempt
       }
       setCheckingDb(false);
     };
@@ -64,113 +59,206 @@ export default function LoginPage() {
     }
   };
 
-  // Show loading while checking database
   if (checkingDb) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-8 bg-stone-50">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#EFEFE9' }}>
+        <Loader2 className="h-8 w-8 animate-spin" style={{ color: '#171717' }} />
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-8 bg-stone-50">
-      <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="flex items-center gap-3 mb-8 justify-center">
-          <Link href="/" className="hover:opacity-90 transition-opacity">
-            <span
-              className="inline-flex items-center px-4 py-2 text-white text-lg border-2 border-blue-900"
-              style={{
-                fontFamily: 'Signifier, Georgia, serif',
-                fontWeight: 500,
-                backgroundColor: '#1e3a8a',
-                transform: 'skewX(-8deg)',
-                borderRadius: '4px',
-                boxShadow: '0 2px 8px rgba(30, 58, 138, 0.3)',
-              }}
-            >
-              <span style={{ display: 'inline-block', transform: 'skewX(8deg)' }}>SeqDesk</span>
-            </span>
-          </Link>
-        </div>
-
-        <GlassCard className="p-8 bg-white border border-stone-200 shadow-sm">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold mb-2">
-              Welcome back
-            </h2>
-            <p className="text-muted-foreground">
-              Sign in to access your sequencing orders
-            </p>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="name@example.com"
-                className="bg-background/50"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link
-                  href="/forgot-password"
-                  className="text-sm text-primary hover:underline"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                className="bg-background/50"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
-
-            <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                <>
-                  Sign In
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </>
-              )}
-            </Button>
-          </form>
-        </GlassCard>
-
-        <p className="text-center text-sm text-stone-500 mt-6">
-          Don&apos;t have an account?{" "}
-          <Link href="/register" className="text-primary hover:underline font-medium">
+    <div className="min-h-screen flex flex-col" style={{ background: '#EFEFE9' }}>
+      {/* Header */}
+      <header className="py-4 px-6 flex items-center justify-between max-w-[1200px] mx-auto w-full">
+        <Link
+          href="/"
+          className="text-lg font-semibold no-underline"
+          style={{ color: '#171717' }}
+        >
+          SeqDesk
+        </Link>
+        <nav className="flex items-center gap-2">
+          <Link
+            href="/register"
+            className="px-4 py-2 text-sm rounded-lg transition-colors no-underline"
+            style={{ color: '#525252' }}
+          >
             Create account
           </Link>
-        </p>
-      </div>
+        </nav>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md">
+          {/* Card */}
+          <div
+            className="rounded-2xl p-8"
+            style={{
+              background: '#ffffff',
+              border: '1px solid #e5e5e0',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+            }}
+          >
+            <div className="text-center mb-8">
+              <h1
+                className="text-2xl font-semibold mb-2"
+                style={{ color: '#171717', letterSpacing: '-0.02em' }}
+              >
+                Welcome back
+              </h1>
+              <p style={{ color: '#525252', fontSize: '0.9375rem' }}>
+                Sign in to access your sequencing orders
+              </p>
+            </div>
+
+            {error && (
+              <div
+                className="mb-6 p-3 rounded-xl text-sm"
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#dc2626'
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium mb-2"
+                  style={{ color: '#171717' }}
+                >
+                  Email
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={isLoading}
+                  className="w-full h-11 px-4 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
+                  style={{
+                    background: '#F7F7F4',
+                    border: '1px solid #e5e5e0',
+                    color: '#171717'
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#a3a3a3';
+                    e.target.style.boxShadow = '0 0 0 3px rgba(163, 163, 163, 0.1)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = '#e5e5e0';
+                    e.target.style.boxShadow = 'none';
+                  }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium mb-2"
+                  style={{ color: '#171717' }}
+                >
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                  className="w-full h-11 px-4 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
+                  style={{
+                    background: '#F7F7F4',
+                    border: '1px solid #e5e5e0',
+                    color: '#171717'
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#a3a3a3';
+                    e.target.style.boxShadow = '0 0 0 3px rgba(163, 163, 163, 0.1)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = '#e5e5e0';
+                    e.target.style.boxShadow = 'none';
+                  }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full h-11 flex items-center justify-center gap-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                style={{
+                  background: '#171717',
+                  color: '#ffffff'
+                }}
+                onMouseOver={(e) => !isLoading && (e.currentTarget.style.background = '#404040')}
+                onMouseOut={(e) => (e.currentTarget.style.background = '#171717')}
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  <>
+                    Sign In
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+
+          <div className="text-center text-sm mt-6 space-y-2">
+            <p style={{ color: '#a3a3a3' }}>
+              Don&apos;t have an account?{" "}
+              <Link
+                href="/register"
+                className="font-medium no-underline transition-colors"
+                style={{ color: '#171717' }}
+              >
+                Create account
+              </Link>
+            </p>
+            <p>
+              <Link
+                href="/forgot-password"
+                className="no-underline transition-colors"
+                style={{ color: '#a3a3a3' }}
+              >
+                Forgot password?
+              </Link>
+            </p>
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer
+        className="py-6 px-6"
+        style={{ borderTop: '1px solid #e5e5e0' }}
+      >
+        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
+          <span className="text-sm font-semibold" style={{ color: '#a3a3a3' }}>
+            SeqDesk
+          </span>
+          <div className="flex gap-6">
+            <Link href="/impressum" className="text-sm no-underline" style={{ color: '#a3a3a3' }}>
+              Impressum
+            </Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

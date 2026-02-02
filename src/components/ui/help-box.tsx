@@ -17,10 +17,10 @@ export function HelpBox({ title, children }: HelpBoxProps) {
   }
 
   return (
-    <div className="mb-6 p-4 rounded-lg bg-primary/5 border border-primary/20 relative">
+    <div className="mb-6 p-4 rounded-xl bg-secondary border border-border relative">
       <button
         onClick={hideHelpText}
-        className="absolute top-2 right-2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-colors"
+        className="absolute top-2 right-2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
         aria-label="Dismiss help text"
       >
         <X className="h-4 w-4" />

@@ -378,7 +378,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <PageContainer maxWidth="medium">
+    <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
           <Settings className="h-6 w-6" />

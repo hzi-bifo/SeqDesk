@@ -183,7 +183,7 @@ export default function AdminAccountsPage() {
   }
 
   return (
-    <PageContainer maxWidth="medium">
+    <PageContainer>
       <div className="mb-6">
         <h1 className="text-xl font-semibold">Admin Accounts</h1>
         <p className="text-sm text-muted-foreground mt-0.5">

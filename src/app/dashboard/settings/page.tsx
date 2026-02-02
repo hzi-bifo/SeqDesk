@@ -3,19 +3,11 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
-import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageContainer } from "@/components/layout/PageContainer";
-import {
-  User,
-  Mail,
-  Building2,
-  Phone,
-  Loader2,
-  Check,
-  AlertCircle,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface UserProfile {
   id: string;
@@ -108,7 +100,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </PageContainer>
     );
   }
@@ -116,30 +108,26 @@ export default function SettingsPage() {
   return (
     <PageContainer>
       <div className="mb-8">
-        <h1 className="text-2xl font-bold">Account Settings</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-2xl font-semibold">Account Settings</h1>
+        <p className="text-muted-foreground mt-1">
           Manage your profile information
         </p>
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-5 w-5" />
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
 
       {success && (
-        <div className="mb-6 p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 flex items-center gap-2">
-          <Check className="h-5 w-5" />
+        <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-sm">
           {success}
         </div>
       )}
 
       <form onSubmit={handleSubmit}>
-        <GlassCard className="p-6 space-y-6">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <User className="h-5 w-5" />
+        <div
+          className="p-6 rounded-xl space-y-6"
+          style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
+        >
+          <h2 className="text-lg font-semibold" style={{ color: '#171717' }}>
             Personal Information
           </h2>
 
@@ -170,16 +158,13 @@ export default function SettingsPage() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="email" className="flex items-center gap-2">
-              <Mail className="h-4 w-4" />
-              Email Address
-            </Label>
+            <Label htmlFor="email">Email Address</Label>
             <Input
               id="email"
               type="email"
               value={email}
               disabled
-              className="bg-muted"
+              className="bg-secondary"
             />
             <p className="text-xs text-muted-foreground">
               Email cannot be changed. Contact support if you need to update it.
@@ -187,10 +172,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="phone" className="flex items-center gap-2">
-              <Phone className="h-4 w-4" />
-              Phone Number
-            </Label>
+            <Label htmlFor="phone">Phone Number</Label>
             <Input
               id="phone"
               type="tel"
@@ -202,10 +184,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="institution" className="flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Institution / Organization
-            </Label>
+            <Label htmlFor="institution">Institution / Organization</Label>
             <Input
               id="institution"
               value={institution}
@@ -223,19 +202,21 @@ export default function SettingsPage() {
                   Saving...
                 </>
               ) : (
-                <>
-                  <Check className="h-4 w-4 mr-2" />
-                  Save Changes
-                </>
+                "Save Changes"
               )}
             </Button>
           </div>
-        </GlassCard>
+        </div>
       </form>
 
       {/* Account Info */}
-      <GlassCard className="p-6 mt-6">
-        <h2 className="text-lg font-semibold mb-4">Account Information</h2>
+      <div
+        className="p-6 mt-6 rounded-xl"
+        style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
+      >
+        <h2 className="text-lg font-semibold mb-4" style={{ color: '#171717' }}>
+          Account Information
+        </h2>
         <div className="space-y-3 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Account Type</span>
@@ -248,7 +229,7 @@ export default function SettingsPage() {
             <span className="font-medium">{email}</span>
           </div>
         </div>
-      </GlassCard>
+      </div>
     </PageContainer>
   );
 }
