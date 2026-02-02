@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -20,9 +20,19 @@ import {
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Dna, FlaskConical, Settings2, Server, HardDrive, Save,
-  CheckCircle2, Eye, RefreshCw, XCircle, Download, ExternalLink,
-  Package, Microscope, FileBarChart, Layers
+  Loader2,
+  Dna,
+  FlaskConical,
+  Settings2,
+  Eye,
+  RefreshCw,
+  XCircle,
+  Download,
+  ExternalLink,
+  Package,
+  Microscope,
+  FileBarChart,
+  Layers,
 } from "lucide-react";
 import { PipelineDagViewer, DagNode, DagEdge, PipelineInfo } from "@/components/pipelines/PipelineDagViewer";
 import { PipelineIntegrationDetails } from "@/components/pipelines/PipelineIntegrationDetails";
@@ -77,22 +87,6 @@ interface PipelineDefinitionData {
   inputs: PipelineInput[];
   outputs: PipelineOutput[];
   samplesheet?: SamplesheetConfig;
-}
-
-interface ExecutionSettings {
-  useSlurm: boolean;
-  slurmQueue: string;
-  slurmCores: number;
-  slurmMemory: string;
-  slurmTimeLimit: number;
-  slurmOptions: string;
-  runtimeMode: "conda";
-  condaPath: string;
-  condaEnv: string;
-  nextflowProfile: string;
-  pipelineRunDir: string;
-  weblogUrl: string;
-  weblogSecret: string;
 }
 
 interface PipelineConfig {
@@ -183,12 +177,7 @@ export default function PipelineSettingsPage() {
     mutate: mutateStore,
   } = useSWR("/api/admin/settings/pipelines/store", fetcher);
 
-  const { data: execData, mutate: mutateExec } = useSWR(
-    "/api/admin/settings/pipelines/execution",
-    fetcher
-  );
-
-  const [activeTab, setActiveTab] = useState("installed");
+  const [showStore, setShowStore] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [dagDialogOpen, setDagDialogOpen] = useState(false);
@@ -200,32 +189,6 @@ export default function PipelineSettingsPage() {
   const [pipelineDefinition, setPipelineDefinition] = useState<PipelineDefinitionData | null>(null);
   const [dialogViewTab, setDialogViewTab] = useState<"integration" | "workflow">("integration");
 
-  // Execution settings state
-  const [execSettings, setExecSettings] = useState<ExecutionSettings>({
-    useSlurm: false,
-    slurmQueue: "cpu",
-    slurmCores: 4,
-    slurmMemory: "64GB",
-    slurmTimeLimit: 12,
-    slurmOptions: "",
-    runtimeMode: "conda",
-    condaPath: "",
-    condaEnv: "seqdesk-pipelines",
-    nextflowProfile: "",
-    pipelineRunDir: "/data/pipeline_runs",
-    weblogUrl: "",
-    weblogSecret: "",
-  });
-  const [savingExec, setSavingExec] = useState(false);
-  const [execSaved, setExecSaved] = useState(false);
-
-  // Test results state
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; testing?: boolean }>>({});
-  const [detectedVersions, setDetectedVersions] = useState<{ nextflow?: string; nfcore?: string; conda?: string; java?: string; condaEnv?: string }>({});
-  const [detectingVersions, setDetectingVersions] = useState(false);
-  const [autoDetecting, setAutoDetecting] = useState(false);
-  const [autoDetectResult, setAutoDetectResult] = useState<{ success: boolean; message: string } | null>(null);
-
   // Install state
   const [installingPipeline, setInstallingPipeline] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -236,126 +199,29 @@ export default function PipelineSettingsPage() {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   };
 
-  // Test a specific setting
-  const testSettingValue = async (setting: string, value?: string) => {
-    setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Testing...", testing: true } }));
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/test-setting", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ setting, value }),
-      });
-      const data = await res.json();
-      setTestResults((prev) => ({ ...prev, [setting]: { success: data.success, message: data.message, testing: false } }));
-    } catch {
-      setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Test failed", testing: false } }));
-    }
-  };
-
-  // Detect installed versions
-  const detectInstalledVersions = async () => {
-    setDetectingVersions(true);
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/test-setting");
-      if (res.ok) {
-        const data = await res.json();
-        setDetectedVersions(data.versions || {});
-      }
-    } catch {
-      // Ignore
-    }
-    setDetectingVersions(false);
-  };
-
-  const handleAutoDetectConda = async () => {
-    setAutoDetecting(true);
-    setAutoDetectResult(null);
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/auto-detect");
-      const data = await res.json();
-      if (!res.ok || !data?.detected) {
-        setAutoDetectResult({
-          success: false,
-          message: data?.message || "No conda environment detected in the server process.",
-        });
-        return;
-      }
-
-      setExecSettings((prev) => ({
-        ...prev,
-        condaPath: data.condaBase || prev.condaPath,
-        condaEnv: data.condaEnv || prev.condaEnv,
-      }));
-      setAutoDetectResult({
-        success: true,
-        message: `Detected ${data.condaEnv || "conda env"} at ${data.condaBase || "unknown path"}`,
-      });
-    } catch {
-      setAutoDetectResult({
-        success: false,
-        message: "Auto-detect failed. Check server logs.",
-      });
-    } finally {
-      setAutoDetecting(false);
-    }
-  };
-
   // Install a pipeline from the store
   const handleInstallPipeline = async (pipelineId: string, version?: string) => {
     setInstallingPipeline(pipelineId);
     setInstallError(null);
     try {
-      const res = await fetch('/api/admin/settings/pipelines/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pipelineId, version }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setInstallError(data.error || 'Installation failed');
+        setInstallError(data.error || "Installation failed");
         return;
       }
       // Refresh pipeline list
       mutate();
-      // Switch to installed tab
-      setActiveTab('installed');
     } catch (err) {
-      setInstallError('Installation failed. Check console for details.');
-      console.error('Install error:', err);
+      setInstallError("Installation failed. Check console for details.");
+      console.error("Install error:", err);
     } finally {
       setInstallingPipeline(null);
     }
-  };
-
-  // Detect versions on mount
-  useEffect(() => {
-    detectInstalledVersions();
-  }, []);
-
-  // Sync execution settings from API
-  useEffect(() => {
-    if (execData?.settings) {
-      setExecSettings(execData.settings);
-    }
-  }, [execData]);
-
-  const handleSaveExecSettings = async () => {
-    setSavingExec(true);
-    setExecSaved(false);
-    try {
-      await fetch("/api/admin/settings/pipelines/execution", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(execSettings),
-      });
-      mutateExec();
-      setExecSaved(true);
-      setTimeout(() => setExecSaved(false), 3000);
-      detectInstalledVersions();
-    } catch (err) {
-      console.error("Failed to save execution settings:", err);
-    }
-    setSavingExec(false);
   };
 
   const handleToggleEnabled = async (pipeline: PipelineConfig) => {
@@ -445,204 +311,264 @@ export default function PipelineSettingsPage() {
   const storePipelines: StorePipeline[] = storeData?.pipelines || [];
   const storeCategories: StoreCategory[] = storeData?.categories || [];
   const availablePipelines = storePipelines.filter(
-    (p) => !installedPipelineIds.has(p.id) && (selectedCategory === "all" || p.category === selectedCategory)
+    (pipeline) => !installedPipelineIds.has(pipeline.id) && (selectedCategory === "all" || pipeline.category === selectedCategory)
   );
+  const installedCount = data?.pipelines?.length || 0;
+  const shouldShowStore = showStore || installedCount === 0;
+  const storeToggleLabel = shouldShowStore && installedCount > 0 ? "Hide store" : "Add pipeline";
 
   return (
     <PageContainer>
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Pipeline Store</h1>
-        <p className="text-muted-foreground mt-1">
-          Browse, install, and configure bioinformatics pipelines
-        </p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
+          <p className="text-muted-foreground mt-1">
+            Install and manage nf-core pipelines. Execution settings live in Platform {" > "} Compute.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <a href="/admin/settings#compute">Compute settings</a>
+          </Button>
+          <Button size="sm" onClick={() => setShowStore((prev) => !prev)}>
+            <Download className="h-4 w-4 mr-2" />
+            {storeToggleLabel}
+          </Button>
+        </div>
       </div>
 
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full max-w-md grid-cols-3">
-          <TabsTrigger value="installed" className="gap-2">
-            <Package className="h-4 w-4" />
-            Installed
-            {data?.pipelines?.length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5">
-                {data.pipelines.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="store" className="gap-2">
-            <Download className="h-4 w-4" />
-            Available
-          </TabsTrigger>
-          <TabsTrigger value="settings" className="gap-2">
-            <Settings2 className="h-4 w-4" />
-            Settings
-          </TabsTrigger>
-        </TabsList>
+      <section id="installed-pipelines" className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Installed</p>
+            <h2 className="text-2xl font-semibold">Installed pipelines</h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              Enable, configure, and review pipelines already available on this instance.
+            </p>
+          </div>
+          <Badge variant="secondary" className="h-6 px-3">
+            {installedCount} installed
+          </Badge>
+        </div>
 
-        {/* Installed Pipelines Tab */}
-        <TabsContent value="installed" className="space-y-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : error ? (
-            <div className="text-center py-12 text-destructive">
-              Failed to load pipeline configurations
-            </div>
-          ) : data?.pipelines?.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {data.pipelines.map((pipeline: PipelineConfig) => (
-                <GlassCard key={pipeline.pipelineId} className="relative overflow-hidden">
-                  {/* Status indicator */}
-                  <div className={`absolute top-0 right-0 w-2 h-full ${pipeline.enabled ? "bg-green-500" : "bg-gray-300"}`} />
-
-                  <div className="flex items-start gap-4 pr-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <div className="text-center py-12 text-destructive">
+            Failed to load pipeline configurations
+          </div>
+        ) : installedCount > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            {data.pipelines.map((pipeline: PipelineConfig) => (
+              <GlassCard key={pipeline.pipelineId} className="relative">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4">
                     <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
                       {getPipelineIcon(pipeline.icon)}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h3 className="font-semibold truncate">{pipeline.name}</h3>
                         {pipeline.version && (
-                          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                          <Badge variant="outline" className="text-xs font-normal">
                             v{pipeline.version}
-                          </span>
+                          </Badge>
                         )}
+                        <Badge variant="secondary" className="text-xs capitalize">
+                          {pipeline.category}
+                        </Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                      <p className="text-sm text-muted-foreground line-clamp-2">
                         {pipeline.description}
                       </p>
-
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            id={`enable-${pipeline.pipelineId}`}
-                            checked={pipeline.enabled}
-                            onCheckedChange={() => handleToggleEnabled(pipeline)}
-                            disabled={saving}
-                          />
-                          <Label htmlFor={`enable-${pipeline.pipelineId}`} className="text-sm">
-                            {pipeline.enabled ? "Enabled" : "Disabled"}
-                          </Label>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openDagDialog(pipeline)}
-                            className="h-8"
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            View
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openConfigDialog(pipeline)}
-                            className="h-8"
-                          >
-                            <Settings2 className="h-4 w-4 mr-1" />
-                            Configure
-                          </Button>
-                        </div>
-                      </div>
+                      <p className="text-xs text-muted-foreground font-mono mt-1">
+                        {pipeline.pipelineId}
+                      </p>
                     </div>
                   </div>
-                </GlassCard>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-16 bg-muted/30 rounded-xl border border-dashed">
-              <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="font-semibold mb-2">No Pipelines Installed</h3>
-              <p className="text-muted-foreground mb-4">
-                Browse the store to install your first pipeline
-              </p>
-              <Button onClick={() => setActiveTab("store")}>
-                <Download className="h-4 w-4 mr-2" />
-                Browse Store
-              </Button>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Available Pipelines (Store) Tab */}
-        <TabsContent value="store" className="space-y-6">
-          {storeLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : storeError ? (
-            <div className="text-center py-12 text-destructive">
-              Failed to load pipeline registry from the store.
-            </div>
-          ) : (
-            <>
-              {/* Category Filter */}
-              <div className="flex gap-2 flex-wrap">
-                {[{ id: "all", name: "All" }, ...storeCategories].map((cat) => (
-                  <Button
-                    key={cat.id}
-                    variant={selectedCategory === cat.id ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className="gap-2"
-                  >
-                    <Layers className="h-4 w-4" />
-                    {cat.name}
-                  </Button>
-                ))}
-              </div>
-
-              {/* Install error banner */}
-              {installError && (
-                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
-                  <XCircle className="h-5 w-5 text-destructive" />
-                  <p className="text-sm text-destructive">{installError}</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="ml-auto"
-                    onClick={() => setInstallError(null)}
-                  >
-                    Dismiss
-                  </Button>
+                  <Badge variant={pipeline.enabled ? "default" : "secondary"}>
+                    {pipeline.enabled ? "Enabled" : "Disabled"}
+                  </Badge>
                 </div>
-              )}
 
-              {/* Pipeline Grid */}
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id={`enable-${pipeline.pipelineId}`}
+                      checked={pipeline.enabled}
+                      onCheckedChange={() => handleToggleEnabled(pipeline)}
+                      disabled={saving}
+                    />
+                    <Label htmlFor={`enable-${pipeline.pipelineId}`} className="text-sm">
+                      {pipeline.enabled ? "Enabled" : "Disabled"}
+                    </Label>
+                  </div>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openDagDialog(pipeline)}
+                      className="h-8"
+                    >
+                      <Eye className="h-4 w-4 mr-1" />
+                      View
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openConfigDialog(pipeline)}
+                      className="h-8"
+                    >
+                      <Settings2 className="h-4 w-4 mr-1" />
+                      Configure
+                    </Button>
+                  </div>
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-16 bg-muted/30 rounded-xl border border-dashed">
+            <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+            <h3 className="font-semibold mb-2">No Pipelines Installed</h3>
+            <p className="text-muted-foreground mb-4">
+              Install a pipeline from the store to get started.
+            </p>
+            <Button onClick={() => setShowStore(true)}>
+              <Download className="h-4 w-4 mr-2" />
+              Browse Store
+            </Button>
+          </div>
+        )}
+      </section>
+
+      {shouldShowStore && (
+        <section id="pipeline-store" className="space-y-4">
+          <GlassCard className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Pipeline store</p>
+                <h2 className="text-2xl font-semibold">Add pipelines</h2>
+                <p className="text-sm text-muted-foreground mt-2 max-w-2xl">
+                  Install nf-core pipelines packaged for SeqDesk with samplesheet generation and output parsing.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => mutateStore()}
+                  disabled={storeLoading}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${storeLoading ? "animate-spin" : ""}`} />
+                  Refresh registry
+                </Button>
+                <Button size="sm" asChild>
+                  <a
+                    href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Browse store
+                    <ExternalLink className="h-4 w-4 ml-2" />
+                  </a>
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant={storeError ? "destructive" : "secondary"} className="uppercase text-[10px]">
+                {storeLoading ? "Checking" : storeError ? "Registry failed" : "Registry online"}
+              </Badge>
+              {!storeLoading && !storeError && (
+                <>
+                  <span>v{storeData?.version || "unknown"}</span>
+                  <span>|</span>
+                  <span>{storePipelines.length} pipelines</span>
+                  <span>|</span>
+                  <span>Updated {formatStoreDate(storeData?.lastUpdated)}</span>
+                </>
+              )}
+            </div>
+
+            {installError && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+                <XCircle className="h-5 w-5 text-destructive" />
+                <p className="text-sm text-destructive">{installError}</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setInstallError(null)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="w-56">
+                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All categories</SelectItem>
+                    {storeCategories.map((category) => (
+                      <SelectItem key={category.id} value={category.id}>
+                        {category.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                Showing {availablePipelines.length} available
+              </span>
+            </div>
+
+            {storeLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : storeError ? (
+              <div className="text-center py-12 text-destructive">
+                Failed to load pipeline registry from the store.
+              </div>
+            ) : availablePipelines.length > 0 ? (
+              <div className="grid gap-3">
                 {availablePipelines.map((pipeline) => (
                   <div
                     key={pipeline.id}
-                    className="relative bg-card border rounded-xl p-5 hover:shadow-lg transition-all duration-200 hover:border-primary/50"
+                    className="flex flex-col gap-4 rounded-xl border bg-card p-4 md:flex-row md:items-center md:justify-between"
                   >
-                    <div className="flex items-start gap-4">
-                      <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2.5 rounded-lg ${getCategoryColor(pipeline.category)}`}>
                         {getPipelineIcon(pipeline.icon || "")}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold">{pipeline.name}</h3>
-                          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                          <Badge variant="outline" className="text-xs font-normal">
                             v{pipeline.version}
-                          </span>
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs capitalize">
+                            {pipeline.category}
+                          </Badge>
                         </div>
-                        <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                        <p className="text-sm text-muted-foreground line-clamp-2">
                           {pipeline.description}
                         </p>
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          <span>by {pipeline.author || "unknown"}</span>
-                          <span>{(pipeline.downloads || 0).toLocaleString()} installs</span>
-                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
+                        </p>
                       </div>
                     </div>
-
-                    <div className="mt-4 flex gap-2">
+                    <div className="flex items-center gap-2">
                       <Button
                         size="sm"
-                        className="flex-1"
                         onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
                         disabled={installingPipeline === pipeline.id}
                       >
@@ -651,407 +577,40 @@ export default function PipelineSettingsPage() {
                         ) : (
                           <Download className="h-4 w-4 mr-2" />
                         )}
-                        {installingPipeline === pipeline.id ? 'Installing...' : 'Install'}
-                      </Button>
-                      <Button size="sm" variant="outline" asChild>
-                        <a href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
+                        {installingPipeline === pipeline.id ? "Installing..." : "Install"}
                       </Button>
                     </div>
                   </div>
                 ))}
               </div>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                No additional pipelines available in this category.
+              </div>
+            )}
 
-              {availablePipelines.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground">
-                  No additional pipelines available in this category
+            <details className="rounded-lg border border-dashed px-4 py-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer text-sm font-medium text-foreground">
+                Store URLs
+              </summary>
+              <div className="mt-2 grid gap-1">
+                <div className="flex flex-wrap gap-2">
+                  <span className="min-w-[110px] text-muted-foreground/70">Store URL</span>
+                  <span className="font-mono break-all">{storeData?.storeBaseUrl || "https://seqdesk.com"}</span>
                 </div>
-              )}
-
-              {/* Store info */}
-              <div className="bg-muted/30 rounded-xl p-6 border border-dashed">
-                <div className="flex items-start gap-4">
-                  <div className="p-3 bg-primary/10 rounded-xl">
-                    <FileBarChart className="h-6 w-6 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Pipeline Store</h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Install pipelines from the SeqDesk store. Each pipeline creates a SeqDesk integration
-                      package with samplesheet generation and output parsing configured.
-                    </p>
-                    <div className="flex flex-wrap items-center gap-3 mb-4">
-                      <a
-                        href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-                      >
-                        Browse all pipelines
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-3 text-xs"
-                        onClick={() => mutateStore()}
-                        disabled={storeLoading}
-                      >
-                        <RefreshCw className={`h-3 w-3 mr-1 ${storeLoading ? "animate-spin" : ""}`} />
-                        Refresh registry
-                      </Button>
-                    </div>
-                    <div className="grid gap-2 text-xs text-muted-foreground">
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Store URL</span>
-                        <span className="font-mono break-all">{storeData?.storeBaseUrl || "https://seqdesk.com"}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Registry URL</span>
-                        <span className="font-mono break-all">{storeData?.registryUrl || "https://seqdesk.com/api/registry"}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Browse URL</span>
-                        <span className="font-mono break-all">{storeData?.browseUrl || "https://seqdesk.com/pipelines"}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Registry version</span>
-                        <span>{storeData?.version || "Unknown"}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Last updated</span>
-                        <span>{formatStoreDate(storeData?.lastUpdated)}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="min-w-[110px] text-muted-foreground/70">Pipelines</span>
-                        <span>{storePipelines.length}</span>
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="min-w-[110px] text-muted-foreground/70">Registry URL</span>
+                  <span className="font-mono break-all">{storeData?.registryUrl || "https://seqdesk.com/api/registry"}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="min-w-[110px] text-muted-foreground/70">Browse URL</span>
+                  <span className="font-mono break-all">{storeData?.browseUrl || "https://seqdesk.com/pipelines"}</span>
                 </div>
               </div>
-            </>
-          )}
-        </TabsContent>
-
-        {/* Settings Tab */}
-        <TabsContent value="settings" className="space-y-6">
-          <GlassCard>
-            <div className="space-y-6">
-              {/* Scheduler */}
-              <div className="flex items-start gap-4 pb-4 border-b">
-                <div className="p-3 bg-muted rounded-lg">
-                  {execSettings.useSlurm ? (
-                    <Server className="h-6 w-6" />
-                  ) : (
-                    <HardDrive className="h-6 w-6" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h3 className="font-semibold">Scheduler</h3>
-                    <Badge variant={execSettings.useSlurm ? "default" : "secondary"}>
-                      {execSettings.useSlurm ? "SLURM Cluster" : "Local"}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {execSettings.useSlurm
-                      ? "Jobs will be submitted to the SLURM queue"
-                      : "Pipelines will run directly on this server"}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="use-slurm"
-                      checked={execSettings.useSlurm}
-                      onCheckedChange={(checked) =>
-                        setExecSettings((prev) => ({ ...prev, useSlurm: checked }))
-                      }
-                    />
-                    <Label htmlFor="use-slurm">Use SLURM</Label>
-                  </div>
-                </div>
-              </div>
-
-              {/* Runtime */}
-              <div className="flex items-start gap-4 pb-4 border-b">
-                <div className="p-3 bg-muted rounded-lg">
-                  <Settings2 className="h-6 w-6" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h3 className="font-semibold">Runtime</h3>
-                    <Badge variant="secondary">Conda</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    SeqDesk runs nf-core pipelines using conda environments for tool resolution.
-                  </p>
-                </div>
-              </div>
-
-              {/* SLURM Settings */}
-              {execSettings.useSlurm && (
-                <div className="grid gap-4 sm:grid-cols-2 pb-4 border-b">
-                  <div className="space-y-2">
-                    <Label htmlFor="slurm-queue">Queue/Partition</Label>
-                    <Input
-                      id="slurm-queue"
-                      value={execSettings.slurmQueue}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, slurmQueue: e.target.value }))
-                      }
-                      placeholder="cpu"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="slurm-cores">CPU Cores</Label>
-                    <Input
-                      id="slurm-cores"
-                      type="number"
-                      min={1}
-                      value={execSettings.slurmCores}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, slurmCores: parseInt(e.target.value) || 4 }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="slurm-memory">Memory</Label>
-                    <Input
-                      id="slurm-memory"
-                      value={execSettings.slurmMemory}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, slurmMemory: e.target.value }))
-                      }
-                      placeholder="64GB"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="slurm-time">Time Limit (hours)</Label>
-                    <Input
-                      id="slurm-time"
-                      type="number"
-                      min={1}
-                      value={execSettings.slurmTimeLimit}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, slurmTimeLimit: parseInt(e.target.value) || 12 }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="slurm-options">Additional SLURM Options</Label>
-                    <Input
-                      id="slurm-options"
-                      value={execSettings.slurmOptions}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, slurmOptions: e.target.value }))
-                      }
-                      placeholder="--constraint=avx2 --account=mylab"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Paths */}
-              <div className="space-y-4 pb-4 border-b">
-                <div className="space-y-2">
-                  <Label htmlFor="run-dir">Pipeline Run Directory</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="run-dir"
-                      value={execSettings.pipelineRunDir}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, pipelineRunDir: e.target.value }))
-                      }
-                      placeholder="/data/pipeline_runs"
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => testSettingValue("pipelineRunDir", execSettings.pipelineRunDir)}
-                      disabled={testResults.pipelineRunDir?.testing}
-                    >
-                      {testResults.pipelineRunDir?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                    </Button>
-                  </div>
-                  {testResults.pipelineRunDir && !testResults.pipelineRunDir.testing && (
-                    <p className={`text-xs flex items-center gap-1 ${testResults.pipelineRunDir.success ? "text-green-600" : "text-red-600"}`}>
-                      {testResults.pipelineRunDir.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {testResults.pipelineRunDir.message}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="conda-path">Conda Installation Path</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="conda-path"
-                      value={execSettings.condaPath}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, condaPath: e.target.value }))
-                      }
-                      placeholder="/opt/homebrew/Caskroom/miniconda/base"
-                      className="flex-1"
-                    />
-                    <Button variant="outline" size="sm" onClick={handleAutoDetectConda} disabled={autoDetecting}>
-                      {autoDetecting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Auto"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => testSettingValue("condaPath", execSettings.condaPath)}
-                      disabled={testResults.condaPath?.testing}
-                    >
-                      {testResults.condaPath?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                    </Button>
-                  </div>
-                  {autoDetectResult && (
-                    <p className={`text-xs flex items-center gap-1 ${autoDetectResult.success ? "text-green-600" : "text-red-600"}`}>
-                      {autoDetectResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {autoDetectResult.message}
-                    </p>
-                  )}
-                  {testResults.condaPath && !testResults.condaPath.testing && (
-                    <p className={`text-xs flex items-center gap-1 ${testResults.condaPath.success ? "text-green-600" : "text-red-600"}`}>
-                      {testResults.condaPath.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {testResults.condaPath.message}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="conda-env">Conda Environment Name</Label>
-                  <Input
-                    id="conda-env"
-                    value={execSettings.condaEnv}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, condaEnv: e.target.value }))
-                    }
-                    placeholder="seqdesk-pipelines"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="nextflow-profile">Nextflow Profile Override</Label>
-                  <Input
-                    id="nextflow-profile"
-                    value={execSettings.nextflowProfile}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, nextflowProfile: e.target.value }))
-                    }
-                    placeholder="e.g. slurm,conda"
-                  />
-                </div>
-              </div>
-
-              {/* Weblog Settings */}
-              <div className="space-y-4 pb-4 border-b">
-                <div className="space-y-2">
-                  <Label htmlFor="weblog-url">Nextflow Weblog URL</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="weblog-url"
-                      value={execSettings.weblogUrl}
-                      onChange={(e) =>
-                        setExecSettings((prev) => ({ ...prev, weblogUrl: e.target.value }))
-                      }
-                      placeholder="https://your-app.domain/api/pipelines/weblog"
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        testSettingValue(
-                          "weblogUrl",
-                          JSON.stringify({ url: execSettings.weblogUrl, secret: execSettings.weblogSecret })
-                        )
-                      }
-                      disabled={testResults.weblogUrl?.testing}
-                    >
-                      {testResults.weblogUrl?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                    </Button>
-                  </div>
-                  {testResults.weblogUrl && !testResults.weblogUrl.testing && (
-                    <p className={`text-xs flex items-center gap-1 ${testResults.weblogUrl.success ? "text-green-600" : "text-red-600"}`}>
-                      {testResults.weblogUrl.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {testResults.weblogUrl.message}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="weblog-secret">Weblog Secret</Label>
-                  <Input
-                    id="weblog-secret"
-                    type="password"
-                    value={execSettings.weblogSecret}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, weblogSecret: e.target.value }))
-                    }
-                    placeholder="shared secret token"
-                  />
-                </div>
-              </div>
-
-              {/* Detected Versions */}
-              <div className="space-y-3 pb-4 border-b">
-                <div className="flex items-center justify-between">
-                  <Label className="flex items-center gap-2">
-                    Detected Tool Versions
-                    {detectingVersions && <Loader2 className="h-3 w-3 animate-spin" />}
-                  </Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={detectInstalledVersions}
-                    disabled={detectingVersions}
-                    className="h-7 text-xs"
-                  >
-                    <RefreshCw className={`h-3 w-3 mr-1 ${detectingVersions ? "animate-spin" : ""}`} />
-                    Refresh
-                  </Button>
-                </div>
-                {detectedVersions.condaEnv && (
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Using: <span className="font-mono font-medium">{detectedVersions.condaEnv}</span>
-                  </p>
-                )}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                  <div className={`p-2 rounded ${detectedVersions.nextflow ? "bg-green-50" : "bg-muted"}`}>
-                    <p className="text-xs text-muted-foreground">Nextflow</p>
-                    <p className="font-mono">{detectedVersions.nextflow || "Not found"}</p>
-                  </div>
-                  <div className={`p-2 rounded ${detectedVersions.java ? "bg-green-50" : "bg-muted"}`}>
-                    <p className="text-xs text-muted-foreground">Java</p>
-                    <p className="font-mono">{detectedVersions.java ? `Java ${detectedVersions.java}` : "Not found"}</p>
-                  </div>
-                  <div className={`p-2 rounded ${detectedVersions.nfcore ? "bg-green-50" : "bg-muted"}`}>
-                    <p className="text-xs text-muted-foreground">nf-core</p>
-                    <p className="font-mono">{detectedVersions.nfcore || "Not found"}</p>
-                  </div>
-                  <div className={`p-2 rounded ${detectedVersions.conda ? "bg-green-50" : "bg-muted"}`}>
-                    <p className="text-xs text-muted-foreground">Conda</p>
-                    <p className="font-mono">{detectedVersions.conda || "Not found"}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Save Button */}
-              <div className="flex items-center gap-3">
-                <Button onClick={handleSaveExecSettings} disabled={savingExec}>
-                  {savingExec ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                  Save Settings
-                </Button>
-                {execSaved && (
-                  <span className="text-sm text-green-600 flex items-center gap-1">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Saved
-                  </span>
-                )}
-              </div>
-            </div>
+            </details>
           </GlassCard>
-        </TabsContent>
-      </Tabs>
+        </section>
+      )}
 
       {/* Configuration Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
