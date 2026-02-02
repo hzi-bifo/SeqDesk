@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
+import { ManifestSchema } from './manifest-schema';
 
 // ============================================================================
 // Package Types
@@ -66,6 +67,8 @@ export interface PackageOutput {
   id: string;
   scope: PackageScope;
   destination: StandardDestination;
+  type?: 'assembly' | 'bin' | 'report' | 'qc' | 'artifact';
+  fromStep?: string;
   discovery: PackageOutputDiscovery;
   parsed?: PackageOutputParsed;
 }
@@ -345,6 +348,114 @@ function loadJson<T>(filePath: string): T | null {
 }
 
 /**
+ * Validation result for a package
+ */
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Validate a package manifest and its consistency with other package files
+ */
+function validatePackageManifest(
+  packageDir: string,
+  manifest: PackageManifest,
+  definition: DefinitionConfig | null,
+  registry: RegistryConfig | null
+): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const folderName = path.basename(packageDir);
+
+  // 1. Validate manifest against schema
+  const schemaResult = ManifestSchema.safeParse({
+    manifestVersion: 1, // Add default version for backwards compatibility
+    ...manifest,
+  });
+  if (!schemaResult.success) {
+    for (const issue of schemaResult.error.issues) {
+      errors.push(`Schema: ${issue.path.join('.')} - ${issue.message}`);
+    }
+  }
+
+  // 2. Validate folder name == manifest.package.id
+  if (manifest.package.id !== folderName) {
+    warnings.push(
+      `Package ID mismatch: manifest.package.id="${manifest.package.id}" but folder is "${folderName}"`
+    );
+  }
+
+  // 3. Validate definition.pipeline == manifest.package.id
+  if (definition && definition.pipeline !== manifest.package.id) {
+    warnings.push(
+      `Definition pipeline mismatch: definition.pipeline="${definition.pipeline}" but manifest.package.id="${manifest.package.id}"`
+    );
+  }
+
+  // 4. Validate registry.id == manifest.package.id
+  if (registry && registry.id !== manifest.package.id) {
+    warnings.push(
+      `Registry ID mismatch: registry.id="${registry.id}" but manifest.package.id="${manifest.package.id}"`
+    );
+  }
+
+  // 5. Check all files in manifest.files.* exist
+  const filesToCheck: Array<{ key: string; file: string | undefined }> = [
+    { key: 'definition', file: manifest.files.definition },
+    { key: 'registry', file: manifest.files.registry },
+    { key: 'samplesheet', file: manifest.files.samplesheet },
+    { key: 'readme', file: manifest.files.readme },
+  ];
+
+  for (const { key, file } of filesToCheck) {
+    if (file) {
+      const filePath = path.join(packageDir, file);
+      if (!fs.existsSync(filePath)) {
+        errors.push(`Missing file: files.${key}="${file}" not found`);
+      }
+    }
+  }
+
+  // Check parser files
+  if (manifest.files.parsers) {
+    for (const parserFile of manifest.files.parsers) {
+      const parserPath = path.join(packageDir, parserFile);
+      if (!fs.existsSync(parserPath)) {
+        errors.push(`Missing parser file: "${parserFile}" not found`);
+      }
+    }
+  }
+
+  // 6. Validate parser IDs referenced in outputs[].parsed.from exist
+  const parserIds = new Set<string>();
+  if (manifest.files.parsers) {
+    for (const parserFile of manifest.files.parsers) {
+      const parserPath = path.join(packageDir, parserFile);
+      const parserConfig = loadYaml<ParserConfig>(parserPath);
+      if (parserConfig?.parser?.id) {
+        parserIds.add(parserConfig.parser.id);
+      }
+    }
+  }
+
+  for (const output of manifest.outputs) {
+    if (output.parsed?.from && !parserIds.has(output.parsed.from)) {
+      errors.push(
+        `Output "${output.id}" references unknown parser: "${output.parsed.from}"`
+      );
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+/**
  * Load a single pipeline package from its directory
  */
 function loadPackage(packageDir: string): LoadedPackage | null {
@@ -372,6 +483,23 @@ function loadPackage(packageDir: string): LoadedPackage | null {
   const registry = loadJson<RegistryConfig>(registryPath);
   if (!registry) {
     console.warn(`No registry found for package ${packageId}`);
+    return null;
+  }
+
+  // Validate manifest and consistency
+  const validation = validatePackageManifest(packageDir, manifest, definition, registry);
+
+  // Log warnings but continue
+  for (const warning of validation.warnings) {
+    console.warn(`[Package ${packageId}] Warning: ${warning}`);
+  }
+
+  // Fail fast on validation errors
+  if (!validation.valid) {
+    for (const error of validation.errors) {
+      console.error(`[Package ${packageId}] Error: ${error}`);
+    }
+    console.error(`Package ${packageId} failed validation - skipping`);
     return null;
   }
 
@@ -422,6 +550,7 @@ function scanPackages(): void {
 
     const dirs = fs.readdirSync(pipelinesDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
+      .filter(d => !d.name.startsWith('.') && !d.name.startsWith('_'))
       .map(d => d.name);
 
     for (const dir of dirs) {

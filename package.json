@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:seed": "tsx prisma/seed.ts",
+    "pipeline:validate": "tsx scripts/validate-pipeline-package.ts",
     "pipeline:monitor": "tsx scripts/pipeline-monitor.ts",
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once"
   },

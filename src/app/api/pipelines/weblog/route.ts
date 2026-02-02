@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getExecutionSettings } from '@/app/api/admin/settings/pipelines/execution/route';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
-import { getAdapter } from '@/lib/pipelines/adapters';
+import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
+import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 // Import to trigger adapter registration
 import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
@@ -13,11 +14,19 @@ type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
  * Process a completed pipeline run - discover outputs and write to DB
  */
 async function processCompletedRun(runId: string, pipelineId: string): Promise<void> {
-  // Get the adapter for this pipeline
-  const adapter = getAdapter(pipelineId);
+  // Get the adapter for this pipeline, falling back to generic adapter
+  let adapter = getAdapter(pipelineId);
   if (!adapter) {
-    console.log(`[Pipeline Weblog] No adapter registered for pipeline: ${pipelineId}`);
-    return;
+    // Try to create a generic adapter from manifest
+    const genericAdapter = createGenericAdapter(pipelineId);
+    if (genericAdapter) {
+      registerAdapter(genericAdapter);
+      adapter = genericAdapter;
+      console.log(`[Pipeline Weblog] Created generic adapter for pipeline: ${pipelineId}`);
+    } else {
+      console.log(`[Pipeline Weblog] No adapter available for pipeline: ${pipelineId}`);
+      return;
+    }
   }
 
   // Fetch run details including output path and samples

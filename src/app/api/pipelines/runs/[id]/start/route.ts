@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { prepareMagRun } from '@/lib/pipelines/mag/executor';
+import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
+import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/app/api/admin/settings/pipelines/execution/route';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
@@ -242,9 +243,20 @@ export async function POST(
       });
     }
 
+    // Verify pipeline package exists
+    const pipelineId = run.pipelineId;
+    const pkg = getPackage(pipelineId);
+    if (!pkg) {
+      return NextResponse.json(
+        { error: `Pipeline package not found: ${pipelineId}` },
+        { status: 400 }
+      );
+    }
+
     // Prepare the run (generates samplesheet, scripts, etc.)
-    const prepResult = await prepareMagRun({
+    const prepResult = await prepareGenericRun({
       runId: run.id,
+      pipelineId,
       studyId: run.studyId!,
       sampleIds: selectedSampleIds,
       config,

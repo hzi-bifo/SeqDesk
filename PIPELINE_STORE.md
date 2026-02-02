@@ -1,5 +1,10 @@
 # Pipeline Store Concept
 
+> **Note:** The pipeline registry/store UI and API now live in the **landing-page repo** (`hzi-bifo/SeqDesk.com`).
+> This repo (`hzi-bifo/SeqDesk`) only loads **local packages** from the `pipelines/` folder.
+> See `SeqDesk.com/src/data/registry/` for the public registry data and `/api/registry` endpoints.
+> This document is a **concept + interface reference**; implementation of the public store lives in the landing-page repo.
+
 ## Overview
 
 The Pipeline Store is a centralized catalog of bioinformatics pipelines that SeqDesk instances can browse, install, and update. It provides a modular system where pipelines are hosted on seqdesk.com and can be installed into local SeqDesk installations.
@@ -296,6 +301,8 @@ Future pipelines can add new destinations without changing adapters.
 
 ## API Endpoints
 
+> **Implementation note:** These endpoints are implemented in the landing-page repo (`hzi-bifo/SeqDesk.com`), not this repo.
+
 ### seqdesk.com API (Store)
 
 | Endpoint | Method | Description |
@@ -323,6 +330,8 @@ Future pipelines can add new destinations without changing adapters.
 ---
 
 ## UI Components
+
+> **Implementation note:** The UI described here is implemented in the landing-page repo.
 
 ### 1. Landing Page - Pipeline Store (`seqdesk.com/pipelines`)
 
@@ -529,6 +538,72 @@ npx tsx scripts/publish-pipeline.ts mag \
 - Adapter: `src/lib/pipelines/adapters/mag.ts` (validation, samplesheet, output discovery).
 - Output resolver: `src/lib/pipelines/output-resolver.ts` writes DB records based on manifest outputs.
 - Completion flow uses adapter + resolver (see `src/lib/pipelines/mag/executor.ts` and the weblog route).
+
+---
+
+## Manifest as Source of Truth for Execution
+
+The manifest.json is now the single source of truth for pipeline execution. New pipelines can be added without writing custom TypeScript code.
+
+### Key Components
+
+1. **Package Loader** (`src/lib/pipelines/package-loader.ts`)
+   - Validates packages against schema on load
+   - Filters folders starting with `_` (templates/examples)
+   - Logs warnings for ID drift between manifest/definition/registry
+
+2. **Generic Executor** (`src/lib/pipelines/generic-executor.ts`)
+   - Builds Nextflow commands from manifest.execution
+   - Uses paramMap for UI config to flag conversion
+   - Applies paramRules for conditional parameters
+
+3. **Generic Adapter** (`src/lib/pipelines/generic-adapter.ts`)
+   - Creates PipelineAdapter from manifest configuration
+   - Validates inputs based on manifest.inputs
+   - Discovers outputs using manifest.outputs patterns
+
+4. **Parser Runtime** (`src/lib/pipelines/parser-runtime.ts`)
+   - Executes YAML-defined parsers (TSV, CSV, JSON)
+   - Enriches discovered outputs with parsed metadata
+
+### paramMap
+
+The `paramMap` translates UI configuration keys to Nextflow command-line flags:
+
+```json
+{
+  "paramMap": {
+    "skipBinQc": "--skip_binqc",
+    "gtdbDb": "--gtdb_db"
+  }
+}
+```
+
+When a user sets `skipBinQc: true`, the executor adds `--skip_binqc` to the command.
+For non-boolean values, it adds `--gtdb_db /path/to/db`.
+
+### paramRules
+
+For complex conditional logic:
+
+```json
+{
+  "paramRules": [
+    {
+      "when": { "skipBinQc": true },
+      "add": [
+        "--skip_quast",
+        "--skip_gtdbtk",
+        "--run_busco false"
+      ]
+    }
+  ]
+}
+```
+
+### Template Package
+
+A template package is provided at `pipelines/_example/` demonstrating all configuration options. This folder is not loaded (starts with `_`).
 
 ---
 

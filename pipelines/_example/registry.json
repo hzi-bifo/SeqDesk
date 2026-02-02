@@ -1,0 +1,80 @@
+{
+  "id": "_example",
+  "name": "Example Pipeline",
+  "description": "Template pipeline for documentation",
+  "category": "analysis",
+  "version": "1.0.0",
+  "website": "https://github.com/your-org/your-pipeline",
+  "requires": {
+    "pairedEndReads": true,
+    "platform": true
+  },
+  "outputs": [
+    {
+      "type": "data",
+      "name": "Processed Files",
+      "description": "Main pipeline output files",
+      "model": "Assembly",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "Summary Report",
+      "description": "HTML summary report",
+      "visibility": "both",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": ["study", "samples"],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": true
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "declarative"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "skipStep1": {
+        "type": "boolean",
+        "title": "Skip Step 1",
+        "description": "Skip the first processing step"
+      },
+      "skipStep2": {
+        "type": "boolean",
+        "title": "Skip Step 2",
+        "description": "Skip the second processing step"
+      },
+      "minQuality": {
+        "type": "integer",
+        "title": "Minimum Quality",
+        "description": "Minimum quality score threshold",
+        "minimum": 0,
+        "maximum": 40
+      },
+      "outputFormat": {
+        "type": "string",
+        "title": "Output Format",
+        "description": "Format for output files",
+        "enum": ["standard", "compressed", "both"]
+      }
+    }
+  },
+  "defaultConfig": {
+    "skipStep1": false,
+    "skipStep2": false,
+    "minQuality": 20,
+    "outputFormat": "standard"
+  },
+  "icon": "Beaker"
+}

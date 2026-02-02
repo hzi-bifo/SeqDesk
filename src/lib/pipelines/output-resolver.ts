@@ -146,6 +146,8 @@ async function createArtifact(
         sampleId: file.sampleId || null,
         pipelineRunId: runId,
         producedByStepId: file.fromStep || output.fromStep,
+        // Persist parsed metadata from adapters
+        metadata: file.metadata ? JSON.stringify(file.metadata) : null,
       },
     });
     return { success: true };
