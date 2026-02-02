@@ -75,9 +75,15 @@ export default function HomePage() {
         style={{ background: '#EFEFE9' }}
       >
         <div>
-          <div className="mb-12">
+          <div className="mb-12 flex items-center gap-3">
             <span className="text-lg font-semibold" style={{ color: '#171717' }}>
               SeqDesk
+            </span>
+            <span
+              className="text-xs font-medium px-2 py-0.5 rounded-full"
+              style={{ background: '#171717', color: '#ffffff' }}
+            >
+              v0.1.7
             </span>
           </div>
 
@@ -150,6 +156,11 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Footer */}
+        <div className="text-xs" style={{ color: '#a3a3a3' }}>
+          SeqDesk v0.1.7 — Modern UI release
         </div>
       </div>
 
