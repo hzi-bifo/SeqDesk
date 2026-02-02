@@ -7,23 +7,18 @@ import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
   Plus,
-  FileText,
-  BookOpen,
-  Users,
-  TestTube,
   ArrowRight,
   ChevronRight,
-  Activity,
 } from "lucide-react";
 
 const ORDER_STATUS_CONFIG: Record<string, { label: string; color: string; dot: string; bgColor: string }> = {
-  DRAFT: { label: "Draft", color: "text-stone-600", dot: "bg-stone-400", bgColor: "bg-stone-100" },
-  READY_FOR_SEQUENCING: { label: "Ready", color: "text-blue-600", dot: "bg-blue-500", bgColor: "bg-blue-100" },
-  SEQUENCING_IN_PROGRESS: { label: "Sequencing", color: "text-amber-600", dot: "bg-amber-500", bgColor: "bg-amber-100" },
-  SEQUENCING_COMPLETED: { label: "Seq. Done", color: "text-purple-600", dot: "bg-purple-500", bgColor: "bg-purple-100" },
-  DATA_PROCESSING: { label: "Processing", color: "text-orange-600", dot: "bg-orange-500", bgColor: "bg-orange-100" },
-  DATA_DELIVERED: { label: "Delivered", color: "text-teal-600", dot: "bg-teal-500", bgColor: "bg-teal-100" },
-  COMPLETED: { label: "Completed", color: "text-emerald-600", dot: "bg-emerald-500", bgColor: "bg-emerald-100" },
+  DRAFT: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground", bgColor: "bg-secondary" },
+  READY_FOR_SEQUENCING: { label: "Ready", color: "text-foreground", dot: "bg-foreground", bgColor: "bg-secondary" },
+  SEQUENCING_IN_PROGRESS: { label: "Sequencing", color: "text-amber-600", dot: "bg-amber-500", bgColor: "bg-secondary" },
+  SEQUENCING_COMPLETED: { label: "Seq. Done", color: "text-foreground", dot: "bg-foreground", bgColor: "bg-secondary" },
+  DATA_PROCESSING: { label: "Processing", color: "text-amber-600", dot: "bg-amber-500", bgColor: "bg-secondary" },
+  DATA_DELIVERED: { label: "Delivered", color: "text-emerald-600", dot: "bg-emerald-500", bgColor: "bg-secondary" },
+  COMPLETED: { label: "Completed", color: "text-emerald-600", dot: "bg-emerald-500", bgColor: "bg-secondary" },
 };
 
 // Helper to check if department sharing is enabled
@@ -180,7 +175,7 @@ export default async function DashboardPage() {
     return (
       <PageContainer>
         {/* Welcome Header */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className="text-2xl font-semibold">
             Welcome back, {session.user.name?.split(" ")[0] || "Researcher"}
           </h1>
@@ -191,35 +186,47 @@ export default async function DashboardPage() {
           </p>
         </div>
 
+        {/* Stats at the top */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-card rounded-xl p-4 border border-border text-center">
+            <p className="text-2xl font-semibold">{sampleCount}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Total Samples</p>
+          </div>
+          <div className="bg-card rounded-xl p-4 border border-border text-center">
+            <p className="text-2xl font-semibold">{activeOrders}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Active Orders</p>
+          </div>
+          <div className="bg-card rounded-xl p-4 border border-border text-center">
+            <p className="text-2xl font-semibold">{completedOrders}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Completed</p>
+          </div>
+        </div>
+
         {/* Quick Actions */}
-        <div className="grid sm:grid-cols-2 gap-4 mb-8">
+        <div className="grid sm:grid-cols-2 gap-4 mb-6">
           <Link
             href="/dashboard/orders/new"
-            className="group bg-white rounded-xl p-6 border-2 border-transparent hover:border-primary/20 transition-all"
+            className="group bg-card rounded-xl p-5 border border-border hover:border-foreground/20 transition-all"
           >
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
-                <Plus className="h-6 w-6 text-blue-600" />
-              </div>
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-lg group-hover:text-primary transition-colors">New Order</h3>
-                <p className="text-sm text-muted-foreground">Submit samples for sequencing</p>
+                <h3 className="font-semibold group-hover:text-primary transition-colors">New Order</h3>
+                <p className="text-sm text-muted-foreground mt-1">Submit samples for sequencing</p>
               </div>
+              <Plus className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
             </div>
           </Link>
 
           <Link
             href="/dashboard/studies/new"
-            className="group bg-white rounded-xl p-6 border-2 border-transparent hover:border-primary/20 transition-all"
+            className="group bg-card rounded-xl p-5 border border-border hover:border-foreground/20 transition-all"
           >
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-violet-500/10 flex items-center justify-center group-hover:bg-violet-500/20 transition-colors">
-                <BookOpen className="h-6 w-6 text-violet-600" />
-              </div>
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-lg group-hover:text-primary transition-colors">New Study</h3>
-                <p className="text-sm text-muted-foreground">Organize samples for ENA submission</p>
+                <h3 className="font-semibold group-hover:text-primary transition-colors">New Study</h3>
+                <p className="text-sm text-muted-foreground mt-1">Organize samples for ENA submission</p>
               </div>
+              <Plus className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
             </div>
           </Link>
         </div>
@@ -227,46 +234,39 @@ export default async function DashboardPage() {
         {/* Orders and Studies side by side */}
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Orders Card */}
-          <div className="bg-white rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                  <FileText className="h-4 w-4 text-blue-600" />
-                </div>
-                <div>
-                  <h2 className="font-semibold">My Orders</h2>
-                  <p className="text-xs text-muted-foreground">
-                    {orderCount} total
-                    {draftOrders > 0 && <span className="text-amber-600"> · {draftOrders} draft</span>}
-                  </p>
-                </div>
+          <div className="bg-card rounded-xl overflow-hidden border border-border">
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold">My Orders</h2>
+                <p className="text-xs text-muted-foreground">
+                  {orderCount} total
+                  {draftOrders > 0 && <span className="text-amber-600"> · {draftOrders} draft</span>}
+                </p>
               </div>
-              <Link href="/dashboard/orders" className="text-sm text-primary hover:underline flex items-center gap-1">
+              <Link href="/dashboard/orders" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
                 View all <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
             {recentOrders.length === 0 ? (
               <div className="text-center py-12 px-5">
-                <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-30" />
                 <p className="text-muted-foreground mb-1">No orders yet</p>
                 <p className="text-sm text-muted-foreground mb-4">Start by creating your first sequencing order</p>
-                <Button size="sm" asChild>
+                <Button size="sm" variant="outline" asChild>
                   <Link href="/dashboard/orders/new">
-                    <Plus className="h-4 w-4 mr-1.5" />
                     Create Order
                   </Link>
                 </Button>
               </div>
             ) : (
-              <div className="divide-y divide-stone-100">
+              <div className="divide-y divide-border">
                 {recentOrders.map((order) => {
                   const status = ORDER_STATUS_CONFIG[order.status] || ORDER_STATUS_CONFIG.DRAFT;
                   return (
                     <Link
                       key={order.id}
                       href={`/dashboard/orders/${order.id}`}
-                      className="flex items-center justify-between px-5 py-3.5 hover:bg-stone-50/80 transition-colors group"
+                      className="flex items-center justify-between px-5 py-3.5 hover:bg-secondary/50 transition-colors group"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -279,7 +279,7 @@ export default async function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <span className={`h-2 w-2 rounded-full ${status.dot}`} />
                         <span className={`text-xs font-medium ${status.color}`}>{status.label}</span>
-                        <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400 transition-colors ml-1" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors ml-1" />
                       </div>
                     </Link>
                   );
@@ -289,47 +289,40 @@ export default async function DashboardPage() {
           </div>
 
           {/* Studies Card */}
-          <div className="bg-white rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                  <BookOpen className="h-4 w-4 text-violet-600" />
-                </div>
-                <div>
-                  <h2 className="font-semibold">My Studies</h2>
-                  <p className="text-xs text-muted-foreground">
-                    {studyCount} total
-                    {submittedStudies > 0 && <span className="text-emerald-600"> · {submittedStudies} published</span>}
-                  </p>
-                </div>
+          <div className="bg-card rounded-xl overflow-hidden border border-border">
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold">My Studies</h2>
+                <p className="text-xs text-muted-foreground">
+                  {studyCount} total
+                  {submittedStudies > 0 && <span className="text-emerald-600"> · {submittedStudies} published</span>}
+                </p>
               </div>
-              <Link href="/dashboard/studies" className="text-sm text-primary hover:underline flex items-center gap-1">
+              <Link href="/dashboard/studies" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
                 View all <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
             {recentStudies.length === 0 ? (
               <div className="text-center py-12 px-5">
-                <BookOpen className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-30" />
                 <p className="text-muted-foreground mb-1">No studies yet</p>
                 <p className="text-sm text-muted-foreground mb-4">Create a study to organize samples for ENA</p>
-                <Button size="sm" asChild>
+                <Button size="sm" variant="outline" asChild>
                   <Link href="/dashboard/studies/new">
-                    <Plus className="h-4 w-4 mr-1.5" />
                     Create Study
                   </Link>
                 </Button>
               </div>
             ) : (
-              <div className="divide-y divide-stone-100">
+              <div className="divide-y divide-border">
                 {recentStudies.map((study) => {
                   const samplesWithMetadata = study.samples.filter(s => sampleHasMetadata(s.checklistData)).length;
                   const totalSamples = study._count.samples;
                   const metadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
 
                   let statusLabel = "Draft";
-                  let statusDot = "bg-stone-400";
-                  let statusColor = "text-stone-600";
+                  let statusDot = "bg-muted-foreground";
+                  let statusColor = "text-muted-foreground";
 
                   if (study.submitted) {
                     statusLabel = "Published";
@@ -341,15 +334,15 @@ export default async function DashboardPage() {
                     statusColor = "text-amber-600";
                   } else if (metadataComplete) {
                     statusLabel = "Ready";
-                    statusDot = "bg-blue-500";
-                    statusColor = "text-blue-600";
+                    statusDot = "bg-foreground";
+                    statusColor = "text-foreground";
                   }
 
                   return (
                     <Link
                       key={study.id}
                       href={`/dashboard/studies/${study.id}`}
-                      className="flex items-center justify-between px-5 py-3.5 hover:bg-stone-50/80 transition-colors group"
+                      className="flex items-center justify-between px-5 py-3.5 hover:bg-secondary/50 transition-colors group"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -362,7 +355,7 @@ export default async function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <span className={`h-2 w-2 rounded-full ${statusDot}`} />
                         <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
-                        <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400 transition-colors ml-1" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors ml-1" />
                       </div>
                     </Link>
                   );
@@ -372,23 +365,6 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        {/* Simple Stats Footer */}
-        <div className="mt-6 bg-white rounded-xl p-5">
-          <div className="flex items-center justify-around text-center divide-x divide-stone-100">
-            <div className="flex-1">
-              <p className="text-2xl font-semibold">{sampleCount}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Total Samples</p>
-            </div>
-            <div className="flex-1">
-              <p className="text-2xl font-semibold">{activeOrders}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Active Orders</p>
-            </div>
-            <div className="flex-1">
-              <p className="text-2xl font-semibold">{completedOrders}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Completed</p>
-            </div>
-          </div>
-        </div>
       </PageContainer>
     );
   }
@@ -417,77 +393,46 @@ export default async function DashboardPage() {
 
       {/* Key Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-              <FileText className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{orderCount}</p>
-              <p className="text-xs text-muted-foreground">Total Orders</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{activeOrders} active</span>
-            <span className="text-muted-foreground">{draftOrders} draft</span>
+        <div className="bg-card rounded-xl p-5 border border-border">
+          <p className="text-2xl font-bold">{orderCount}</p>
+          <p className="text-sm text-muted-foreground">Total Orders</p>
+          <div className="flex items-center gap-2 text-xs mt-3">
+            <span className="text-amber-600">{activeOrders} active</span>
+            <span className="text-muted-foreground">· {draftOrders} draft</span>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
-              <BookOpen className="h-5 w-5 text-violet-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{studyCount}</p>
-              <p className="text-xs text-muted-foreground">Total Studies</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{submittedStudies} published</span>
-            <span className="text-muted-foreground">{draftStudies} draft</span>
+        <div className="bg-card rounded-xl p-5 border border-border">
+          <p className="text-2xl font-bold">{studyCount}</p>
+          <p className="text-sm text-muted-foreground">Total Studies</p>
+          <div className="flex items-center gap-2 text-xs mt-3">
+            <span className="text-emerald-600">{submittedStudies} published</span>
+            <span className="text-muted-foreground">· {draftStudies} draft</span>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-lg bg-teal-500/10 flex items-center justify-center">
-              <TestTube className="h-5 w-5 text-teal-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{sampleCount}</p>
-              <p className="text-xs text-muted-foreground">Total Samples</p>
-            </div>
-          </div>
-          <Link href="/dashboard/orders" className="text-xs text-primary hover:underline">
+        <div className="bg-card rounded-xl p-5 border border-border">
+          <p className="text-2xl font-bold">{sampleCount}</p>
+          <p className="text-sm text-muted-foreground">Total Samples</p>
+          <Link href="/dashboard/orders" className="text-xs text-muted-foreground hover:text-foreground mt-3 inline-block transition-colors">
             View in orders
           </Link>
         </div>
 
-        <div className="bg-white rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-              <Users className="h-5 w-5 text-indigo-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{userCount}</p>
-              <p className="text-xs text-muted-foreground">Researchers</p>
-            </div>
-          </div>
-          <Link href="/admin/users" className="text-xs text-primary hover:underline">
+        <div className="bg-card rounded-xl p-5 border border-border">
+          <p className="text-2xl font-bold">{userCount}</p>
+          <p className="text-sm text-muted-foreground">Researchers</p>
+          <Link href="/admin/users" className="text-xs text-muted-foreground hover:text-foreground mt-3 inline-block transition-colors">
             Manage users
           </Link>
         </div>
       </div>
 
       {/* Order Status Breakdown */}
-      <div className="bg-white rounded-xl p-5 mb-6">
+      <div className="bg-card rounded-xl p-5 mb-6 border border-border">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-muted-foreground" />
-            <h2 className="font-semibold">Order Pipeline</h2>
-          </div>
-          <Link href="/dashboard/orders" className="text-sm text-primary hover:underline flex items-center gap-1">
+          <h2 className="font-semibold">Order Pipeline</h2>
+          <Link href="/dashboard/orders" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
             View all orders <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -507,28 +452,27 @@ export default async function DashboardPage() {
       {/* Two Column Layout */}
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Recent Orders */}
-        <div className="bg-white rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-stone-100 flex items-center justify-between">
+        <div className="bg-card rounded-xl overflow-hidden border border-border">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <h3 className="font-medium">Recent Orders</h3>
-            <Link href="/dashboard/orders" className="text-xs text-primary hover:underline">
+            <Link href="/dashboard/orders" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
               View all
             </Link>
           </div>
 
           {recentOrders.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">
-              <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
               <p className="text-sm">No orders yet</p>
             </div>
           ) : (
-            <div className="divide-y divide-stone-100">
+            <div className="divide-y divide-border">
               {recentOrders.map((order) => {
                 const status = ORDER_STATUS_CONFIG[order.status] || ORDER_STATUS_CONFIG.DRAFT;
                 return (
                   <Link
                     key={order.id}
                     href={`/dashboard/orders/${order.id}`}
-                    className="flex items-center justify-between px-5 py-3 hover:bg-stone-50/80 transition-colors group"
+                    className="flex items-center justify-between px-5 py-3 hover:bg-secondary/50 transition-colors group"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -542,7 +486,7 @@ export default async function DashboardPage() {
                       <div className={`px-2 py-1 rounded-full text-xs font-medium ${status.bgColor} ${status.color}`}>
                         {status.label}
                       </div>
-                      <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400" />
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground" />
                     </div>
                   </Link>
                 );
@@ -552,45 +496,44 @@ export default async function DashboardPage() {
         </div>
 
         {/* Recent Studies */}
-        <div className="bg-white rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-stone-100 flex items-center justify-between">
+        <div className="bg-card rounded-xl overflow-hidden border border-border">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <h3 className="font-medium">Recent Studies</h3>
-            <Link href="/dashboard/studies" className="text-xs text-primary hover:underline">
+            <Link href="/dashboard/studies" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
               View all
             </Link>
           </div>
 
           {recentStudies.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">
-              <BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />
               <p className="text-sm">No studies yet</p>
             </div>
           ) : (
-            <div className="divide-y divide-stone-100">
+            <div className="divide-y divide-border">
               {recentStudies.map((study) => {
                 const samplesWithMetadata = study.samples.filter(s => sampleHasMetadata(s.checklistData)).length;
                 const totalSamples = study._count.samples;
                 const metadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
 
                 let statusLabel = "Draft";
-                let statusColor = "bg-stone-100 text-stone-600";
+                let statusColor = "bg-secondary text-muted-foreground";
 
                 if (study.submitted) {
                   statusLabel = "Published";
-                  statusColor = "bg-emerald-100 text-emerald-600";
+                  statusColor = "bg-secondary text-emerald-600";
                 } else if (totalSamples > 0 && !metadataComplete) {
                   statusLabel = `${samplesWithMetadata}/${totalSamples}`;
-                  statusColor = "bg-amber-100 text-amber-600";
+                  statusColor = "bg-secondary text-amber-600";
                 } else if (metadataComplete) {
                   statusLabel = "Ready";
-                  statusColor = "bg-blue-100 text-blue-600";
+                  statusColor = "bg-secondary text-foreground";
                 }
 
                 return (
                   <Link
                     key={study.id}
                     href={`/dashboard/studies/${study.id}`}
-                    className="flex items-center justify-between px-5 py-3 hover:bg-stone-50/80 transition-colors group"
+                    className="flex items-center justify-between px-5 py-3 hover:bg-secondary/50 transition-colors group"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -604,7 +547,7 @@ export default async function DashboardPage() {
                       <div className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
                         {statusLabel}
                       </div>
-                      <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400" />
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground" />
                     </div>
                   </Link>
                 );

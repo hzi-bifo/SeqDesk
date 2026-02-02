@@ -63,7 +63,7 @@ export function UpdateBanner() {
   }
 
   return (
-    <div className="bg-blue-600 text-white px-4 py-2">
+    <div className="bg-foreground text-background px-4 py-2">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center gap-3">
           <ArrowUpCircle className="h-5 w-5" />
@@ -84,7 +84,7 @@ export function UpdateBanner() {
         </div>
         <button
           onClick={handleDismiss}
-          className="p-1 hover:bg-blue-700 rounded"
+          className="p-1 hover:bg-white/10 rounded"
           aria-label="Dismiss"
         >
           <X className="h-4 w-4" />

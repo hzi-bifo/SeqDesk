@@ -7,16 +7,14 @@ import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import {
-  FileText,
-  Plus,
   Loader2,
-  AlertCircle,
   ChevronRight,
   Search,
   ArrowUpDown,
   ChevronDown,
   X,
 } from "lucide-react";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface Order {
   id: string;
@@ -38,12 +36,12 @@ interface Order {
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  DRAFT: { label: "Draft", color: "text-stone-600", dot: "bg-stone-400" },
-  READY_FOR_SEQUENCING: { label: "Ready", color: "text-blue-600", dot: "bg-blue-500" },
+  DRAFT: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground" },
+  READY_FOR_SEQUENCING: { label: "Ready", color: "text-foreground", dot: "bg-foreground" },
   SEQUENCING_IN_PROGRESS: { label: "Sequencing", color: "text-amber-600", dot: "bg-amber-500" },
-  SEQUENCING_COMPLETED: { label: "Seq. Done", color: "text-purple-600", dot: "bg-purple-500" },
-  DATA_PROCESSING: { label: "Processing", color: "text-orange-600", dot: "bg-orange-500" },
-  DATA_DELIVERED: { label: "Delivered", color: "text-teal-600", dot: "bg-teal-500" },
+  SEQUENCING_COMPLETED: { label: "Seq. Done", color: "text-foreground", dot: "bg-foreground" },
+  DATA_PROCESSING: { label: "Processing", color: "text-amber-600", dot: "bg-amber-500" },
+  DATA_DELIVERED: { label: "Delivered", color: "text-emerald-600", dot: "bg-emerald-500" },
   COMPLETED: { label: "Completed", color: "text-emerald-600", dot: "bg-emerald-500" },
 };
 
@@ -201,9 +199,8 @@ export default function OrdersPage() {
           </p>
         </div>
         {isResearcher && (
-          <Button size="sm" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link href="/dashboard/orders/new">
-              <Plus className="h-4 w-4 mr-1.5" />
               New Order
             </Link>
           </Button>
@@ -215,16 +212,10 @@ export default function OrdersPage() {
         It contains sample information, sequencing parameters, and tracks the progress from submission through to data delivery.
       </HelpBox>
 
-      {error && (
-        <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-5 w-5" />
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       {orders.length === 0 ? (
-        <div className="bg-white rounded-xl p-12 text-center">
-          <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-30" />
+        <div className="bg-card rounded-xl p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No orders yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             {isResearcher
@@ -232,18 +223,17 @@ export default function OrdersPage() {
               : "Orders contain samples for sequencing. Researchers create orders and mark them as ready when samples are prepared."}
           </p>
           {isResearcher && (
-            <Button size="sm" asChild>
+            <Button size="sm" variant="outline" asChild>
               <Link href="/dashboard/orders/new">
-                <Plus className="h-4 w-4 mr-1.5" />
                 Create Order
               </Link>
             </Button>
           )}
         </div>
       ) : (
-        <div className="bg-white rounded-xl overflow-hidden">
+        <div className="bg-card rounded-xl overflow-hidden border border-border">
           {/* Search & Filters */}
-          <div className="px-4 py-3 border-b border-stone-100">
+          <div className="px-4 py-3 border-b border-border">
             <div className="flex items-center gap-3">
               {/* Search */}
               <div className="relative flex-1">
@@ -253,7 +243,7 @@ export default function OrdersPage() {
                   placeholder="Search orders..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 text-sm bg-stone-50 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -262,7 +252,7 @@ export default function OrdersPage() {
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-stone-50 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                 >
                   <option value="">All Status</option>
                   {Object.entries(STATUS_CONFIG).map(([key, config]) => (
@@ -278,7 +268,7 @@ export default function OrdersPage() {
                   <select
                     value={userFilter}
                     onChange={(e) => setUserFilter(e.target.value)}
-                    className="appearance-none pl-3 pr-8 py-2 text-sm bg-stone-50 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                    className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                   >
                     <option value="">All Researchers</option>
                     {uniqueUsers.map((user) => (
@@ -303,7 +293,7 @@ export default function OrdersPage() {
           </div>
 
           {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("name")}
               className="col-span-4 flex items-center gap-1 hover:text-foreground transition-colors text-left"
@@ -345,7 +335,7 @@ export default function OrdersPage() {
           </div>
 
           {/* Orders List */}
-          <div className="divide-y divide-stone-100">
+          <div className="divide-y divide-border">
             {filteredOrders.map((order) => {
               const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
 
@@ -353,7 +343,7 @@ export default function OrdersPage() {
                 <Link
                   key={order.id}
                   href={`/dashboard/orders/${order.id}`}
-                  className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-stone-50/80 transition-colors group items-center"
+                  className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors group items-center"
                 >
                   {/* Order Info */}
                   <div className="col-span-4 min-w-0">
@@ -400,7 +390,7 @@ export default function OrdersPage() {
 
                   {/* Arrow */}
                   <div className="col-span-1 flex justify-end">
-                    <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400 transition-colors" />
+                    <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                   </div>
                 </Link>
               );

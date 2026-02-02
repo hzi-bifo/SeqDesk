@@ -456,19 +456,19 @@ export default function OrderDetailPage({
           const step4Complete = isSequenced; // Sequencing completed
 
           return (
-            <div className="mb-6 bg-gradient-to-r from-blue-50 to-emerald-50 rounded-xl border border-blue-100 p-5">
-              <h3 className="font-semibold text-stone-800 mb-4 flex items-center gap-2">
+            <div className="mb-6 bg-gradient-to-r from-secondary to-emerald-50/50 rounded-xl border border-border p-5">
+              <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                 <ClipboardList className="h-5 w-5 text-blue-600" />
                 Order Progress
               </h3>
               <div className="grid grid-cols-4 gap-3">
                 {/* Step 1: Order Created */}
-                <div className={`relative p-3 rounded-lg ${step1Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-stone-200'}`}>
+                <div className={`relative p-3 rounded-lg ${step1Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step1Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
                         <span className="text-[10px] text-white font-bold">1</span>
                       </div>
                     )}
@@ -478,12 +478,12 @@ export default function OrderDetailPage({
                 </div>
 
                 {/* Step 2: Add Samples */}
-                <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-stone-200'}`}>
+                <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step2Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
                         <span className="text-[10px] text-white font-bold">2</span>
                       </div>
                     )}
@@ -493,12 +493,12 @@ export default function OrderDetailPage({
                 </div>
 
                 {/* Step 3: Mark as Ready - available after adding samples */}
-                <div className={`relative p-3 rounded-lg ${step3Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-stone-200'}`}>
+                <div className={`relative p-3 rounded-lg ${step3Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step3Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
                         <span className="text-[10px] text-white font-bold">3</span>
                       </div>
                     )}
@@ -528,7 +528,7 @@ export default function OrderDetailPage({
                     </button>
                   )}
                   {!step3Complete && !step2Complete && (
-                    <p className="mt-2 text-xs text-stone-400">Add samples first</p>
+                    <p className="mt-2 text-xs text-muted-foreground/60">Add samples first</p>
                   )}
                   {step3Complete && instructions && (
                     <button
@@ -542,12 +542,12 @@ export default function OrderDetailPage({
                 </div>
 
                 {/* Step 4: Sequenced */}
-                <div className={`relative p-3 rounded-lg ${step4Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-stone-200'}`}>
+                <div className={`relative p-3 rounded-lg ${step4Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step4Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
                         <span className="text-[10px] text-white font-bold">4</span>
                       </div>
                     )}
@@ -565,8 +565,8 @@ export default function OrderDetailPage({
 
               {/* Shipping Instructions - shown when expanded */}
               {isSubmitted && showFullInstructions && instructions && (
-                <div className="mt-4 p-4 bg-white/80 rounded-lg border border-blue-100">
-                  <div className="prose prose-sm max-w-none prose-headings:text-stone-800 prose-p:text-stone-700 prose-li:text-stone-700 prose-strong:text-stone-800">
+                <div className="mt-4 p-4 bg-white/80 rounded-lg border border-border">
+                  <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
                     <ReactMarkdown>{instructions}</ReactMarkdown>
                   </div>
                 </div>
@@ -574,8 +574,8 @@ export default function OrderDetailPage({
 
               {/* Admin controls for submitted orders */}
               {isSubmitted && isFacilityAdmin && currentStatusIndex < STATUS_ORDER.length - 1 && (
-                <div className="mt-4 pt-4 border-t border-blue-200 flex items-center justify-between">
-                  <span className="text-sm text-stone-600">Admin: Advance order status</span>
+                <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Admin: Advance order status</span>
                   <Button
                     size="sm"
                     onClick={() => handleStatusChange(STATUS_ORDER[currentStatusIndex + 1].key)}

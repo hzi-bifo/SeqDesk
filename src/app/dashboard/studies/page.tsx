@@ -1,18 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import {
-  BookOpen,
-  Plus,
   Loader2,
-  AlertCircle,
   ChevronRight,
+  Search,
+  ArrowUpDown,
+  ChevronDown,
+  X,
 } from "lucide-react";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface Study {
   id: string;
@@ -36,15 +38,23 @@ interface Study {
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  draft: { label: "Draft", color: "text-stone-600", dot: "bg-stone-400" },
+  draft: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground" },
   published: { label: "Published", color: "text-emerald-600", dot: "bg-emerald-500" },
 };
+
+type SortField = "created" | "title" | "status" | "samples";
+type SortDirection = "asc" | "desc";
 
 export default function StudiesPage() {
   const { data: session } = useSession();
   const [studies, setStudies] = useState<Study[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [userFilter, setUserFilter] = useState<string>("");
+  const [sortField, setSortField] = useState<SortField>("created");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -74,10 +84,92 @@ export default function StudiesPage() {
     });
   };
 
+  // Get unique users for filter dropdown
+  const uniqueUsers = useMemo(() => {
+    const users = new Map<string, { id: string; name: string }>();
+    studies.forEach((study) => {
+      if (!users.has(study.user.id)) {
+        users.set(study.user.id, {
+          id: study.user.id,
+          name: `${study.user.firstName} ${study.user.lastName}`,
+        });
+      }
+    });
+    return Array.from(users.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [studies]);
+
+  // Filter and sort studies
+  const filteredStudies = useMemo(() => {
+    let result = studies.filter((study) => {
+      // Search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesSearch =
+          study.title.toLowerCase().includes(query) ||
+          study.checklistType?.toLowerCase().includes(query) ||
+          study.user.firstName.toLowerCase().includes(query) ||
+          study.user.lastName.toLowerCase().includes(query) ||
+          study.user.email.toLowerCase().includes(query) ||
+          study.studyAccessionId?.toLowerCase().includes(query);
+        if (!matchesSearch) return false;
+      }
+
+      // Status filter
+      if (statusFilter) {
+        const studyStatus = study.submitted ? "published" : "draft";
+        if (studyStatus !== statusFilter) return false;
+      }
+
+      // User filter
+      if (userFilter && study.user.id !== userFilter) return false;
+
+      return true;
+    });
+
+    // Sort
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case "created":
+          comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          break;
+        case "title":
+          comparison = a.title.localeCompare(b.title);
+          break;
+        case "status":
+          comparison = (a.submitted ? 1 : 0) - (b.submitted ? 1 : 0);
+          break;
+        case "samples":
+          comparison = a._count.samples - b._count.samples;
+          break;
+      }
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+
+    return result;
+  }, [studies, searchQuery, statusFilter, userFilter, sortField, sortDirection]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("");
+    setUserFilter("");
+  };
+
+  const hasActiveFilters = searchQuery || statusFilter || userFilter;
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </PageContainer>
     );
   }
@@ -95,9 +187,8 @@ export default function StudiesPage() {
           </p>
         </div>
         {isResearcher && (
-          <Button size="sm" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link href="/dashboard/studies/new">
-              <Plus className="h-4 w-4 mr-1.5" />
               New Study
             </Link>
           </Button>
@@ -109,16 +200,10 @@ export default function StudiesPage() {
         Each study uses a specific MIxS checklist to capture standardized metadata for ENA submission.
       </HelpBox>
 
-      {error && (
-        <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-5 w-5" />
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       {studies.length === 0 ? (
-        <div className="bg-white rounded-xl p-12 text-center">
-          <BookOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-30" />
+        <div className="bg-card rounded-xl p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No studies yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             {isResearcher
@@ -127,33 +212,116 @@ export default function StudiesPage() {
           </p>
           {isResearcher && (
             <div className="flex flex-col items-center gap-3">
-              <Button size="sm" asChild>
+              <Button size="sm" variant="outline" asChild>
                 <Link href="/dashboard/studies/new">
-                  <Plus className="h-4 w-4 mr-1.5" />
                   New Study
                 </Link>
               </Button>
-              <Link href="/dashboard/orders" className="text-xs text-muted-foreground hover:text-primary">
+              <Link href="/dashboard/orders" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                 Or create an order first
               </Link>
             </div>
           )}
         </div>
       ) : (
-        <div className="bg-white rounded-xl overflow-hidden">
+        <div className="bg-card rounded-xl overflow-hidden border border-border">
+          {/* Search & Filters */}
+          <div className="px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-3">
+              {/* Search */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search studies..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <div className="relative">
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 cursor-pointer"
+                >
+                  <option value="">All Status</option>
+                  <option value="draft">Draft</option>
+                  <option value="published">Published</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+
+              {/* User Filter (Admin only) */}
+              {isFacilityAdmin && (
+                <div className="relative">
+                  <select
+                    value={userFilter}
+                    onChange={(e) => setUserFilter(e.target.value)}
+                    className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 cursor-pointer"
+                  >
+                    <option value="">All Researchers</option>
+                    {uniqueUsers.map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                </div>
+              )}
+
+              {/* Clear Filters */}
+              {hasActiveFilters && (
+                <button
+                  onClick={clearFilters}
+                  className="flex items-center gap-1 px-2 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
-            <div className={isFacilityAdmin ? "col-span-3" : "col-span-4"}>Study</div>
-            <div className="col-span-2">Status</div>
-            <div className="col-span-2">Environment</div>
+          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+            <button
+              onClick={() => handleSort("title")}
+              className={`${isFacilityAdmin ? "col-span-3" : "col-span-5"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+            >
+              Study
+              {sortField === "title" && <ArrowUpDown className="h-3 w-3" />}
+            </button>
+            <button
+              onClick={() => handleSort("status")}
+              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+            >
+              Status
+              {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
+            </button>
+            <div className={isFacilityAdmin ? "col-span-2" : "col-span-2"}>Environment</div>
             {isFacilityAdmin && <div className="col-span-2">Researcher</div>}
-            <div className="col-span-2 text-right">Samples / Reads</div>
-            <div className="col-span-1">Created</div>
+            <button
+              onClick={() => handleSort("samples")}
+              className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} flex items-center gap-1 hover:text-foreground transition-colors justify-end`}
+            >
+              {sortField === "samples" && <ArrowUpDown className="h-3 w-3" />}
+              Samples
+            </button>
+            <button
+              onClick={() => handleSort("created")}
+              className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+            >
+              Created
+              {sortField === "created" && <ArrowUpDown className="h-3 w-3" />}
+            </button>
+            <div className="col-span-1"></div>
           </div>
 
           {/* Studies List */}
-          <div className="divide-y divide-stone-100">
-            {studies.map((study) => {
+          <div className="divide-y divide-border">
+            {filteredStudies.map((study) => {
               const status = study.submitted ? "published" : "draft";
               const statusConfig = STATUS_CONFIG[status];
 
@@ -161,10 +329,10 @@ export default function StudiesPage() {
                 <Link
                   key={study.id}
                   href={`/dashboard/studies/${study.id}`}
-                  className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-stone-50/80 transition-colors group items-center"
+                  className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors group items-center"
                 >
                   {/* Study Info */}
-                  <div className={`${isFacilityAdmin ? "col-span-3" : "col-span-4"} min-w-0`}>
+                  <div className={`${isFacilityAdmin ? "col-span-3" : "col-span-5"} min-w-0`}>
                     <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                       {study.title}
                     </p>
@@ -202,36 +370,39 @@ export default function StudiesPage() {
                   )}
 
                   {/* Samples / Reads */}
-                  <div className="col-span-2 text-right">
-                    <span className="text-sm tabular-nums">
-                      <span className="text-muted-foreground">{study._count.samples}</span>
-                      <span className="text-muted-foreground/50 mx-1">/</span>
-                      <span className={study.samplesWithReads === study._count.samples && study._count.samples > 0
-                        ? "text-green-600"
-                        : study.samplesWithReads > 0
-                          ? "text-amber-600"
-                          : "text-muted-foreground"
-                      }>
-                        {study.samplesWithReads}
-                      </span>
+                  <div className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} text-right`}>
+                    <span className="text-sm tabular-nums text-muted-foreground">
+                      {study._count.samples}
                     </span>
                   </div>
 
                   {/* Date */}
-                  <div className="col-span-1">
+                  <div className={isFacilityAdmin ? "col-span-1" : "col-span-1"}>
                     <span className="text-sm text-muted-foreground tabular-nums">
                       {formatDate(study.createdAt)}
                     </span>
                   </div>
 
                   {/* Arrow */}
-                  <div className="col-span-0 flex justify-end">
-                    <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400 transition-colors" />
+                  <div className="col-span-1 flex justify-end">
+                    <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                   </div>
                 </Link>
               );
             })}
           </div>
+
+          {filteredStudies.length === 0 && hasActiveFilters && (
+            <div className="py-12 text-center text-muted-foreground">
+              <p className="text-sm">No studies match your filters</p>
+              <button
+                onClick={clearFilters}
+                className="mt-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear all filters
+              </button>
+            </div>
+          )}
         </div>
       )}
     </PageContainer>

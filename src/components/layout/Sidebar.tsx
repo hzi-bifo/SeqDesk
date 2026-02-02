@@ -138,8 +138,8 @@ export function Sidebar({ user }: SidebarProps) {
       "flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm",
       collapsed && "justify-center px-2",
       isActive(path)
-        ? "bg-stone-900/[0.06] text-stone-900 font-medium [&>svg]:text-stone-700"
-        : "text-stone-500 hover:bg-stone-900/[0.04] hover:text-stone-700 [&>svg]:text-stone-400"
+        ? "bg-secondary text-foreground font-medium"
+        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
 
   const adminSubItemClass = (path: string) =>
@@ -147,19 +147,19 @@ export function Sidebar({ user }: SidebarProps) {
       "block px-3 py-1.5 rounded-lg transition-all text-sm",
       collapsed ? "ml-0 text-center" : "ml-7",
       isActive(path)
-        ? "bg-stone-900/[0.06] text-stone-900 font-medium"
-        : "text-stone-500 hover:bg-stone-900/[0.04] hover:text-stone-600"
+        ? "bg-secondary text-foreground font-medium"
+        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
 
   return (
     <aside
       className={cn(
-        "fixed top-0 left-0 bottom-0 bg-white/95 dark:bg-card/95 backdrop-blur-sm border-r border-border/50 flex flex-col z-40 transition-all duration-300",
+        "fixed top-0 left-0 bottom-0 bg-card border-r border-border flex flex-col z-40 transition-all duration-300",
         collapsed ? "w-16" : "w-64"
       )}
     >
       {/* Header */}
-      <div className={cn("p-3 border-b border-border/50", collapsed && "px-2")}>
+      <div className={cn("p-3 border-b border-border", collapsed && "px-2")}>
         <div className="flex items-center justify-between">
           {collapsed ? (
             <button
@@ -167,37 +167,23 @@ export function Sidebar({ user }: SidebarProps) {
               className="flex items-center justify-center w-full"
               title="Expand sidebar"
             >
-              <span
-                className="inline-flex items-center justify-center px-2 py-1 text-white text-sm font-medium border border-blue-900"
-                style={{
-                  backgroundColor: '#1e3a8a',
-                  transform: 'skewX(-8deg)',
-                  borderRadius: '4px',
-                }}
-              >
-                <span style={{ display: 'inline-block', transform: 'skewX(8deg)' }}>S</span>
+              <span className="inline-flex items-center justify-center px-2 py-1 bg-foreground text-background text-sm font-semibold rounded-md">
+                S
               </span>
             </button>
           ) : (
             <>
               <Link href="/dashboard" className="flex items-center gap-2.5">
-                <span
-                  className="inline-flex items-center px-2.5 py-1 text-white text-sm font-medium border border-blue-900"
-                  style={{
-                    backgroundColor: '#1e3a8a',
-                    transform: 'skewX(-8deg)',
-                    borderRadius: '4px',
-                  }}
-                >
-                  <span style={{ display: 'inline-block', transform: 'skewX(8deg)' }}>SeqDesk</span>
+                <span className="inline-flex items-center px-2.5 py-1 bg-foreground text-background text-sm font-semibold rounded-md">
+                  SeqDesk
                 </span>
-                <span className="text-[11px] font-medium text-stone-400 uppercase tracking-wider">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                   {isFacilityAdmin ? "Facility" : "Portal"}
                 </span>
               </Link>
               <button
                 onClick={toggle}
-                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors"
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                 title="Collapse sidebar"
               >
                 <PanelLeftClose className="h-4 w-4" />
@@ -208,6 +194,7 @@ export function Sidebar({ user }: SidebarProps) {
       </div>
 
       <nav className={cn("flex-1 p-4 space-y-1 overflow-y-auto", collapsed && "p-2")}>
+        {/* Core workflow items */}
         <Link href="/dashboard" className={navItemClass("/dashboard")} title="Dashboard">
           <Home className="h-4 w-4 shrink-0" />
           {!collapsed && "Dashboard"}
@@ -215,13 +202,8 @@ export function Sidebar({ user }: SidebarProps) {
         <Link href="/dashboard/orders" className={navItemClass("/dashboard/orders")} title="Orders">
           <FileText className="h-4 w-4 shrink-0" />
           {!collapsed && "Orders"}
-          {counts.orders > 0 && (
-            <span
-              className={cn(
-                "flex items-center justify-center text-xs font-medium text-stone-600 bg-stone-200 rounded-full",
-                collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-              )}
-            >
+          {!collapsed && counts.orders > 0 && (
+            <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
               {counts.orders > 99 ? "99+" : counts.orders}
             </span>
           )}
@@ -229,32 +211,9 @@ export function Sidebar({ user }: SidebarProps) {
         <Link href="/dashboard/studies" className={navItemClass("/dashboard/studies")} title="Studies">
           <BookOpen className="h-4 w-4 shrink-0" />
           {!collapsed && "Studies"}
-          {counts.studies > 0 && (
-            <span
-              className={cn(
-                "flex items-center justify-center text-xs font-medium text-stone-600 bg-stone-200 rounded-full",
-                collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-              )}
-            >
+          {!collapsed && counts.studies > 0 && (
+            <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
               {counts.studies > 99 ? "99+" : counts.studies}
-            </span>
-          )}
-        </Link>
-        <Link href="/dashboard/help" className={navItemClass("/dashboard/help")} title="Help">
-          <HelpCircle className="h-4 w-4 shrink-0" />
-          {!collapsed && "Help"}
-        </Link>
-        <Link href="/dashboard/messages" className={cn(navItemClass("/dashboard/messages"), "relative")} title="Messages">
-          <MessageSquare className="h-4 w-4 shrink-0" />
-          {!collapsed && "Messages"}
-          {unreadMessages > 0 && (
-            <span
-              className={cn(
-                "flex items-center justify-center text-xs font-medium text-white bg-primary rounded-full",
-                collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-              )}
-            >
-              {unreadMessages > 9 ? "9+" : unreadMessages}
             </span>
           )}
         </Link>
@@ -264,13 +223,8 @@ export function Sidebar({ user }: SidebarProps) {
           <Link href="/dashboard/files" className={navItemClass("/dashboard/files")} title="Sequencing Files">
             <HardDrive className="h-4 w-4 shrink-0" />
             {!collapsed && "Seq. Files"}
-            {counts.files > 0 && (
-              <span
-                className={cn(
-                  "flex items-center justify-center text-xs font-medium text-stone-600 bg-stone-200 rounded-full",
-                  collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-                )}
-              >
+            {!collapsed && counts.files > 0 && (
+              <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
                 {counts.files > 99 ? "99+" : counts.files}
               </span>
             )}
@@ -282,13 +236,8 @@ export function Sidebar({ user }: SidebarProps) {
           <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="ENA Submissions">
             <Send className="h-4 w-4 shrink-0" />
             {!collapsed && "ENA Submissions"}
-            {counts.submissions > 0 && (
-              <span
-                className={cn(
-                  "flex items-center justify-center text-xs font-medium text-stone-600 bg-stone-200 rounded-full",
-                  collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-                )}
-              >
+            {!collapsed && counts.submissions > 0 && (
+              <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
                 {counts.submissions > 99 ? "99+" : counts.submissions}
               </span>
             )}
@@ -300,12 +249,9 @@ export function Sidebar({ user }: SidebarProps) {
           <Link href="/dashboard/analysis" className={navItemClass("/dashboard/analysis")} title="Analysis">
             <FlaskConical className="h-4 w-4 shrink-0" />
             {!collapsed && "Analysis"}
-            {counts.analysis > 0 && (
+            {!collapsed && counts.analysis > 0 && (
               <span
-                className={cn(
-                  "flex items-center justify-center text-xs font-medium text-white bg-amber-500 rounded-full",
-                  collapsed ? "absolute -top-1 -right-1 h-4 w-4 text-[10px]" : "ml-auto h-5 min-w-5 px-1.5"
-                )}
+                className="flex items-center justify-center text-xs font-medium text-white bg-amber-500 rounded-full ml-auto h-5 min-w-5 px-1.5"
                 title={`${counts.analysis} running`}
               >
                 {counts.analysis > 9 ? "9+" : counts.analysis}
@@ -316,23 +262,31 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Field Help Panel - show when a field is focused */}
         {focusedField && !collapsed && (
-          <div className="mt-2 mb-2">
-            <div className="p-3 rounded-lg bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-700">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2">
-                  <Lightbulb className="h-4 w-4 text-stone-500 flex-shrink-0" />
-                  <span className="text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wide">
-                    Field Help
-                  </span>
+          <div className="mt-6 mb-6">
+            <div className="relative p-3 rounded-lg overflow-hidden" style={{
+              background: 'linear-gradient(135deg, rgba(247, 247, 244, 0.9) 0%, rgba(239, 239, 233, 0.95) 50%, rgba(247, 247, 244, 0.9) 100%)',
+              border: '1px solid #e5e5e0'
+            }}>
+              {/* Shimmer overlay */}
+              <div className="absolute inset-0 pointer-events-none shimmer-bg" />
+              <div className="relative z-10">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-5 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #171717 0%, #525252 100%)' }}>
+                      <Lightbulb className="h-3 w-3 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-foreground tracking-wide">
+                      Field Help
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setFocusedField(null)}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setFocusedField(null)}
-                  className="text-stone-400 hover:text-stone-600 transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <p className="text-sm font-medium text-stone-700 dark:text-stone-200 mb-1">
+              <p className="text-sm font-medium text-foreground mb-1">
                 {focusedField.label}
                 {focusedField.required && <span className="text-red-500 ml-1">*</span>}
               </p>
@@ -344,26 +298,26 @@ export function Sidebar({ user }: SidebarProps) {
                 </div>
               )}
               {focusedField.helpText && (
-                <p className="text-xs text-stone-500 dark:text-stone-400 mb-2">
+                <p className="text-xs text-muted-foreground mb-2">
                   {focusedField.helpText}
                 </p>
               )}
               {(focusedField.placeholder || focusedField.example) && (
-                <p className="text-xs text-stone-400 dark:text-stone-500">
+                <p className="text-xs text-muted-foreground/70">
                   Example: {focusedField.placeholder || focusedField.example}
                 </p>
               )}
               {/* Units for MIxS fields */}
               {focusedField.units && Array.isArray(focusedField.units) && focusedField.units.length > 0 && (
-                <p className="text-xs text-stone-400 dark:text-stone-500 mt-1">
+                <p className="text-xs text-muted-foreground/70 mt-1">
                   Unit: {focusedField.units.map((u: { label: string }) => u.label).join(', ')}
                 </p>
               )}
               {/* Options for select fields */}
               {focusedField.type === 'select' && focusedField.options && focusedField.options.length > 0 && focusedField.options.length <= 10 && (
                 <div className="mt-2">
-                  <p className="text-xs text-stone-500 dark:text-stone-400 font-medium mb-1">Options:</p>
-                  <ul className="text-xs text-stone-400 dark:text-stone-500 space-y-0.5">
+                  <p className="text-xs text-muted-foreground font-medium mb-1">Options:</p>
+                  <ul className="text-xs text-muted-foreground/70 space-y-0.5">
                     {focusedField.options.map((opt: { value: string; label: string }) => (
                       <li key={opt.value}>{opt.label}</li>
                     ))}
@@ -371,7 +325,7 @@ export function Sidebar({ user }: SidebarProps) {
                 </div>
               )}
               {focusedField.type === 'select' && focusedField.options && focusedField.options.length > 10 && (
-                <p className="text-xs text-stone-400 dark:text-stone-500 mt-1">
+                <p className="text-xs text-muted-foreground/70 mt-1">
                   {focusedField.options.length} options available
                 </p>
               )}
@@ -409,9 +363,9 @@ export function Sidebar({ user }: SidebarProps) {
                     // Still show that validation exists
                     if (hasPattern) {
                       return (
-                        <div className="mt-2 pt-2 border-t border-stone-200 dark:border-stone-700">
-                          <p className="text-xs text-stone-500 dark:text-stone-400 font-medium mb-1">Validation:</p>
-                          <p className="text-xs text-stone-400 dark:text-stone-500">
+                        <div className="mt-2 pt-2 border-t border-border">
+                          <p className="text-xs text-muted-foreground font-medium mb-1">Validation:</p>
+                          <p className="text-xs text-muted-foreground/70">
                             Input will be validated on entry
                           </p>
                         </div>
@@ -421,9 +375,9 @@ export function Sidebar({ user }: SidebarProps) {
                   }
 
                   return (
-                    <div className="mt-2 pt-2 border-t border-stone-200 dark:border-stone-700">
-                      <p className="text-xs text-stone-500 dark:text-stone-400 font-medium mb-1">Format:</p>
-                      <ul className="text-xs text-stone-400 dark:text-stone-500 space-y-0.5">
+                    <div className="mt-2 pt-2 border-t border-border">
+                      <p className="text-xs text-muted-foreground font-medium mb-1">Format:</p>
+                      <ul className="text-xs text-muted-foreground/70 space-y-0.5">
                         {v.minLength && (
                           <li>Min length: {v.minLength} characters</li>
                         )}
@@ -448,12 +402,13 @@ export function Sidebar({ user }: SidebarProps) {
                 })()
               )}
               {focusedField.perSample && (
-                <div className="mt-2 pt-2 border-t border-stone-200 dark:border-stone-700">
-                  <span className="text-xs bg-stone-200 dark:bg-stone-700 text-stone-600 dark:text-stone-300 px-1.5 py-0.5 rounded">
+                <div className="mt-2 pt-2 border-t border-border">
+                  <span className="text-xs bg-secondary text-muted-foreground px-1.5 py-0.5 rounded">
                     Per-Sample Field
                   </span>
                 </div>
               )}
+              </div>
             </div>
           </div>
         )}
@@ -468,6 +423,15 @@ export function Sidebar({ user }: SidebarProps) {
             <Link href="/admin/departments" className={navItemClass("/admin/departments")} title="Departments">
               <Building2 className="h-4 w-4 shrink-0" />
               {!collapsed && "Departments"}
+            </Link>
+            <Link href="/dashboard/messages" className={navItemClass("/dashboard/messages")} title="Support">
+              <MessageSquare className="h-4 w-4 shrink-0" />
+              {!collapsed && "Support"}
+              {!collapsed && unreadMessages > 0 && (
+                <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full ml-auto h-5 min-w-5 px-1.5">
+                  {unreadMessages > 9 ? "9+" : unreadMessages}
+                </span>
+              )}
             </Link>
           </>
         )}
@@ -484,8 +448,8 @@ export function Sidebar({ user }: SidebarProps) {
                 pathname.startsWith("/admin") &&
                   !pathname.startsWith("/admin/users") &&
                   !pathname.startsWith("/admin/departments")
-                  ? "bg-stone-900/[0.06] text-stone-700"
-                  : "text-stone-400 hover:bg-stone-900/[0.04] hover:text-stone-700"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
               )}
               title="Platform Settings"
             >
@@ -500,8 +464,8 @@ export function Sidebar({ user }: SidebarProps) {
                   pathname.startsWith("/admin") &&
                     !pathname.startsWith("/admin/users") &&
                     !pathname.startsWith("/admin/departments")
-                    ? "bg-stone-900/[0.06] text-stone-900 font-medium [&>span>svg]:text-stone-700"
-                    : "text-stone-500 hover:bg-stone-900/[0.04] hover:text-stone-700 [&>span>svg]:text-stone-400"
+                    ? "bg-secondary text-foreground font-medium"
+                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                 )}
               >
                 <span className="flex items-center gap-3">
@@ -555,14 +519,40 @@ export function Sidebar({ user }: SidebarProps) {
         </div>
       )}
 
-      {/* New Order Button - hide on admin config pages */}
-      {!isConfigPage(pathname) && (
+      {/* Support section at bottom - Researchers only */}
+      {!isFacilityAdmin && (
+        <div className={cn("px-4 pb-2", collapsed && "px-2")}>
+          {!collapsed && (
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 px-3">
+              Support
+            </p>
+          )}
+          <div className="space-y-1">
+            <Link href="/dashboard/help" className={navItemClass("/dashboard/help")} title="Help">
+              <HelpCircle className="h-4 w-4 shrink-0" />
+              {!collapsed && "Help & Guide"}
+            </Link>
+            <Link href="/dashboard/messages" className={navItemClass("/dashboard/messages")} title="Support">
+              <MessageSquare className="h-4 w-4 shrink-0" />
+              {!collapsed && "Support"}
+              {!collapsed && unreadMessages > 0 && (
+                <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full ml-auto h-5 min-w-5 px-1.5">
+                  {unreadMessages > 9 ? "9+" : unreadMessages}
+                </span>
+              )}
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* New Order Button - Researchers only, hide on admin config pages */}
+      {!isFacilityAdmin && !isConfigPage(pathname) && (
         <div className={cn("px-4 pb-3", collapsed && "px-2")}>
           <Link
             href="/dashboard/orders/new"
             className={cn(
               "flex items-center justify-center gap-2 w-full py-2.5 rounded-lg font-medium text-sm transition-all",
-              "bg-blue-900 text-white hover:bg-blue-800",
+              "border border-border text-foreground hover:bg-secondary",
               collapsed && "px-0"
             )}
             title="Create new order"
@@ -574,21 +564,21 @@ export function Sidebar({ user }: SidebarProps) {
       )}
 
       {/* User Menu */}
-      <div className={cn("p-4 border-t border-border/50 relative", collapsed && "p-2")} ref={userMenuRef}>
+      <div className={cn("p-4 border-t border-border relative", collapsed && "p-2")} ref={userMenuRef}>
         {/* User menu dropdown */}
         {userMenuOpen && !collapsed && (
-          <div className="absolute bottom-full left-4 right-4 mb-2 bg-white dark:bg-popover border border-border/50 rounded-xl shadow-lg overflow-hidden">
+          <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden">
             <Link
               href="/dashboard/settings"
               onClick={() => setUserMenuOpen(false)}
-              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-stone-50 transition-colors"
+              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-secondary transition-colors"
             >
               <Settings className="h-4 w-4" />
               Account Settings
             </Link>
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-red-50 transition-colors w-full text-left text-red-600"
+              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left text-red-600"
             >
               <LogOut className="h-4 w-4" />
               Sign out
@@ -603,16 +593,13 @@ export function Sidebar({ user }: SidebarProps) {
               className="relative"
               title={user.name || "User"}
             >
-              <div
-                className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium text-white"
-                style={{ backgroundColor: '#1e3a8a' }}
-              >
+              <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium bg-foreground text-background">
                 {user.name?.charAt(0) || "U"}
               </div>
             </button>
             {userMenuOpen && (
-              <div className="absolute bottom-full left-2 mb-2 bg-white dark:bg-popover border border-border/50 rounded-xl shadow-lg overflow-hidden w-48">
-                <div className="px-4 py-2 border-b border-border/50">
+              <div className="absolute bottom-full left-2 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden w-48">
+                <div className="px-4 py-2 border-b border-border">
                   <p className="text-sm font-medium truncate">{user.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {isFacilityAdmin ? "Facility Admin" : "Researcher"}
@@ -621,14 +608,14 @@ export function Sidebar({ user }: SidebarProps) {
                 <Link
                   href="/dashboard/settings"
                   onClick={() => setUserMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-stone-50 transition-colors"
+                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-secondary transition-colors"
                 >
                   <Settings className="h-4 w-4" />
                   Account Settings
                 </Link>
                 <button
                   onClick={handleSignOut}
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-red-50 transition-colors w-full text-left text-red-600"
+                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left text-red-600"
                 >
                   <LogOut className="h-4 w-4" />
                   Sign out
@@ -639,12 +626,9 @@ export function Sidebar({ user }: SidebarProps) {
         ) : (
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="flex items-center gap-3 w-full rounded-xl p-2 hover:bg-stone-50 transition-all"
+            className="flex items-center gap-3 w-full rounded-xl p-2 hover:bg-secondary transition-all"
           >
-            <div
-              className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0"
-              style={{ backgroundColor: '#1e3a8a' }}
-            >
+            <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium bg-foreground text-background shrink-0">
               {user.name?.charAt(0) || "U"}
             </div>
             <div className="flex-1 min-w-0 text-left">

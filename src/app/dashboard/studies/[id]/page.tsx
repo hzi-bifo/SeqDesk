@@ -17,23 +17,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  BookOpen,
   ArrowLeft,
   Loader2,
   AlertCircle,
-  CheckCircle2,
   XCircle,
-  Pencil,
   FlaskConical,
   ArrowRight,
   ClipboardList,
-  Trash2,
   Send,
-  RotateCcw,
   Clock,
   ExternalLink,
   Copy,
   FileCode,
+  CheckCircle2,
+  BookOpen,
+  RotateCcw,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 
@@ -524,45 +522,43 @@ export default function StudyDetailPage({
         </Button>
 
         <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-lg bg-primary/10 flex items-center justify-center">
-              <BookOpen className="h-7 w-7 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">{study.title}</h1>
-              <div className="flex items-center gap-3 mt-1">
-                {study.submitted ? (
-                  <Badge className="bg-green-500 hover:bg-green-600">
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                    Submitted
-                  </Badge>
-                ) : study.testRegisteredAt ? (
-                  <Badge className="bg-amber-500 hover:bg-amber-600">
-                    <AlertCircle className="h-3 w-3 mr-1" />
-                    Test Registered
-                  </Badge>
-                ) : study.studyAccessionId ? (
-                  <Badge className="bg-amber-500 hover:bg-amber-600">
-                    <AlertCircle className="h-3 w-3 mr-1" />
-                    Study Registered
-                  </Badge>
-                ) : study.readyForSubmission ? (
-                  <Badge className="bg-blue-500 hover:bg-blue-600">
-                    <Send className="h-3 w-3 mr-1" />
-                    Ready for Submission
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">Draft</Badge>
-                )}
-                {study.studyAccessionId && (
-                  <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                    {study.studyAccessionId}
-                  </span>
-                )}
-                <span className="text-muted-foreground text-sm">
-                  Created {formatDate(study.createdAt)}
+          <div>
+            <h1 className="text-2xl font-semibold">{study.title}</h1>
+            <div className="flex items-center gap-3 mt-2">
+              {study.submitted ? (
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Submitted
                 </span>
-              </div>
+              ) : study.testRegisteredAt ? (
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-600">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Test Registered
+                </span>
+              ) : study.studyAccessionId ? (
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-600">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Study Registered
+                </span>
+              ) : study.readyForSubmission ? (
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <span className="h-2 w-2 rounded-full bg-foreground" />
+                  Ready for Submission
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+                  Draft
+                </span>
+              )}
+              {study.studyAccessionId && (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {study.studyAccessionId}
+                </span>
+              )}
+              <span className="text-muted-foreground text-sm">
+                Created {formatDate(study.createdAt)}
+              </span>
             </div>
           </div>
           {/* Action buttons - visible to owner and admin */}
@@ -572,7 +568,6 @@ export default function StudyDetailPage({
               {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
                 <Button variant="outline" size="sm" asChild>
                   <Link href={`/dashboard/studies/${id}/edit`}>
-                    <Pencil className="h-4 w-4 mr-2" />
                     Edit
                   </Link>
                 </Button>
@@ -587,9 +582,7 @@ export default function StudyDetailPage({
                     >
                       {markingReady ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4 mr-2" />
-                      )}
+                      ) : null}
                       Mark as Ready
                     </Button>
                   )}
@@ -600,7 +593,6 @@ export default function StudyDetailPage({
                     onClick={() => setDeleteDialogOpen(true)}
                     disabled={deleting}
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
                     Delete
                   </Button>
                 </>
@@ -614,9 +606,7 @@ export default function StudyDetailPage({
                 >
                   {markingReady ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                  )}
+                  ) : null}
                   Back to Draft
                 </Button>
               )}
@@ -728,7 +718,7 @@ export default function StudyDetailPage({
                 ) : study.testRegisteredAt || study.studyAccessionId ? (
                   <AlertCircle className="h-4 w-4 text-amber-500" />
                 ) : study.readyForSubmission ? (
-                  <Clock className="h-4 w-4 text-blue-500" />
+                  <Clock className="h-4 w-4 text-muted-foreground" />
                 ) : (
                   <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
                     <span className="text-[10px] text-white font-bold">4</span>
@@ -1101,8 +1091,8 @@ export default function StudyDetailPage({
           {/* Marked as Ready */}
           {study.readyAt && (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
-              <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center flex-shrink-0">
-                <Send className="h-4 w-4 text-blue-500" />
+              <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+                <Send className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
                 <p className="font-medium">Marked as Ready for Submission</p>

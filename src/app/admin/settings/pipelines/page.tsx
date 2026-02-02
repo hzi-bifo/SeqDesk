@@ -115,57 +115,23 @@ interface PipelineConfig {
   defaultConfig: Record<string, unknown>;
 }
 
-// Available pipelines from store (mock data for now)
-const STORE_PIPELINES = [
-  {
-    id: "rnaseq",
-    name: "RNA-seq",
-    description: "RNA sequencing analysis with differential expression",
-    category: "transcriptomics",
-    version: "3.14.0",
-    author: "nf-core",
-    downloads: 3420,
-    icon: "rna",
-  },
-  {
-    id: "ampliseq",
-    name: "Ampliseq",
-    description: "16S/18S/ITS amplicon sequencing analysis",
-    category: "amplicon",
-    version: "2.8.0",
-    author: "nf-core",
-    downloads: 1890,
-    icon: "amplicon",
-  },
-  {
-    id: "taxprofiler",
-    name: "Taxprofiler",
-    description: "Taxonomic classification and profiling",
-    category: "metagenomics",
-    version: "1.1.0",
-    author: "nf-core",
-    downloads: 890,
-    icon: "taxonomy",
-  },
-  {
-    id: "fetchngs",
-    name: "FetchNGS",
-    description: "Download data from public databases",
-    category: "utilities",
-    version: "1.10.0",
-    author: "nf-core",
-    downloads: 2150,
-    icon: "download",
-  },
-];
+interface StorePipeline {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: string;
+  latestVersion?: string;
+  author?: string;
+  downloads?: number;
+  icon?: string;
+}
 
-const CATEGORIES = [
-  { id: "all", name: "All", icon: Layers },
-  { id: "metagenomics", name: "Metagenomics", icon: Microscope },
-  { id: "transcriptomics", name: "Transcriptomics", icon: Dna },
-  { id: "amplicon", name: "Amplicon", icon: FlaskConical },
-  { id: "utilities", name: "Utilities", icon: Package },
-];
+interface StoreCategory {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 function getPipelineIcon(icon: string) {
   switch (icon) {
@@ -209,6 +175,13 @@ export default function PipelineSettingsPage() {
     "/api/admin/settings/pipelines",
     fetcher
   );
+
+  const {
+    data: storeData,
+    error: storeError,
+    isLoading: storeLoading,
+    mutate: mutateStore,
+  } = useSWR("/api/admin/settings/pipelines/store", fetcher);
 
   const { data: execData, mutate: mutateExec } = useSWR(
     "/api/admin/settings/pipelines/execution",
@@ -256,6 +229,12 @@ export default function PipelineSettingsPage() {
   // Install state
   const [installingPipeline, setInstallingPipeline] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+
+  const formatStoreDate = (value?: string) => {
+    if (!value) return "Unknown";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  };
 
   // Test a specific setting
   const testSettingValue = async (setting: string, value?: string) => {
@@ -322,14 +301,14 @@ export default function PipelineSettingsPage() {
   };
 
   // Install a pipeline from the store
-  const handleInstallPipeline = async (pipelineId: string) => {
+  const handleInstallPipeline = async (pipelineId: string, version?: string) => {
     setInstallingPipeline(pipelineId);
     setInstallError(null);
     try {
       const res = await fetch('/api/admin/settings/pipelines/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipelineId }),
+        body: JSON.stringify({ pipelineId, version }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -463,12 +442,14 @@ export default function PipelineSettingsPage() {
   };
 
   const installedPipelineIds = new Set(data?.pipelines?.map((p: PipelineConfig) => p.pipelineId) || []);
-  const availablePipelines = STORE_PIPELINES.filter(
+  const storePipelines: StorePipeline[] = storeData?.pipelines || [];
+  const storeCategories: StoreCategory[] = storeData?.categories || [];
+  const availablePipelines = storePipelines.filter(
     (p) => !installedPipelineIds.has(p.id) && (selectedCategory === "all" || p.category === selectedCategory)
   );
 
   return (
-    <PageContainer maxWidth="wide">
+    <PageContainer>
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Pipeline Store</h1>
@@ -588,120 +569,170 @@ export default function PipelineSettingsPage() {
 
         {/* Available Pipelines (Store) Tab */}
         <TabsContent value="store" className="space-y-6">
-          {/* Category Filter */}
-          <div className="flex gap-2 flex-wrap">
-            {CATEGORIES.map((cat) => (
-              <Button
-                key={cat.id}
-                variant={selectedCategory === cat.id ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedCategory(cat.id)}
-                className="gap-2"
-              >
-                <cat.icon className="h-4 w-4" />
-                {cat.name}
-              </Button>
-            ))}
-          </div>
-
-          {/* Install error banner */}
-          {installError && (
-            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
-              <XCircle className="h-5 w-5 text-destructive" />
-              <p className="text-sm text-destructive">{installError}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto"
-                onClick={() => setInstallError(null)}
-              >
-                Dismiss
-              </Button>
+          {storeLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          )}
-
-          {/* Pipeline Grid */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {availablePipelines.map((pipeline) => (
-              <div
-                key={pipeline.id}
-                className="relative bg-card border rounded-xl p-5 hover:shadow-lg transition-all duration-200 hover:border-primary/50"
-              >
-                <div className="flex items-start gap-4">
-                  <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
-                    {getPipelineIcon(pipeline.icon)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold">{pipeline.name}</h3>
-                      <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                        v{pipeline.version}
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-                      {pipeline.description}
-                    </p>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span>by {pipeline.author}</span>
-                      <span>{pipeline.downloads.toLocaleString()} installs</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex gap-2">
+          ) : storeError ? (
+            <div className="text-center py-12 text-destructive">
+              Failed to load pipeline registry from the store.
+            </div>
+          ) : (
+            <>
+              {/* Category Filter */}
+              <div className="flex gap-2 flex-wrap">
+                {[{ id: "all", name: "All" }, ...storeCategories].map((cat) => (
                   <Button
+                    key={cat.id}
+                    variant={selectedCategory === cat.id ? "default" : "outline"}
                     size="sm"
-                    className="flex-1"
-                    onClick={() => handleInstallPipeline(pipeline.id)}
-                    disabled={installingPipeline === pipeline.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className="gap-2"
                   >
-                    {installingPipeline === pipeline.id ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4 mr-2" />
-                    )}
-                    {installingPipeline === pipeline.id ? 'Installing...' : 'Install'}
+                    <Layers className="h-4 w-4" />
+                    {cat.name}
                   </Button>
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={`https://nf-co.re/${pipeline.id}`} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
+                ))}
+              </div>
+
+              {/* Install error banner */}
+              {installError && (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+                  <XCircle className="h-5 w-5 text-destructive" />
+                  <p className="text-sm text-destructive">{installError}</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => setInstallError(null)}
+                  >
+                    Dismiss
                   </Button>
                 </div>
-              </div>
-            ))}
-          </div>
+              )}
 
-          {availablePipelines.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              No additional pipelines available in this category
-            </div>
+              {/* Pipeline Grid */}
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {availablePipelines.map((pipeline) => (
+                  <div
+                    key={pipeline.id}
+                    className="relative bg-card border rounded-xl p-5 hover:shadow-lg transition-all duration-200 hover:border-primary/50"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
+                        {getPipelineIcon(pipeline.icon || "")}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold">{pipeline.name}</h3>
+                          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                            v{pipeline.version}
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                          {pipeline.description}
+                        </p>
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>by {pipeline.author || "unknown"}</span>
+                          <span>{(pipeline.downloads || 0).toLocaleString()} installs</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex gap-2">
+                      <Button
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
+                        disabled={installingPipeline === pipeline.id}
+                      >
+                        {installingPipeline === pipeline.id ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4 mr-2" />
+                        )}
+                        {installingPipeline === pipeline.id ? 'Installing...' : 'Install'}
+                      </Button>
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {availablePipelines.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  No additional pipelines available in this category
+                </div>
+              )}
+
+              {/* Store info */}
+              <div className="bg-muted/30 rounded-xl p-6 border border-dashed">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 bg-primary/10 rounded-xl">
+                    <FileBarChart className="h-6 w-6 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-1">Pipeline Store</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Install pipelines from the SeqDesk store. Each pipeline creates a SeqDesk integration
+                      package with samplesheet generation and output parsing configured.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                      <a
+                        href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+                      >
+                        Browse all pipelines
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-3 text-xs"
+                        onClick={() => mutateStore()}
+                        disabled={storeLoading}
+                      >
+                        <RefreshCw className={`h-3 w-3 mr-1 ${storeLoading ? "animate-spin" : ""}`} />
+                        Refresh registry
+                      </Button>
+                    </div>
+                    <div className="grid gap-2 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Store URL</span>
+                        <span className="font-mono break-all">{storeData?.storeBaseUrl || "https://seqdesk.com"}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Registry URL</span>
+                        <span className="font-mono break-all">{storeData?.registryUrl || "https://seqdesk.com/api/registry"}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Browse URL</span>
+                        <span className="font-mono break-all">{storeData?.browseUrl || "https://seqdesk.com/pipelines"}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Registry version</span>
+                        <span>{storeData?.version || "Unknown"}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Last updated</span>
+                        <span>{formatStoreDate(storeData?.lastUpdated)}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="min-w-[110px] text-muted-foreground/70">Pipelines</span>
+                        <span>{storePipelines.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
           )}
-
-          {/* Store info */}
-          <div className="bg-muted/30 rounded-xl p-6 border border-dashed">
-            <div className="flex items-start gap-4">
-              <div className="p-3 bg-primary/10 rounded-xl">
-                <FileBarChart className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-semibold mb-1">Pipeline Store</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Install nf-core pipelines with one click. Each pipeline creates a SeqDesk integration
-                  package with samplesheet generation and output parsing configured.
-                </p>
-                <a
-                  href="https://nf-co.re/pipelines"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  Browse all nf-core pipelines
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          </div>
         </TabsContent>
 
         {/* Settings Tab */}
