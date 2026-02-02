@@ -12,6 +12,7 @@
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Sequencing data base path
 #   SEQDESK_RUN_DIR=/data/runs     - Pipeline run directory
+#   SEQDESK_PORT=3000              - App port (default: 3000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
@@ -38,6 +39,7 @@ SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
+SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
@@ -192,15 +194,20 @@ run_wizard() {
     if [ ! -f scripts/install-wizard.mjs ]; then
         return 1
     fi
+    if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ]; then
+        return 1
+    fi
     local wizard_out
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
     SEQDESK_WIZARD_DEFAULT_DATA_PATH="${SEQDESK_DATA_PATH:-./data}" \
     SEQDESK_WIZARD_DEFAULT_RUN_DIR="${SEQDESK_RUN_DIR:-./pipeline_runs}" \
+    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-3000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \
     SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}" \
+    SEQDESK_PORT="${SEQDESK_PORT:-}" \
     SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
     node scripts/install-wizard.mjs
@@ -524,10 +531,11 @@ print_success "Dependencies installed"
 print_step "Configuring environment"
 
 wizard_status=1
-set +e
-run_wizard
-wizard_status=$?
-set -e
+if run_wizard; then
+    wizard_status=0
+else
+    wizard_status=$?
+fi
 if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
@@ -537,6 +545,7 @@ elif [ $wizard_status -ne 0 ]; then
         prompt_value SEQDESK_RUN_DIR "Pipeline run directory" "./pipeline_runs"
     fi
 
+    prompt_value SEQDESK_PORT "App port" "3000"
     prompt_optional SEQDESK_NEXTAUTH_URL "NEXTAUTH_URL (optional)" ""
     prompt_optional SEQDESK_DATABASE_URL "DATABASE_URL (optional)" ""
 fi
@@ -552,6 +561,7 @@ fi
 
 set_env_var "NEXTAUTH_URL" "$SEQDESK_NEXTAUTH_URL"
 set_env_var "DATABASE_URL" "$SEQDESK_DATABASE_URL"
+set_env_var "PORT" "$SEQDESK_PORT"
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 
@@ -559,7 +569,26 @@ write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 print_step "Initializing database"
 
 print_info "Creating database schema..."
-npx prisma db push --skip-generate
+PRISMA_CLI="./node_modules/.bin/prisma"
+PRISMA_VERSION=""
+PRISMA_SKIP_GENERATE=""
+if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
+    PRISMA_SKIP_GENERATE="--skip-generate"
+fi
+if [ -x "$PRISMA_CLI" ]; then
+    "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
+else
+    if command_exists node && [ -f package.json ]; then
+        PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
+        PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
+    fi
+    if [ -n "$PRISMA_VERSION" ]; then
+        print_info "Using Prisma CLI v$PRISMA_VERSION"
+        npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
+    else
+        npx prisma db push $PRISMA_SKIP_GENERATE
+    fi
+fi
 
 print_info "Seeding initial data..."
 npx prisma db seed
@@ -613,7 +642,7 @@ echo ""
 echo -e "  ${BLUE}cd $SEQDESK_DIR${NC}"
 echo -e "  ${BLUE}npm run dev${NC}"
 echo ""
-echo "Then open http://localhost:3000 in your browser."
+echo "Then open http://localhost:${SEQDESK_PORT:-3000} in your browser."
 echo ""
 echo "Default login credentials:"
 echo "  Admin:      admin@example.com / admin"
