@@ -5,7 +5,6 @@ import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -323,25 +322,6 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  const handleToggleEnabled = async (pipeline: PipelineConfig) => {
-    setSaving(true);
-    try {
-      await fetch("/api/admin/settings/pipelines", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pipelineId: pipeline.pipelineId,
-          enabled: !pipeline.enabled,
-          config: pipeline.config,
-        }),
-      });
-      mutate();
-    } catch (err) {
-      console.error("Failed to toggle pipeline:", err);
-    }
-    setSaving(false);
-  };
-
   const openConfigDialog = (pipeline: PipelineConfig) => {
     setSelectedPipeline(pipeline);
     setLocalConfig({ ...pipeline.config });
@@ -423,7 +403,7 @@ export default function PipelineSettingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
           <p className="text-muted-foreground mt-1">
-            Install and manage nf-core pipelines. Toggle Active to allow runs. Execution settings live in Data & Compute.
+            Install and manage nf-core pipelines. Installed pipelines are ready to run. Execution settings live in Data & Compute.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -443,7 +423,7 @@ export default function PipelineSettingsPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Installed</p>
             <h2 className="text-2xl font-semibold">Installed pipelines</h2>
             <p className="text-sm text-muted-foreground mt-2">
-              Installed pipelines are available on this instance. Toggle Active to allow running and download code to prefetch the workflow.
+              Installed pipelines are available on this instance and ready to run. Download to warm the workflow cache.
             </p>
           </div>
           <Badge variant="secondary" className="h-6 px-3">
@@ -502,10 +482,10 @@ export default function PipelineSettingsPage() {
                   const shouldOfferCodeDownload =
                     codeMissing || codeUpdateAvailable || (codeStatus === "downloaded" && !downloadedCodeVersion);
                   const codeActionLabel = codeMissing
-                    ? "Download code"
+                    ? "Download pipeline"
                     : codeUpdateAvailable
-                      ? "Update code"
-                      : "Re-download";
+                      ? "Update pipeline"
+                      : "Re-download pipeline";
 
                   return (
                 <>
@@ -527,27 +507,27 @@ export default function PipelineSettingsPage() {
                         </Badge>
                         {codeStatus === "downloaded" && (
                           <Badge variant="outline" className="text-xs font-normal">
-                            Code ready
+                            Pipeline cached
                           </Badge>
                         )}
                         {downloadInProgress && (
                           <Badge variant="secondary" className="text-xs">
-                            Downloading...
+                            Downloading pipeline...
                           </Badge>
                         )}
                         {downloadFailed && (
                           <Badge variant="secondary" className="text-xs">
-                            Download failed
+                            Pipeline download failed
                           </Badge>
                         )}
                         {codeStatus === "missing" && (
                           <Badge variant="secondary" className="text-xs">
-                            Code missing
+                            Pipeline not cached
                           </Badge>
                         )}
                         {codeStatus === "unsupported" && (
                           <Badge variant="secondary" className="text-xs">
-                            Code external
+                            External pipeline
                           </Badge>
                         )}
                         <Badge variant="secondary" className="text-xs capitalize">
@@ -560,7 +540,7 @@ export default function PipelineSettingsPage() {
                         )}
                         {codeUpdateAvailable && (
                           <Badge variant="secondary" className="text-xs">
-                            Code update
+                            Pipeline update
                           </Badge>
                         )}
                       </div>
@@ -577,12 +557,12 @@ export default function PipelineSettingsPage() {
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
                         {codeStatus === "downloaded"
-                          ? `Code cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
+                          ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
                           : codeStatus === "missing"
-                            ? "Code cache: not downloaded"
+                            ? "Pipeline cache: not downloaded"
                             : codeStatus === "unsupported"
-                              ? "Code cache: managed externally"
-                              : "Code cache: unknown"}
+                              ? "Pipeline cache: managed externally"
+                              : "Pipeline cache: unknown"}
                         {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
                       </p>
                       {downloadInProgress && downloadJob?.startedAt && (
@@ -592,7 +572,7 @@ export default function PipelineSettingsPage() {
                       )}
                       {downloadFailed && (
                         <p className="text-xs text-destructive mt-1">
-                          {downloadJob?.error ? `Download failed: ${downloadJob.error}` : "Download failed"}
+                          {downloadJob?.error ? `Pipeline download failed: ${downloadJob.error}` : "Pipeline download failed"}
                         </p>
                       )}
                       {downloadJob?.state === "success" && downloadFinishedAt && (
@@ -602,23 +582,9 @@ export default function PipelineSettingsPage() {
                       )}
                     </div>
                   </div>
-                  <Badge variant={pipeline.enabled ? "default" : "secondary"}>
-                    {pipeline.enabled ? "Active" : "Inactive"}
-                  </Badge>
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id={`enable-${pipeline.pipelineId}`}
-                      checked={pipeline.enabled}
-                      onCheckedChange={() => handleToggleEnabled(pipeline)}
-                      disabled={saving}
-                    />
-                    <Label htmlFor={`enable-${pipeline.pipelineId}`} className="text-sm">
-                      {pipeline.enabled ? "Active" : "Inactive"}
-                    </Label>
-                  </div>
                   <div className="ml-auto flex flex-wrap gap-2">
                     {shouldOfferCodeDownload && (
                       <Button

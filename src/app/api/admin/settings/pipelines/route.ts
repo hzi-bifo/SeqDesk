@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
         category: definition.category,
         version: definition.version,
         icon: definition.icon,
-        enabled: dbConfig?.enabled ?? false,
+        enabled: true,
         config: dbConfig?.config ? JSON.parse(dbConfig.config) : definition.defaultConfig,
         configSchema: definition.configSchema,
         defaultConfig: definition.defaultConfig,
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { pipelineId, enabled, config } = body;
+    const { pipelineId, config } = body;
 
     if (!pipelineId || !PIPELINE_REGISTRY[pipelineId]) {
       return NextResponse.json({ error: 'Invalid pipeline ID' }, { status: 400 });
@@ -95,11 +95,11 @@ export async function POST(request: NextRequest) {
       where: { pipelineId },
       create: {
         pipelineId,
-        enabled: enabled ?? false,
+        enabled: true,
         config: config ? JSON.stringify(config) : null,
       },
       update: {
-        enabled: enabled ?? false,
+        enabled: true,
         config: config ? JSON.stringify(config) : null,
       },
     });
