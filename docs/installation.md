@@ -382,6 +382,9 @@ pm2 startup
 pm2 save
 ```
 
+Note: The in-app updater can only auto-restart when SeqDesk is managed by PM2 or systemd.
+If you use the release tarball, start it with PM2 using `pm2 start ./start.sh --name seqdesk`.
+
 ### Using systemd
 
 Create `/etc/systemd/system/seqdesk.service`:

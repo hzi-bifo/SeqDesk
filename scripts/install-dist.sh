@@ -18,6 +18,7 @@
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
+#   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #
 
 set -euo pipefail
@@ -44,11 +45,14 @@ SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
+SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
+
+PM2_CONFIGURED="false"
 
 MIN_NODE_VERSION=18
 INSTALL_START_TS=$(date +%s)
 INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
-TOTAL_STEPS=7
+TOTAL_STEPS=8
 CURRENT_STEP=0
 
 print_header() {
@@ -853,6 +857,41 @@ else
     print_info "Skipped pipeline environment setup"
 fi
 
+print_step "Process manager"
+
+if [ -z "$SEQDESK_USE_PM2" ]; then
+    prompt_yes_no SEQDESK_USE_PM2 "Start SeqDesk with PM2 for auto-restart? (recommended)" "y"
+fi
+
+if is_truthy "$SEQDESK_USE_PM2"; then
+    if ! command_exists pm2; then
+        print_info "Installing PM2 (requires npm)..."
+        if npm install -g pm2; then
+            print_success "PM2 installed"
+        else
+            print_warning "PM2 install failed. You may need to run: npm install -g pm2"
+        fi
+    fi
+
+    if command_exists pm2; then
+        print_info "Starting SeqDesk with PM2..."
+        if (cd "$SEQDESK_DIR" && pm2 start ./start.sh --name seqdesk); then
+            PM2_CONFIGURED="true"
+            pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
+            if ! pm2 startup >/dev/null 2>&1; then
+                print_warning "PM2 startup not enabled. Run: pm2 startup"
+            fi
+            print_success "PM2 configured for auto-restart"
+        else
+            print_warning "PM2 failed to start SeqDesk. You can start manually with ./start.sh"
+        fi
+    else
+        print_warning "PM2 not available. You can start manually with ./start.sh"
+    fi
+else
+    print_info "Skipping PM2 setup"
+fi
+
 # Done
 print_header "Installation Complete!"
 
@@ -890,12 +929,21 @@ if [ -n "$SEQDESK_LOG" ]; then
 fi
 
 echo ""
-echo "To start SeqDesk:"
+if [ "$PM2_CONFIGURED" = "true" ]; then
+    echo "SeqDesk is running under PM2."
+    echo "  pm2 status"
+    echo "  pm2 logs seqdesk"
+else
+    echo "To start SeqDesk manually:"
+    echo ""
+    echo -e "  ${CYAN}cd $SEQDESK_DIR${NC}"
+    echo -e "  ${CYAN}./start.sh${NC}"
+    echo ""
+    echo "Note: manual start will not auto-restart after updates."
+    echo "For auto-restart, re-run the installer and choose PM2, or set up systemd."
+fi
 echo ""
-echo -e "  ${CYAN}cd $SEQDESK_DIR${NC}"
-echo -e "  ${CYAN}./start.sh${NC}"
-echo ""
-echo "Then open http://localhost:${SEQDESK_PORT:-3000}"
+echo "Open http://localhost:${SEQDESK_PORT:-3000}"
 echo ""
 echo "Default login:"
 echo "  Email:    admin@example.com"
