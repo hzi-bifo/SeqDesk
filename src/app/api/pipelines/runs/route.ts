@@ -105,18 +105,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid pipeline ID' }, { status: 400 });
     }
 
-    // Check if pipeline is enabled
-    const pipelineConfig = await db.pipelineConfig.findUnique({
-      where: { pipelineId },
-    });
-
-    if (!pipelineConfig?.enabled) {
-      return NextResponse.json(
-        { error: 'Pipeline is not enabled' },
-        { status: 400 }
-      );
-    }
-
     // Validate study exists
     const study = await db.study.findUnique({
       where: { id: studyId },
