@@ -5,6 +5,9 @@ import { db } from '@/lib/db';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
+import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
+import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
+import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -54,6 +57,90 @@ function resolveEffectiveProfile(
     parts.push('conda');
   }
   return parts.join(',');
+}
+
+async function processCompletedRun(runId: string, pipelineId: string): Promise<void> {
+  let adapter = getAdapter(pipelineId);
+  if (!adapter) {
+    const genericAdapter = createGenericAdapter(pipelineId);
+    if (genericAdapter) {
+      registerAdapter(genericAdapter);
+      adapter = genericAdapter;
+      console.log(`[Pipeline Run] Created generic adapter for pipeline: ${pipelineId}`);
+    }
+  }
+
+  if (!adapter) {
+    console.log(`[Pipeline Run] No adapter available for pipeline: ${pipelineId}`);
+    return;
+  }
+
+  const run = await db.pipelineRun.findUnique({
+    where: { id: runId },
+    include: {
+      study: {
+        include: {
+          samples: {
+            select: { id: true, sampleId: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!run || !run.runFolder) {
+    console.log(`[Pipeline Run] Run ${runId} missing run folder`);
+    return;
+  }
+
+  const samples = run.study?.samples || [];
+  if (samples.length === 0) {
+    console.log(`[Pipeline Run] Run ${runId} has no samples`);
+    return;
+  }
+
+  const outputDir = path.join(run.runFolder, 'output');
+  const discovered = await adapter.discoverOutputs({
+    runId,
+    outputDir,
+    samples: samples.map((s) => ({ id: s.id, sampleId: s.sampleId })),
+  });
+
+  const result = await resolveOutputs(pipelineId, runId, discovered);
+  await saveRunResults(runId, result);
+}
+
+async function finalizeLocalRun(
+  runId: string,
+  pipelineId: string,
+  exitCode: number | null
+): Promise<void> {
+  const completedAt = new Date();
+  if (exitCode === 0) {
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'completed',
+        progress: 100,
+        currentStep: 'Completed',
+        completedAt,
+      },
+    });
+    processCompletedRun(runId, pipelineId).catch((err) => {
+      console.error('[Pipeline Run] Output resolution failed:', err);
+    });
+  } else {
+    const message = `Pipeline exited with code ${exitCode ?? 'unknown'}`;
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'failed',
+        currentStep: 'Failed',
+        errorTail: message,
+        completedAt,
+      },
+    });
+  }
 }
 
 // POST - Start/execute a pipeline run
@@ -354,12 +441,16 @@ export async function POST(
         try {
           const childProcess = spawn('bash', [scriptPath], {
             cwd: prepResult.runFolder,
-            detached: true,
             stdio: 'ignore',
           });
 
-          // Don't wait for the process - let it run in background
-          childProcess.unref();
+          childProcess.on('close', (code) => {
+            void finalizeLocalRun(run.id, pipelineId, code);
+          });
+          childProcess.on('error', (error) => {
+            console.error('[Pipeline Run] Local execution error:', error);
+            void finalizeLocalRun(run.id, pipelineId, 1);
+          });
 
           // Update run status to running
           await db.pipelineRun.update({
