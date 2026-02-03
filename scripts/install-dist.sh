@@ -202,6 +202,21 @@ resolve_parent_dir() {
     fi
 }
 
+resolve_absolute_dir() {
+    local target="$1"
+    local parent
+    local base
+    parent="$(dirname "$target")"
+    if base="$(cd "$parent" 2>/dev/null && pwd)"; then
+        printf '%s/%s' "$base" "$(basename "$target")"
+    else
+        printf '%s/%s' "$PWD" "$(basename "$target")"
+    fi
+}
+
+SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
+SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
+
 format_kb() {
     local kb="${1:-0}"
     local mb=$((kb / 1024))
@@ -875,7 +890,7 @@ if is_truthy "$SEQDESK_USE_PM2"; then
 
     if command_exists pm2; then
         print_info "Starting SeqDesk with PM2..."
-        if (cd "$SEQDESK_DIR" && pm2 start ./start.sh --name seqdesk); then
+        if pm2 start "$SEQDESK_DIR/start.sh" --name seqdesk; then
             PM2_CONFIGURED="true"
             pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
             if ! pm2 startup >/dev/null 2>&1; then
