@@ -19,5 +19,5 @@
  */
 
 export * from './types';
-export { checkForUpdates, getCurrentVersion, clearUpdateCache } from './checker';
+export { checkForUpdates, getCurrentVersion, getInstalledVersion, clearUpdateCache } from './checker';
 export { installUpdate } from './installer';

@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -44,6 +46,7 @@ import {
   Table,
   FileText,
   Database,
+  Settings2,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
@@ -65,6 +68,33 @@ import { BillingAdminEditor } from "@/lib/field-types/billing/BillingAdminEditor
 import { SequencingTechAdminEditor } from "@/lib/field-types/sequencing-tech/SequencingTechAdminEditor";
 import { useModule, ModuleGate } from "@/lib/modules";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
+
+const DEFAULT_POST_SUBMISSION_INSTRUCTIONS = `## Thank you for your submission!
+
+Your sequencing order has been received and is now being processed.
+
+### Next Steps
+
+1. **Prepare your samples** according to the guidelines provided
+2. **Label each sample** with the Sample ID shown in your order
+3. **Ship samples to:**
+
+   Sequencing Facility
+   123 Science Drive
+   Lab Building, Room 456
+   City, State 12345
+
+4. **Include a printed copy** of your order summary in the package
+
+### Important Notes
+
+- Samples should be shipped on dry ice for overnight delivery
+- Please notify us when samples are shipped by emailing sequencing@example.com
+- Processing typically begins within 3-5 business days of sample receipt
+
+### Questions?
+
+Contact us at sequencing@example.com or call (555) 123-4567.`;
 
 // Field template loaded from JSON files (same as MixsTemplate but more general)
 interface FieldTemplate {
@@ -159,6 +189,12 @@ export default function FormBuilderPage() {
   const [aiTestResult, setAiTestResult] = useState<{valid: boolean; message: string; suggestion?: string} | null>(null);
   const [aiTesting, setAiTesting] = useState(false);
 
+  // Post-submission instructions state
+  const [postSubmissionInstructions, setPostSubmissionInstructions] = useState("");
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
+  const [instructionsSaving, setInstructionsSaving] = useState(false);
+  const [allowDeleteSubmittedOrders, setAllowDeleteSubmittedOrders] = useState(false);
+
   // Fetch form configuration
   useEffect(() => {
     const fetchConfig = async () => {
@@ -235,6 +271,62 @@ export default function FormBuilderPage() {
     };
     checkAI();
   }, []);
+
+  // Fetch post-submission instructions and order settings
+  useEffect(() => {
+    const fetchAccessSettings = async () => {
+      try {
+        const res = await fetch("/api/admin/settings/access");
+        if (res.ok) {
+          const data = await res.json();
+          setPostSubmissionInstructions(data.postSubmissionInstructions ?? DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
+          setAllowDeleteSubmittedOrders(data.allowDeleteSubmittedOrders ?? false);
+        }
+      } catch {
+        // Use defaults
+        setPostSubmissionInstructions(DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
+      }
+    };
+    fetchAccessSettings();
+  }, []);
+
+  const handleSaveInstructions = async () => {
+    setInstructionsSaving(true);
+    setInstructionsSaved(false);
+
+    try {
+      await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postSubmissionInstructions }),
+      });
+      setInstructionsSaved(true);
+      setTimeout(() => setInstructionsSaved(false), 3000);
+    } catch (error) {
+      console.error("Failed to save instructions:", error);
+    } finally {
+      setInstructionsSaving(false);
+    }
+  };
+
+  const handleResetInstructions = () => {
+    setPostSubmissionInstructions(DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
+  };
+
+  const handleAllowDeleteSubmittedChange = async (enabled: boolean) => {
+    setAllowDeleteSubmittedOrders(enabled);
+
+    try {
+      await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowDeleteSubmittedOrders: enabled }),
+      });
+    } catch (error) {
+      console.error("Failed to save setting:", error);
+      setAllowDeleteSubmittedOrders(!enabled);
+    }
+  };
 
   // Generate field name from label
   const generateFieldName = (label: string) => {
@@ -1941,6 +2033,99 @@ export default function FormBuilderPage() {
                     Contact us
                   </a>
                 </p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+
+      {/* Advanced Settings */}
+      <div className="mt-8">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <h2 className="text-lg font-semibold">Advanced Settings</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Configure post-submission behavior and data handling policies for orders.
+        </p>
+
+        <div className="space-y-4">
+          {/* Post-Submission Instructions */}
+          <GlassCard className="p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                <FileText className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold">Post-Submission Instructions</h3>
+                <p className="text-sm text-muted-foreground">
+                  Instructions shown to users after they submit an order (supports Markdown)
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t pt-4 space-y-4">
+              <div>
+                <Textarea
+                  value={postSubmissionInstructions}
+                  onChange={(e) => setPostSubmissionInstructions(e.target.value)}
+                  placeholder="Enter instructions shown to users after order submission..."
+                  className="min-h-[200px] font-mono text-sm"
+                  disabled={instructionsSaving}
+                />
+                <p className="text-xs text-muted-foreground mt-2">
+                  Use Markdown formatting: **bold**, *italic*, ## headings, - lists, etc.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={handleSaveInstructions} disabled={instructionsSaving}>
+                  {instructionsSaving ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : instructionsSaved ? (
+                    <Check className="h-4 w-4 mr-2 text-green-500" />
+                  ) : null}
+                  {instructionsSaved ? "Saved!" : "Save Instructions"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleResetInstructions} disabled={instructionsSaving}>
+                  Reset to Default
+                </Button>
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Data Handling */}
+          <GlassCard className="p-6">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                <Database className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold">Data Handling</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Control data deletion and modification policies
+                </p>
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="allow-delete-submitted" className="text-sm font-medium flex items-center gap-2">
+                        Allow Deletion of Submitted Orders
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        When enabled, facility admins can delete orders even after they have been submitted.
+                        This is useful for testing but should be disabled in production to prevent data loss.
+                      </p>
+                    </div>
+                    <Switch
+                      id="allow-delete-submitted"
+                      checked={allowDeleteSubmittedOrders}
+                      onCheckedChange={handleAllowDeleteSubmittedChange}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </GlassCard>

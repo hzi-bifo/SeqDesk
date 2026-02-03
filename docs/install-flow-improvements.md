@@ -21,8 +21,9 @@ must continue to satisfy. It is not a user guide.
 
 ### Distribution installer (`scripts/install-dist.sh`) — 7 steps
 1. Step 1/7: Detect system (OS, arch).
-2. Step 2/7: Check dependencies (node, npm). No dependency install.
+2. Step 2/7: Check dependencies (node, npm). Offers to install Node if missing/outdated.
 3. Step 3/7: Pipeline support prompt (Conda + Nextflow).
+   - Prints a preflight summary after pipeline selection.
 4. Step 4/7: Download SeqDesk (release tarball).
 5. Step 5/7: Extract package.
 6. Step 6/7: Configure environment (wizard or prompts, `.env` + `seqdesk.config.json`).
@@ -39,11 +40,14 @@ Prompts read from `/dev/tty` so `curl | bash` still works interactively.
 If a TTY is present, the installer will invoke `scripts/install-wizard.mjs`
 to provide a guided setup. If the wizard cannot run, it falls back to the
 plain shell prompts.
+After prompts, the installer prints a configuration summary and asks for
+confirmation (skipped when `SEQDESK_YES=1`).
 
 ## Non-Interactive Mode
 - `SEQDESK_YES=1` (accept defaults, skip prompts)
 - `SEQDESK_WITH_PIPELINES=1` (force pipeline setup)
 - `SEQDESK_WITH_CONDA=1` (legacy alias for pipeline setup)
+- `SEQDESK_SKIP_DEPS=1` (skip dependency install prompts)
 - Overrides:
   - `SEQDESK_DATA_PATH`
   - `SEQDESK_RUN_DIR`
@@ -91,8 +95,9 @@ plain shell prompts.
 - [x] Print install directory.
 - [x] Indicate whether pipelines were enabled/disabled.
 - [x] Print data path / run directory (when provided).
-- [ ] Print config file paths (`.env`, `seqdesk.config.json`).
-- [ ] Indicate conda env name or creation status (dist installer does not).
+- [x] Print config file paths (`.env`, `seqdesk.config.json`).
+- [x] Print conda version when available (pipelines enabled).
+- [ ] Indicate conda env name or creation status.
 - [x] Print next steps (start server, admin login, configure compute settings).
 
 ## Acceptance Tests (Manual)

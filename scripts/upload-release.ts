@@ -118,7 +118,7 @@ async function publishRelease(
   },
   adminSecret: string
 ): Promise<void> {
-  const response = await fetch("https://seqdesk.com/api/releases/publish", {
+  const response = await fetch("https://www.seqdesk.com/api/releases/publish", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${adminSecret}`,

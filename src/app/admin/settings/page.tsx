@@ -1,134 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Settings, Settings2, Users, Loader2, Database, AlertTriangle, FileText, Check, HardDrive, FolderOpen, CheckCircle2, XCircle, FileJson, RefreshCw, Download, ArrowUpCircle, Server } from "lucide-react";
+import { Info, Users, Loader2, AlertTriangle, CheckCircle2, FileJson, RefreshCw, Download, ArrowUpCircle, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-
-const DEFAULT_POST_SUBMISSION_INSTRUCTIONS = `## Thank you for your submission!
-
-Your sequencing order has been received and is now being processed.
-
-### Next Steps
-
-1. **Prepare your samples** according to the guidelines provided
-2. **Label each sample** with the Sample ID shown in your order
-3. **Ship samples to:**
-
-   Sequencing Facility
-   123 Science Drive
-   Lab Building, Room 456
-   City, State 12345
-
-4. **Include a printed copy** of your order summary in the package
-
-### Important Notes
-
-- Samples should be shipped on dry ice for overnight delivery
-- Please notify us when samples are shipped by emailing sequencing@example.com
-- Processing typically begins within 3-5 business days of sample receipt
-
-### Questions?
-
-Contact us at sequencing@example.com or call (555) 123-4567.`;
-
-interface SequencingFilesConfig {
-  allowedExtensions: string[];
-  scanDepth: number;
-  ignorePatterns: string[];
-  allowSingleEnd: boolean;
-  autoAssign: boolean;
-}
-
-interface ExecutionSettings {
-  useSlurm: boolean;
-  slurmQueue: string;
-  slurmCores: number;
-  slurmMemory: string;
-  slurmTimeLimit: number;
-  slurmOptions: string;
-  runtimeMode: "conda";
-  condaPath: string;
-  condaEnv: string;
-  nextflowProfile: string;
-  pipelineRunDir: string;
-  weblogUrl: string;
-  weblogSecret: string;
-}
-
-interface PathTestResult {
-  valid: boolean;
-  error?: string;
-  resolvedPath?: string;
-  totalFiles?: number;
-  matchingFiles?: number;
-  message?: string;
-}
-
-interface TestFilesResult {
-  success: boolean;
-  error?: string;
-  createdPath?: string;
-  folderName?: string;
-  filesCreated?: number;
-  pairedCount?: number;
-  singleEndCount?: number;
-  extension?: string;
-}
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [departmentSharing, setDepartmentSharing] = useState(false);
-  const [allowDeleteSubmittedOrders, setAllowDeleteSubmittedOrders] = useState(false);
-  const [postSubmissionInstructions, setPostSubmissionInstructions] = useState("");
-  const [instructionsSaved, setInstructionsSaved] = useState(false);
 
-  // Sequencing files settings
-  const [dataBasePath, setDataBasePath] = useState("");
-  const [seqFilesConfig, setSeqFilesConfig] = useState<SequencingFilesConfig>({
-    allowedExtensions: [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
-    scanDepth: 2,
-    ignorePatterns: [],
-    allowSingleEnd: true,
-    autoAssign: false,
-  });
-  const [seqFilesSaved, setSeqFilesSaved] = useState(false);
-  const [testingPath, setTestingPath] = useState(false);
-  const [pathTestResult, setPathTestResult] = useState<PathTestResult | null>(null);
-  const [generatingTestFiles, setGeneratingTestFiles] = useState(false);
-  const [testFilesResult, setTestFilesResult] = useState<TestFilesResult | null>(null);
-
-  // Pipeline execution settings
-  const [execSettings, setExecSettings] = useState<ExecutionSettings>({
-    useSlurm: false,
-    slurmQueue: "cpu",
-    slurmCores: 4,
-    slurmMemory: "64GB",
-    slurmTimeLimit: 12,
-    slurmOptions: "",
-    runtimeMode: "conda",
-    condaPath: "",
-    condaEnv: "seqdesk-pipelines",
-    nextflowProfile: "",
-    pipelineRunDir: "/data/pipeline_runs",
-    weblogUrl: "",
-    weblogSecret: "",
-  });
-  const [savingExec, setSavingExec] = useState(false);
-  const [execSaved, setExecSaved] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; testing?: boolean }>>({});
+  // Detected tool versions
   const [detectedVersions, setDetectedVersions] = useState<{ nextflow?: string; nfcore?: string; conda?: string; java?: string; condaEnv?: string }>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
-  const [autoDetecting, setAutoDetecting] = useState(false);
-  const [autoDetectResult, setAutoDetectResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Config status
   const [configStatus, setConfigStatus] = useState<{
@@ -142,6 +31,9 @@ export default function SettingsPage() {
   // Update system
   const [updateInfo, setUpdateInfo] = useState<{
     currentVersion: string;
+    runningVersion?: string;
+    installedVersion?: string;
+    restartRequired?: boolean;
     updateAvailable: boolean;
     latest?: {
       version: string;
@@ -150,17 +42,94 @@ export default function SettingsPage() {
     };
     error?: string;
   } | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<{
+    status: "idle" | "checking" | "downloading" | "extracting" | "restarting" | "error" | "complete";
+    progress: number;
+    message: string;
+    error?: string;
+    updatedAt?: string;
+    targetVersion?: string;
+  } | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings();
-    fetchSequencingFilesSettings();
-    fetchExecSettings();
     detectInstalledVersions();
     fetchConfigStatus();
     checkForUpdates();
+    fetchUpdateStatus();
+  }, []);
+
+  const updateInProgress =
+    !!updateStatus && !["idle", "complete", "error"].includes(updateStatus.status);
+  const installedMatchesLatest = !!(
+    updateInfo?.installedVersion &&
+    updateInfo?.latest?.version &&
+    updateInfo.installedVersion === updateInfo.latest.version
+  );
+  const restartPending = !!updateInfo?.restartRequired && installedMatchesLatest;
+  const updatePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const restartPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopUpdatePolling = () => {
+    if (updatePollRef.current) {
+      clearInterval(updatePollRef.current);
+      updatePollRef.current = null;
+    }
+  };
+
+  const stopRestartPolling = () => {
+    if (restartPollRef.current) {
+      clearInterval(restartPollRef.current);
+      restartPollRef.current = null;
+    }
+  };
+
+  const startUpdatePolling = () => {
+    if (updatePollRef.current) return;
+    updatePollRef.current = setInterval(async () => {
+      await fetchUpdateStatus();
+    }, 2000);
+  };
+
+  const startRestartPolling = (targetVersion: string) => {
+    if (restartPollRef.current) return;
+    restartPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("/api/admin/updates?force=true");
+        if (!res.ok) return;
+        const data = await res.json();
+        setUpdateInfo(data);
+        const running = data.runningVersion || data.currentVersion;
+        if (running === targetVersion) {
+          stopRestartPolling();
+          window.location.reload();
+        }
+      } catch {
+        // Server might be restarting; keep polling.
+      }
+    }, 3000);
+  };
+
+  useEffect(() => {
+    if (updateInProgress) {
+      startUpdatePolling();
+      return;
+    }
+
+    stopUpdatePolling();
+  }, [updateInProgress]);
+
+  useEffect(() => {
+    if (!updateStatus?.targetVersion) return;
+    if (updateStatus.status === "restarting" || updateStatus.status === "complete") {
+      startRestartPolling(updateStatus.targetVersion);
+    }
+  }, [updateStatus?.status, updateStatus?.targetVersion]);
+
+  useEffect(() => () => {
+    stopUpdatePolling();
+    stopRestartPolling();
   }, []);
 
   const fetchConfigStatus = async () => {
@@ -178,10 +147,22 @@ export default function SettingsPage() {
     }
   };
 
-  const checkForUpdates = async () => {
+  const fetchUpdateStatus = async () => {
+    try {
+      const res = await fetch("/api/admin/updates/progress");
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateStatus(data.status ?? null);
+      }
+    } catch (error) {
+      console.error("Failed to load update status:", error);
+    }
+  };
+
+  const checkForUpdates = async (force = false) => {
     setCheckingUpdate(true);
     try {
-      const res = await fetch("/api/admin/updates");
+      const res = await fetch(`/api/admin/updates${force ? "?force=true" : ""}`);
       if (res.ok) {
         const data = await res.json();
         setUpdateInfo(data);
@@ -208,8 +189,12 @@ export default function SettingsPage() {
 
     if (!confirmed) return;
 
-    setUpdating(true);
-    setUpdateProgress("Starting update...");
+    setUpdateStatus({
+      status: "checking",
+      progress: 0,
+      message: "Starting update...",
+      targetVersion: updateInfo.latest.version,
+    });
 
     try {
       const res = await fetch("/api/admin/updates/install", {
@@ -218,21 +203,25 @@ export default function SettingsPage() {
 
       if (!res.ok) {
         const data = await res.json();
+        if (res.status === 409) {
+          throw new Error(data.error || "Update already in progress");
+        }
         throw new Error(data.error || "Update failed");
       }
 
-      setUpdateProgress("Update installed! Restarting server...");
-      toast.success("Update installed! The page will reload shortly.");
-
-      // Wait for server to restart, then reload
-      setTimeout(() => {
-        window.location.reload();
-      }, 5000);
+      toast.success("Update started. We'll reload when the server restarts.");
+      await fetchUpdateStatus();
+      await checkForUpdates(true);
     } catch (error) {
       console.error("Update failed:", error);
       toast.error(error instanceof Error ? error.message : "Update failed");
-      setUpdateProgress(null);
-      setUpdating(false);
+      setUpdateStatus({
+        status: "error",
+        progress: 0,
+        message: "Update failed",
+        error: error instanceof Error ? error.message : "Update failed",
+        targetVersion: updateInfo.latest.version,
+      });
     }
   };
 
@@ -241,8 +230,6 @@ export default function SettingsPage() {
       const res = await fetch("/api/admin/settings/access");
       const data = await res.json();
       setDepartmentSharing(data.departmentSharing ?? false);
-      setAllowDeleteSubmittedOrders(data.allowDeleteSubmittedOrders ?? false);
-      setPostSubmissionInstructions(data.postSubmissionInstructions ?? DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
     } catch (error) {
       console.error("Failed to load settings:", error);
     } finally {
@@ -269,176 +256,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleAllowDeleteSubmittedChange = async (enabled: boolean) => {
-    setSaving(true);
-    setAllowDeleteSubmittedOrders(enabled);
-
-    try {
-      await fetch("/api/admin/settings/access", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowDeleteSubmittedOrders: enabled }),
-      });
-    } catch (error) {
-      console.error("Failed to save setting:", error);
-      // Revert on error
-      setAllowDeleteSubmittedOrders(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSaveInstructions = async () => {
-    setSaving(true);
-    setInstructionsSaved(false);
-
-    try {
-      await fetch("/api/admin/settings/access", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postSubmissionInstructions }),
-      });
-      setInstructionsSaved(true);
-      setTimeout(() => setInstructionsSaved(false), 3000);
-    } catch (error) {
-      console.error("Failed to save instructions:", error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleResetInstructions = () => {
-    setPostSubmissionInstructions(DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
-  };
-
-  // Sequencing files settings
-  const fetchSequencingFilesSettings = async () => {
-    try {
-      const res = await fetch("/api/admin/settings/sequencing-files");
-      const data = await res.json();
-      setDataBasePath(data.dataBasePath || "");
-      if (data.config) {
-        setSeqFilesConfig(data.config);
-      }
-    } catch (error) {
-      console.error("Failed to load sequencing files settings:", error);
-    }
-  };
-
-  const handleSaveSequencingFiles = async () => {
-    setSaving(true);
-    setSeqFilesSaved(false);
-
-    try {
-      await fetch("/api/admin/settings/sequencing-files", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dataBasePath,
-          config: seqFilesConfig,
-        }),
-      });
-      setSeqFilesSaved(true);
-      setPathTestResult(null); // Clear test result after save
-      setTimeout(() => setSeqFilesSaved(false), 3000);
-    } catch (error) {
-      console.error("Failed to save sequencing files settings:", error);
-      toast.error("Failed to save settings");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTestPath = async () => {
-    if (!dataBasePath.trim()) {
-      toast.error("Please enter a path first");
-      return;
-    }
-
-    setTestingPath(true);
-    setPathTestResult(null);
-
-    try {
-      const res = await fetch("/api/admin/settings/sequencing-files/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          basePath: dataBasePath,
-          allowedExtensions: seqFilesConfig.allowedExtensions,
-        }),
-      });
-      const result = await res.json();
-      setPathTestResult(result);
-    } catch (error) {
-      console.error("Failed to test path:", error);
-      setPathTestResult({ valid: false, error: "Failed to test path" });
-    } finally {
-      setTestingPath(false);
-    }
-  };
-
-  const handleGenerateTestFiles = async () => {
-    if (!dataBasePath.trim()) {
-      toast.error("Please configure a data base path first");
-      return;
-    }
-
-    setGeneratingTestFiles(true);
-    setTestFilesResult(null);
-
-    try {
-      const res = await fetch("/api/admin/settings/sequencing-files/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const result = await res.json();
-
-      if (!res.ok) {
-        throw new Error(result.error || "Failed to create test files");
-      }
-
-      setTestFilesResult({ success: true, ...result });
-      toast.success(`Created ${result.filesCreated} test files`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create test files";
-      setTestFilesResult({ success: false, error: message });
-      toast.error(message);
-    } finally {
-      setGeneratingTestFiles(false);
-    }
-  };
-
-  // Pipeline execution settings
-  const fetchExecSettings = async () => {
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/execution");
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.settings) {
-          setExecSettings(data.settings);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load pipeline execution settings:", error);
-    }
-  };
-
-  const testSettingValue = async (setting: string, value?: string) => {
-    setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Testing...", testing: true } }));
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/test-setting", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ setting, value }),
-      });
-      const data = await res.json();
-      setTestResults((prev) => ({ ...prev, [setting]: { success: data.success, message: data.message, testing: false } }));
-    } catch {
-      setTestResults((prev) => ({ ...prev, [setting]: { success: false, message: "Test failed", testing: false } }));
-    }
-  };
-
   const detectInstalledVersions = async () => {
     setDetectingVersions(true);
     try {
@@ -451,57 +268,6 @@ export default function SettingsPage() {
       // Ignore
     }
     setDetectingVersions(false);
-  };
-
-  const handleAutoDetectConda = async () => {
-    setAutoDetecting(true);
-    setAutoDetectResult(null);
-    try {
-      const res = await fetch("/api/admin/settings/pipelines/auto-detect");
-      const data = await res.json();
-      if (!res.ok || !data?.detected) {
-        setAutoDetectResult({
-          success: false,
-          message: data?.message || "No conda environment detected in the server process.",
-        });
-        return;
-      }
-
-      setExecSettings((prev) => ({
-        ...prev,
-        condaPath: data.condaBase || prev.condaPath,
-        condaEnv: data.condaEnv || prev.condaEnv,
-      }));
-      setAutoDetectResult({
-        success: true,
-        message: `Detected ${data.condaEnv || "conda env"} at ${data.condaBase || "unknown path"}`,
-      });
-    } catch {
-      setAutoDetectResult({
-        success: false,
-        message: "Auto-detect failed. Check server logs.",
-      });
-    } finally {
-      setAutoDetecting(false);
-    }
-  };
-
-  const handleSaveExecSettings = async () => {
-    setSavingExec(true);
-    setExecSaved(false);
-    try {
-      await fetch("/api/admin/settings/pipelines/execution", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(execSettings),
-      });
-      setExecSaved(true);
-      setTimeout(() => setExecSaved(false), 3000);
-      detectInstalledVersions();
-    } catch (error) {
-      console.error("Failed to save execution settings:", error);
-    }
-    setSavingExec(false);
   };
 
   if (loading) {
@@ -518,11 +284,11 @@ export default function SettingsPage() {
     <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <Settings className="h-6 w-6" />
-          General Settings
+          <Info className="h-6 w-6" />
+          Info
         </h1>
         <p className="text-muted-foreground mt-1">
-          Configure platform-wide settings
+          Platform status, updates, and configuration overview
         </p>
       </div>
 
@@ -564,616 +330,6 @@ export default function SettingsPage() {
         </div>
       </GlassCard>
 
-      {/* Data Handling */}
-      <GlassCard className="p-6 mt-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-lg bg-amber-100 flex items-center justify-center">
-            <Database className="h-5 w-5 text-amber-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Data Handling</h2>
-            <p className="text-sm text-muted-foreground">
-              Control data deletion and modification policies
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t pt-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <Label htmlFor="allow-delete-submitted" className="text-base font-medium flex items-center gap-2">
-                Allow Deletion of Submitted Orders
-                <AlertTriangle className="h-4 w-4 text-amber-500" />
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                When enabled, facility admins can delete orders even after they have been submitted.
-                This is useful for testing but should be disabled in production to prevent data loss.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {saving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-              <Switch
-                id="allow-delete-submitted"
-                checked={allowDeleteSubmittedOrders}
-                onCheckedChange={handleAllowDeleteSubmittedChange}
-                disabled={saving}
-              />
-            </div>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* Post-Submission Instructions */}
-      <GlassCard className="p-6 mt-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-lg bg-green-100 flex items-center justify-center">
-            <FileText className="h-5 w-5 text-green-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Post-Submission Instructions</h2>
-            <p className="text-sm text-muted-foreground">
-              Instructions shown to users after they submit an order (supports Markdown)
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t pt-4 space-y-4">
-          <div>
-            <Textarea
-              value={postSubmissionInstructions}
-              onChange={(e) => setPostSubmissionInstructions(e.target.value)}
-              placeholder="Enter instructions shown to users after order submission..."
-              className="min-h-[300px] font-mono text-sm"
-              disabled={saving}
-            />
-            <p className="text-xs text-muted-foreground mt-2">
-              Use Markdown formatting: **bold**, *italic*, ## headings, - lists, etc.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button onClick={handleSaveInstructions} disabled={saving}>
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : instructionsSaved ? (
-                <Check className="h-4 w-4 mr-2 text-green-500" />
-              ) : null}
-              {instructionsSaved ? "Saved!" : "Save Instructions"}
-            </Button>
-            <Button variant="outline" onClick={handleResetInstructions} disabled={saving}>
-              Reset to Default
-            </Button>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* Sequencing Files Settings */}
-      <GlassCard className="p-6 mt-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-lg bg-violet-100 flex items-center justify-center">
-            <HardDrive className="h-5 w-5 text-violet-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Sequencing Files</h2>
-            <p className="text-sm text-muted-foreground">
-              Configure where raw sequencing files are stored on the server
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t pt-4 space-y-4">
-          {/* Base Path */}
-          <div className="space-y-2">
-            <Label htmlFor="data-base-path" className="text-base font-medium">
-              Data Base Path
-            </Label>
-            <p className="text-sm text-muted-foreground">
-              Absolute path to the directory where sequencing files are stored (e.g., /data/sequencing)
-            </p>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <FolderOpen className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="data-base-path"
-                  value={dataBasePath}
-                  onChange={(e) => {
-                    setDataBasePath(e.target.value);
-                    setPathTestResult(null);
-                  }}
-                  placeholder="/data/sequencing"
-                  className="pl-10"
-                  disabled={saving}
-                />
-              </div>
-              <Button
-                variant="outline"
-                onClick={handleTestPath}
-                disabled={saving || testingPath || !dataBasePath.trim()}
-              >
-                {testingPath ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Test Path"
-                )}
-              </Button>
-            </div>
-
-            {/* Test Result */}
-            {pathTestResult && (
-              <div
-                className={`mt-2 p-3 rounded-lg text-sm flex items-start gap-2 ${
-                  pathTestResult.valid
-                    ? "bg-green-50 text-green-800"
-                    : "bg-red-50 text-red-800"
-                }`}
-              >
-                {pathTestResult.valid ? (
-                  <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                ) : (
-                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                <div>
-                  {pathTestResult.valid ? (
-                    <>
-                      <p className="font-medium">{pathTestResult.message}</p>
-                      {pathTestResult.resolvedPath && (
-                        <p className="text-xs mt-1 opacity-70">
-                          Resolved path: {pathTestResult.resolvedPath}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p>{pathTestResult.error}</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Allowed Extensions */}
-          <div className="space-y-2">
-            <Label className="text-base font-medium">Allowed File Extensions</Label>
-            <p className="text-sm text-muted-foreground">
-              File extensions to scan for (comma-separated)
-            </p>
-            <Input
-              value={seqFilesConfig.allowedExtensions.join(", ")}
-              onChange={(e) =>
-                setSeqFilesConfig({
-                  ...seqFilesConfig,
-                  allowedExtensions: e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter((s) => s),
-                })
-              }
-              placeholder=".fastq.gz, .fq.gz, .fastq, .fq"
-              disabled={saving}
-            />
-          </div>
-
-          {/* Options */}
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <Label className="text-sm font-medium">Allow Single-End Files</Label>
-                <p className="text-xs text-muted-foreground">
-                  Allow files without R2 pair to be assigned as single-end reads
-                </p>
-              </div>
-              <Switch
-                checked={seqFilesConfig.allowSingleEnd}
-                onCheckedChange={(checked) =>
-                  setSeqFilesConfig({ ...seqFilesConfig, allowSingleEnd: checked })
-                }
-                disabled={saving}
-              />
-            </div>
-          </div>
-
-          {/* Test Files */}
-          <div className="space-y-2 pt-2">
-            <Label className="text-base font-medium">Test Data</Label>
-            <p className="text-sm text-muted-foreground">
-              Create dummy FASTQ files in a new subfolder for testing auto-detect and the file browser.
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={handleGenerateTestFiles}
-                disabled={saving || generatingTestFiles || !dataBasePath.trim()}
-              >
-                {generatingTestFiles ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : null}
-                Generate Test Files
-              </Button>
-            </div>
-
-            {testFilesResult && (
-              <div
-                className={`mt-2 p-3 rounded-lg text-sm flex items-start gap-2 ${
-                  testFilesResult.success
-                    ? "bg-green-50 text-green-800"
-                    : "bg-red-50 text-red-800"
-                }`}
-              >
-                {testFilesResult.success ? (
-                  <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                ) : (
-                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                <div>
-                  {testFilesResult.success ? (
-                    <>
-                      <p className="font-medium">
-                        Created {testFilesResult.filesCreated} file(s)
-                        {typeof testFilesResult.pairedCount === "number"
-                          ? ` (${testFilesResult.pairedCount} paired, ${testFilesResult.singleEndCount} single-end)`
-                          : ""}
-                      </p>
-                      {testFilesResult.folderName && (
-                        <p className="text-xs mt-1 opacity-70">
-                          Folder: {testFilesResult.folderName}
-                        </p>
-                      )}
-                      {testFilesResult.extension && (
-                        <p className="text-xs mt-1 opacity-70">
-                          Extension: {testFilesResult.extension}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p>{testFilesResult.error}</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Save Button */}
-          <div className="flex items-center gap-2 pt-2">
-            <Button onClick={handleSaveSequencingFiles} disabled={saving}>
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : seqFilesSaved ? (
-                <Check className="h-4 w-4 mr-2 text-green-500" />
-              ) : null}
-              {seqFilesSaved ? "Saved!" : "Save Settings"}
-            </Button>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* Compute & Pipelines */}
-      <section id="compute">
-        <GlassCard className="p-6 mt-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center">
-              <Server className="h-5 w-5 text-slate-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">Compute & Pipelines</h2>
-              <p className="text-sm text-muted-foreground">
-                Configure Nextflow runtime, scheduler, and diagnostics for pipeline execution
-              </p>
-            </div>
-          </div>
-
-          <div className="border-t pt-4 space-y-6">
-            {/* Scheduler */}
-            <div className="flex items-start gap-4 pb-4 border-b">
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                {execSettings.useSlurm ? (
-                  <Server className="h-5 w-5" />
-                ) : (
-                  <HardDrive className="h-5 w-5" />
-                )}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h3 className="font-semibold">Scheduler</h3>
-                  <Badge variant={execSettings.useSlurm ? "default" : "secondary"}>
-                    {execSettings.useSlurm ? "SLURM Cluster" : "Local"}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground mb-3">
-                  {execSettings.useSlurm
-                    ? "Jobs will be submitted to the SLURM queue"
-                    : "Pipelines will run directly on this server"}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="compute-use-slurm"
-                    checked={execSettings.useSlurm}
-                    onCheckedChange={(checked) =>
-                      setExecSettings((prev) => ({ ...prev, useSlurm: checked }))
-                    }
-                  />
-                  <Label htmlFor="compute-use-slurm">Use SLURM</Label>
-                </div>
-              </div>
-            </div>
-
-            {/* Runtime */}
-            <div className="flex items-start gap-4 pb-4 border-b">
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                <Settings2 className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h3 className="font-semibold">Runtime</h3>
-                  <Badge variant="secondary">Conda</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  SeqDesk runs nf-core pipelines using conda environments for tool resolution.
-                </p>
-              </div>
-            </div>
-
-            {/* SLURM Settings */}
-            {execSettings.useSlurm && (
-              <div className="grid gap-4 sm:grid-cols-2 pb-4 border-b">
-                <div className="space-y-2">
-                  <Label htmlFor="slurm-queue">Queue/Partition</Label>
-                  <Input
-                    id="slurm-queue"
-                    value={execSettings.slurmQueue}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, slurmQueue: e.target.value }))
-                    }
-                    placeholder="cpu"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slurm-cores">CPU Cores</Label>
-                  <Input
-                    id="slurm-cores"
-                    type="number"
-                    min={1}
-                    value={execSettings.slurmCores}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, slurmCores: parseInt(e.target.value) || 4 }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slurm-memory">Memory</Label>
-                  <Input
-                    id="slurm-memory"
-                    value={execSettings.slurmMemory}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, slurmMemory: e.target.value }))
-                    }
-                    placeholder="64GB"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slurm-time">Time Limit (hours)</Label>
-                  <Input
-                    id="slurm-time"
-                    type="number"
-                    min={1}
-                    value={execSettings.slurmTimeLimit}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, slurmTimeLimit: parseInt(e.target.value) || 12 }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="slurm-options">Additional SLURM Options</Label>
-                  <Input
-                    id="slurm-options"
-                    value={execSettings.slurmOptions}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, slurmOptions: e.target.value }))
-                    }
-                    placeholder="--constraint=avx2 --account=mylab"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Paths */}
-            <div className="space-y-4 pb-4 border-b">
-              <div className="space-y-2">
-                <Label htmlFor="compute-run-dir">Pipeline Run Directory</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="compute-run-dir"
-                    value={execSettings.pipelineRunDir}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, pipelineRunDir: e.target.value }))
-                    }
-                    placeholder="/data/pipeline_runs"
-                    className="flex-1"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => testSettingValue("pipelineRunDir", execSettings.pipelineRunDir)}
-                    disabled={testResults.pipelineRunDir?.testing}
-                  >
-                    {testResults.pipelineRunDir?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                  </Button>
-                </div>
-                {testResults.pipelineRunDir && !testResults.pipelineRunDir.testing && (
-                  <p className={`text-xs flex items-center gap-1 ${testResults.pipelineRunDir.success ? "text-green-600" : "text-red-600"}`}>
-                    {testResults.pipelineRunDir.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                    {testResults.pipelineRunDir.message}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="compute-conda-path">Conda Installation Path</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="compute-conda-path"
-                    value={execSettings.condaPath}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, condaPath: e.target.value }))
-                    }
-                    placeholder="/opt/homebrew/Caskroom/miniconda/base"
-                    className="flex-1"
-                  />
-                  <Button variant="outline" size="sm" onClick={handleAutoDetectConda} disabled={autoDetecting}>
-                    {autoDetecting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Auto"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => testSettingValue("condaPath", execSettings.condaPath)}
-                    disabled={testResults.condaPath?.testing}
-                  >
-                    {testResults.condaPath?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                  </Button>
-                </div>
-                {autoDetectResult && (
-                  <p className={`text-xs flex items-center gap-1 ${autoDetectResult.success ? "text-green-600" : "text-red-600"}`}>
-                    {autoDetectResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                    {autoDetectResult.message}
-                  </p>
-                )}
-                {testResults.condaPath && !testResults.condaPath.testing && (
-                  <p className={`text-xs flex items-center gap-1 ${testResults.condaPath.success ? "text-green-600" : "text-red-600"}`}>
-                    {testResults.condaPath.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                    {testResults.condaPath.message}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="compute-conda-env">Conda Environment Name</Label>
-                <Input
-                  id="compute-conda-env"
-                  value={execSettings.condaEnv}
-                  onChange={(e) =>
-                    setExecSettings((prev) => ({ ...prev, condaEnv: e.target.value }))
-                  }
-                  placeholder="seqdesk-pipelines"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="compute-nextflow-profile">Nextflow Profile Override</Label>
-                <Input
-                  id="compute-nextflow-profile"
-                  value={execSettings.nextflowProfile}
-                  onChange={(e) =>
-                    setExecSettings((prev) => ({ ...prev, nextflowProfile: e.target.value }))
-                  }
-                  placeholder="e.g. slurm,conda"
-                />
-              </div>
-            </div>
-
-            {/* Weblog Settings */}
-            <div className="space-y-4 pb-4 border-b">
-              <div className="space-y-2">
-                <Label htmlFor="compute-weblog-url">Nextflow Weblog URL</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="compute-weblog-url"
-                    value={execSettings.weblogUrl}
-                    onChange={(e) =>
-                      setExecSettings((prev) => ({ ...prev, weblogUrl: e.target.value }))
-                    }
-                    placeholder="https://your-app.domain/api/pipelines/weblog"
-                    className="flex-1"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      testSettingValue(
-                        "weblogUrl",
-                        JSON.stringify({ url: execSettings.weblogUrl, secret: execSettings.weblogSecret })
-                      )
-                    }
-                    disabled={testResults.weblogUrl?.testing}
-                  >
-                    {testResults.weblogUrl?.testing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                  </Button>
-                </div>
-                {testResults.weblogUrl && !testResults.weblogUrl.testing && (
-                  <p className={`text-xs flex items-center gap-1 ${testResults.weblogUrl.success ? "text-green-600" : "text-red-600"}`}>
-                    {testResults.weblogUrl.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                    {testResults.weblogUrl.message}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="compute-weblog-secret">Weblog Secret</Label>
-                <Input
-                  id="compute-weblog-secret"
-                  type="password"
-                  value={execSettings.weblogSecret}
-                  onChange={(e) =>
-                    setExecSettings((prev) => ({ ...prev, weblogSecret: e.target.value }))
-                  }
-                  placeholder="shared secret token"
-                />
-              </div>
-            </div>
-
-            {/* Detected Versions */}
-            <div className="space-y-3 pb-4 border-b">
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-2">
-                  Detected Tool Versions
-                  {detectingVersions && <Loader2 className="h-3 w-3 animate-spin" />}
-                </Label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={detectInstalledVersions}
-                  disabled={detectingVersions}
-                  className="h-7 text-xs"
-                >
-                  <RefreshCw className={`h-3 w-3 mr-1 ${detectingVersions ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
-              </div>
-              {detectedVersions.condaEnv && (
-                <p className="text-xs text-muted-foreground mb-2">
-                  Using: <span className="font-mono font-medium">{detectedVersions.condaEnv}</span>
-                </p>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                <div className={`p-2 rounded ${detectedVersions.nextflow ? "bg-green-50" : "bg-muted"}`}>
-                  <p className="text-xs text-muted-foreground">Nextflow</p>
-                  <p className="font-mono">{detectedVersions.nextflow || "Not found"}</p>
-                </div>
-                <div className={`p-2 rounded ${detectedVersions.java ? "bg-green-50" : "bg-muted"}`}>
-                  <p className="text-xs text-muted-foreground">Java</p>
-                  <p className="font-mono">{detectedVersions.java ? `Java ${detectedVersions.java}` : "Not found"}</p>
-                </div>
-                <div className={`p-2 rounded ${detectedVersions.nfcore ? "bg-green-50" : "bg-muted"}`}>
-                  <p className="text-xs text-muted-foreground">nf-core</p>
-                  <p className="font-mono">{detectedVersions.nfcore || "Not found"}</p>
-                </div>
-                <div className={`p-2 rounded ${detectedVersions.conda ? "bg-green-50" : "bg-muted"}`}>
-                  <p className="text-xs text-muted-foreground">Conda</p>
-                  <p className="font-mono">{detectedVersions.conda || "Not found"}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Save Button */}
-            <div className="flex items-center gap-3">
-              <Button onClick={handleSaveExecSettings} disabled={savingExec}>
-                {savingExec ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Save Settings
-              </Button>
-              {execSaved && (
-                <span className="text-sm text-green-600 flex items-center gap-1">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Saved
-                </span>
-              )}
-            </div>
-          </div>
-        </GlassCard>
-      </section>
-
       {/* Software Updates */}
       <GlassCard className="p-6 mt-6">
         <div className="flex items-center justify-between mb-4">
@@ -1195,8 +351,8 @@ export default function SettingsPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={checkForUpdates}
-            disabled={checkingUpdate || updating}
+            onClick={() => checkForUpdates(true)}
+            disabled={checkingUpdate || updateInProgress}
           >
             {checkingUpdate ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1207,13 +363,73 @@ export default function SettingsPage() {
         </div>
 
         <div className="border-t pt-4">
+          {updateStatus && updateStatus.status !== "idle" && (
+            <div className={`border rounded-lg p-4 mb-4 ${
+              updateStatus.status === "error"
+                ? "bg-red-50 border-red-200"
+                : "bg-slate-50 border-slate-200"
+            }`}>
+              <div className="flex items-start gap-3">
+                {updateStatus.status === "error" ? (
+                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                ) : (
+                  <Server className="h-5 w-5 text-slate-600 mt-0.5" />
+                )}
+                <div className="flex-1">
+                  <p className={`font-medium ${
+                    updateStatus.status === "error" ? "text-red-900" : "text-slate-900"
+                  }`}>
+                    {updateStatus.message}
+                  </p>
+                  {updateStatus.error && (
+                    <p className="text-sm text-red-700 mt-1">
+                      {updateStatus.error}
+                    </p>
+                  )}
+                  <div className="mt-3">
+                    <div className="h-2 rounded bg-slate-200 overflow-hidden">
+                      <div
+                        className={`h-2 ${
+                          updateStatus.status === "error" ? "bg-red-500" : "bg-blue-600"
+                        }`}
+                        style={{ width: `${Math.min(updateStatus.progress || 0, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {updateStatus.progress || 0}% • {updateStatus.status}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {updateInfo ? (
             <div className="space-y-4">
-              {/* Current Version */}
+              {/* Running Version */}
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Current version</span>
-                <Badge variant="outline">v{updateInfo.currentVersion}</Badge>
+                <span className="text-sm text-muted-foreground">Running version</span>
+                <Badge variant="outline">v{updateInfo.runningVersion || updateInfo.currentVersion}</Badge>
               </div>
+
+              {/* Installed Version */}
+              {updateInfo.installedVersion && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Installed version</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={restartPending ? "default" : "outline"}>
+                      v{updateInfo.installedVersion}
+                    </Badge>
+                    {restartPending && (
+                      <Badge
+                        variant="outline"
+                        className="text-amber-700 bg-amber-50 border-amber-200"
+                      >
+                        Restart pending
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Latest Version */}
               <div className="flex items-center justify-between">
@@ -1222,6 +438,22 @@ export default function SettingsPage() {
                   v{updateInfo.latest?.version || updateInfo.currentVersion}
                 </Badge>
               </div>
+
+              {restartPending && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-amber-900">
+                        Update installed. Restart required to finish.
+                      </p>
+                      <p className="text-sm text-amber-700 mt-1">
+                        The server will restart automatically once the update completes.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Update Status */}
               {updateInfo.updateAvailable && updateInfo.latest ? (
@@ -1237,16 +469,26 @@ export default function SettingsPage() {
                           {updateInfo.latest.releaseNotes}
                         </p>
                       )}
+                      {restartPending && (
+                        <p className="text-sm text-amber-700 mt-2">
+                          Update is already installed on disk. Waiting for restart.
+                        </p>
+                      )}
                       <div className="mt-3">
                         <Button
                           onClick={performUpdate}
-                          disabled={updating}
+                          disabled={updateInProgress || restartPending}
                           className="bg-blue-600 hover:bg-blue-700"
                         >
-                          {updating ? (
+                          {updateInProgress ? (
                             <>
                               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              {updateProgress || "Updating..."}
+                              {updateStatus?.message || "Updating..."}
+                            </>
+                          ) : restartPending ? (
+                            <>
+                              <Server className="h-4 w-4 mr-2" />
+                              Restart pending
                             </>
                           ) : (
                             <>
@@ -1285,6 +527,62 @@ export default function SettingsPage() {
               Failed to check for updates. Click refresh to try again.
             </p>
           )}
+        </div>
+      </GlassCard>
+
+      {/* Detected Tool Versions */}
+      <GlassCard className="p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Server className="h-5 w-5 text-slate-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Detected Tool Versions</h2>
+              <p className="text-sm text-muted-foreground">
+                Pipeline tools detected on this server
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={detectInstalledVersions}
+            disabled={detectingVersions}
+            className="h-8"
+          >
+            {detectingVersions ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        <div className="border-t pt-4">
+          {detectedVersions.condaEnv && (
+            <p className="text-xs text-muted-foreground mb-3">
+              Using: <span className="font-mono font-medium">{detectedVersions.condaEnv}</span>
+            </p>
+          )}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className={`p-2 rounded ${detectedVersions.nextflow ? "bg-green-50" : "bg-muted"}`}>
+              <p className="text-xs text-muted-foreground">Nextflow</p>
+              <p className="font-mono">{detectedVersions.nextflow || "Not found"}</p>
+            </div>
+            <div className={`p-2 rounded ${detectedVersions.java ? "bg-green-50" : "bg-muted"}`}>
+              <p className="text-xs text-muted-foreground">Java</p>
+              <p className="font-mono">{detectedVersions.java ? `Java ${detectedVersions.java}` : "Not found"}</p>
+            </div>
+            <div className={`p-2 rounded ${detectedVersions.nfcore ? "bg-green-50" : "bg-muted"}`}>
+              <p className="text-xs text-muted-foreground">nf-core</p>
+              <p className="font-mono">{detectedVersions.nfcore || "Not found"}</p>
+            </div>
+            <div className={`p-2 rounded ${detectedVersions.conda ? "bg-green-50" : "bg-muted"}`}>
+              <p className="text-xs text-muted-foreground">Conda</p>
+              <p className="font-mono">{detectedVersions.conda || "Not found"}</p>
+            </div>
+          </div>
         </div>
       </GlassCard>
 

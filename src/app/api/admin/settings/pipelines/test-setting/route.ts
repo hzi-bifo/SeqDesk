@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { testSetting, detectVersions } from '@/lib/pipelines/prerequisite-check';
-import { getExecutionSettings } from '../execution/route';
+import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 
 // POST - Test a specific setting
 export async function POST(request: NextRequest) {

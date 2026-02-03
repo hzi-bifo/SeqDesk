@@ -65,6 +65,17 @@ next-env.d.ts
 seqdesk-*.tar.gz
 seqdesk-*/
 
+# updater runtime artifacts
+.update-status.json
+.update-lock
+.update-temp/
+.update-backup/
+
+# pipeline download status
+pipelines/.pipeline-downloads.json
+pipelines/.pipeline-download-status.json
+pipelines/.pipeline-download-logs/
+
 # internal notes
 agents.md
 

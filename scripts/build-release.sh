@@ -98,6 +98,10 @@ mkdir -p "$RELEASE_DIR"
 echo "Copying standalone output..."
 cp -R "${ROOT_DIR}/.next/standalone/." "$RELEASE_DIR/"
 
+# Remove bundled release artifacts if file tracing pulled them in
+rm -rf "${RELEASE_DIR}"/seqdesk-*/
+rm -f "${RELEASE_DIR}"/seqdesk-*.tar.gz
+
 for file in .env .env.local .env.production .env.development .env.test; do
   if [[ -f "${RELEASE_DIR}/${file}" ]]; then
     rm -f "${RELEASE_DIR}/${file}"
@@ -117,7 +121,7 @@ mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"
 
 echo "Copying runtime assets..."
-for item in public prisma pipelines seqdesk.config.example.json package-lock.json next.config.ts; do
+for item in public prisma pipelines seqdesk.config.example.json package-lock.json next.config.ts .env.example; do
   if [[ -e "${ROOT_DIR}/${item}" ]]; then
     cp -R "${ROOT_DIR}/${item}" "$RELEASE_DIR/"
   fi

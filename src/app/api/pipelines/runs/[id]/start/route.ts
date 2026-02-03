@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
-import { getExecutionSettings } from '@/app/api/admin/settings/pipelines/execution/route';
+import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';

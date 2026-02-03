@@ -7,6 +7,9 @@ import Link from "next/link";
 
 interface UpdateInfo {
   currentVersion: string;
+  runningVersion?: string;
+  installedVersion?: string;
+  restartRequired?: boolean;
   updateAvailable: boolean;
   latest?: {
     version: string;
@@ -53,6 +56,13 @@ export function UpdateBanner() {
     setDismissed(true);
   };
 
+  const restartPending = !!(
+    updateInfo?.restartRequired &&
+    updateInfo?.installedVersion &&
+    updateInfo.latest?.version &&
+    updateInfo.installedVersion === updateInfo.latest.version
+  );
+
   // Don't show if not admin, no update, or dismissed
   if (
     session?.user?.role !== "FACILITY_ADMIN" ||
@@ -68,8 +78,13 @@ export function UpdateBanner() {
         <div className="flex items-center gap-3">
           <ArrowUpCircle className="h-5 w-5" />
           <span className="text-sm">
-            <strong>SeqDesk {updateInfo.latest?.version}</strong> is available.
-            {updateInfo.latest?.releaseNotes && (
+            {restartPending ? (
+              <strong>SeqDesk {updateInfo.latest?.version}</strong>
+            ) : (
+              <strong>SeqDesk {updateInfo.latest?.version}</strong>
+            )}{" "}
+            {restartPending ? "installed. Restart pending." : "is available."}
+            {!restartPending && updateInfo.latest?.releaseNotes && (
               <span className="ml-1 opacity-90">
                 {updateInfo.latest.releaseNotes}
               </span>
@@ -79,7 +94,7 @@ export function UpdateBanner() {
             href="/admin/settings"
             className="ml-2 text-sm font-medium underline hover:no-underline"
           >
-            Update now
+            {restartPending ? "View status" : "Update now"}
           </Link>
         </div>
         <button

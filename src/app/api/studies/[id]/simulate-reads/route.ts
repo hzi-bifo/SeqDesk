@@ -8,19 +8,47 @@ import * as path from "path";
 import { gzipSync } from "zlib";
 
 const DEFAULT_EXTENSION = ".fastq.gz";
+const DEFAULT_READ_COUNT = 50;
+const DEFAULT_READ_LENGTH = 150;
+const MAX_READ_COUNT = 1000;
+const MAX_READ_LENGTH = 1000;
 
-function buildFastqContent(sampleId: string, readNum: number): Buffer {
-  // Create minimal valid FASTQ content
-  const content = `@${sampleId}_read${readNum}
-ACGTACGTACGTACGTACGTACGTACGTACGT
-+
-FFFFFFFFFFFFFFFFFFFFFFFFFFFF
-@${sampleId}_read${readNum + 1}
-TACGTACGTACGTACGTACGTACGTACGTACG
-+
-FFFFFFFFFFFFFFFFFFFFFFFFFFFF
-`;
-  return Buffer.from(content, "utf-8");
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const rounded = Math.floor(value);
+  if (rounded < min) return min;
+  if (rounded > max) return max;
+  return rounded;
+}
+
+function buildSequence(length: number, seed: number): string {
+  const pattern = "ACGT";
+  const shift = seed % pattern.length;
+  const rotated = pattern.slice(shift) + pattern.slice(0, shift);
+  return rotated.repeat(Math.ceil(length / rotated.length)).slice(0, length);
+}
+
+function buildFastqContent(
+  sampleId: string,
+  readCount: number,
+  readLength: number,
+  readOffset: number
+): Buffer {
+  const lines: string[] = [];
+  const quality = "I".repeat(readLength);
+
+  for (let i = 0; i < readCount; i += 1) {
+    const readNum = readOffset + i + 1;
+    const sequence = buildSequence(readLength, readNum);
+    lines.push(
+      `@${sampleId}_read${readNum}`,
+      sequence,
+      "+",
+      quality
+    );
+  }
+
+  return Buffer.from(`${lines.join("\n")}\n`, "utf-8");
 }
 
 // POST - create dummy sequencing files for a study's samples
@@ -37,10 +65,29 @@ export async function POST(
   try {
     const { id: studyId } = await params;
     const body = await request.json().catch(() => ({}));
-    const { pairedEnd = true, createRecords = true } = body as {
+    const {
+      pairedEnd = true,
+      createRecords = true,
+      readCount,
+      readLength,
+    } = body as {
       pairedEnd?: boolean;
       createRecords?: boolean;
+      readCount?: number;
+      readLength?: number;
     };
+    const normalizedReadCount = clampInt(
+      readCount,
+      DEFAULT_READ_COUNT,
+      2,
+      MAX_READ_COUNT
+    );
+    const normalizedReadLength = clampInt(
+      readLength,
+      DEFAULT_READ_LENGTH,
+      25,
+      MAX_READ_LENGTH
+    );
 
     // Get the study with samples
     const study = await db.study.findUnique({
@@ -137,8 +184,20 @@ export async function POST(
       const file1RelPath = path.join(folderName, file1Name);
 
       const buffer1 = extension.endsWith(".gz")
-        ? gzipSync(buildFastqContent(sample.sampleId, 1))
-        : buildFastqContent(sample.sampleId, 1);
+        ? gzipSync(
+            buildFastqContent(
+              sample.sampleId,
+              normalizedReadCount,
+              normalizedReadLength,
+              0
+            )
+          )
+        : buildFastqContent(
+            sample.sampleId,
+            normalizedReadCount,
+            normalizedReadLength,
+            0
+          );
 
       await fs.writeFile(file1AbsPath, buffer1);
       filesCreated += 1;
@@ -151,8 +210,20 @@ export async function POST(
         file2RelPath = path.join(folderName, file2Name);
 
         const buffer2 = extension.endsWith(".gz")
-          ? gzipSync(buildFastqContent(sample.sampleId, 100))
-          : buildFastqContent(sample.sampleId, 100);
+          ? gzipSync(
+              buildFastqContent(
+                sample.sampleId,
+                normalizedReadCount,
+                normalizedReadLength,
+                normalizedReadCount
+              )
+            )
+          : buildFastqContent(
+              sample.sampleId,
+              normalizedReadCount,
+              normalizedReadLength,
+              normalizedReadCount
+            );
 
         await fs.writeFile(file2AbsPath, buffer2);
         filesCreated += 1;
@@ -184,6 +255,8 @@ export async function POST(
       samplesProcessed: study.samples.length,
       pairedEnd,
       recordsCreated: createRecords,
+      readCount: normalizedReadCount,
+      readLength: normalizedReadLength,
       files: createdFiles,
     });
   } catch (error) {

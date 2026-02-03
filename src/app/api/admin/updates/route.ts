@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { checkForUpdates, getCurrentVersion } from '@/lib/updater';
+import { checkForUpdates, getCurrentVersion, getInstalledVersion } from '@/lib/updater';
 
 /**
  * GET /api/admin/updates
@@ -21,9 +21,14 @@ export async function GET(request: Request) {
 
   try {
     const result = await checkForUpdates(force);
+    const runningVersion = getCurrentVersion();
+    const installedVersion = await getInstalledVersion();
 
     return NextResponse.json({
-      currentVersion: getCurrentVersion(),
+      currentVersion: runningVersion,
+      runningVersion,
+      installedVersion,
+      restartRequired: installedVersion !== runningVersion,
       updateAvailable: result.updateAvailable,
       latest: result.latest,
       error: result.error,

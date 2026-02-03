@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { checkAllPrerequisites, quickPrerequisiteCheck } from '@/lib/pipelines/prerequisite-check';
-import { getExecutionSettings } from '../execution/route';
+import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 
 // GET - Run prerequisite checks
 export async function GET(request: Request) {

@@ -6,6 +6,7 @@
 
 import type { UpdateCheckResult, ReleaseInfo } from './types';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import path from 'path';
 
 // Get current version from package.json
@@ -84,6 +85,19 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
  */
 export function getCurrentVersion(): string {
   return CURRENT_VERSION;
+}
+
+/**
+ * Get installed version from disk (not cached).
+ */
+export async function getInstalledVersion(): Promise<string> {
+  try {
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    const pkg = JSON.parse(await fsPromises.readFile(pkgPath, 'utf-8'));
+    return pkg.version || CURRENT_VERSION;
+  } catch {
+    return CURRENT_VERSION;
+  }
 }
 
 /**
