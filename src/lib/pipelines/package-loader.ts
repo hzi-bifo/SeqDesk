@@ -300,7 +300,7 @@ let packagesScanned = false;
 /**
  * Get the path to the pipelines directory
  */
-function getPipelinesDir(): string {
+export function getPipelinesDir(): string {
   const possiblePaths = [
     path.join(process.cwd(), 'pipelines'),
     path.join(process.cwd(), '..', 'pipelines'),

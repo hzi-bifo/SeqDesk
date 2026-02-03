@@ -551,9 +551,22 @@ elif [ $wizard_status -ne 0 ]; then
 fi
 
 if [ ! -f .env ]; then
-    cp .env.example .env
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+    else
+        cat > .env <<'EOF'
+NEXTAUTH_SECRET=""
+NEXTAUTH_URL=""
+DATABASE_URL=""
+PORT=3000
+EOF
+    fi
     RANDOM_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
-    sed_inplace "s|^NEXTAUTH_SECRET=.*|NEXTAUTH_SECRET=\"${RANDOM_SECRET}\"|" .env
+    if grep -q "^NEXTAUTH_SECRET=" .env; then
+        sed_inplace "s|^NEXTAUTH_SECRET=.*|NEXTAUTH_SECRET=\"${RANDOM_SECRET}\"|" .env
+    else
+        echo "NEXTAUTH_SECRET=\"${RANDOM_SECRET}\"" >> .env
+    fi
     print_success "Created .env with generated secret"
 else
     print_info ".env already exists, skipping"

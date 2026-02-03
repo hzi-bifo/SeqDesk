@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { pipelineId, version } = body || {};
+    const { pipelineId, version, replace } = body || {};
 
     if (!pipelineId || typeof pipelineId !== 'string') {
       return NextResponse.json({ error: 'Pipeline ID required' }, { status: 400 });
@@ -188,8 +188,9 @@ export async function POST(req: NextRequest) {
 
     const pipelinesDir = path.join(process.cwd(), 'pipelines');
     const pipelineDir = path.join(pipelinesDir, pipelineId);
+    const exists = fs.existsSync(pipelineDir);
 
-    if (fs.existsSync(pipelineDir)) {
+    if (exists && !replace) {
       return NextResponse.json(
         { error: `Pipeline ${pipelineId} already installed` },
         { status: 400 }
@@ -197,12 +198,17 @@ export async function POST(req: NextRequest) {
     }
 
     await fs.promises.mkdir(pipelinesDir, { recursive: true });
-    await fs.promises.mkdir(pipelineDir, { recursive: true });
+
+    const tempDir = path.join(
+      pipelinesDir,
+      `${pipelineId}.__tmp-${Date.now()}`
+    );
+    await fs.promises.mkdir(tempDir, { recursive: true });
 
     try {
-      await writePackageFiles(pipelineDir, payload, pipelineId);
+      await writePackageFiles(tempDir, payload, pipelineId);
     } catch (error) {
-      await fs.promises.rm(pipelineDir, { recursive: true, force: true });
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
       const message = error instanceof Error ? error.message : 'Unknown error';
       return NextResponse.json(
         { error: 'Failed to write pipeline package', details: message },
@@ -210,15 +216,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (exists) {
+      const backupDir = path.join(
+        pipelinesDir,
+        `${pipelineId}.__backup-${Date.now()}`
+      );
+      await fs.promises.rename(pipelineDir, backupDir);
+      await fs.promises.rename(tempDir, pipelineDir);
+      await fs.promises.rm(backupDir, { recursive: true, force: true });
+    } else {
+      await fs.promises.rename(tempDir, pipelineDir);
+    }
+
     clearPackageCache();
     clearRegistryCache();
 
     return NextResponse.json({
       success: true,
-      message: `Pipeline ${pipelineId} installed successfully`,
+      message: `Pipeline ${pipelineId} ${exists ? 'updated' : 'installed'} successfully`,
       pipelineId,
       version: download.version,
       source: download.url,
+      action: exists ? 'update' : 'install',
     });
   } catch (error) {
     console.error('Failed to install pipeline:', error);

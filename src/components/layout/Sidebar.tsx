@@ -35,9 +35,10 @@ interface SidebarProps {
     email?: string | null;
     role?: string;
   };
+  version?: string;
 }
 
-export function Sidebar({ user }: SidebarProps) {
+export function Sidebar({ user, version }: SidebarProps) {
   const pathname = usePathname();
   const { collapsed, toggle } = useSidebar();
   const { focusedField, setFocusedField, validationError } = useFieldHelp();
@@ -177,6 +178,11 @@ export function Sidebar({ user }: SidebarProps) {
                 <span className="inline-flex items-center px-2.5 py-1 bg-foreground text-background text-sm font-semibold rounded-md">
                   SeqDesk
                 </span>
+                {version && (
+                  <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                    v{version}
+                  </span>
+                )}
                 <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                   {isFacilityAdmin ? "Facility" : "Portal"}
                 </span>
@@ -251,10 +257,9 @@ export function Sidebar({ user }: SidebarProps) {
             {!collapsed && "Analysis"}
             {!collapsed && counts.analysis > 0 && (
               <span
-                className="flex items-center justify-center text-xs font-medium text-white bg-amber-500 rounded-full ml-auto h-5 min-w-5 px-1.5"
-                title={`${counts.analysis} running`}
+                className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5"
               >
-                {counts.analysis > 9 ? "9+" : counts.analysis}
+                {counts.analysis > 99 ? "99+" : counts.analysis}
               </span>
             )}
           </Link>
@@ -437,7 +442,7 @@ export function Sidebar({ user }: SidebarProps) {
         )}
       </nav>
 
-      {/* Platform Settings - Admin only, above user menu */}
+      {/* Settings - Admin only, above user menu */}
       {isFacilityAdmin && (
         <div className={cn("px-4 pb-2", collapsed && "px-2")}>
           {collapsed ? (
@@ -451,7 +456,7 @@ export function Sidebar({ user }: SidebarProps) {
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
               )}
-              title="Platform Settings"
+              title="Settings"
             >
               <Settings className="h-4 w-4" />
             </Link>
@@ -470,7 +475,7 @@ export function Sidebar({ user }: SidebarProps) {
               >
                 <span className="flex items-center gap-3">
                   <Settings className="h-4 w-4" />
-                  Platform Settings
+                  Settings
                 </span>
                 <ChevronDown
                   className={cn(
@@ -488,7 +493,7 @@ export function Sidebar({ user }: SidebarProps) {
                 )}
               >
                 <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-                  Order Forms
+                  Order Flow
                 </Link>
                 <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
                   Study Forms
@@ -496,22 +501,25 @@ export function Sidebar({ user }: SidebarProps) {
                 <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
                   Modules
                 </Link>
-                <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
-                  Pipelines
-                </Link>
                 {sequencingTechEnabled && (
                   <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
                     Seq. Technologies
                   </Link>
                 )}
+                <Link href="/admin/data-compute" className={adminSubItemClass("/admin/data-compute")}>
+                  Data & Compute
+                </Link>
+                <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
+                  Pipelines
+                </Link>
                 <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
-                  Admin Accounts
+                  Accounts
                 </Link>
                 <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
-                  ENA
+                  Data Upload
                 </Link>
                 <Link href="/admin/settings" className={adminSubItemClass("/admin/settings")}>
-                  General
+                  Info
                 </Link>
               </div>
             </>

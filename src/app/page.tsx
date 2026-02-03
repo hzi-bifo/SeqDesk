@@ -16,6 +16,7 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [checkingDb, setCheckingDb] = useState(true);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const checkDatabase = async () => {
@@ -33,6 +34,21 @@ export default function HomePage() {
     };
     checkDatabase();
   }, [router]);
+
+  useEffect(() => {
+    const loadVersion = async () => {
+      try {
+        const res = await fetch("/api/version");
+        if (res.ok) {
+          const data = await res.json();
+          setAppVersion(data.version || null);
+        }
+      } catch {
+        setAppVersion(null);
+      }
+    };
+    loadVersion();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,7 +176,7 @@ export default function HomePage() {
 
         {/* Footer */}
         <div className="text-xs" style={{ color: '#a3a3a3' }}>
-          SeqDesk v0.1.8 — Install flow improvements
+          SeqDesk v{appVersion || "—"}
         </div>
       </div>
 
@@ -246,22 +262,13 @@ export default function HomePage() {
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label
-                    htmlFor="password"
-                    className="block text-sm font-medium"
-                    style={{ color: '#171717' }}
-                  >
-                    Password
-                  </label>
-                  <Link
-                    href="/forgot-password"
-                    className="text-sm no-underline"
-                    style={{ color: '#525252' }}
-                  >
-                    Forgot password?
-                  </Link>
-                </div>
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium mb-2"
+                  style={{ color: '#171717' }}
+                >
+                  Password
+                </label>
                 <input
                   id="password"
                   type="password"
@@ -313,19 +320,27 @@ export default function HomePage() {
             </form>
           </div>
 
-          <p
-            className="text-center text-sm mt-6"
-            style={{ color: '#a3a3a3' }}
-          >
-            Don&apos;t have an account?{" "}
-            <Link
-              href="/register"
-              className="font-medium no-underline"
-              style={{ color: '#171717' }}
-            >
-              Create account
-            </Link>
-          </p>
+          <div className="text-center text-sm mt-6 space-y-2">
+            <p style={{ color: '#a3a3a3' }}>
+              Don&apos;t have an account?{" "}
+              <Link
+                href="/register"
+                className="font-medium no-underline"
+                style={{ color: '#171717' }}
+              >
+                Create account
+              </Link>
+            </p>
+            <p>
+              <Link
+                href="/forgot-password"
+                className="no-underline transition-colors"
+                style={{ color: '#a3a3a3' }}
+              >
+                Forgot password?
+              </Link>
+            </p>
+          </div>
 
           {/* Mobile App Info */}
           <div className="lg:hidden mt-8 text-center text-sm" style={{ color: '#a3a3a3' }}>

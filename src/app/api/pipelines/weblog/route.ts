@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getExecutionSettings } from '@/app/api/admin/settings/pipelines/execution/route';
+import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';

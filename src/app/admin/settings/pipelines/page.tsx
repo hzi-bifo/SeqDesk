@@ -98,6 +98,7 @@ interface PipelineConfig {
   icon: string;
   enabled: boolean;
   config: Record<string, unknown>;
+  download?: PipelineDownloadInfo;
   configSchema: {
     properties: Record<string, {
       type: string;
@@ -107,6 +108,27 @@ interface PipelineConfig {
     }>;
   };
   defaultConfig: Record<string, unknown>;
+}
+
+interface PipelineDownloadInfo {
+  status: "downloaded" | "missing" | "unsupported";
+  version?: string;
+  expectedVersion?: string;
+  path?: string;
+  lastUpdated?: string;
+  detail?: string;
+  job?: {
+    state: "running" | "success" | "error";
+    pipelineRef?: string;
+    requestedVersion?: string;
+    resolvedVersion?: string;
+    source?: string;
+    pid?: number;
+    startedAt?: string;
+    finishedAt?: string;
+    error?: string;
+    logPath?: string;
+  };
 }
 
 interface StorePipeline {
@@ -167,7 +189,13 @@ function getCategoryColor(category: string): string {
 export default function PipelineSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR(
     "/api/admin/settings/pipelines",
-    fetcher
+    fetcher,
+    {
+      refreshInterval: (latestData) =>
+        latestData?.pipelines?.some((pipeline: PipelineConfig) => pipeline.download?.job?.state === "running")
+          ? 3000
+          : 0,
+    }
   );
 
   const {
@@ -191,7 +219,26 @@ export default function PipelineSettingsPage() {
 
   // Install state
   const [installingPipeline, setInstallingPipeline] = useState<string | null>(null);
+  const [installAction, setInstallAction] = useState<"install" | "update" | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
+  const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const compareVersions = (a?: string, b?: string) => {
+    if (!a || !b) return 0;
+    const partsA = a.replace(/^v/, "").split(".").map(Number);
+    const partsB = b.replace(/^v/, "").split(".").map(Number);
+    const length = Math.max(partsA.length, partsB.length);
+    for (let i = 0; i < length; i += 1) {
+      const numA = partsA[i] || 0;
+      const numB = partsB[i] || 0;
+      if (Number.isNaN(numA) || Number.isNaN(numB)) return 0;
+      if (numA > numB) return 1;
+      if (numA < numB) return -1;
+    }
+    return 0;
+  };
 
   const formatStoreDate = (value?: string) => {
     if (!value) return "Unknown";
@@ -202,6 +249,7 @@ export default function PipelineSettingsPage() {
   // Install a pipeline from the store
   const handleInstallPipeline = async (pipelineId: string, version?: string) => {
     setInstallingPipeline(pipelineId);
+    setInstallAction("install");
     setInstallError(null);
     try {
       const res = await fetch("/api/admin/settings/pipelines/install", {
@@ -221,6 +269,57 @@ export default function PipelineSettingsPage() {
       console.error("Install error:", err);
     } finally {
       setInstallingPipeline(null);
+      setInstallAction(null);
+    }
+  };
+
+  const handleUpdatePipeline = async (pipelineId: string, version?: string) => {
+    setInstallingPipeline(pipelineId);
+    setInstallAction("update");
+    setInstallError(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipelineId, version, replace: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setInstallError(data.error || "Update failed");
+        return;
+      }
+      mutate();
+    } catch (err) {
+      setInstallError("Update failed. Check console for details.");
+      console.error("Update error:", err);
+    } finally {
+      setInstallingPipeline(null);
+      setInstallAction(null);
+    }
+  };
+
+  const handleDownloadPipelineCode = async (pipelineId: string, version?: string, action: "download" | "update" = "download") => {
+    setDownloadingPipeline(pipelineId);
+    setDownloadAction(action);
+    setDownloadError(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipelineId, version }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDownloadError(data.error || "Download failed");
+        return;
+      }
+      mutate();
+    } catch (err) {
+      setDownloadError("Download failed. Check console for details.");
+      console.error("Download error:", err);
+    } finally {
+      setDownloadingPipeline(null);
+      setDownloadAction(null);
     }
   };
 
@@ -309,6 +408,7 @@ export default function PipelineSettingsPage() {
 
   const installedPipelineIds = new Set(data?.pipelines?.map((p: PipelineConfig) => p.pipelineId) || []);
   const storePipelines: StorePipeline[] = storeData?.pipelines || [];
+  const storePipelineMap = new Map(storePipelines.map((pipeline) => [pipeline.id, pipeline]));
   const storeCategories: StoreCategory[] = storeData?.categories || [];
   const availablePipelines = storePipelines.filter(
     (pipeline) => !installedPipelineIds.has(pipeline.id) && (selectedCategory === "all" || pipeline.category === selectedCategory)
@@ -323,12 +423,12 @@ export default function PipelineSettingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
           <p className="text-muted-foreground mt-1">
-            Install and manage nf-core pipelines. Execution settings live in Platform {" > "} Compute.
+            Install and manage nf-core pipelines. Toggle Active to allow runs. Execution settings live in Data & Compute.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" asChild>
-            <a href="/admin/settings#compute">Compute settings</a>
+            <a href="/admin/data-compute">Compute settings</a>
           </Button>
           <Button size="sm" onClick={() => setShowStore((prev) => !prev)}>
             <Download className="h-4 w-4 mr-2" />
@@ -343,13 +443,28 @@ export default function PipelineSettingsPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Installed</p>
             <h2 className="text-2xl font-semibold">Installed pipelines</h2>
             <p className="text-sm text-muted-foreground mt-2">
-              Enable, configure, and review pipelines already available on this instance.
+              Installed pipelines are available on this instance. Toggle Active to allow running and download code to prefetch the workflow.
             </p>
           </div>
           <Badge variant="secondary" className="h-6 px-3">
             {installedCount} installed
           </Badge>
         </div>
+
+        {downloadError && (
+          <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+            <XCircle className="h-5 w-5 text-destructive" />
+            <p className="text-sm text-destructive">{downloadError}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              onClick={() => setDownloadError(null)}
+            >
+              Dismiss
+            </Button>
+          </div>
+        )}
 
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
@@ -363,6 +478,37 @@ export default function PipelineSettingsPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {data.pipelines.map((pipeline: PipelineConfig) => (
               <GlassCard key={pipeline.pipelineId} className="relative">
+                {(() => {
+                  const storeEntry = storePipelineMap.get(pipeline.pipelineId);
+                  const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
+                  const updateAvailable =
+                    latestVersion &&
+                    pipeline.version &&
+                    compareVersions(latestVersion, pipeline.version) > 0;
+                  const downloadStatus = pipeline.download;
+                  const expectedCodeVersion = downloadStatus?.expectedVersion;
+                  const downloadedCodeVersion = downloadStatus?.version;
+                  const codeStatus = downloadStatus?.status;
+                  const downloadJob = downloadStatus?.job;
+                  const downloadInProgress = downloadJob?.state === "running";
+                  const downloadFailed = downloadJob?.state === "error";
+                  const downloadFinishedAt = downloadJob?.finishedAt;
+                  const codeUpdateAvailable =
+                    codeStatus === "downloaded" &&
+                    expectedCodeVersion &&
+                    downloadedCodeVersion &&
+                    compareVersions(expectedCodeVersion, downloadedCodeVersion) > 0;
+                  const codeMissing = codeStatus === "missing";
+                  const shouldOfferCodeDownload =
+                    codeMissing || codeUpdateAvailable || (codeStatus === "downloaded" && !downloadedCodeVersion);
+                  const codeActionLabel = codeMissing
+                    ? "Download code"
+                    : codeUpdateAvailable
+                      ? "Update code"
+                      : "Re-download";
+
+                  return (
+                <>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-4">
                     <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
@@ -376,9 +522,47 @@ export default function PipelineSettingsPage() {
                             v{pipeline.version}
                           </Badge>
                         )}
+                        <Badge variant="outline" className="text-xs font-normal">
+                          Installed
+                        </Badge>
+                        {codeStatus === "downloaded" && (
+                          <Badge variant="outline" className="text-xs font-normal">
+                            Code ready
+                          </Badge>
+                        )}
+                        {downloadInProgress && (
+                          <Badge variant="secondary" className="text-xs">
+                            Downloading...
+                          </Badge>
+                        )}
+                        {downloadFailed && (
+                          <Badge variant="secondary" className="text-xs">
+                            Download failed
+                          </Badge>
+                        )}
+                        {codeStatus === "missing" && (
+                          <Badge variant="secondary" className="text-xs">
+                            Code missing
+                          </Badge>
+                        )}
+                        {codeStatus === "unsupported" && (
+                          <Badge variant="secondary" className="text-xs">
+                            Code external
+                          </Badge>
+                        )}
                         <Badge variant="secondary" className="text-xs capitalize">
                           {pipeline.category}
                         </Badge>
+                        {updateAvailable && (
+                          <Badge variant="secondary" className="text-xs">
+                            Package update
+                          </Badge>
+                        )}
+                        {codeUpdateAvailable && (
+                          <Badge variant="secondary" className="text-xs">
+                            Code update
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {pipeline.description}
@@ -386,10 +570,40 @@ export default function PipelineSettingsPage() {
                       <p className="text-xs text-muted-foreground font-mono mt-1">
                         {pipeline.pipelineId}
                       </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {latestVersion
+                          ? `Latest version: v${latestVersion}`
+                          : "Latest version: unknown"}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {codeStatus === "downloaded"
+                          ? `Code cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
+                          : codeStatus === "missing"
+                            ? "Code cache: not downloaded"
+                            : codeStatus === "unsupported"
+                              ? "Code cache: managed externally"
+                              : "Code cache: unknown"}
+                        {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
+                      </p>
+                      {downloadInProgress && downloadJob?.startedAt && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Download started {formatStoreDate(downloadJob.startedAt)}
+                        </p>
+                      )}
+                      {downloadFailed && (
+                        <p className="text-xs text-destructive mt-1">
+                          {downloadJob?.error ? `Download failed: ${downloadJob.error}` : "Download failed"}
+                        </p>
+                      )}
+                      {downloadJob?.state === "success" && downloadFinishedAt && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Last download {formatStoreDate(downloadFinishedAt)}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <Badge variant={pipeline.enabled ? "default" : "secondary"}>
-                    {pipeline.enabled ? "Enabled" : "Disabled"}
+                    {pipeline.enabled ? "Active" : "Inactive"}
                   </Badge>
                 </div>
 
@@ -402,10 +616,48 @@ export default function PipelineSettingsPage() {
                       disabled={saving}
                     />
                     <Label htmlFor={`enable-${pipeline.pipelineId}`} className="text-sm">
-                      {pipeline.enabled ? "Enabled" : "Disabled"}
+                      {pipeline.enabled ? "Active" : "Inactive"}
                     </Label>
                   </div>
                   <div className="ml-auto flex flex-wrap gap-2">
+                    {shouldOfferCodeDownload && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDownloadPipelineCode(pipeline.pipelineId, expectedCodeVersion, codeUpdateAvailable ? "update" : "download")}
+                        className="h-8"
+                        disabled={downloadingPipeline === pipeline.pipelineId || downloadInProgress}
+                      >
+                        {downloadingPipeline === pipeline.pipelineId || downloadInProgress ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4 mr-1" />
+                        )}
+                        {downloadingPipeline === pipeline.pipelineId || downloadInProgress
+                          ? downloadAction === "update"
+                            ? "Updating..."
+                            : "Downloading..."
+                          : codeActionLabel}
+                      </Button>
+                    )}
+                    {updateAvailable && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleUpdatePipeline(pipeline.pipelineId, latestVersion)}
+                        className="h-8"
+                        disabled={installingPipeline === pipeline.pipelineId}
+                      >
+                        {installingPipeline === pipeline.pipelineId && installAction === "update" ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4 mr-1" />
+                        )}
+                        {installingPipeline === pipeline.pipelineId && installAction === "update"
+                          ? "Updating..."
+                          : "Update"}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -426,6 +678,9 @@ export default function PipelineSettingsPage() {
                     </Button>
                   </div>
                 </div>
+                </>
+                  );
+                })()}
               </GlassCard>
             ))}
           </div>
@@ -453,6 +708,7 @@ export default function PipelineSettingsPage() {
                 <h2 className="text-2xl font-semibold">Add pipelines</h2>
                 <p className="text-sm text-muted-foreground mt-2 max-w-2xl">
                   Install nf-core pipelines packaged for SeqDesk with samplesheet generation and output parsing.
+                  Download the workflow code after install to warm the Nextflow cache.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -572,12 +828,12 @@ export default function PipelineSettingsPage() {
                         onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
                         disabled={installingPipeline === pipeline.id}
                       >
-                        {installingPipeline === pipeline.id ? (
+                        {installingPipeline === pipeline.id && installAction === "install" ? (
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         ) : (
                           <Download className="h-4 w-4 mr-2" />
                         )}
-                        {installingPipeline === pipeline.id ? "Installing..." : "Install"}
+                        {installingPipeline === pipeline.id && installAction === "install" ? "Installing..." : "Install"}
                       </Button>
                     </div>
                   </div>

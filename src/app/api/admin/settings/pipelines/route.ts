@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY, getAllPipelineIds } from '@/lib/pipelines';
+import { getPackageManifest } from '@/lib/pipelines/package-loader';
+import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
 
 // GET - List all pipeline configurations
 export async function GET(request: NextRequest) {
@@ -24,9 +26,20 @@ export async function GET(request: NextRequest) {
     const configMap = new Map(configs.map(c => [c.pipelineId, c]));
 
     // Build response with registry data + database config
-    const pipelines = allPipelineIds.map(pipelineId => {
+    const pipelines = await Promise.all(allPipelineIds.map(async pipelineId => {
       const definition = PIPELINE_REGISTRY[pipelineId];
       const dbConfig = configMap.get(pipelineId);
+      const manifest = getPackageManifest(pipelineId);
+      const downloadStatus = manifest
+        ? await getPipelineDownloadStatus(
+          pipelineId,
+          manifest.execution.pipeline,
+          manifest.execution.version
+        )
+        : {
+          status: 'unsupported' as const,
+          detail: 'Missing pipeline manifest',
+        };
 
       return {
         pipelineId,
@@ -42,8 +55,9 @@ export async function GET(request: NextRequest) {
         visibility: definition.visibility,
         requires: definition.requires,
         outputs: definition.outputs,
+        download: downloadStatus,
       };
-    });
+    }));
 
     // Filter if only enabled requested
     const result = enabledOnly

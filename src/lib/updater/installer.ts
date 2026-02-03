@@ -15,9 +15,12 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import type { ReleaseInfo, UpdateProgress } from './types';
+import { releaseUpdateLock } from './status';
 
 const execAsync = promisify(exec);
 
@@ -96,6 +99,10 @@ export async function installUpdate(
     report('extracting', 80, 'Applying update...');
     await applyUpdate();
 
+    // Step 5b: Verify version
+    report('extracting', 85, 'Verifying update...');
+    await verifyInstalledVersion(release.version);
+
     // Step 6: Run migrations
     report('extracting', 90, 'Running database migrations...');
     await runMigrations();
@@ -106,6 +113,7 @@ export async function installUpdate(
 
     // Step 8: Restart
     report('restarting', 100, 'Restarting application...');
+    await releaseUpdateLock();
     await restartApplication();
 
   } catch (error) {
@@ -119,6 +127,7 @@ export async function installUpdate(
       // Backup restore failed - manual intervention needed
     }
 
+    await releaseUpdateLock();
     throw error;
   }
 }
@@ -152,12 +161,22 @@ async function verifyChecksum(filePath: string, expectedChecksum: string): Promi
     throw new Error(`Unsupported checksum algorithm: ${algorithm}`);
   }
 
-  const { stdout } = await execAsync(`shasum -a 256 "${filePath}"`);
-  const actualHash = stdout.split(' ')[0];
+  const actualHash = await hashFile(filePath, 'sha256');
 
   if (actualHash !== hash) {
     throw new Error('Checksum verification failed - download may be corrupted');
   }
+}
+
+async function hashFile(filePath: string, algorithm: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash(algorithm);
+    const stream = createReadStream(filePath);
+
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 /**
@@ -229,11 +248,24 @@ async function applyUpdate(): Promise<void> {
   }
 
   // Copy new files
-  await execAsync(`cp -r "${extractDir}/"* "${INSTALL_DIR}/"`);
+  await execAsync(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
 
   // Restore preserved files
   for (const [file, content] of Object.entries(preserved)) {
     await fs.writeFile(path.join(INSTALL_DIR, file), content);
+  }
+}
+
+async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
+  try {
+    const pkgPath = path.join(INSTALL_DIR, 'package.json');
+    const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+    if (pkg.version !== expectedVersion) {
+      throw new Error(`Expected ${expectedVersion}, found ${pkg.version || 'unknown'}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Installed version check failed: ${message}`);
   }
 }
 
