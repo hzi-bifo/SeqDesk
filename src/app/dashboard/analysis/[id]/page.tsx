@@ -374,7 +374,7 @@ export default function AnalysisRunDetailPage({
   }
 
   const stepStatusMap = new Map<string, Run["steps"][number]>();
-  run?.steps.forEach((step) => stepStatusMap.set(step.stepId, step));
+  run?.steps?.forEach((step) => stepStatusMap.set(step.stepId, step));
   const orderedNodes = defData?.nodes
     ? [...defData.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     : [];
@@ -394,7 +394,7 @@ export default function AnalysisRunDetailPage({
       })
     : undefined;
 
-  const extraSteps = run?.steps.filter((step) => !orderedNodeIds.has(step.stepId)) || [];
+  const extraSteps = run?.steps?.filter((step) => !orderedNodeIds.has(step.stepId)) || [];
 
   const stepRows = [
     ...orderedNodes.map((node) => {
