@@ -355,6 +355,24 @@ async function applyUpdate(): Promise<void> {
     }
   }
 
+  // Backup database files to a safe location (more robust than just stripping from extract)
+  // This ensures we preserve the database even if the strip function fails
+  const dbBackupDir = path.join(TEMP_DIR, 'db-backup');
+  await fs.mkdir(dbBackupDir, { recursive: true });
+  const databaseFiles = await getDatabaseFiles();
+  const dbBackups: Array<{ original: string; backup: string }> = [];
+
+  for (const dbPath of databaseFiles) {
+    try {
+      await fs.access(dbPath);
+      const backupPath = path.join(dbBackupDir, path.basename(dbPath));
+      await fs.copyFile(dbPath, backupPath);
+      dbBackups.push({ original: dbPath, backup: backupPath });
+    } catch {
+      // File doesn't exist, skip
+    }
+  }
+
   await stripDatabaseFilesFromExtract(extractDir);
 
   // Copy new files
@@ -363,6 +381,16 @@ async function applyUpdate(): Promise<void> {
   // Restore preserved files
   for (const [file, content] of Object.entries(preserved)) {
     await fs.writeFile(path.join(INSTALL_DIR, file), content);
+  }
+
+  // Restore database files from backup
+  for (const { original, backup } of dbBackups) {
+    try {
+      await fs.copyFile(backup, original);
+    } catch {
+      // Backup restore failed - this is critical
+      console.error(`Failed to restore database file: ${original}`);
+    }
   }
 }
 
