@@ -34,7 +34,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
   // Load module states from API
   const loadModuleStates = async () => {
     try {
-      const res = await fetch("/api/admin/modules");
+      const res = await fetch("/api/modules");
       if (res.ok) {
         const data = await res.json();
         setModuleStates(data.modules || DEFAULT_MODULE_STATES);
