@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -48,7 +48,15 @@ function getStatusBadge(status: string) {
     case "completed":
       return <Badge variant="default" className="bg-green-600">Completed</Badge>;
     case "running":
-      return <Badge variant="default" className="bg-blue-600">Running</Badge>;
+      return (
+        <Badge variant="default" className="bg-blue-600">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-white/70 opacity-75 animate-ping" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+          </span>
+          Running
+        </Badge>
+      );
     case "queued":
       return <Badge variant="secondary">Queued</Badge>;
     case "pending":
@@ -101,6 +109,22 @@ function formatRelativeTime(timestamp?: string | null): string {
   return `${days}d ago`;
 }
 
+function formatStatusSource(source?: string | null): string {
+  if (!source) return "unknown";
+  switch (source) {
+    case "weblog":
+      return "Weblog";
+    case "trace":
+      return "Trace";
+    case "process":
+      return "Process";
+    case "launcher":
+      return "Launcher";
+    default:
+      return source.replace(/_/g, " ");
+  }
+}
+
 interface Run {
   id: string;
   runNumber: string;
@@ -121,8 +145,11 @@ interface Run {
   queuedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  lastEventAt?: string | null;
+  statusSource?: string | null;
   createdAt: string;
   updatedAt: string;
+  queueJobId?: string | null;
   study: {
     id: string;
     title: string;
@@ -141,6 +168,18 @@ interface Run {
   inputSampleIds?: string[] | null;
 }
 
+interface QueueStatus {
+  available: boolean;
+  type?: "slurm" | "local";
+  status?: string;
+  reason?: string;
+  elapsed?: string;
+  exitCode?: string;
+  pid?: number;
+  source?: "squeue" | "sacct";
+  message?: string;
+}
+
 export default function AnalysisRunDetailPage({
   params,
 }: {
@@ -150,14 +189,16 @@ export default function AnalysisRunDetailPage({
   const [viewMode, setViewMode] = useState<"dag" | "list">("dag");
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [checkingQueue, setCheckingQueue] = useState(false);
   const router = useRouter();
 
   const { data, error, isLoading, mutate } = useSWR(
     `/api/pipelines/runs/${id}`,
     fetcher,
     {
-      refreshInterval: (data) =>
-        data?.run?.status === "running" ? 5000 : 0, // Only refresh if running
+      refreshInterval: (latestData) =>
+        latestData?.run?.status === "running" ? 15000 : 0,
     }
   );
 
@@ -363,6 +404,40 @@ export default function AnalysisRunDetailPage({
     }
   };
 
+  const syncRun = useCallback(async () => {
+    try {
+      await fetch(`/api/pipelines/runs/${id}/sync`, { method: "POST" });
+    } catch (err) {
+      console.error("Failed to sync run:", err);
+    }
+  }, [id]);
+
+  const handleRefresh = async () => {
+    if (run?.status === "running") {
+      await syncRun();
+    }
+    mutate();
+  };
+
+  useEffect(() => {
+    if (!run || run.status !== "running") return;
+    let active = true;
+
+    const tick = async () => {
+      await syncRun();
+      if (active) {
+        mutate();
+      }
+    };
+
+    void tick();
+    const interval = setInterval(tick, 15000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [run?.id, run?.status, mutate, syncRun]);
+
   const handleRetry = async () => {
     if (!run) return;
     if (!run.study?.id) {
@@ -448,11 +523,73 @@ export default function AnalysisRunDetailPage({
     );
   }
 
-  const lastUpdateAgeMs = run?.updatedAt
-    ? Date.now() - new Date(run.updatedAt).getTime()
+  const lastEventAt = (() => {
+    if (!run) return null;
+    const candidates = [
+      run.lastEventAt,
+      run.startedAt,
+      run.updatedAt,
+      run.createdAt,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    return candidates[0] || null;
+  })();
+  const lastUpdateAgeMs = lastEventAt
+    ? Date.now() - new Date(lastEventAt).getTime()
     : null;
   const isLive = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs <= 60_000;
   const isStale = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs > 300_000;
+
+  const fetchQueueStatus = async () => {
+    if (!run?.queueJobId) return;
+    setCheckingQueue(true);
+    try {
+      const res = await fetch(`/api/pipelines/runs/${run.id}/queue`);
+      if (!res.ok) {
+        setQueueStatus({
+          available: false,
+          message: `Failed to fetch queue status (HTTP ${res.status})`,
+        });
+        return;
+      }
+      const data = (await res.json()) as QueueStatus;
+      setQueueStatus(data);
+    } catch {
+      setQueueStatus({
+        available: false,
+        message: "Failed to fetch queue status",
+      });
+    } finally {
+      setCheckingQueue(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!run?.id || run.status !== "running") return;
+    let active = true;
+
+    const tick = async () => {
+      await fetch(`/api/pipelines/runs/${run.id}/sync`, { method: "POST" });
+      if (active) {
+        mutate();
+      }
+    };
+
+    const interval = setInterval(tick, 20000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [run?.id, run?.status, mutate]);
+
+  useEffect(() => {
+    if (!run?.queueJobId) return;
+    if (!["running", "queued", "pending"].includes(run.status)) return;
+    fetchQueueStatus();
+    const interval = setInterval(fetchQueueStatus, 20000);
+    return () => clearInterval(interval);
+  }, [run?.queueJobId, run?.status]);
 
   return (
     <PageContainer>
@@ -469,18 +606,52 @@ export default function AnalysisRunDetailPage({
               {getPipelineIcon(run.pipelineIcon)}
               <h1 className="text-2xl font-bold font-mono">{run.runNumber}</h1>
               {getStatusBadge(run.status)}
+              {isLive && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-blue-500/70 opacity-75 animate-ping" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
+                  </span>
+                  Live
+                </span>
+              )}
             </div>
             <p className="text-muted-foreground mt-1">{run.pipelineName}</p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-              <span>Last update: {formatRelativeTime(run.updatedAt)}</span>
-              {isLive && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Live</Badge>}
-              {isStale && <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">No updates</Badge>}
+              <span>Last event: {formatRelativeTime(lastEventAt)}</span>
+              <Badge variant="outline" className="text-xs">
+                Source: {formatStatusSource(run.statusSource)}
+              </Badge>
+              {queueStatus?.available && queueStatus.status && (
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${
+                    queueStatus.type === "slurm"
+                      ? "bg-slate-50 text-slate-700 border-slate-200"
+                      : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                  }`}
+                  title={queueStatus.reason ? `Reason: ${queueStatus.reason}` : undefined}
+                >
+                  {queueStatus.type === "local" ? "Local process" : "Queue"}: {queueStatus.status}
+                  {queueStatus.reason ? ` (${queueStatus.reason})` : ""}
+                </Badge>
+              )}
+              {isLive && (
+                <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                  Live
+                </Badge>
+              )}
+              {isStale && (
+                <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
+                  No updates
+                </Badge>
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => mutate()}>
+          <Button variant="outline" onClick={handleRefresh}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
@@ -597,6 +768,7 @@ export default function AnalysisRunDetailPage({
             <PipelineFileBrowser
               inputFiles={inputFiles}
               outputFiles={outputFiles}
+              runId={run.id}
               runFolder={run.runFolder}
               runStatus={run.status}
             />
@@ -741,6 +913,43 @@ export default function AnalysisRunDetailPage({
                   <dd>{new Date(run.completedAt).toLocaleString()}</dd>
                 </div>
               )}
+              <div>
+                <dt className="text-sm text-muted-foreground">Last Event</dt>
+                <dd>{lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}</dd>
+              </div>
+              {run.queueJobId && (
+                <div>
+                  <dt className="text-sm text-muted-foreground">Queue Job</dt>
+                  <dd className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm">{run.queueJobId}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={fetchQueueStatus}
+                        disabled={checkingQueue}
+                      >
+                        {checkingQueue ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Check queue"
+                        )}
+                      </Button>
+                    </div>
+                    {queueStatus && (
+                      <p className={`text-xs ${queueStatus.available ? "text-muted-foreground" : "text-yellow-600"}`}>
+                        {queueStatus.available
+                          ? `${queueStatus.type === "local" ? "Local process" : "SLURM"}: ${queueStatus.status || "unknown"}${queueStatus.elapsed ? ` (${queueStatus.elapsed})` : ""}${queueStatus.reason ? ` — ${queueStatus.reason}` : ""}`
+                          : queueStatus.message || "Queue status unavailable"}
+                      </p>
+                    )}
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-sm text-muted-foreground">Status Source</dt>
+                <dd>{formatStatusSource(run.statusSource)}</dd>
+              </div>
             </dl>
           </GlassCard>
 

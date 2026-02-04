@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ import {
   FileText,
   Download,
   Eye,
+  Loader2,
   Search,
   FolderInput,
   FolderOutput,
@@ -59,6 +60,7 @@ export interface PipelineFile {
 interface PipelineFileBrowserProps {
   inputFiles: PipelineFile[];
   outputFiles: PipelineFile[];
+  runId?: string;
   runFolder?: string | null;
   runStatus?: string;
   className?: string;
@@ -84,6 +86,27 @@ function getFileIcon(filename: string, type: string) {
     return <FileCode className="h-4 w-4 text-indigo-600" />;
   }
   return <File className="h-4 w-4 text-gray-500" />;
+}
+
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "log",
+  "out",
+  "err",
+  "csv",
+  "tsv",
+  "json",
+  "yaml",
+  "yml",
+  "md",
+  "dot",
+]);
+
+function isTextLikeFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".out") || lower.endsWith(".err")) return true;
+  const ext = lower.split(".").pop();
+  return !!ext && TEXT_EXTENSIONS.has(ext);
 }
 
 // File type badge
@@ -125,14 +148,61 @@ function formatSize(size?: number | bigint): string {
 // File preview dialog
 function FilePreviewDialog({
   file,
+  runId,
   open,
   onClose,
 }: {
   file: PipelineFile | null;
+  runId?: string;
   open: boolean;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTruncated, setPreviewTruncated] = useState(false);
+
+  const canPreview = !!file && !!runId && isTextLikeFile(file.name);
+
+  const loadPreview = async () => {
+    if (!file || !runId || !isTextLikeFile(file.name)) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewContent(null);
+    setPreviewTruncated(false);
+    try {
+      const res = await fetch(
+        `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}`
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPreviewError(data?.error || `Failed to load file (HTTP ${res.status})`);
+        return;
+      }
+      const data = (await res.json()) as {
+        content?: string;
+        truncated?: boolean;
+      };
+      setPreviewContent(data.content ?? "");
+      setPreviewTruncated(Boolean(data.truncated));
+    } catch {
+      setPreviewError("Failed to load file");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (canPreview) {
+      void loadPreview();
+    } else {
+      setPreviewContent(null);
+      setPreviewError(null);
+      setPreviewTruncated(false);
+    }
+  }, [open, file?.path, runId]);
 
   const copyPath = () => {
     if (file?.path) {
@@ -216,6 +286,42 @@ function FilePreviewDialog({
               </Button>
             )}
           </div>
+
+          {/* Preview */}
+          <div className="pt-2">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm text-muted-foreground">Preview</div>
+              {canPreview && (
+                <Button variant="ghost" size="sm" onClick={loadPreview} disabled={previewLoading}>
+                  {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+                </Button>
+              )}
+            </div>
+            {!canPreview && (
+              <div className="text-xs text-muted-foreground">
+                Preview available for text-based files (e.g., .out, .err, .log, .txt).
+              </div>
+            )}
+            {previewError && (
+              <div className="text-xs text-destructive">{previewError}</div>
+            )}
+            {canPreview && !previewError && (
+              <div className="bg-muted rounded-md border max-h-[320px] overflow-auto">
+                {previewLoading ? (
+                  <div className="p-4 text-sm text-muted-foreground">Loading...</div>
+                ) : (
+                  <pre className="p-4 text-xs whitespace-pre-wrap font-mono">
+                    {previewContent || "No content"}
+                  </pre>
+                )}
+              </div>
+            )}
+            {previewTruncated && (
+              <div className="text-xs text-muted-foreground mt-1">
+                Showing last part of file (truncated).
+              </div>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -225,6 +331,7 @@ function FilePreviewDialog({
 export function PipelineFileBrowser({
   inputFiles,
   outputFiles,
+  runId,
   runFolder,
   runStatus,
   className = "",
@@ -471,6 +578,7 @@ export function PipelineFileBrowser({
       {/* Preview Dialog */}
       <FilePreviewDialog
         file={selectedFile}
+        runId={runId}
         open={!!selectedFile}
         onClose={() => setSelectedFile(null)}
       />
