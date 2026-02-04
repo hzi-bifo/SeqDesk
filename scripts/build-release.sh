@@ -127,6 +127,11 @@ for item in public prisma pipelines seqdesk.config.example.json package-lock.jso
   fi
 done
 
+# Remove any database files from the release (CRITICAL: prevents data loss on update)
+echo "Removing database files from release..."
+rm -f "${RELEASE_DIR}/prisma/dev.db" "${RELEASE_DIR}/prisma/dev.db-wal" "${RELEASE_DIR}/prisma/dev.db-shm" "${RELEASE_DIR}/prisma/dev.db-journal"
+rm -f "${RELEASE_DIR}/prisma/"*.db "${RELEASE_DIR}/prisma/"*.db-*
+
 if [[ -f "${ROOT_DIR}/scripts/install-wizard.mjs" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp "${ROOT_DIR}/scripts/install-wizard.mjs" "${RELEASE_DIR}/scripts/"
