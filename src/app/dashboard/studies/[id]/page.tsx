@@ -28,7 +28,6 @@ import {
   Clock,
   ExternalLink,
   Copy,
-  FileCode,
   CheckCircle2,
   BookOpen,
   RotateCcw,
@@ -182,17 +181,6 @@ export default function StudyDetailPage({
     studyXml?: string;
     sampleXml?: string;
     submissionXml?: string;
-  } | null>(null);
-
-  // Simulate reads states
-  const [simulateReadsDialogOpen, setSimulateReadsDialogOpen] = useState(false);
-  const [simulatingReads, setSimulatingReads] = useState(false);
-  const [simulateReadsResult, setSimulateReadsResult] = useState<{
-    success: boolean;
-    error?: string;
-    createdPath?: string;
-    filesCreated?: number;
-    samplesProcessed?: number;
   } | null>(null);
 
   // Check if current user is the owner of this study
@@ -422,53 +410,6 @@ export default function StudyDetailPage({
       setRegisterResult({ success: false, error: message, isTest });
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleSimulateReads = async () => {
-    if (!study) return;
-
-    setSimulatingReads(true);
-    setSimulateReadsResult(null);
-    setSimulateReadsDialogOpen(true);
-    setError("");
-
-    try {
-      const res = await fetch(`/api/studies/${id}/simulate-reads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pairedEnd: true,
-          createRecords: true,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setSimulateReadsResult({
-          success: false,
-          error: data.error || "Failed to create simulated read files",
-        });
-        return;
-      }
-
-      setSimulateReadsResult({
-        success: true,
-        createdPath: data.createdPath,
-        filesCreated: data.filesCreated,
-        samplesProcessed: data.samplesProcessed,
-      });
-
-      // Refresh study data to show new reads
-      setTimeout(fetchStudy, 500);
-    } catch (err) {
-      setSimulateReadsResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to create simulated reads",
-      });
-    } finally {
-      setSimulatingReads(false);
     }
   };
 
@@ -919,38 +860,6 @@ export default function StudyDetailPage({
         );
       })()}
 
-      {/* Admin Tools - only for admins with samples */}
-      {isAdmin && totalSamples > 0 && (
-        <div className="mb-6 rounded-lg border p-5 bg-muted/30">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-semibold flex items-center gap-2">
-                <FileCode className="h-5 w-5" />
-                Admin Tools
-              </p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Development and testing utilities
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleSimulateReads}
-                disabled={simulatingReads}
-              >
-                {simulatingReads ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <FileCode className="h-4 w-4 mr-2" />
-                )}
-                Simulate Reads
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Pipelines Section - only for admins with samples */}
       {isAdmin && totalSamples > 0 && (
         <StudyPipelinesSection studyId={study.id} samples={study.samples} />
@@ -1354,85 +1263,6 @@ export default function StudyDetailPage({
         </DialogContent>
       </Dialog>
 
-      {/* Simulate Reads Dialog */}
-      <Dialog open={simulateReadsDialogOpen} onOpenChange={(open) => {
-        if (!simulatingReads) setSimulateReadsDialogOpen(open);
-      }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileCode className="h-5 w-5" />
-              Simulate Reads
-            </DialogTitle>
-            <DialogDescription>
-              {simulateReadsResult
-                ? simulateReadsResult.success
-                  ? "Simulated read files created successfully"
-                  : "Failed to create simulated reads"
-                : "Creating simulated FASTQ files..."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-4">
-            {simulatingReads && (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            )}
-
-            {simulateReadsResult && (
-              <div className={`p-4 rounded-lg border ${
-                simulateReadsResult.success
-                  ? "bg-green-50 border-green-200"
-                  : "bg-red-50 border-red-200"
-              }`}>
-                <div className="text-center">
-                  {simulateReadsResult.success ? (
-                    <>
-                      <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-2" />
-                      <p className="font-medium">Files Created Successfully</p>
-                      <div className="mt-3 text-sm text-muted-foreground space-y-1">
-                        <p>
-                          <span className="font-medium">{simulateReadsResult.filesCreated}</span> files created
-                        </p>
-                        <p>
-                          <span className="font-medium">{simulateReadsResult.samplesProcessed}</span> samples processed
-                        </p>
-                        {simulateReadsResult.createdPath && (
-                          <p className="mt-2 text-xs font-mono bg-muted p-2 rounded break-all">
-                            {simulateReadsResult.createdPath}
-                          </p>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
-                      <p className="font-medium text-red-800">Failed</p>
-                      <p className="text-sm text-red-600 mt-1">
-                        {simulateReadsResult.error}
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            {simulateReadsResult ? (
-              <Button onClick={() => setSimulateReadsDialogOpen(false)}>
-                Close
-              </Button>
-            ) : (
-              <Button variant="outline" disabled>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Creating files...
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </PageContainer>
   );
 }
