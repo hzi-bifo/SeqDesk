@@ -57,7 +57,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   sequencingFiles: {
     extensions: ['.fastq.gz', '.fq.gz', '.fastq', '.fq'],
     scanDepth: 2,
-    allowSingleEnd: false,
+    allowSingleEnd: true,
     ignorePatterns: ['**/tmp/**', '**/undetermined/**'],
   },
   auth: {

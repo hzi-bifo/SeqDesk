@@ -104,7 +104,7 @@ export default function DataComputePage() {
       const data = await res.json();
       setDataBasePath(data.dataBasePath || "");
       if (data.config) {
-        setSeqFilesConfig(data.config);
+        setSeqFilesConfig({ ...data.config, allowSingleEnd: true });
       }
     } catch (error) {
       console.error("Failed to load sequencing files settings:", error);
@@ -118,12 +118,13 @@ export default function DataComputePage() {
     setSeqFilesSaved(false);
 
     try {
+      const configToSave = { ...seqFilesConfig, allowSingleEnd: true };
       await fetch("/api/admin/settings/sequencing-files", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dataBasePath,
-          config: seqFilesConfig,
+          config: configToSave,
         }),
       });
       setSeqFilesSaved(true);
@@ -371,25 +372,6 @@ export default function DataComputePage() {
               />
             </div>
 
-            {/* Options */}
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label className="text-sm font-medium">Allow Single-End Files</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Allow files without R2 pair to be assigned as single-end reads
-                  </p>
-                </div>
-                <Switch
-                  checked={seqFilesConfig.allowSingleEnd}
-                  onCheckedChange={(checked) =>
-                    setSeqFilesConfig({ ...seqFilesConfig, allowSingleEnd: checked })
-                  }
-                  disabled={saving}
-                />
-              </div>
-            </div>
-
             {/* Save Button */}
             <div className="flex items-center gap-2 pt-2">
               <Button onClick={handleSaveSequencingFiles} disabled={saving}>
@@ -440,7 +422,7 @@ export default function DataComputePage() {
                     ? "Jobs will be submitted to the SLURM queue"
                     : "Pipelines will run directly on this server"}
                 </p>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Switch
                     id="compute-use-slurm"
                     checked={execSettings.useSlurm}
@@ -449,7 +431,27 @@ export default function DataComputePage() {
                     }
                   />
                   <Label htmlFor="compute-use-slurm">Use SLURM</Label>
+                  {execSettings.useSlurm && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testSettingValue("slurm")}
+                      disabled={testResults.slurm?.testing}
+                    >
+                      {testResults.slurm?.testing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        "Test"
+                      )}
+                    </Button>
+                  )}
                 </div>
+                {execSettings.useSlurm && testResults.slurm && !testResults.slurm.testing && (
+                  <p className={`text-xs flex items-center gap-1 mt-2 ${testResults.slurm.success ? "text-green-600" : "text-red-600"}`}>
+                    {testResults.slurm.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                    {testResults.slurm.message}
+                  </p>
+                )}
               </div>
             </div>
 

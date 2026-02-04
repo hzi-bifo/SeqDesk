@@ -782,7 +782,7 @@ export async function quickPrerequisiteCheck(
  * Test a specific setting (for inline testing in admin UI)
  */
 export async function testSetting(
-  setting: 'pipelineRunDir' | 'condaPath' | 'nextflow' | 'nfcore' | 'weblogUrl',
+  setting: 'pipelineRunDir' | 'condaPath' | 'nextflow' | 'nfcore' | 'weblogUrl' | 'slurm',
   value?: string
 ): Promise<{ success: boolean; message: string; details?: string; version?: string }> {
   switch (setting) {
@@ -836,6 +836,15 @@ export async function testSetting(
         success: false,
         message: 'Conda not found at path',
         details: `Tried: ${condaBin}, ${condabinConda}`,
+      };
+    }
+
+    case 'slurm': {
+      const check = await checkSlurm(true);
+      return {
+        success: check.status === 'pass',
+        message: check.message,
+        details: check.details,
       };
     }
 
