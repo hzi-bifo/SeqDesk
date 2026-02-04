@@ -118,6 +118,8 @@ function formatStatusSource(source?: string | null): string {
       return "Trace";
     case "process":
       return "Process";
+    case "queue":
+      return "Queue";
     case "launcher":
       return "Launcher";
     default:
@@ -527,6 +529,7 @@ export default function AnalysisRunDetailPage({
     if (!run) return null;
     const candidates = [
       run.lastEventAt,
+      run.queuedAt,
       run.startedAt,
       run.updatedAt,
       run.createdAt,

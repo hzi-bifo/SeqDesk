@@ -124,6 +124,8 @@ async function finalizeLocalRun(
         progress: 100,
         currentStep: 'Completed',
         completedAt,
+        statusSource: 'process',
+        lastEventAt: completedAt,
       },
     });
     processCompletedRun(runId, pipelineId).catch((err) => {
@@ -138,6 +140,8 @@ async function finalizeLocalRun(
         currentStep: 'Failed',
         errorTail: message,
         completedAt,
+        statusSource: 'process',
+        lastEventAt: completedAt,
       },
     });
   }
@@ -287,6 +291,8 @@ export async function POST(
           status: 'failed',
           errorTail: message,
           completedAt: new Date(),
+          statusSource: 'launcher',
+          lastEventAt: new Date(),
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
@@ -304,6 +310,8 @@ export async function POST(
           status: 'failed',
           errorTail: message,
           completedAt: new Date(),
+          statusSource: 'launcher',
+          lastEventAt: new Date(),
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
@@ -318,6 +326,8 @@ export async function POST(
           status: 'failed',
           errorTail: message,
           completedAt: new Date(),
+          statusSource: 'launcher',
+          lastEventAt: new Date(),
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
@@ -363,6 +373,8 @@ export async function POST(
           status: 'failed',
           errorTail: prepResult.errors.join('\n'),
           completedAt: new Date(),
+          statusSource: 'launcher',
+          lastEventAt: new Date(),
         },
       });
 
@@ -404,19 +416,21 @@ export async function POST(
             sbatchProcess.on('error', reject);
           });
 
-          // Update run with job ID
+          // Update run with job ID (queued)
           await db.pipelineRun.update({
             where: { id },
             data: {
-              status: 'running',
+              status: 'queued',
               queueJobId: jobId,
-              startedAt: new Date(),
+              queuedAt: new Date(),
+              statusSource: 'launcher',
+              lastEventAt: new Date(),
             },
           });
 
           return NextResponse.json({
             success: true,
-            status: 'running',
+            status: 'queued',
             jobId,
             runFolder: prepResult.runFolder,
           });
@@ -428,6 +442,8 @@ export async function POST(
               status: 'failed',
               errorTail: message,
               completedAt: new Date(),
+              statusSource: 'launcher',
+              lastEventAt: new Date(),
             },
           });
 
@@ -459,6 +475,8 @@ export async function POST(
               status: 'running',
               queueJobId: `local-${childProcess.pid}`,
               startedAt: new Date(),
+              statusSource: 'launcher',
+              lastEventAt: new Date(),
             },
           });
 
@@ -477,6 +495,8 @@ export async function POST(
               status: 'failed',
               errorTail: message,
               completedAt: new Date(),
+              statusSource: 'launcher',
+              lastEventAt: new Date(),
             },
           });
 

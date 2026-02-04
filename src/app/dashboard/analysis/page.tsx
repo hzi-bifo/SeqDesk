@@ -128,6 +128,7 @@ type RunData = {
   currentStep: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  queuedAt: string | null;
   lastEventAt?: string | null;
   updatedAt?: string;
   user: { firstName: string; lastName: string };
@@ -341,7 +342,7 @@ export default function AnalysisDashboardPage() {
                     <div className="flex flex-col gap-1">
                       {getStatusBadge(run.status)}
                       <span className="text-xs text-muted-foreground">
-                        Last event: {formatRelativeTime(getLatestTimestamp(run.lastEventAt, run.startedAt, run.updatedAt, run.createdAt))}
+                        Last event: {formatRelativeTime(getLatestTimestamp(run.lastEventAt, run.startedAt, run.queuedAt, run.updatedAt, run.createdAt))}
                       </span>
                     </div>
                   </TableCell>
