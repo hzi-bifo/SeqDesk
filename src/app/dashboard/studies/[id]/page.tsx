@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
   Dialog,
@@ -454,109 +455,113 @@ export default function StudyDetailPage({
   return (
     <PageContainer>
       {/* Header */}
-      <div className="mb-6">
-        <Button variant="ghost" size="sm" asChild className="mb-4">
+      <div className="mb-4">
+        <Button variant="ghost" size="sm" asChild className="mb-2">
           <Link href="/dashboard/studies">
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Studies
           </Link>
         </Button>
 
-        <div className="flex items-start justify-between">
-          <div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{study.title}</h1>
-            <div className="flex items-center gap-3 mt-2">
-              {study.submitted ? (
-                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  Submitted
-                </span>
-              ) : study.testRegisteredAt ? (
-                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-600">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  Test Registered
-                </span>
-              ) : study.studyAccessionId ? (
-                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-600">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  Study Registered
-                </span>
-              ) : study.readyForSubmission ? (
-                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <span className="h-2 w-2 rounded-full bg-foreground" />
-                  Ready for Submission
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-                  Draft
-                </span>
-              )}
-              {study.studyAccessionId && (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {study.studyAccessionId}
-                </span>
-              )}
-              <span className="text-muted-foreground text-sm">
-                Created {formatDate(study.createdAt)}
-              </span>
-            </div>
-          </div>
-          {/* Action buttons - visible to owner and admin */}
-          {(isOwner || isAdmin) && (
-            <div className="flex items-center gap-2">
-              {/* Edit button - always available for admin, only for drafts for owner */}
-              {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/dashboard/studies/${id}/edit`}>
-                    Edit
-                  </Link>
-                </Button>
-              )}
-              {!study.submitted && !study.readyForSubmission && isOwner && (
-                <>
-                  {allMetadataComplete && (
+            {/* Action buttons - visible to owner and admin */}
+            {(isOwner || isAdmin) && (
+              <div className="flex items-center gap-2">
+                {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/dashboard/studies/${id}/edit`}>
+                      Edit
+                    </Link>
+                  </Button>
+                )}
+                {!study.submitted && !study.readyForSubmission && isOwner && (
+                  <>
+                    {allMetadataComplete && (
+                      <Button
+                        size="sm"
+                        onClick={() => setMarkReadyDialogOpen(true)}
+                        disabled={markingReady}
+                      >
+                        {markingReady ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : null}
+                        Mark as Ready
+                      </Button>
+                    )}
                     <Button
+                      variant="outline"
                       size="sm"
-                      onClick={() => setMarkReadyDialogOpen(true)}
-                      disabled={markingReady}
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setDeleteDialogOpen(true)}
+                      disabled={deleting}
                     >
-                      {markingReady ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : null}
-                      Mark as Ready
+                      Delete
                     </Button>
-                  )}
+                  </>
+                )}
+                {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setDeleteDialogOpen(true)}
-                    disabled={deleting}
+                    onClick={() => setUnmarkReadyDialogOpen(true)}
+                    disabled={markingReady}
                   >
-                    Delete
+                    {markingReady ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Back to Draft
                   </Button>
-                </>
-              )}
-              {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setUnmarkReadyDialogOpen(true)}
-                  disabled={markingReady}
-                >
-                  {markingReady ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
-                  Back to Draft
-                </Button>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {study.description && (
-          <p className="text-muted-foreground mt-4 max-w-3xl">{study.description}</p>
+        <div className="flex items-center gap-2 mt-1 text-sm">
+          {study.submitted ? (
+            <span className="inline-flex items-center gap-1.5 font-medium text-emerald-600">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Submitted
+            </span>
+          ) : study.testRegisteredAt ? (
+            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              Test Registered
+            </span>
+          ) : study.studyAccessionId ? (
+            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              Study Registered
+            </span>
+          ) : study.readyForSubmission ? (
+            <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+              <span className="h-2 w-2 rounded-full bg-foreground" />
+              Ready for Submission
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+              Draft
+            </span>
+          )}
+          {study.studyAccessionId && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <span className="font-mono text-xs text-muted-foreground">
+                {study.studyAccessionId}
+              </span>
+            </>
+          )}
+          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">
+            Created {formatDate(study.createdAt)}
+          </span>
+        </div>
+
+        {study.description && study.description !== study.title && (
+          <p className="text-muted-foreground mt-2 max-w-3xl">{study.description}</p>
         )}
       </div>
 
@@ -574,465 +579,485 @@ export default function StudyDetailPage({
         </div>
       )}
 
-      {/* Workflow Progress */}
-      {!study.submitted && (
-        <div className="mb-6 rounded-lg border bg-muted/30 p-5">
-          <h3 className="font-semibold text-stone-700 mb-4 flex items-center gap-2">
-            <ClipboardList className="h-5 w-5" />
-            Study Progress
-          </h3>
-          <div className="grid grid-cols-4 gap-3">
-            {/* Step 1: Create Study */}
-            <div className="p-3 rounded-lg bg-white border">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="text-sm font-medium">Create Study</span>
-              </div>
-              <p className="text-xs text-muted-foreground">Done</p>
-            </div>
-
-            {/* Step 2: Associate Samples */}
-            <div className="p-3 rounded-lg bg-white border">
-              <div className="flex items-center gap-2 mb-1">
-                {totalSamples > 0 ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                    <span className="text-[10px] text-white font-bold">2</span>
-                  </div>
-                )}
-                <span className="text-sm font-medium">Add Samples</span>
-              </div>
-              {totalSamples > 0 ? (
-                <p className="text-xs text-muted-foreground">{totalSamples} sample{totalSamples !== 1 ? 's' : ''}</p>
-              ) : (
-                <>
-                  <p className="text-xs text-muted-foreground">No samples yet</p>
-                  {isOwner && (
-                    <Link
-                      href={`/dashboard/studies/${id}/edit`}
-                      className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      Add Samples <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Step 3: Enter Metadata */}
-            <div className="p-3 rounded-lg bg-white border">
-              <div className="flex items-center gap-2 mb-1">
-                {allMetadataComplete ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                    <span className="text-[10px] text-white font-bold">3</span>
-                  </div>
-                )}
-                <span className="text-sm font-medium">Metadata</span>
-              </div>
-              {allMetadataComplete ? (
-                <p className="text-xs text-muted-foreground">Complete</p>
-              ) : totalSamples > 0 ? (
-                <>
-                  <p className="text-xs text-muted-foreground">{samplesWithMetadata}/{totalSamples} complete</p>
-                  {isOwner && (
-                    <Link
-                      href={`/dashboard/studies/${id}/edit`}
-                      className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      Edit <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">Add samples first</p>
-              )}
-            </div>
-
-            {/* Step 4: Submit to ENA */}
-            <div className="p-3 rounded-lg bg-white border">
-              <div className="flex items-center gap-2 mb-1">
-                {study.submitted ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : study.testRegisteredAt || study.studyAccessionId ? (
-                  <AlertCircle className="h-4 w-4 text-amber-500" />
-                ) : study.readyForSubmission ? (
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                    <span className="text-[10px] text-white font-bold">4</span>
-                  </div>
-                )}
-                <span className="text-sm font-medium">Submit to ENA</span>
-              </div>
-              {study.submitted ? (
-                <p className="text-xs text-muted-foreground">Submitted</p>
-              ) : study.testRegisteredAt ? (
-                <p className="text-xs text-muted-foreground">Test registered</p>
-              ) : study.studyAccessionId ? (
-                <p className="text-xs text-muted-foreground">Study registered (samples pending)</p>
-              ) : study.readyForSubmission ? (
-                <p className="text-xs text-muted-foreground">Awaiting facility</p>
-              ) : allMetadataComplete ? (
-                <p className="text-xs text-muted-foreground">Mark as ready</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">Complete metadata</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Submitted Study Status */}
-      {study.submitted && (
-        <div className="mb-6 rounded-lg border p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
-            <div>
-              <p className="font-medium">Registered with ENA</p>
-              <p className="text-sm text-muted-foreground">
-                {study.studyAccessionId && <span className="font-mono">{study.studyAccessionId}</span>}
-                {study.submittedAt && <span className="ml-2">{formatDate(study.submittedAt)}</span>}
-              </p>
-            </div>
-          </div>
-          {study.studyAccessionId && (
-            <a
-              href="https://www.ebi.ac.uk/ena/submit/webin/report/studies"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-primary hover:underline flex items-center gap-1"
-            >
-              View in Webin Portal
-              <ExternalLink className="h-3 w-3" />
-            </a>
+      {/* Tabs */}
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="samples">Samples ({totalSamples})</TabsTrigger>
+          {isAdmin && totalSamples > 0 && (
+            <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
           )}
-        </div>
-      )}
+          <TabsTrigger value="ena">ENA</TabsTrigger>
+        </TabsList>
 
-      {/* ENA Submission Readiness - Admin View */}
-      {isAdmin && !study.submitted && (() => {
-        const requiredChecks = {
-          hasTitle: Boolean(study.title && study.title.trim()),
-          hasDescription: Boolean(study.description && study.description.trim()),
-          hasSamples: totalSamples > 0,
-          allSamplesHaveOrganism: study.samples.every(s =>
-            s.taxId && s.taxId.trim()
-          ),
-          allSamplesHaveMetadata: allMetadataComplete,
-        };
-        const passedChecks = Object.values(requiredChecks).filter(Boolean).length;
-        const totalChecks = Object.keys(requiredChecks).length;
-        const allPassed = passedChecks === totalChecks;
-        const hasTestRegistration = Boolean(study.testRegisteredAt);
+        {/* Overview Tab */}
+        <TabsContent value="overview">
+          {/* Workflow Progress */}
+          {!study.submitted && (
+            <div className="rounded-lg border bg-muted/30 p-5">
+              <h3 className="font-semibold text-stone-700 mb-4 flex items-center gap-2">
+                <ClipboardList className="h-5 w-5" />
+                Study Progress
+              </h3>
+              <div className="grid grid-cols-4 gap-3">
+                {/* Step 1: Create Study */}
+                <div className="p-3 rounded-lg bg-white border">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium">Create Study</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Done</p>
+                </div>
 
-        return (
-          <div className="mb-6 rounded-lg border p-5 bg-muted/30">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <p className="font-semibold flex items-center gap-2">
-                  ENA Registration
-                  <span className="text-sm font-normal text-muted-foreground">
-                    ({passedChecks}/{totalChecks} checks)
-                  </span>
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {study.readyForSubmission ? "User marked ready" : "User has not marked as ready"}
-                </p>
-              </div>
-              {allPassed && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleRegisterWithENA(true)}
-                    disabled={submitting}
-                  >
-                    {submitting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                {/* Step 2: Associate Samples */}
+                <div className="p-3 rounded-lg bg-white border">
+                  <div className="flex items-center gap-2 mb-1">
+                    {totalSamples > 0 ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
                     ) : (
-                      <Send className="h-4 w-4 mr-2" />
+                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                        <span className="text-[10px] text-white font-bold">2</span>
+                      </div>
                     )}
-                    Test Server
-                  </Button>
-                  {study.readyForSubmission && (
-                    <Button
-                      size="sm"
-                      onClick={() => handleRegisterWithENA(false)}
-                      disabled={submitting}
-                    >
-                      {submitting ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4 mr-2" />
+                    <span className="text-sm font-medium">Add Samples</span>
+                  </div>
+                  {totalSamples > 0 ? (
+                    <p className="text-xs text-muted-foreground">{totalSamples} sample{totalSamples !== 1 ? 's' : ''}</p>
+                  ) : (
+                    <>
+                      <p className="text-xs text-muted-foreground">No samples yet</p>
+                      {isOwner && (
+                        <Link
+                          href={`/dashboard/studies/${id}/edit`}
+                          className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          Add Samples <ArrowRight className="h-3 w-3" />
+                        </Link>
                       )}
-                      Production
-                    </Button>
+                    </>
                   )}
                 </div>
+
+                {/* Step 3: Enter Metadata */}
+                <div className="p-3 rounded-lg bg-white border">
+                  <div className="flex items-center gap-2 mb-1">
+                    {allMetadataComplete ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                        <span className="text-[10px] text-white font-bold">3</span>
+                      </div>
+                    )}
+                    <span className="text-sm font-medium">Metadata</span>
+                  </div>
+                  {allMetadataComplete ? (
+                    <p className="text-xs text-muted-foreground">Complete</p>
+                  ) : totalSamples > 0 ? (
+                    <>
+                      <p className="text-xs text-muted-foreground">{samplesWithMetadata}/{totalSamples} complete</p>
+                      {isOwner && (
+                        <Link
+                          href={`/dashboard/studies/${id}/edit`}
+                          className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          Edit <ArrowRight className="h-3 w-3" />
+                        </Link>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Add samples first</p>
+                  )}
+                </div>
+
+                {/* Step 4: Submit to ENA */}
+                <div className="p-3 rounded-lg bg-white border">
+                  <div className="flex items-center gap-2 mb-1">
+                    {study.submitted ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : study.testRegisteredAt || study.studyAccessionId ? (
+                      <AlertCircle className="h-4 w-4 text-amber-500" />
+                    ) : study.readyForSubmission ? (
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
+                        <span className="text-[10px] text-white font-bold">4</span>
+                      </div>
+                    )}
+                    <span className="text-sm font-medium">Submit to ENA</span>
+                  </div>
+                  {study.submitted ? (
+                    <p className="text-xs text-muted-foreground">Submitted</p>
+                  ) : study.testRegisteredAt ? (
+                    <p className="text-xs text-muted-foreground">Test registered</p>
+                  ) : study.studyAccessionId ? (
+                    <p className="text-xs text-muted-foreground">Study registered (samples pending)</p>
+                  ) : study.readyForSubmission ? (
+                    <p className="text-xs text-muted-foreground">Awaiting facility</p>
+                  ) : allMetadataComplete ? (
+                    <p className="text-xs text-muted-foreground">Mark as ready</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Complete metadata</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Submitted Study Status */}
+          {study.submitted && (
+            <div className="rounded-lg border p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="h-5 w-5 text-green-600" />
+                <div>
+                  <p className="font-medium">Registered with ENA</p>
+                  <p className="text-sm text-muted-foreground">
+                    {study.studyAccessionId && <span className="font-mono">{study.studyAccessionId}</span>}
+                    {study.submittedAt && <span className="ml-2">{formatDate(study.submittedAt)}</span>}
+                  </p>
+                </div>
+              </div>
+              {study.studyAccessionId && (
+                <a
+                  href="https://www.ebi.ac.uk/ena/submit/webin/report/studies"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  View in Webin Portal
+                  <ExternalLink className="h-3 w-3" />
+                </a>
               )}
             </div>
+          )}
 
-            {/* Test Registration Status */}
-            {hasTestRegistration && (() => {
-              const expiration = getTestExpirationStatus(study.testRegisteredAt);
-              const isExpired = expiration?.expired ?? false;
-              return (
-                <div className={`mb-4 p-3 rounded border flex items-center justify-between ${
-                  isExpired
-                    ? "border-stone-300 bg-stone-100"
-                    : "border-amber-200 bg-amber-50"
-                }`}>
-                  <div className="flex items-center gap-2 text-sm">
-                    <AlertCircle className={`h-4 w-4 ${isExpired ? "text-stone-500" : "text-amber-600"}`} />
-                    <span className={isExpired ? "text-stone-600" : "text-amber-800"}>
-                      Test: <span className={`font-mono ${isExpired ? "line-through" : ""}`}>{study.studyAccessionId}</span>
-                      <span className={`ml-2 ${isExpired ? "text-stone-500" : "text-amber-600"}`}>
-                        ({expiration?.text ?? "expires 24h"})
-                      </span>
-                    </span>
-                  </div>
-                  {!isExpired && (
-                    <a
-                      href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-amber-700 hover:underline flex items-center gap-1"
-                    >
-                      View <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
-              <div className="flex items-center gap-2">
-                {requiredChecks.hasTitle ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <span>Title</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {requiredChecks.hasDescription ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <span>Description</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {requiredChecks.hasSamples ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <span>Samples ({totalSamples})</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {requiredChecks.allSamplesHaveOrganism ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <span>Taxonomy ID</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {requiredChecks.allSamplesHaveMetadata ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <span>Metadata</span>
-              </div>
-            </div>
-
-            <div className="mt-4 pt-3 border-t text-sm text-muted-foreground">
-              Created by: {study.user.firstName && study.user.lastName
-                ? `${study.user.firstName} ${study.user.lastName}`
-                : study.user.email}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Pipelines Section - only for admins with samples */}
-      {isAdmin && totalSamples > 0 && (
-        <StudyPipelinesSection studyId={study.id} samples={study.samples} />
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Study Details */}
-        <GlassCard className="p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <BookOpen className="h-5 w-5" />
-            Study Details
-          </h2>
-          <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Environment Type</span>
-              <span className="font-medium capitalize">
-                {study.checklistType?.replace(/-/g, " ") || "Not specified"}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Status</span>
-              <span className="font-medium">
-                {study.submitted
-                  ? "Submitted to ENA"
-                  : study.testRegisteredAt
-                    ? "Test registered"
-                    : study.studyAccessionId
-                      ? "Study registered (samples pending)"
-                      : study.readyForSubmission
-                        ? "Ready for Submission"
-                        : "Draft"}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Samples</span>
-              <span className="font-medium">{totalSamples}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Metadata Complete</span>
-              <span className="font-medium">{samplesWithMetadata} of {totalSamples}</span>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Samples */}
-        <GlassCard className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <FlaskConical className="h-5 w-5" />
-              Samples ({study.samples.length})
+          {/* Study Details */}
+          <GlassCard className="p-6 mt-4">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <BookOpen className="h-5 w-5" />
+              Study Details
             </h2>
-            {!study.submitted && isOwner && (
-              <Button size="sm" variant="outline" asChild>
-                <Link href={`/dashboard/studies/${id}/edit`}>
-                  Manage Samples
-                </Link>
-              </Button>
-            )}
-          </div>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Environment Type</span>
+                <span className="font-medium capitalize">
+                  {study.checklistType?.replace(/-/g, " ") || "Not specified"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Status</span>
+                <span className="font-medium">
+                  {study.submitted
+                    ? "Submitted to ENA"
+                    : study.testRegisteredAt
+                      ? "Test registered"
+                      : study.studyAccessionId
+                        ? "Study registered (samples pending)"
+                        : study.readyForSubmission
+                          ? "Ready for Submission"
+                          : "Draft"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Samples</span>
+                <span className="font-medium">{totalSamples}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Metadata Complete</span>
+                <span className="font-medium">{samplesWithMetadata} of {totalSamples}</span>
+              </div>
+            </div>
+          </GlassCard>
+        </TabsContent>
 
-          {study.samples.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <FlaskConical className="h-10 w-10 mx-auto mb-2 opacity-50" />
-              <p>No samples in this study yet</p>
+        {/* Samples Tab */}
+        <TabsContent value="samples">
+          <GlassCard className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <FlaskConical className="h-5 w-5" />
+                Samples ({study.samples.length})
+              </h2>
               {!study.submitted && isOwner && (
-                <Button className="mt-4" size="sm" asChild>
+                <Button size="sm" variant="outline" asChild>
                   <Link href={`/dashboard/studies/${id}/edit`}>
-                    Add Samples
+                    Manage Samples
                   </Link>
                 </Button>
               )}
             </div>
-          ) : (
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {study.samples.map((sample) => {
-                const hasMetadata = sampleHasMetadata(sample);
-                return (
-                  <div
-                    key={sample.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-muted/30"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${
-                        hasMetadata ? "bg-green-500/10" : "bg-muted"
-                      }`}>
-                        <FlaskConical className={`h-4 w-4 ${
-                          hasMetadata ? "text-green-600" : "text-muted-foreground"
-                        }`} />
-                      </div>
-                      <div>
-                        <div className="font-medium flex items-center gap-2">
-                          {sample.sampleId}
-                          {hasMetadata && (
-                            <CheckCircle2 className="h-3 w-3 text-green-500" />
-                          )}
+
+            {study.samples.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <FlaskConical className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                <p>No samples in this study yet</p>
+                {!study.submitted && isOwner && (
+                  <Button className="mt-4" size="sm" asChild>
+                    <Link href={`/dashboard/studies/${id}/edit`}>
+                      Add Samples
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {study.samples.map((sample) => {
+                  const hasMetadata = sampleHasMetadata(sample);
+                  return (
+                    <div
+                      key={sample.id}
+                      className="flex items-center justify-between p-3 rounded-lg bg-muted/30"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${
+                          hasMetadata ? "bg-green-500/10" : "bg-muted"
+                        }`}>
+                          <FlaskConical className={`h-4 w-4 ${
+                            hasMetadata ? "text-green-600" : "text-muted-foreground"
+                          }`} />
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          <Link
-                            href={`/dashboard/orders/${sample.order.id}`}
-                            className="hover:text-primary"
-                          >
-                            {sample.order.orderNumber}
-                          </Link>
-                          {sample.order.name && (
-                            <span> - {sample.order.name}</span>
-                          )}
+                        <div>
+                          <div className="font-medium flex items-center gap-2">
+                            {sample.sampleId}
+                            {hasMetadata && (
+                              <CheckCircle2 className="h-3 w-3 text-green-500" />
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            <Link
+                              href={`/dashboard/orders/${sample.order.id}`}
+                              className="hover:text-primary"
+                            >
+                              {sample.order.orderNumber}
+                            </Link>
+                            {sample.order.name && (
+                              <span> - {sample.order.name}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </GlassCard>
+        </TabsContent>
+
+        {/* Pipelines Tab - admin only */}
+        {isAdmin && totalSamples > 0 && (
+          <TabsContent value="pipelines">
+            <StudyPipelinesSection studyId={study.id} samples={study.samples} />
+          </TabsContent>
+        )}
+
+        {/* ENA Tab */}
+        <TabsContent value="ena">
+          {/* ENA Submission Readiness - Admin View */}
+          {isAdmin && !study.submitted && (() => {
+            const requiredChecks = {
+              hasTitle: Boolean(study.title && study.title.trim()),
+              hasDescription: Boolean(study.description && study.description.trim()),
+              hasSamples: totalSamples > 0,
+              allSamplesHaveOrganism: study.samples.every(s =>
+                s.taxId && s.taxId.trim()
+              ),
+              allSamplesHaveMetadata: allMetadataComplete,
+            };
+            const passedChecks = Object.values(requiredChecks).filter(Boolean).length;
+            const totalChecks = Object.keys(requiredChecks).length;
+            const allPassed = passedChecks === totalChecks;
+            const hasTestRegistration = Boolean(study.testRegisteredAt);
+
+            return (
+              <div className="rounded-lg border p-5 bg-muted/30">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <p className="font-semibold flex items-center gap-2">
+                      ENA Registration
+                      <span className="text-sm font-normal text-muted-foreground">
+                        ({passedChecks}/{totalChecks} checks)
+                      </span>
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {study.readyForSubmission ? "User marked ready" : "User has not marked as ready"}
+                    </p>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
-      </div>
-
-      {/* Status History */}
-      <GlassCard className="p-6 mt-6">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Clock className="h-5 w-5" />
-          Status History
-        </h2>
-        <div className="space-y-3">
-          {/* Created */}
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <BookOpen className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <p className="font-medium">Study Created</p>
-              <p className="text-sm text-muted-foreground">
-                {formatDate(study.createdAt)}
-              </p>
-            </div>
-          </div>
-
-          {/* Marked as Ready */}
-          {study.readyAt && (
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
-              <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
-                <Send className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="font-medium">Marked as Ready for Submission</p>
-                <p className="text-sm text-muted-foreground">
-                  {formatDate(study.readyAt)}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Submitted to ENA */}
-          {study.submittedAt && (
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
-              <div className="h-8 w-8 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              </div>
-              <div>
-                <p className="font-medium">Submitted to ENA</p>
-                <p className="text-sm text-muted-foreground">
-                  {formatDate(study.submittedAt)}
-                  {study.studyAccessionId && (
-                    <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                      {study.studyAccessionId}
-                    </span>
+                  {allPassed && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRegisterWithENA(true)}
+                        disabled={submitting}
+                      >
+                        {submitting ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4 mr-2" />
+                        )}
+                        Test Server
+                      </Button>
+                      {study.readyForSubmission && (
+                        <Button
+                          size="sm"
+                          onClick={() => handleRegisterWithENA(false)}
+                          disabled={submitting}
+                        >
+                          {submitting ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4 mr-2" />
+                          )}
+                          Production
+                        </Button>
+                      )}
+                    </div>
                   )}
-                </p>
+                </div>
+
+                {/* Test Registration Status */}
+                {hasTestRegistration && (() => {
+                  const expiration = getTestExpirationStatus(study.testRegisteredAt);
+                  const isExpired = expiration?.expired ?? false;
+                  return (
+                    <div className={`mb-4 p-3 rounded border flex items-center justify-between ${
+                      isExpired
+                        ? "border-stone-300 bg-stone-100"
+                        : "border-amber-200 bg-amber-50"
+                    }`}>
+                      <div className="flex items-center gap-2 text-sm">
+                        <AlertCircle className={`h-4 w-4 ${isExpired ? "text-stone-500" : "text-amber-600"}`} />
+                        <span className={isExpired ? "text-stone-600" : "text-amber-800"}>
+                          Test: <span className={`font-mono ${isExpired ? "line-through" : ""}`}>{study.studyAccessionId}</span>
+                          <span className={`ml-2 ${isExpired ? "text-stone-500" : "text-amber-600"}`}>
+                            ({expiration?.text ?? "expires 24h"})
+                          </span>
+                        </span>
+                      </div>
+                      {!isExpired && (
+                        <a
+                          href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-amber-700 hover:underline flex items-center gap-1"
+                        >
+                          View <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    {requiredChecks.hasTitle ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    <span>Title</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {requiredChecks.hasDescription ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    <span>Description</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {requiredChecks.hasSamples ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    <span>Samples ({totalSamples})</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {requiredChecks.allSamplesHaveOrganism ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    <span>Taxonomy ID</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {requiredChecks.allSamplesHaveMetadata ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    <span>Metadata</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t text-sm text-muted-foreground">
+                  Created by: {study.user.firstName && study.user.lastName
+                    ? `${study.user.firstName} ${study.user.lastName}`
+                    : study.user.email}
+                </div>
               </div>
+            );
+          })()}
+
+          {/* Status History */}
+          <GlassCard className={`p-6 ${isAdmin && !study.submitted ? "mt-4" : ""}`}>
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Status History
+            </h2>
+            <div className="space-y-3">
+              {/* Created */}
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
+                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <BookOpen className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <p className="font-medium">Study Created</p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDate(study.createdAt)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Marked as Ready */}
+              {study.readyAt && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
+                  <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+                    <Send className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Marked as Ready for Submission</p>
+                    <p className="text-sm text-muted-foreground">
+                      {formatDate(study.readyAt)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Submitted to ENA */}
+              {study.submittedAt && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
+                  <div className="h-8 w-8 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Submitted to ENA</p>
+                    <p className="text-sm text-muted-foreground">
+                      {formatDate(study.submittedAt)}
+                      {study.studyAccessionId && (
+                        <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                          {study.studyAccessionId}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </GlassCard>
+          </GlassCard>
+        </TabsContent>
+      </Tabs>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
