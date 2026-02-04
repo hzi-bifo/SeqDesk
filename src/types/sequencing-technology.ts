@@ -87,6 +87,7 @@ export interface SequencerDevice {
   order: number;
   sourceUrl?: string;
   lastUpdated?: string;
+  localOverrides?: boolean;
 }
 
 export interface FlowCell {
@@ -102,6 +103,7 @@ export interface FlowCell {
   available: boolean;
   order: number;
   sourceUrl?: string;
+  localOverrides?: boolean;
 }
 
 export interface SequencingKit {
@@ -125,6 +127,7 @@ export interface SequencingKit {
   available: boolean;
   order: number;
   sourceUrl?: string;
+  localOverrides?: boolean;
 }
 
 export interface SequencingSoftware {
@@ -136,6 +139,7 @@ export interface SequencingSoftware {
   downloadUrl?: string;
   available: boolean;
   order: number;
+  localOverrides?: boolean;
 }
 
 // Technology category/family

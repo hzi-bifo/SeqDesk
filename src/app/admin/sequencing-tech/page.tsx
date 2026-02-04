@@ -471,6 +471,7 @@ export default function SequencingTechPage() {
       order: deviceForm.order ?? devices.length,
       sourceUrl: deviceForm.sourceUrl,
       lastUpdated: deviceForm.lastUpdated,
+      localOverrides: true,
     };
 
     const exists = devices.some((d) => d.id === (editingDevice?.id || deviceForm.id));
@@ -536,6 +537,7 @@ export default function SequencingTechPage() {
       available: flowCellForm.available ?? true,
       order: flowCellForm.order ?? flowCells.length,
       sourceUrl: flowCellForm.sourceUrl,
+      localOverrides: true,
     };
 
     const exists = flowCells.some((cell) => cell.id === (editingFlowCell?.id || flowCellForm.id));
@@ -591,6 +593,7 @@ export default function SequencingTechPage() {
       available: kitForm.available ?? true,
       order: kitForm.order ?? kits.length,
       sourceUrl: kitForm.sourceUrl,
+      localOverrides: true,
     };
 
     const exists = kits.some((existing) => existing.id === (editingKit?.id || kitForm.id));
@@ -640,6 +643,7 @@ export default function SequencingTechPage() {
       downloadUrl: softwareForm.downloadUrl,
       available: softwareForm.available ?? true,
       order: softwareForm.order ?? software.length,
+      localOverrides: true,
     };
 
     const exists = software.some((existing) => existing.id === (editingSoftware?.id || softwareForm.id));
