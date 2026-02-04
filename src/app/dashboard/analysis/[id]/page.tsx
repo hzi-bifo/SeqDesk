@@ -127,6 +127,11 @@ function formatStatusSource(source?: string | null): string {
   }
 }
 
+function formatEventType(value?: string | null): string {
+  if (!value) return "Event";
+  return value.replace(/_/g, " ");
+}
+
 interface Run {
   id: string;
   runNumber: string;
@@ -148,10 +153,15 @@ interface Run {
   startedAt: string | null;
   completedAt: string | null;
   lastEventAt?: string | null;
+  lastWeblogAt?: string | null;
+  lastTraceAt?: string | null;
   statusSource?: string | null;
   createdAt: string;
   updatedAt: string;
   queueJobId?: string | null;
+  queueStatus?: string | null;
+  queueReason?: string | null;
+  queueUpdatedAt?: string | null;
   study: {
     id: string;
     title: string;
@@ -168,6 +178,17 @@ interface Run {
   artifacts: { id: string; type: string; name: string; path: string; size?: bigint; checksum?: string; producedByStepId?: string; metadata?: string; sampleId?: string }[];
   inputFiles: { id: string; name: string; path: string; type: string; sampleId?: string; checksum?: string }[];
   inputSampleIds?: string[] | null;
+  detectedLogFiles?: { id: string; name: string; path: string; type: string }[];
+  events?: {
+    id: string;
+    eventType: string;
+    processName: string | null;
+    stepId: string | null;
+    status: string | null;
+    message: string | null;
+    source: string | null;
+    occurredAt: string;
+  }[];
 }
 
 interface QueueStatus {
@@ -222,6 +243,12 @@ export default function AnalysisRunDetailPage({
     if (!run) return [];
 
     const outputs: PipelineOutputFile[] = [];
+    const outputPaths = new Set<string>();
+    const addOutput = (file: PipelineOutputFile) => {
+      if (outputPaths.has(file.path)) return;
+      outputPaths.add(file.path);
+      outputs.push(file);
+    };
     const sampleIdMap = new Map<string, string>();
 
     run.study?.samples?.forEach((sample) => {
@@ -229,7 +256,7 @@ export default function AnalysisRunDetailPage({
     });
 
     for (const artifact of run.artifacts || []) {
-      outputs.push({
+      addOutput({
         id: `artifact:${artifact.id}`,
         name: artifact.name || artifact.path.split("/").pop() || artifact.path,
         path: artifact.path,
@@ -245,7 +272,7 @@ export default function AnalysisRunDetailPage({
     const assemblyStepId = run.pipelineId === "mag" ? "assembly" : undefined;
     for (const assembly of run.assembliesCreated || []) {
       if (!assembly.assemblyFile) continue;
-      outputs.push({
+      addOutput({
         id: `assembly:${assembly.id}`,
         name:
           assembly.assemblyName ||
@@ -261,7 +288,7 @@ export default function AnalysisRunDetailPage({
     const binStepId = run.pipelineId === "mag" ? "binning" : undefined;
     for (const bin of run.binsCreated || []) {
       if (!bin.binFile) continue;
-      outputs.push({
+      addOutput({
         id: `bin:${bin.id}`,
         name: bin.binName || bin.binFile.split("/").pop() || bin.binFile,
         path: bin.binFile,
@@ -273,7 +300,7 @@ export default function AnalysisRunDetailPage({
 
     // Standard run artifacts (logs/reports)
     if (run.outputPath) {
-      outputs.push({
+      addOutput({
         id: "log:stdout",
         name: run.outputPath.split("/").pop() || "pipeline.out",
         path: run.outputPath,
@@ -281,40 +308,46 @@ export default function AnalysisRunDetailPage({
       });
     }
     if (run.errorPath) {
-      outputs.push({
+      addOutput({
         id: "log:stderr",
         name: run.errorPath.split("/").pop() || "pipeline.err",
         path: run.errorPath,
         type: "log",
       });
     }
+    for (const logFile of run.detectedLogFiles || []) {
+      addOutput({
+        id: logFile.id,
+        name: logFile.name,
+        path: logFile.path,
+        type: logFile.type,
+      });
+    }
     if (run.runFolder) {
-      outputs.push(
-        {
-          id: "run:trace",
-          name: "trace.txt",
-          path: `${run.runFolder}/trace.txt`,
-          type: "log",
-        },
-        {
-          id: "run:report",
-          name: "report.html",
-          path: `${run.runFolder}/report.html`,
-          type: "report",
-        },
-        {
-          id: "run:timeline",
-          name: "timeline.html",
-          path: `${run.runFolder}/timeline.html`,
-          type: "report",
-        },
-        {
-          id: "run:dag",
-          name: "dag.dot",
-          path: `${run.runFolder}/dag.dot`,
-          type: "dag",
-        }
-      );
+      addOutput({
+        id: "run:trace",
+        name: "trace.txt",
+        path: `${run.runFolder}/trace.txt`,
+        type: "log",
+      });
+      addOutput({
+        id: "run:report",
+        name: "report.html",
+        path: `${run.runFolder}/report.html`,
+        type: "report",
+      });
+      addOutput({
+        id: "run:timeline",
+        name: "timeline.html",
+        path: `${run.runFolder}/timeline.html`,
+        type: "report",
+      });
+      addOutput({
+        id: "run:dag",
+        name: "dag.dot",
+        path: `${run.runFolder}/dag.dot`,
+        type: "dag",
+      });
     }
 
     return outputs;
@@ -529,6 +562,8 @@ export default function AnalysisRunDetailPage({
     if (!run) return null;
     const candidates = [
       run.lastEventAt,
+      run.lastWeblogAt,
+      run.lastTraceAt,
       run.queuedAt,
       run.startedAt,
       run.updatedAt,
@@ -543,6 +578,36 @@ export default function AnalysisRunDetailPage({
     : null;
   const isLive = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs <= 60_000;
   const isStale = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs > 300_000;
+  const persistedQueueBadge =
+    run?.queueStatus
+      ? {
+          status: run.queueStatus,
+          reason: run.queueReason || undefined,
+          type: run.queueJobId?.startsWith("local-") ? "local" : "slurm",
+        }
+      : null;
+  const queueBadge =
+    queueStatus?.available && queueStatus.status
+      ? {
+          status: queueStatus.status,
+          reason: queueStatus.reason,
+          type: queueStatus.type,
+        }
+      : persistedQueueBadge;
+  const queueStatusLine = queueStatus
+    ? queueStatus.available
+      ? `${queueStatus.type === "local" ? "Local process" : "SLURM"}: ${queueStatus.status || "unknown"}${queueStatus.elapsed ? ` (${queueStatus.elapsed})` : ""}${queueStatus.reason ? ` — ${queueStatus.reason}` : ""}`
+      : queueStatus.message || "Queue status unavailable"
+    : run?.queueStatus
+      ? `${run.queueJobId?.startsWith("local-") ? "Local process" : "SLURM"}: ${run.queueStatus}${run.queueReason ? ` — ${run.queueReason}` : ""}`
+      : null;
+  const queueStatusTone = queueStatus
+    ? queueStatus.available
+      ? "text-muted-foreground"
+      : "text-yellow-600"
+    : run?.queueStatus
+      ? "text-muted-foreground"
+      : "text-muted-foreground";
 
   const fetchQueueStatus = async () => {
     if (!run?.queueJobId) return;
@@ -625,18 +690,18 @@ export default function AnalysisRunDetailPage({
               <Badge variant="outline" className="text-xs">
                 Source: {formatStatusSource(run.statusSource)}
               </Badge>
-              {queueStatus?.available && queueStatus.status && (
+              {queueBadge && queueBadge.status && (
                 <Badge
                   variant="outline"
                   className={`text-xs ${
-                    queueStatus.type === "slurm"
+                    queueBadge.type === "slurm"
                       ? "bg-slate-50 text-slate-700 border-slate-200"
                       : "bg-indigo-50 text-indigo-700 border-indigo-200"
                   }`}
-                  title={queueStatus.reason ? `Reason: ${queueStatus.reason}` : undefined}
+                  title={queueBadge.reason ? `Reason: ${queueBadge.reason}` : undefined}
                 >
-                  {queueStatus.type === "local" ? "Local process" : "Queue"}: {queueStatus.status}
-                  {queueStatus.reason ? ` (${queueStatus.reason})` : ""}
+                  {queueBadge.type === "local" ? "Local process" : "Queue"}: {queueBadge.status}
+                  {queueBadge.reason ? ` (${queueBadge.reason})` : ""}
                 </Badge>
               )}
               {isLive && (
@@ -920,6 +985,14 @@ export default function AnalysisRunDetailPage({
                 <dt className="text-sm text-muted-foreground">Last Event</dt>
                 <dd>{lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}</dd>
               </div>
+              <div>
+                <dt className="text-sm text-muted-foreground">Last Weblog</dt>
+                <dd>{run.lastWeblogAt ? new Date(run.lastWeblogAt).toLocaleString() : "-"}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-muted-foreground">Last Trace</dt>
+                <dd>{run.lastTraceAt ? new Date(run.lastTraceAt).toLocaleString() : "-"}</dd>
+              </div>
               {run.queueJobId && (
                 <div>
                   <dt className="text-sm text-muted-foreground">Queue Job</dt>
@@ -939,11 +1012,9 @@ export default function AnalysisRunDetailPage({
                         )}
                       </Button>
                     </div>
-                    {queueStatus && (
-                      <p className={`text-xs ${queueStatus.available ? "text-muted-foreground" : "text-yellow-600"}`}>
-                        {queueStatus.available
-                          ? `${queueStatus.type === "local" ? "Local process" : "SLURM"}: ${queueStatus.status || "unknown"}${queueStatus.elapsed ? ` (${queueStatus.elapsed})` : ""}${queueStatus.reason ? ` — ${queueStatus.reason}` : ""}`
-                          : queueStatus.message || "Queue status unavailable"}
+                    {queueStatusLine && (
+                      <p className={`text-xs ${queueStatusTone}`}>
+                        {queueStatusLine}
                       </p>
                     )}
                   </dd>
@@ -954,6 +1025,44 @@ export default function AnalysisRunDetailPage({
                 <dd>{formatStatusSource(run.statusSource)}</dd>
               </div>
             </dl>
+          </GlassCard>
+
+          {/* Event Feed */}
+          <GlassCard>
+            <h2 className="text-lg font-semibold mb-4">Event Feed</h2>
+            {run.events && run.events.length > 0 ? (
+              <div className="space-y-3 max-h-[320px] overflow-auto pr-1">
+                {run.events.map((event) => (
+                  <div key={event.id} className="border-b border-border pb-3 last:border-b-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(event.occurredAt)}
+                      </span>
+                      {event.status && (
+                        <Badge variant="outline" className="text-xs">
+                          {event.status}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-sm font-medium">
+                      {formatEventType(event.eventType)}
+                    </div>
+                    {event.processName && (
+                      <div className="text-xs text-muted-foreground">
+                        {event.processName}
+                      </div>
+                    )}
+                    {event.message && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {event.message}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No events received yet.</p>
+            )}
           </GlassCard>
 
           {/* Progress */}

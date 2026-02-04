@@ -130,9 +130,14 @@ type RunData = {
   completedAt: string | null;
   queuedAt: string | null;
   lastEventAt?: string | null;
+  lastWeblogAt?: string | null;
+  lastTraceAt?: string | null;
   updatedAt?: string;
   user: { firstName: string; lastName: string };
   createdAt: string;
+  queueStatus?: string | null;
+  queueReason?: string | null;
+  queueJobId?: string | null;
   _count: { assembliesCreated: number; binsCreated: number };
 };
 
@@ -342,8 +347,18 @@ export default function AnalysisDashboardPage() {
                     <div className="flex flex-col gap-1">
                       {getStatusBadge(run.status)}
                       <span className="text-xs text-muted-foreground">
-                        Last event: {formatRelativeTime(getLatestTimestamp(run.lastEventAt, run.startedAt, run.queuedAt, run.updatedAt, run.createdAt))}
+                        Last event: {formatRelativeTime(getLatestTimestamp(run.lastEventAt, run.lastWeblogAt, run.lastTraceAt, run.startedAt, run.queuedAt, run.updatedAt, run.createdAt))}
                       </span>
+                      {run.queueStatus && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs w-fit"
+                          title={run.queueReason ? `Reason: ${run.queueReason}` : undefined}
+                        >
+                          {run.queueJobId?.startsWith("local-") ? "Local" : "Queue"}: {run.queueStatus}
+                          {run.queueReason ? ` (${run.queueReason})` : ""}
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>
