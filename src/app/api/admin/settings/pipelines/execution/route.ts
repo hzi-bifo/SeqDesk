@@ -40,6 +40,12 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
+    // Validate pipelineRunDir - must be a proper directory path, not just "/"
+    let pipelineRunDir = body.pipelineRunDir || DEFAULT_EXECUTION_SETTINGS.pipelineRunDir;
+    if (pipelineRunDir === '/' || pipelineRunDir === '') {
+      pipelineRunDir = DEFAULT_EXECUTION_SETTINGS.pipelineRunDir;
+    }
+
     // Validate and merge with defaults
     const newSettings: ExecutionSettings = {
       useSlurm: body.useSlurm ?? DEFAULT_EXECUTION_SETTINGS.useSlurm,
@@ -52,7 +58,7 @@ export async function POST(request: NextRequest) {
       condaPath: body.condaPath ?? DEFAULT_EXECUTION_SETTINGS.condaPath,
       condaEnv: body.condaEnv ?? DEFAULT_EXECUTION_SETTINGS.condaEnv,
       nextflowProfile: body.nextflowProfile ?? DEFAULT_EXECUTION_SETTINGS.nextflowProfile,
-      pipelineRunDir: body.pipelineRunDir || DEFAULT_EXECUTION_SETTINGS.pipelineRunDir,
+      pipelineRunDir,
       weblogUrl: body.weblogUrl ?? DEFAULT_EXECUTION_SETTINGS.weblogUrl,
       weblogSecret: body.weblogSecret ?? DEFAULT_EXECUTION_SETTINGS.weblogSecret,
     };
