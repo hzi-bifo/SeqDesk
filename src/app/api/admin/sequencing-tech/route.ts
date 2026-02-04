@@ -15,7 +15,41 @@ const SETTINGS_KEY = "sequencingTechConfig";
 
 // External API URL for syncing technologies
 const SEQDESK_API_URL =
-  process.env.SEQDESK_API_URL || "https://seqdesk.com/api/technologies";
+  process.env.SEQDESK_API_URL ||
+  "https://seqdesk.com/api/registry/sequencing-tech";
+
+type MergeableItem = { id: string; available?: boolean; localOverrides?: boolean };
+
+const mergeItems = <T extends MergeableItem>(localItems: T[], remoteItems: T[]) => {
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const merged: T[] = [];
+
+  for (const remoteItem of remoteItems) {
+    const localItem = localById.get(remoteItem.id);
+    if (!localItem) {
+      merged.push(remoteItem);
+      continue;
+    }
+    if (localItem.localOverrides) {
+      merged.push(localItem);
+      continue;
+    }
+    merged.push({
+      ...remoteItem,
+      available: localItem.available ?? remoteItem.available,
+      localOverrides: localItem.localOverrides ?? remoteItem.localOverrides,
+    });
+  }
+
+  for (const localItem of localItems) {
+    if (!remoteById.has(localItem.id)) {
+      merged.push(localItem);
+    }
+  }
+
+  return merged;
+};
 
 // GET sequencing technologies config
 export async function GET() {
@@ -201,6 +235,10 @@ export async function POST(request: NextRequest) {
         }
 
         const remoteData = await response.json();
+        const remoteConfig: SequencingTechConfig =
+          remoteData?.config && typeof remoteData.config === "object"
+            ? remoteData.config
+            : remoteData;
 
         // Get current config
         const currentSettings = await db.siteSettings.findUnique({
@@ -222,46 +260,33 @@ export async function POST(request: NextRequest) {
 
         const currentConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
         const currentVersion = currentConfig.version || 0;
-        const remoteVersion = parseInt(remoteData.version) || 0;
+        const remoteVersion = parseInt(String(remoteConfig.version || 0)) || 0;
 
         // Compare versions
         if (remoteVersion > currentVersion) {
-          // Merge: keep local customizations, add new technologies
-          const localIds = new Set(currentConfig.technologies.map(t => t.id));
-          const localOverrideIds = new Set(
-            currentConfig.technologies
-              .filter(t => t.localOverrides)
-              .map(t => t.id)
-          );
+          const remoteTechnologies = Array.isArray(remoteConfig.technologies)
+            ? remoteConfig.technologies
+            : [];
+          const remoteDevices = Array.isArray(remoteConfig.devices)
+            ? remoteConfig.devices
+            : [];
+          const remoteFlowCells = Array.isArray(remoteConfig.flowCells)
+            ? remoteConfig.flowCells
+            : [];
+          const remoteKits = Array.isArray(remoteConfig.kits)
+            ? remoteConfig.kits
+            : [];
+          const remoteSoftware = Array.isArray(remoteConfig.software)
+            ? remoteConfig.software
+            : [];
 
-          // Get new technologies from remote that don't exist locally
-          const newTechnologies = remoteData.technologies.filter(
-            (t: { id: string }) => !localIds.has(t.id)
-          );
-
-          // Update existing technologies (except those with local overrides)
-          const updatedTechnologies = currentConfig.technologies.map(localTech => {
-            if (localTech.localOverrides) {
-              // Keep local customizations
-              return localTech;
-            }
-            // Find remote version and merge
-            const remoteTech = remoteData.technologies.find(
-              (t: { id: string }) => t.id === localTech.id
-            );
-            if (remoteTech) {
-              return {
-                ...remoteTech,
-                available: localTech.available, // Keep local availability setting
-              };
-            }
-            return localTech;
-          });
-
-          // Add new technologies
           const mergedConfig: SequencingTechConfig = {
             ...currentConfig,
-            technologies: [...updatedTechnologies, ...newTechnologies],
+            technologies: mergeItems(currentConfig.technologies, remoteTechnologies),
+            devices: mergeItems(currentConfig.devices || [], remoteDevices),
+            flowCells: mergeItems(currentConfig.flowCells || [], remoteFlowCells),
+            kits: mergeItems(currentConfig.kits || [], remoteKits),
+            software: mergeItems(currentConfig.software || [], remoteSoftware),
             version: remoteVersion,
             lastSyncedAt: new Date().toISOString(),
             syncUrl: SEQDESK_API_URL,
@@ -283,9 +308,13 @@ export async function POST(request: NextRequest) {
 
           return NextResponse.json({
             hasUpdates: true,
-            newTechnologies: newTechnologies.length,
+            newTechnologies: Math.max(
+              0,
+              (remoteConfig.technologies?.length || 0) -
+                (currentConfig.technologies?.length || 0)
+            ),
             updatedVersion: remoteVersion,
-            message: `Updated to version ${remoteVersion}. Added ${newTechnologies.length} new technologies.`,
+            message: `Updated to version ${remoteVersion}.`,
             config: mergedConfig,
           });
         }
