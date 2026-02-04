@@ -17,6 +17,7 @@ const SETTINGS_KEY = "sequencingTechConfig";
 const SEQDESK_API_URL =
   process.env.SEQDESK_API_URL ||
   "https://seqdesk.com/api/registry/sequencing-tech";
+const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
 
 type MergeableItem = { id: string; available?: boolean; localOverrides?: boolean };
 
@@ -51,6 +52,46 @@ const mergeItems = <T extends MergeableItem>(localItems: T[], remoteItems: T[]) 
   return merged;
 };
 
+const normalizeRemoteConfig = (raw: SequencingTechConfig): SequencingTechConfig => {
+  const defaults = loadDefaultTechConfig();
+  return {
+    ...defaults,
+    ...raw,
+    technologies: Array.isArray(raw.technologies) ? raw.technologies : [],
+    devices: Array.isArray(raw.devices) ? raw.devices : [],
+    flowCells: Array.isArray(raw.flowCells) ? raw.flowCells : [],
+    kits: Array.isArray(raw.kits) ? raw.kits : [],
+    software: Array.isArray(raw.software) ? raw.software : [],
+    version: parseInt(String(raw.version || 0)) || 0,
+  };
+};
+
+const fetchRemoteConfig = async (): Promise<SequencingTechConfig> => {
+  const response = await fetch(SEQDESK_API_URL, {
+    headers: {
+      Accept: "application/json",
+    },
+    next: { revalidate: 0 },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API returned ${response.status}`);
+  }
+
+  const remoteData = await response.json();
+  const remoteConfig: SequencingTechConfig =
+    remoteData?.config && typeof remoteData.config === "object"
+      ? remoteData.config
+      : remoteData;
+
+  const normalized = normalizeRemoteConfig(remoteConfig);
+  return {
+    ...normalized,
+    lastSyncedAt: new Date().toISOString(),
+    syncUrl: SEQDESK_API_URL,
+  };
+};
+
 // GET sequencing technologies config
 export async function GET() {
   try {
@@ -76,8 +117,31 @@ export async function GET() {
       }
     }
 
-    const config = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+    const storedConfig = extraSettings[SETTINGS_KEY] ?? null;
 
+    if (!storedConfig) {
+      try {
+        const remoteConfig = await fetchRemoteConfig();
+        extraSettings[SETTINGS_KEY] = JSON.stringify(remoteConfig);
+
+        await db.siteSettings.upsert({
+          where: { id: "singleton" },
+          update: {
+            extraSettings: JSON.stringify(extraSettings),
+          },
+          create: {
+            id: "singleton",
+            extraSettings: JSON.stringify(extraSettings),
+          },
+        });
+
+        return NextResponse.json({ config: remoteConfig });
+      } catch (error) {
+        console.error("Error auto-syncing sequencing tech config:", error);
+      }
+    }
+
+    const config = parseTechConfig(storedConfig);
     return NextResponse.json({ config });
   } catch (error) {
     console.error("Error fetching sequencing tech config:", error);
@@ -179,8 +243,10 @@ export async function POST(request: NextRequest) {
     const { action } = body as { action: string };
 
     if (action === "reset") {
-      // Reset to defaults from file
-      const defaults = loadDefaultTechConfig();
+      // Reset to defaults (local file or remote registry)
+      const defaults = USE_LOCAL_DEFAULTS
+        ? loadDefaultTechConfig()
+        : await fetchRemoteConfig();
 
       // Get current extra settings
       const currentSettings = await db.siteSettings.findUnique({
@@ -216,7 +282,9 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         config: defaults,
-        message: "Reset to defaults",
+        message: USE_LOCAL_DEFAULTS
+          ? "Reset to defaults"
+          : "Reset to registry defaults",
       });
     }
 
@@ -262,8 +330,14 @@ export async function POST(request: NextRequest) {
         const currentVersion = currentConfig.version || 0;
         const remoteVersion = parseInt(String(remoteConfig.version || 0)) || 0;
 
+        const shouldUpdate =
+          remoteVersion > currentVersion ||
+          (currentConfig.technologies.length === 0 &&
+            remoteConfig.technologies &&
+            remoteConfig.technologies.length > 0);
+
         // Compare versions
-        if (remoteVersion > currentVersion) {
+        if (shouldUpdate) {
           const remoteTechnologies = Array.isArray(remoteConfig.technologies)
             ? remoteConfig.technologies
             : [];

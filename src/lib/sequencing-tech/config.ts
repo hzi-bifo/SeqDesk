@@ -17,6 +17,7 @@ const DEFAULTS_PATH = path.join(
   "defaults.json"
 );
 const DEVICES_DIR = path.join(process.cwd(), "data", "sequencing-devices");
+const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
 
 function mergeById<T extends { id: string }>(
   base: T[],
@@ -105,6 +106,10 @@ export function normalizeTechConfig(
 }
 
 export function loadDefaultTechConfig(): SequencingTechConfig {
+  if (!USE_LOCAL_DEFAULTS) {
+    return { ...DEFAULT_TECH_CONFIG };
+  }
+
   let baseConfig: SequencingTechConfig = DEFAULT_TECH_CONFIG;
 
   try {
