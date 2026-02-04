@@ -66,7 +66,7 @@ import type { MixsTemplate } from "@/lib/field-types/mixs";
 import { FundingAdminEditor } from "@/lib/field-types/funding/FundingAdminEditor";
 import { BillingAdminEditor } from "@/lib/field-types/billing/BillingAdminEditor";
 import { SequencingTechAdminEditor } from "@/lib/field-types/sequencing-tech/SequencingTechAdminEditor";
-import { useModule, ModuleGate } from "@/lib/modules";
+import { useModule, useModules, ModuleGate } from "@/lib/modules";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 
 const DEFAULT_POST_SUBMISSION_INSTRUCTIONS = `## Thank you for your submission!
@@ -114,6 +114,7 @@ export default function FormBuilderPage() {
   const { enabled: billingModuleEnabled } = useModule("billing-info");
   const { enabled: sequencingTechModuleEnabled } = useModule("sequencing-tech");
   const { enabled: enaSampleFieldsEnabled } = useModule("ena-sample-fields");
+  const { loading: modulesLoading } = useModules();
 
   const [fields, setFields] = useState<FormFieldDefinition[]>([]);
   const [groups, setGroups] = useState<FormFieldGroup[]>([]);
@@ -1164,9 +1165,11 @@ export default function FormBuilderPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{field.label}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                    {FIELD_TYPE_LABELS[field.type] || field.type}
-                  </span>
+                  {!moduleFieldMeta[field.type] && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      {FIELD_TYPE_LABELS[field.type] || field.type}
+                    </span>
+                  )}
                   {field.isSystem && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">
                       System
@@ -1184,30 +1187,32 @@ export default function FormBuilderPage() {
                     </span>
                   )}
                   {/* Module disabled warnings */}
-                  {field.type === "mixs" && !mixsModuleEnabled && (
+                  {!modulesLoading && field.type === "mixs" && !mixsModuleEnabled && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="MIxS module is disabled">
                       <AlertTriangle className="h-3 w-3" />
                       Module Off
                     </span>
                   )}
-                  {field.type === "funding" && !fundingModuleEnabled && (
+                  {!modulesLoading && field.type === "funding" && !fundingModuleEnabled && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Funding module is disabled">
                       <AlertTriangle className="h-3 w-3" />
                       Module Off
                     </span>
                   )}
-                  {field.type === "billing" && !billingModuleEnabled && (
+                  {!modulesLoading && field.type === "billing" && !billingModuleEnabled && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Billing module is disabled">
                       <AlertTriangle className="h-3 w-3" />
                       Module Off
                     </span>
                   )}
-                  {field.type === "sequencing-tech" && !sequencingTechModuleEnabled && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Sequencing Technologies module is disabled">
-                      <AlertTriangle className="h-3 w-3" />
-                      Module Off
-                    </span>
-                  )}
+                  {!modulesLoading &&
+                    field.type === "sequencing-tech" &&
+                    !sequencingTechModuleEnabled && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Sequencing Technologies module is disabled">
+                        <AlertTriangle className="h-3 w-3" />
+                        Module Off
+                      </span>
+                    )}
                   {/* Group badge */}
                   {field.groupId ? (
                     <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
