@@ -4,14 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 // Statuses where files can be assigned
-const FILES_ASSIGNABLE_STATUSES = [
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
 
 // Extract sample identifier from filename by removing common suffixes
 function extractSampleIdFromFilename(filename: string): string {

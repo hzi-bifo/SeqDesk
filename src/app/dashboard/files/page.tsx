@@ -4,17 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -27,33 +19,25 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Loader2,
   AlertCircle,
-  HardDrive,
   Search,
   RefreshCw,
   FileText,
   CheckCircle2,
   FolderOpen,
   AlertTriangle,
-  Filter,
   FlaskConical,
   Link as LinkIcon,
-  BookOpen,
-  Hash,
-  Copy,
-  Check,
+  ChevronDown,
+  Trash2,
+  XCircle,
 } from "lucide-react";
 
 interface FileWithAssignment {
@@ -153,7 +137,16 @@ export default function FileBrowserPage() {
 
   // Bulk selection state
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [copiedChecksum, setCopiedChecksum] = useState<string | null>(null);
+
+  // Bulk delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState<{
+    success: boolean;
+    error?: string;
+    deletedCount?: number;
+    recordsRemoved?: number;
+  } | null>(null);
 
   // Assignment dialog state
   const [selectedFile, setSelectedFile] = useState<FileWithAssignment | null>(null);
@@ -187,88 +180,6 @@ export default function FileBrowserPage() {
       setSelectedFiles(new Set());
     } else {
       setSelectedFiles(new Set(allPaths));
-    }
-  };
-
-  // Copy checksum to clipboard
-  const copyChecksum = async (checksum: string) => {
-    await navigator.clipboard.writeText(checksum);
-    setCopiedChecksum(checksum);
-    setTimeout(() => setCopiedChecksum(null), 2000);
-  };
-
-  // Checksum calculation state
-  const [calculatingChecksums, setCalculatingChecksums] = useState<Set<string>>(new Set());
-  const [checksumError, setChecksumError] = useState("");
-
-  // Calculate MD5 for a single file
-  const calculateChecksum = async (filePath: string) => {
-    setCalculatingChecksums((prev) => new Set(prev).add(filePath));
-    setChecksumError("");
-
-    try {
-      const res = await fetch("/api/files/checksum", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePaths: [filePath] }),
-      });
-
-      const result = await res.json();
-      if (!res.ok) {
-        setChecksumError(result.error || "Failed to calculate checksum");
-        return;
-      }
-
-      // Refresh files to show updated checksum
-      fetchFiles();
-    } catch {
-      setChecksumError("Failed to calculate checksum");
-    } finally {
-      setCalculatingChecksums((prev) => {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
-      });
-    }
-  };
-
-  // Calculate MD5 for selected files (bulk)
-  const calculateSelectedChecksums = async () => {
-    if (selectedFiles.size === 0) return;
-
-    // Only calculate for assigned files without checksums
-    const filesToCalculate = data?.files
-      .filter((f) => selectedFiles.has(f.relativePath) && f.assigned && !f.checksum)
-      .map((f) => f.relativePath) || [];
-
-    if (filesToCalculate.length === 0) {
-      setChecksumError("No eligible files selected (must be assigned and without checksum)");
-      return;
-    }
-
-    setCalculatingChecksums(new Set(filesToCalculate));
-    setChecksumError("");
-
-    try {
-      const res = await fetch("/api/files/checksum", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePaths: filesToCalculate }),
-      });
-
-      const result = await res.json();
-      if (!res.ok) {
-        setChecksumError(result.error || "Failed to calculate checksums");
-        return;
-      }
-
-      // Refresh files to show updated checksums
-      fetchFiles();
-      setSelectedFiles(new Set());
-    } catch {
-      setChecksumError("Failed to calculate checksums");
-    } finally {
-      setCalculatingChecksums(new Set());
     }
   };
 
@@ -394,6 +305,56 @@ export default function FileBrowserPage() {
     }
   };
 
+  const handleBulkDeleteClick = () => {
+    setDeleteResult(null);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    setDeleting(true);
+    setDeleteResult(null);
+
+    try {
+      const res = await fetch("/api/files/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filePaths: Array.from(selectedFiles),
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        setDeleteResult({
+          success: false,
+          error: result.error || "Failed to delete files",
+        });
+        return;
+      }
+
+      setDeleteResult({
+        success: true,
+        deletedCount: result.deletedCount,
+        recordsRemoved: result.recordsRemoved,
+      });
+
+      // Refresh file list (force re-scan) and clear selection after a short delay
+      setTimeout(() => {
+        setSelectedFiles(new Set());
+        setDeleteDialogOpen(false);
+        fetchFiles(true);
+      }, 1500);
+    } catch {
+      setDeleteResult({
+        success: false,
+        error: "Failed to delete files",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   useEffect(() => {
     fetchFiles();
   }, [filter, extension]);
@@ -421,13 +382,13 @@ export default function FileBrowserPage() {
   if (!isFacilityAdmin) {
     return (
       <PageContainer>
-        <GlassCard className="p-8 text-center">
-          <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-          <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
-          <p className="text-muted-foreground">
+        <div className="bg-card rounded-lg p-8 text-center border border-border">
+          <AlertCircle className="h-10 w-10 mx-auto mb-3 text-destructive" />
+          <h2 className="text-lg font-medium mb-2">Access Denied</h2>
+          <p className="text-sm text-muted-foreground">
             Only facility administrators can access the file browser.
           </p>
-        </GlassCard>
+        </div>
       </PageContainer>
     );
   }
@@ -444,33 +405,28 @@ export default function FileBrowserPage() {
 
   return (
     <PageContainer>
-      <div className="mb-6">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-lg bg-primary/10 flex items-center justify-center">
-              <HardDrive className="h-7 w-7 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">Sequencing Files</h1>
-              <p className="text-muted-foreground mt-1">
-                Browse and manage sequencing files. Click on unassigned files to assign them.
-              </p>
-            </div>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={() => fetchFiles(true)}
-            disabled={scanning}
-          >
-            {scanning ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Scan Now
-          </Button>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold">Sequencing Files</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {data
+              ? <>{data.total} file{data.total !== 1 ? "s" : ""}{data.assigned > 0 && <span className="text-green-600"> · {data.assigned} assigned</span>}{data.unassigned > 0 && <span className="text-amber-600"> · {data.unassigned} unassigned</span>}</>
+              : "Loading..."}
+          </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => fetchFiles(true)}
+          disabled={scanning}
+        >
+          {scanning ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
+          Scan Now
+        </Button>
       </div>
 
       {error && (
@@ -492,75 +448,6 @@ export default function FileBrowserPage() {
         </div>
       )}
 
-      {/* Stats */}
-      {data && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <GlassCard className="p-4">
-            <div className="text-2xl font-bold">{data.total}</div>
-            <div className="text-sm text-muted-foreground">Total Files</div>
-          </GlassCard>
-          <GlassCard className="p-4">
-            <div className="text-2xl font-bold text-green-600">{data.assigned}</div>
-            <div className="text-sm text-muted-foreground">Assigned</div>
-          </GlassCard>
-          <GlassCard className="p-4">
-            <div className="text-2xl font-bold text-amber-600">{data.unassigned}</div>
-            <div className="text-sm text-muted-foreground">Unassigned</div>
-          </GlassCard>
-          <GlassCard className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{data.filtered}</div>
-            <div className="text-sm text-muted-foreground">Showing</div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* Filters */}
-      <GlassCard className="p-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Filters:</span>
-          </div>
-
-          <div className="flex-1 max-w-sm">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search files, samples, orders..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
-
-          <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Files</SelectItem>
-              <SelectItem value="assigned">Assigned</SelectItem>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={extension} onValueChange={setExtension}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Extension" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Extensions</SelectItem>
-              {data?.config?.allowedExtensions?.map((ext) => (
-                <SelectItem key={ext} value={ext}>
-                  {ext}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </GlassCard>
-
       {/* Bulk Selection Actions */}
       {selectedFiles.size > 0 && (
         <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20 flex items-center justify-between">
@@ -571,15 +458,11 @@ export default function FileBrowserPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={calculateSelectedChecksums}
-              disabled={calculatingChecksums.size > 0}
+              className="text-destructive hover:text-destructive"
+              onClick={handleBulkDeleteClick}
             >
-              {calculatingChecksums.size > 0 ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Hash className="h-4 w-4 mr-2" />
-              )}
-              Calculate MD5
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Selected
             </Button>
             <Button
               size="sm"
@@ -592,23 +475,56 @@ export default function FileBrowserPage() {
         </div>
       )}
 
-      {/* Checksum Error */}
-      {checksumError && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-4 w-4" />
-          <span className="text-sm">{checksumError}</span>
-          <button onClick={() => setChecksumError("")} className="ml-auto text-sm underline">
-            Dismiss
-          </button>
-        </div>
-      )}
-
       {/* File Table */}
-      <GlassCard className="p-0 overflow-x-auto">
-        <TooltipProvider>
+      <div className="bg-card rounded-lg overflow-hidden border border-border">
+        {/* Search & Filters */}
+        <div className="px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search files, samples, orders..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+
+            <div className="relative">
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value as typeof filter)}
+                className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="all">All Files</option>
+                <option value="assigned">Assigned</option>
+                <option value="unassigned">Unassigned</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            </div>
+
+            <div className="relative">
+              <select
+                value={extension}
+                onChange={(e) => setExtension(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="all">All Extensions</option>
+                {data?.config?.allowedExtensions?.map((ext) => (
+                  <option key={ext} value={ext}>{ext}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
+        {/* Table Header */}
+        <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="bg-secondary/50">
                 <TableHead className="w-[40px]">
                   <Checkbox
                     checked={data?.files.length ? data.files.every((f) => selectedFiles.has(f.relativePath)) : false}
@@ -620,15 +536,13 @@ export default function FileBrowserPage() {
                 <TableHead className="w-[90px]">Pair</TableHead>
                 <TableHead className="w-[80px]">Size</TableHead>
                 <TableHead className="w-[100px]">Status</TableHead>
-                <TableHead>Sample</TableHead>
                 <TableHead>Study</TableHead>
-                <TableHead className="w-[70px]">MD5</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data?.files.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12">
+                  <TableCell colSpan={7} className="text-center py-12">
                     <FolderOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
                     <p className="text-muted-foreground">
                       {data.total === 0
@@ -654,14 +568,7 @@ export default function FileBrowserPage() {
                     <TableCell onClick={() => handleFileClick(file)}>
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="font-medium truncate max-w-[200px] block">{file.filename}</span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="font-mono text-xs">{file.relativePath}</p>
-                          </TooltipContent>
-                        </Tooltip>
+                        <span className="font-medium truncate max-w-[200px] block">{file.filename}</span>
                         <LinkIcon className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
                       </div>
                     </TableCell>
@@ -698,7 +605,11 @@ export default function FileBrowserPage() {
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>
                       {file.assigned ? (
-                        <Badge variant="default" className="bg-green-600 text-xs">
+                        <Badge
+                          variant="default"
+                          className="bg-green-600 text-xs cursor-default"
+                          title={file.assignedTo ? `${file.assignedTo.sampleId}${file.assignedTo.studyTitle ? ` · ${file.assignedTo.studyTitle}` : ""}${file.assignedTo.orderName ? ` · ${file.assignedTo.orderName}` : ""}` : undefined}
+                        >
                           Assigned
                         </Badge>
                       ) : (
@@ -708,67 +619,14 @@ export default function FileBrowserPage() {
                       )}
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>
-                      {file.assignedTo ? (
-                        <div className="text-sm">
-                          <span className="text-primary font-medium">
-                            {file.assignedTo.sampleId}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell onClick={() => handleFileClick(file)}>
                       {file.assignedTo?.studyTitle ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center gap-1 text-sm max-w-[120px]">
-                              <BookOpen className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                              <span className="truncate text-muted-foreground">{file.assignedTo.studyTitle}</span>
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{file.assignedTo.studyTitle}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      {file.checksum ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              onClick={() => copyChecksum(file.checksum!)}
-                              className="flex items-center gap-1 text-xs text-green-600 hover:text-green-700"
-                            >
-                              {copiedChecksum === file.checksum ? (
-                                <Check className="h-3 w-3" />
-                              ) : (
-                                <Hash className="h-3 w-3" />
-                              )}
-                              <span className="font-mono">{file.checksum.slice(0, 6)}...</span>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="font-mono text-xs">{file.checksum}</p>
-                            <p className="text-xs text-muted-foreground mt-1">Click to copy</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : file.assigned ? (
-                        <button
-                          onClick={() => calculateChecksum(file.relativePath)}
-                          disabled={calculatingChecksums.has(file.relativePath)}
-                          className="text-xs text-primary hover:underline disabled:opacity-50 flex items-center gap-1"
+                        <Link
+                          href={`/dashboard/studies/${file.assignedTo.studyId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-sm text-primary hover:underline truncate max-w-[150px] block"
                         >
-                          {calculatingChecksums.has(file.relativePath) ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Hash className="h-3 w-3" />
-                          )}
-                          {calculatingChecksums.has(file.relativePath) ? "..." : "Calc"}
-                        </button>
+                          {file.assignedTo.studyTitle}
+                        </Link>
                       ) : (
                         <span className="text-muted-foreground text-xs">-</span>
                       )}
@@ -777,9 +635,9 @@ export default function FileBrowserPage() {
               ))
             )}
           </TableBody>
-        </Table>
-        </TooltipProvider>
-      </GlassCard>
+          </Table>
+        </div>
+      </div>
 
       {/* Path info */}
       {data?.dataBasePath && (
@@ -788,6 +646,134 @@ export default function FileBrowserPage() {
           {" "}(depth: {data.config.scanDepth})
         </div>
       )}
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!deleting) setDeleteDialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Delete Files
+            </DialogTitle>
+            <DialogDescription>
+              {deleteResult
+                ? deleteResult.success
+                  ? "Files deleted successfully"
+                  : "Failed to delete files"
+                : "This action cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {!deleteResult && !deleting && (() => {
+              const selectedFilesList = data?.files.filter(f => selectedFiles.has(f.relativePath)) || [];
+              const assignedCount = selectedFilesList.filter(f => f.assigned).length;
+              return (
+                <div className="space-y-3">
+                  <p className="text-sm">
+                    You are about to delete{" "}
+                    <span className="font-medium">{selectedFiles.size}</span>{" "}
+                    file{selectedFiles.size !== 1 ? "s" : ""} from disk.
+                  </p>
+                  {assignedCount > 0 && (
+                    <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
+                      <div className="text-sm font-medium text-amber-800 flex items-center gap-1.5 mb-1">
+                        <AlertTriangle className="h-4 w-4" />
+                        {assignedCount} file{assignedCount !== 1 ? "s are" : " is"} assigned to samples
+                      </div>
+                      <p className="text-xs text-amber-700">
+                        Deleting will remove the file assignments from their samples.
+                      </p>
+                    </div>
+                  )}
+                  <div className="max-h-[200px] overflow-y-auto border rounded-lg divide-y">
+                    {selectedFilesList.map((f) => (
+                      <div key={f.relativePath} className="px-3 py-2 text-xs flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                          <span className="truncate">{f.filename}</span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-muted-foreground">{formatFileSize(f.size)}</span>
+                          {f.assigned && (
+                            <Badge variant="default" className="bg-green-600 text-[10px]">Assigned</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {deleting && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            )}
+
+            {deleteResult && (
+              <div
+                className={`p-4 rounded-lg border ${
+                  deleteResult.success
+                    ? "bg-green-50 border-green-200"
+                    : "bg-red-50 border-red-200"
+                }`}
+              >
+                <div className="text-center">
+                  {deleteResult.success ? (
+                    <>
+                      <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-2" />
+                      <p className="font-medium">Deleted Successfully</p>
+                      <div className="mt-2 text-sm text-muted-foreground space-y-1">
+                        <p>
+                          <span className="font-medium">{deleteResult.deletedCount}</span>{" "}
+                          file{deleteResult.deletedCount !== 1 ? "s" : ""} removed
+                        </p>
+                        {(deleteResult.recordsRemoved ?? 0) > 0 && (
+                          <p>
+                            <span className="font-medium">{deleteResult.recordsRemoved}</span>{" "}
+                            assignment{deleteResult.recordsRemoved !== 1 ? "s" : ""} cleared
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
+                      <p className="font-medium text-red-800">Failed</p>
+                      <p className="text-sm text-red-600 mt-1">{deleteResult.error}</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            {!deleteResult && !deleting && (
+              <>
+                <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleBulkDeleteConfirm}>
+                  Delete {selectedFiles.size} File{selectedFiles.size !== 1 ? "s" : ""}
+                </Button>
+              </>
+            )}
+            {deleteResult && (
+              <Button onClick={() => setDeleteDialogOpen(false)}>
+                Close
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Assignment Dialog */}
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>

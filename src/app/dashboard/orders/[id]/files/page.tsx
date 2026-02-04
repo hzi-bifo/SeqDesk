@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Save,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -502,6 +503,15 @@ export default function OrderFilesPage({
                                 <AlertTriangle className="h-4 w-4 text-amber-500" />
                               </span>
                             )}
+                            {sample.read1 && sample.read1Exists && (
+                              <a
+                                href={`/api/files/download?path=${encodeURIComponent(read1Value)}`}
+                                title="Download"
+                                className="text-primary hover:text-primary/80"
+                              >
+                                <Download className="h-4 w-4" />
+                              </a>
+                            )}
                           </>
                         ) : (
                           <span className="text-muted-foreground">-</span>
@@ -531,6 +541,15 @@ export default function OrderFilesPage({
                               <span title="File not found">
                                 <AlertTriangle className="h-4 w-4 text-amber-500" />
                               </span>
+                            )}
+                            {sample.read2 && sample.read2Exists && (
+                              <a
+                                href={`/api/files/download?path=${encodeURIComponent(read2Value)}`}
+                                title="Download"
+                                className="text-primary hover:text-primary/80"
+                              >
+                                <Download className="h-4 w-4" />
+                              </a>
                             )}
                           </>
                         ) : (

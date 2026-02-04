@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/glass-card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +22,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Dna,
   FlaskConical,
   Loader2,
@@ -35,11 +42,9 @@ import {
   Settings,
   ExternalLink,
   Clock,
-  History,
   Package,
   ArrowRight,
   Layers,
-  Info,
 } from "lucide-react";
 import { PipelineDataFlowSummary } from "@/components/pipelines/PipelineDataFlow";
 
@@ -105,6 +110,8 @@ interface Pipeline {
   description: string;
   icon: string;
   enabled: boolean;
+  version?: string;
+  category?: string;
   config?: Record<string, unknown>;
   configSchema: {
     properties: Record<
@@ -243,10 +250,9 @@ export function StudyPipelinesSection({
     data: runsData,
     mutate: mutateRuns,
   } = useSWR(`/api/pipelines/runs?studyId=${studyId}&limit=10`, fetcher, {
-    refreshInterval: 10000, // Refresh every 10 seconds to update running status
+    refreshInterval: 10000,
   });
 
-  const [activeTab, setActiveTab] = useState("run");
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(
     null
@@ -506,200 +512,171 @@ export function StudyPipelinesSection({
 
   return (
     <>
-      <GlassCard className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <FlaskConical className="h-5 w-5" />
-            Pipelines
-          </h2>
-          {pipelineRuns.length > 0 && (
-            <Link
-              href="/dashboard/analysis"
-              className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1"
-            >
-              View all runs
-              <ArrowRight className="h-3 w-3" />
-            </Link>
-          )}
+      {/* System warning */}
+      {checkingSystem ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Checking system requirements...
         </div>
+      ) : systemReady && !systemReady.ready ? (
+        <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 mb-4">
+          <p className="text-sm text-amber-800 flex items-center gap-2 mb-2">
+            <AlertTriangle className="h-4 w-4" />
+            {systemReady.summary}
+          </p>
+          <Link
+            href="/admin/settings/pipelines"
+            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+          >
+            <Settings className="h-3 w-3" />
+            Configure Pipeline Settings
+          </Link>
+        </div>
+      ) : null}
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="run" className="gap-2">
-              <Play className="h-4 w-4" />
-              Run New
-            </TabsTrigger>
-            <TabsTrigger value="history" className="gap-2">
-              <History className="h-4 w-4" />
-              History
-              {pipelineRuns.length > 0 && (
-                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                  {pipelineRuns.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
+      {/* Pipeline cards */}
+      {samplesWithReads.length === 0 ? (
+        <div className="text-center py-8 bg-muted/30 rounded-lg border border-dashed mb-4">
+          <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+          <p className="font-medium mb-1">No Samples Ready</p>
+          <p className="text-sm text-muted-foreground">
+            Assign paired-end read files to run analysis pipelines
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Sample readiness */}
+          <div className="flex items-center gap-2 text-sm mb-3">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <span>
+              <strong>{samplesWithReads.length}</strong> of {samples.length} samples ready
+            </span>
+          </div>
 
-          {/* Run New Tab */}
-          <TabsContent value="run" className="mt-0">
-            {checkingSystem ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Checking system requirements...
-              </div>
-            ) : systemReady && !systemReady.ready ? (
-              <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
-                <p className="text-sm text-amber-800 flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  {systemReady.summary}
-                </p>
-                <Link
-                  href="/admin/settings/pipelines"
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+          {/* Pipeline cards - admin-style */}
+          <div className="grid gap-4 sm:grid-cols-2 mb-6">
+            {enabledPipelines.map((pipeline) => {
+              const canRun =
+                pipeline.pipelineId === "mag" ? canRunMag : true;
+              const category = pipeline.category || "metagenomics";
+
+              return (
+                <GlassCard
+                  key={pipeline.pipelineId}
+                  className={`relative transition-all ${
+                    canRun
+                      ? "hover:shadow-md hover:border-primary/50 cursor-pointer"
+                      : "opacity-60"
+                  }`}
+                  onClick={() => canRun && openRunDialog(pipeline)}
                 >
-                  <Settings className="h-3 w-3" />
-                  Configure Pipeline Settings
-                </Link>
-              </div>
-            ) : samplesWithReads.length === 0 ? (
-              <div className="text-center py-8 bg-muted/30 rounded-lg border border-dashed">
-                <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-                <p className="font-medium mb-1">No Samples Ready</p>
-                <p className="text-sm text-muted-foreground">
-                  Assign paired-end read files to run analysis pipelines
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* Sample readiness indicator */}
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span>
-                    <strong>{samplesWithReads.length}</strong> of{" "}
-                    {samples.length} samples ready
-                  </span>
-                </div>
-
-                {/* Pipeline cards */}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {enabledPipelines.map((pipeline) => {
-                    const canRun =
-                      pipeline.pipelineId === "mag" ? canRunMag : true;
-
-                    return (
-                      <div
-                        key={pipeline.pipelineId}
-                        className={`relative p-4 rounded-xl border bg-card transition-all ${
-                          canRun
-                            ? "hover:shadow-md hover:border-primary/50 cursor-pointer"
-                            : "opacity-60"
-                        }`}
-                        onClick={() => canRun && openRunDialog(pipeline)}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`p-2.5 rounded-lg ${getCategoryColor("metagenomics")}`}
-                          >
-                            {getPipelineIcon(pipeline.icon)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-medium">{pipeline.name}</h3>
-                            </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              {pipeline.description}
-                            </p>
-                          </div>
-                          {canRun && (
-                            <Button size="sm" variant="ghost" className="h-8">
-                              <Play className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </TabsContent>
-
-          {/* History Tab */}
-          <TabsContent value="history" className="mt-0">
-            {pipelineRuns.length === 0 ? (
-              <div className="text-center py-8 bg-muted/30 rounded-lg border border-dashed">
-                <History className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-                <p className="font-medium mb-1">No Pipeline Runs Yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Run your first analysis pipeline to see results here
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setActiveTab("run")}
-                >
-                  <Play className="h-4 w-4 mr-2" />
-                  Run Pipeline
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {pipelineRuns.map((run) => (
-                  <Link
-                    key={run.id}
-                    href={`/dashboard/analysis/${run.id}`}
-                    className="flex items-center gap-4 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
-                  >
-                    <div
-                      className={`p-2 rounded-lg ${getCategoryColor("metagenomics")}`}
-                    >
-                      {getPipelineIcon(run.pipelineIcon)}
+                  <div className="flex items-start gap-4">
+                    <div className={`p-3 rounded-xl ${getCategoryColor(category)}`}>
+                      {getPipelineIcon(pipeline.icon)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="font-medium text-sm">
-                          {run.pipelineName}
-                        </span>
-                        <span className="text-xs text-muted-foreground font-mono">
-                          {run.runNumber}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span>{formatRelativeTime(run.createdAt)}</span>
-                        {run.currentStep && run.status === "running" && (
-                          <span className="text-blue-600">
-                            {run.currentStep}
-                          </span>
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <h3 className="font-semibold">{pipeline.name}</h3>
+                        {pipeline.version && (
+                          <Badge variant="outline" className="text-xs font-normal">
+                            v{pipeline.version}
+                          </Badge>
                         )}
-                        {run._count &&
-                          (run._count.assembliesCreated > 0 ||
-                            run._count.binsCreated > 0) && (
-                            <span>
-                              {run._count.assembliesCreated} assemblies,{" "}
-                              {run._count.binsCreated} bins
-                            </span>
-                          )}
+                        <Badge variant="secondary" className="text-xs capitalize">
+                          {category}
+                        </Badge>
                       </div>
+                      <p className="text-sm text-muted-foreground line-clamp-2">
+                        {pipeline.description}
+                      </p>
                     </div>
-                    {getStatusBadge(run.status)}
-                  </Link>
-                ))}
-
-                {runsData?.total > pipelineRuns.length && (
-                  <div className="text-center pt-2">
-                    <Link
-                      href={`/dashboard/analysis?studyId=${studyId}`}
-                      className="text-sm text-primary hover:underline"
-                    >
-                      View all {runsData.total} runs
-                    </Link>
+                    {canRun && (
+                      <Button size="sm" variant="ghost" className="h-8 flex-shrink-0">
+                        <Play className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
-                )}
-              </div>
+                </GlassCard>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Run History */}
+      {pipelineRuns.length > 0 && (
+        <div className="bg-card rounded-lg border overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              Run History
+            </h3>
+            {runsData?.total > pipelineRuns.length && (
+              <Link
+                href={`/dashboard/analysis?studyId=${studyId}`}
+                className="text-xs text-primary hover:underline flex items-center gap-1"
+              >
+                View all {runsData.total} runs
+                <ArrowRight className="h-3 w-3" />
+              </Link>
             )}
-          </TabsContent>
-        </Tabs>
-      </GlassCard>
+          </div>
+
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-secondary/50">
+                <TableHead>Pipeline</TableHead>
+                <TableHead className="w-[100px]">Run</TableHead>
+                <TableHead className="w-[100px]">Started</TableHead>
+                <TableHead className="w-[120px]">Results</TableHead>
+                <TableHead className="w-[110px]">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pipelineRuns.map((run) => (
+                <TableRow
+                  key={run.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => window.location.href = `/dashboard/analysis/${run.id}`}
+                >
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg ${getCategoryColor("metagenomics")}`}>
+                        {getPipelineIcon(run.pipelineIcon)}
+                      </div>
+                      <span className="font-medium text-sm">{run.pipelineName}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {run.runNumber}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatRelativeTime(run.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {run.currentStep && run.status === "running" ? (
+                      <span className="text-blue-600">{run.currentStep}</span>
+                    ) : run._count &&
+                      (run._count.assembliesCreated > 0 ||
+                        run._count.binsCreated > 0) ? (
+                      <span>
+                        {run._count.assembliesCreated} assemblies, {run._count.binsCreated} bins
+                      </span>
+                    ) : (
+                      <span>--</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {getStatusBadge(run.status)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {/* Run Pipeline Dialog */}
       <Dialog open={runDialogOpen} onOpenChange={setRunDialogOpen}>

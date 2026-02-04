@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +27,7 @@ import {
   Search,
   Trash2,
   Copy,
+  X,
 } from "lucide-react";
 
 interface Submission {
@@ -62,43 +62,50 @@ interface Submission {
   } | null;
 }
 
-const statusConfig: Record<
+const STATUS_CONFIG: Record<
   string,
-  { label: string; color: string; icon: React.ReactNode }
+  { label: string; dot: string; color: string; icon: React.ReactNode }
 > = {
   PENDING: {
     label: "Pending",
-    color: "bg-amber-100 text-amber-700 border-amber-200",
+    dot: "bg-amber-500",
+    color: "text-amber-600",
     icon: <Clock className="h-3 w-3" />,
   },
   SUBMITTED: {
     label: "Submitted",
-    color: "bg-blue-100 text-blue-700 border-blue-200",
+    dot: "bg-blue-500",
+    color: "text-blue-600",
     icon: <Send className="h-3 w-3" />,
   },
   PARTIAL: {
     label: "Partial",
-    color: "bg-amber-100 text-amber-700 border-amber-200",
+    dot: "bg-amber-500",
+    color: "text-amber-600",
     icon: <AlertCircle className="h-3 w-3" />,
   },
   ACCEPTED: {
     label: "Accepted",
-    color: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    dot: "bg-emerald-500",
+    color: "text-emerald-600",
     icon: <CheckCircle2 className="h-3 w-3" />,
   },
   REJECTED: {
     label: "Rejected",
-    color: "bg-red-100 text-red-700 border-red-200",
+    dot: "bg-red-500",
+    color: "text-red-600",
     icon: <XCircle className="h-3 w-3" />,
   },
   ERROR: {
     label: "Error",
-    color: "bg-red-100 text-red-700 border-red-200",
+    dot: "bg-red-500",
+    color: "text-red-600",
     icon: <AlertCircle className="h-3 w-3" />,
   },
   CANCELLED: {
     label: "Cancelled",
-    color: "bg-stone-100 text-stone-600 border-stone-200",
+    dot: "bg-stone-400",
+    color: "text-stone-500",
     icon: <XCircle className="h-3 w-3" />,
   },
 };
@@ -131,11 +138,10 @@ function StepItem({ step }: { step: StepDetails }) {
     });
   };
 
-  const renderValue = (value: unknown, depth = 0, key?: string): React.ReactNode => {
+  const renderValue = (value: unknown, depth = 0): React.ReactNode => {
     if (value === null || value === undefined) return <span className="text-muted-foreground">-</span>;
     if (typeof value === "boolean") return value ? "Yes" : "No";
     if (typeof value === "string") {
-      // Check if it looks like XML
       if (value.startsWith("<?xml") || value.startsWith("<")) {
         return (
           <div className="relative group">
@@ -260,6 +266,9 @@ export default function SubmissionsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>("");
 
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;
@@ -312,7 +321,6 @@ export default function SubmissionsPage() {
         return;
       }
 
-      // Remove from local state
       setSubmissions((prev) => prev.filter((s) => s.id !== submissionId));
       setExpandedId(null);
     } catch {
@@ -351,16 +359,13 @@ export default function SubmissionsPage() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString("en-US", {
-      year: "numeric",
+    return new Date(dateString).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
+      year: "numeric",
     });
   };
 
-  // Calculate expiration status for test submissions (24h expiry)
   const getTestExpirationStatus = (createdAt: string): { expired: boolean; hoursRemaining: number; text: string } => {
     const created = new Date(createdAt);
     const expiresAt = new Date(created.getTime() + 24 * 60 * 60 * 1000);
@@ -378,18 +383,42 @@ export default function SubmissionsPage() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const config = statusConfig[status] || statusConfig.PENDING;
-    return (
-      <Badge
-        variant="outline"
-        className={`${config.color} flex items-center gap-1`}
-      >
-        {config.icon}
-        {config.label}
-      </Badge>
-    );
+  // Filtered submissions
+  const filteredSubmissions = useMemo(() => {
+    return submissions.filter((s) => {
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const entityName = s.entityType === "study"
+          ? s.entityDetails?.title || ""
+          : s.entityDetails?.sampleId || "";
+        const userName = s.entityDetails?.user
+          ? `${s.entityDetails.user.firstName || ""} ${s.entityDetails.user.lastName || ""}`.trim()
+          : "";
+        const matchesSearch =
+          entityName.toLowerCase().includes(query) ||
+          userName.toLowerCase().includes(query) ||
+          s.submissionType.toLowerCase().includes(query) ||
+          s.id.toLowerCase().includes(query);
+        if (!matchesSearch) return false;
+      }
+      if (statusFilter && s.status !== statusFilter) return false;
+      if (typeFilter && s.entityType !== typeFilter) return false;
+      return true;
+    });
+  }, [submissions, searchQuery, statusFilter, typeFilter]);
+
+  const hasActiveFilters = searchQuery || statusFilter || typeFilter;
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("");
+    setTypeFilter("");
   };
+
+  // Stats
+  const acceptedCount = submissions.filter((s) => s.status === "ACCEPTED").length;
+  const pendingCount = submissions.filter((s) => s.status === "PENDING" || s.status === "SUBMITTED").length;
+  const issueCount = submissions.filter((s) => s.status === "REJECTED" || s.status === "ERROR" || s.status === "PARTIAL").length;
 
   if (sessionStatus === "loading" || loading) {
     return (
@@ -403,38 +432,23 @@ export default function SubmissionsPage() {
     return null;
   }
 
-  // Group submissions by status
-  const pendingSubmissions = submissions.filter((s) =>
-    s.status === "PENDING" || s.status === "SUBMITTED"
-  );
-  const completedSubmissions = submissions.filter(
-    (s) => s.status === "ACCEPTED"
-  );
-  const issueSubmissions = submissions.filter(
-    (s) => s.status === "REJECTED" || s.status === "ERROR" || s.status === "PARTIAL"
-  );
-
   return (
     <PageContainer>
       {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Send className="h-7 w-7 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">ENA Submissions</h1>
-              <p className="text-muted-foreground mt-1">
-                Track study and sample registrations with the European Nucleotide Archive
-              </p>
-            </div>
-          </div>
-          <Button onClick={fetchSubmissions} variant="outline" size="sm">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold">ENA Submissions</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
+            {acceptedCount > 0 && <span className="text-emerald-600"> · {acceptedCount} accepted</span>}
+            {pendingCount > 0 && <span className="text-amber-600"> · {pendingCount} pending</span>}
+            {issueCount > 0 && <span className="text-red-600"> · {issueCount} issue{issueCount !== 1 ? "s" : ""}</span>}
+          </p>
         </div>
+        <Button onClick={fetchSubmissions} variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh
+        </Button>
       </div>
 
       {error && (
@@ -444,298 +458,183 @@ export default function SubmissionsPage() {
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <GlassCard className="p-4">
-          <div className="text-2xl font-bold">{submissions.length}</div>
-          <div className="text-sm text-muted-foreground">Total Submissions</div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-2xl font-bold text-amber-600">
-            {pendingSubmissions.length}
-          </div>
-          <div className="text-sm text-muted-foreground">Pending</div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-2xl font-bold text-emerald-600">
-            {completedSubmissions.length}
-          </div>
-          <div className="text-sm text-muted-foreground">Accepted</div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-2xl font-bold text-red-600">
-            {issueSubmissions.length}
-          </div>
-          <div className="text-sm text-muted-foreground">Issues</div>
-        </GlassCard>
-      </div>
-
-      {/* Submissions List */}
       {submissions.length === 0 ? (
-        <GlassCard className="p-12 text-center">
-          <Send className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
-          <h2 className="text-xl font-semibold mb-2">No Submissions Yet</h2>
-          <p className="text-muted-foreground mb-4">
+        <div className="bg-card rounded-lg p-12 text-center border border-border">
+          <h2 className="text-lg font-medium mb-2">No submissions yet</h2>
+          <p className="text-sm text-muted-foreground mb-4">
             When you register studies or samples with ENA, they will appear here.
           </p>
-          <Button asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link href="/dashboard/studies">
-              <BookOpen className="h-4 w-4 mr-2" />
               View Studies
             </Link>
           </Button>
-        </GlassCard>
+        </div>
       ) : (
-        <GlassCard className="divide-y divide-border">
-          {submissions.map((submission) => {
-            const isExpanded = expandedId === submission.id;
-            const response = safeJsonParse(submission.response);
-            const accessionNumbers = safeJsonParse(submission.accessionNumbers) as Record<string, string> | null;
-            const isTestSubmission = response?.isTest !== false;
+        <div className="bg-card rounded-lg overflow-hidden border border-border">
+          {/* Search & Filters */}
+          <div className="px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search submissions..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
 
-            return (
-              <div key={submission.id} className="p-4">
-                <div
-                  className="flex items-center justify-between cursor-pointer"
-                  onClick={() =>
-                    setExpandedId(isExpanded ? null : submission.id)
-                  }
+              <div className="relative">
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                 >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                        submission.entityType === "study"
-                          ? "bg-blue-100"
-                          : "bg-emerald-100"
-                      }`}
-                    >
-                      {submission.entityType === "study" ? (
-                        <BookOpen
-                          className={`h-5 w-5 ${
+                  <option value="">All Status</option>
+                  {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                    <option key={key} value={key}>{config.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+
+              <div className="relative">
+                <select
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="">All Types</option>
+                  <option value="study">Study</option>
+                  <option value="sample">Sample</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+
+              {hasActiveFilters && (
+                <button
+                  onClick={clearFilters}
+                  className="flex items-center gap-1 px-2 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Column Headers */}
+          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+            <div className="col-span-4">Entity</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-2">Accession</div>
+            <div className="col-span-2">Date</div>
+            <div className="col-span-2"></div>
+          </div>
+
+          {/* Submissions List */}
+          <div className="divide-y divide-border">
+            {filteredSubmissions.map((submission) => {
+              const isExpanded = expandedId === submission.id;
+              const response = safeJsonParse(submission.response);
+              const accessionNumbers = safeJsonParse(submission.accessionNumbers) as Record<string, string> | null;
+              const isTestSubmission = response?.isTest !== false;
+              const statusCfg = STATUS_CONFIG[submission.status] || STATUS_CONFIG.PENDING;
+
+              return (
+                <div key={submission.id}>
+                  <div
+                    className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors cursor-pointer items-center"
+                    onClick={() => setExpandedId(isExpanded ? null : submission.id)}
+                  >
+                    {/* Entity */}
+                    <div className="col-span-4 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={`h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0 ${
                             submission.entityType === "study"
-                              ? "text-blue-600"
-                              : "text-emerald-600"
+                              ? "bg-blue-100"
+                              : "bg-emerald-100"
                           }`}
-                        />
+                        >
+                          {submission.entityType === "study" ? (
+                            <BookOpen className="h-3.5 w-3.5 text-blue-600" />
+                          ) : (
+                            <FlaskConical className="h-3.5 w-3.5 text-emerald-600" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate">
+                            {submission.entityType === "study"
+                              ? submission.entityDetails?.title || "Deleted Study"
+                              : submission.entityDetails?.sampleId || "Deleted Sample"}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {submission.submissionType}
+                            {response?.isTest && " · Test"}
+                            {!submission.entityDetails && " · Entity Deleted"}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Status */}
+                    <div className="col-span-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${statusCfg.dot}`} />
+                        <span className={`text-xs font-medium ${statusCfg.color}`}>
+                          {statusCfg.label}
+                        </span>
+                      </div>
+                      {response?.isTest && (() => {
+                        const expiration = getTestExpirationStatus(submission.createdAt);
+                        return (
+                          <span className={`text-[10px] ml-4 ${expiration.expired ? "text-stone-400 line-through" : "text-amber-500"}`}>
+                            {expiration.expired ? "Expired" : expiration.text}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Accession */}
+                    <div className="col-span-2">
+                      {accessionNumbers ? (
+                        <span className="font-mono text-xs text-emerald-700">
+                          {Object.values(accessionNumbers)[0]}
+                        </span>
                       ) : (
-                        <FlaskConical className="h-5 w-5 text-emerald-600" />
+                        <span className="text-xs text-muted-foreground">-</span>
                       )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">
-                          {submission.entityType === "study"
-                            ? submission.entityDetails?.title || "Deleted Study"
-                            : submission.entityDetails?.sampleId ||
-                              "Deleted Sample"}
-                        </span>
-                        {getStatusBadge(submission.status)}
-                        {!submission.entityDetails && (
-                          <Badge variant="outline" className="text-stone-500 border-stone-300">
-                            Entity Deleted
-                          </Badge>
-                        )}
-                        {response?.isTest && (() => {
-                          const expiration = getTestExpirationStatus(submission.createdAt);
-                          return (
-                            <Badge
-                              variant="outline"
-                              className={expiration.expired
-                                ? "text-stone-500 border-stone-300 line-through"
-                                : "text-amber-600 border-amber-300"
-                              }
-                            >
-                              {expiration.expired ? "Test - Expired" : `Test - ${expiration.text}`}
-                            </Badge>
-                          );
-                        })()}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {submission.submissionType} | {formatDate(submission.createdAt)}
-                        {submission.entityDetails?.user && (
-                          <span className="ml-2">
-                            | by{" "}
-                            {submission.entityDetails.user.firstName
-                              ? `${submission.entityDetails.user.firstName} ${submission.entityDetails.user.lastName}`
-                              : submission.entityDetails.user.email}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {accessionNumbers && (
-                      <span className="font-mono text-sm bg-emerald-50 text-emerald-700 px-2 py-1 rounded">
-                        {Object.values(accessionNumbers || {})[0]}
+
+                    {/* Date */}
+                    <div className="col-span-2">
+                      <span className="text-sm text-muted-foreground tabular-nums">
+                        {formatDate(submission.createdAt)}
                       </span>
-                    )}
-                    {submission.entityType === "study" &&
-                      submission.entityDetails && (
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link
-                            href={`/dashboard/studies/${submission.entityId}`}
-                          >
-                            <ExternalLink className="h-4 w-4" />
+                    </div>
+
+                    {/* Actions */}
+                    <div className="col-span-2 flex items-center justify-end gap-1">
+                      {submission.entityType === "study" && submission.entityDetails && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          asChild
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                        >
+                          <Link href={`/dashboard/studies/${submission.entityId}`}>
+                            <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         </Button>
                       )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(submission.id);
-                      }}
-                      disabled={deletingId === submission.id}
-                    >
-                      {deletingId === submission.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
-                    {isExpanded ? (
-                      <ChevronUp className="h-5 w-5 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Expanded Details */}
-                {isExpanded && (
-                  <div className="mt-4 pt-4 border-t border-border/50 space-y-4">
-                    {/* Steps Timeline */}
-                    {response?.steps && Array.isArray(response.steps) && (
-                      <div className="bg-stone-50 rounded-lg p-4">
-                        <h4 className="font-medium mb-4">Registration Steps</h4>
-                        <div className="space-y-3">
-                          {response.steps.map((step: {
-                            step: number;
-                            name: string;
-                            status: string;
-                            timestamp: string;
-                            details: Record<string, unknown>;
-                          }) => (
-                            <StepItem key={step.step} step={step} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Legacy Response Info (for old submissions without steps) */}
-                    {response && !response.steps && (
-                      <div className="bg-stone-50 rounded-lg p-4">
-                        <h4 className="font-medium mb-2">Submission Details</h4>
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Server:</span>{" "}
-                            <span className="font-mono text-xs">
-                              {response.server}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Type:</span>{" "}
-                            {response.isTest ? "Test" : "Production"}
-                          </div>
-                          {response.message && (
-                            <div className="col-span-2">
-                              <span className="text-muted-foreground">
-                                Message:
-                              </span>{" "}
-                              {response.message}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Accession Numbers */}
-                    {accessionNumbers && (
-                      <div className="bg-emerald-50 rounded-lg p-4">
-                        <h4 className="font-medium mb-3 text-emerald-700 flex items-center gap-2">
-                          <CheckCircle2 className="h-4 w-4" />
-                          Accession Numbers
-                        </h4>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                          {Object.entries(accessionNumbers).map(
-                            ([key, value]) => (
-                              <div
-                                key={key}
-                                className="bg-white rounded-lg p-2 border border-emerald-200"
-                              >
-                                <div className="text-xs text-muted-foreground mb-1">
-                                  {key === "study" ? "Study" : `Sample: ${key}`}
-                                </div>
-                                <a
-                                  href={
-                                    response?.isTest
-                                      ? `https://wwwdev.ebi.ac.uk/ena/browser/view/${value}`
-                                      : `https://www.ebi.ac.uk/ena/browser/view/${value}`
-                                  }
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="font-mono text-sm text-emerald-700 hover:text-emerald-900 hover:underline flex items-center gap-1"
-                                >
-                                  {value as string}
-                                  <ExternalLink className="h-3 w-3" />
-                                </a>
-                              </div>
-                            )
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-3">
-                          {response?.isTest
-                            ? "Test accessions - these will be deleted after 24 hours"
-                            : "Production accessions - permanently registered with ENA"}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* XML Content (collapsible) */}
-                    {submission.xmlContent && (
-                      <div className="bg-stone-50 rounded-lg p-4">
-                        <h4 className="font-medium mb-2">Generated XML</h4>
-                        <pre className="text-xs font-mono overflow-x-auto max-h-40 p-2 bg-white rounded border">
-                          {submission.xmlContent}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="flex gap-2">
-                      {(submission.status === "REJECTED" ||
-                        submission.status === "ERROR") &&
-                        submission.entityType === "study" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRetry(submission, isTestSubmission);
-                          }}
-                          disabled={retryingId === submission.id}
-                        >
-                          {retryingId === submission.id ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-4 w-4 mr-2" />
-                          )}
-                          Retry Submission
-                        </Button>
-                      )}
-                      {submission.status === "PENDING" && (
-                        <Button size="sm" variant="outline" disabled>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </Button>
-                      )}
-                      {/* Delete button - always available */}
                       <Button
+                        variant="ghost"
                         size="sm"
-                        variant="outline"
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDelete(submission.id);
@@ -743,19 +642,176 @@ export default function SubmissionsPage() {
                         disabled={deletingId === submission.id}
                       >
                         {deletingId === submission.id ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <Trash2 className="h-4 w-4 mr-2" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         )}
-                        Delete
                       </Button>
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </GlassCard>
+
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div className="px-5 pb-4 pt-0 space-y-4">
+                      <div className="border-t border-border/50 pt-4 space-y-4">
+                        {/* Steps Timeline */}
+                        {response?.steps && Array.isArray(response.steps) && (
+                          <div className="bg-stone-50 rounded-lg p-4">
+                            <h4 className="font-medium mb-4 text-sm">Registration Steps</h4>
+                            <div className="space-y-3">
+                              {response.steps.map((step: {
+                                step: number;
+                                name: string;
+                                status: string;
+                                timestamp: string;
+                                details: Record<string, unknown>;
+                              }) => (
+                                <StepItem key={step.step} step={step} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Legacy Response Info */}
+                        {response && !response.steps && (
+                          <div className="bg-stone-50 rounded-lg p-4">
+                            <h4 className="font-medium mb-2 text-sm">Submission Details</h4>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-muted-foreground">Server:</span>{" "}
+                                <span className="font-mono text-xs">{response.server}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Type:</span>{" "}
+                                {response.isTest ? "Test" : "Production"}
+                              </div>
+                              {response.message && (
+                                <div className="col-span-2">
+                                  <span className="text-muted-foreground">Message:</span>{" "}
+                                  {response.message}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Accession Numbers */}
+                        {accessionNumbers && (
+                          <div className="bg-emerald-50 rounded-lg p-4">
+                            <h4 className="font-medium mb-3 text-sm text-emerald-700 flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4" />
+                              Accession Numbers
+                            </h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                              {Object.entries(accessionNumbers).map(([key, value]) => (
+                                <div key={key} className="bg-white rounded-lg p-2 border border-emerald-200">
+                                  <div className="text-xs text-muted-foreground mb-1">
+                                    {key === "study" ? "Study" : `Sample: ${key}`}
+                                  </div>
+                                  <a
+                                    href={
+                                      response?.isTest
+                                        ? `https://wwwdev.ebi.ac.uk/ena/browser/view/${value}`
+                                        : `https://www.ebi.ac.uk/ena/browser/view/${value}`
+                                    }
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-sm text-emerald-700 hover:text-emerald-900 hover:underline flex items-center gap-1"
+                                  >
+                                    {value as string}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-3">
+                              {response?.isTest
+                                ? "Test accessions - these will be deleted after 24 hours"
+                                : "Production accessions - permanently registered with ENA"}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* XML Content */}
+                        {submission.xmlContent && (
+                          <div className="bg-stone-50 rounded-lg p-4">
+                            <h4 className="font-medium mb-2 text-sm">Generated XML</h4>
+                            <pre className="text-xs font-mono overflow-x-auto max-h-40 p-2 bg-white rounded border">
+                              {submission.xmlContent}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex gap-2">
+                          {(submission.status === "REJECTED" || submission.status === "ERROR") &&
+                            submission.entityType === "study" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRetry(submission, isTestSubmission);
+                              }}
+                              disabled={retryingId === submission.id}
+                            >
+                              {retryingId === submission.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                              )}
+                              Retry Submission
+                            </Button>
+                          )}
+                          {submission.status === "PENDING" && (
+                            <Button size="sm" variant="outline" disabled>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Processing...
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(submission.id);
+                            }}
+                            disabled={deletingId === submission.id}
+                          >
+                            {deletingId === submission.id ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4 mr-2" />
+                            )}
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {filteredSubmissions.length === 0 && hasActiveFilters && (
+            <div className="py-12 text-center text-muted-foreground">
+              <p className="text-sm">No submissions match your filters</p>
+              <button
+                onClick={clearFilters}
+                className="mt-2 text-sm text-primary hover:underline"
+              >
+                Clear all filters
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </PageContainer>
   );

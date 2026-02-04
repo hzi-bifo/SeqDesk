@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
-import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,7 +31,6 @@ import {
   Mail,
   Phone,
   MapPin,
-  Settings,
   Pencil,
   Trash2,
   ClipboardList,
@@ -44,26 +43,27 @@ import {
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
 
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
 // Helper to format custom field values for display
 function formatCustomFieldValue(key: string, value: unknown): string | React.ReactNode {
-  // Handle projects field specially
   if (key === "_projects") {
     const projects = parseProjectsValue(value);
     if (projects.length === 0) return "No projects";
     return projects.map(p => p.name).join(", ");
   }
-
-  // Handle arrays
   if (Array.isArray(value)) {
     return value.join(", ");
   }
-
-  // Handle booleans
   if (typeof value === "boolean") {
     return value ? "Yes" : "No";
   }
-
-  // Handle objects (stringify them nicely)
   if (typeof value === "object" && value !== null) {
     if ("technologyId" in value) {
       const selection = value as {
@@ -89,8 +89,6 @@ function formatCustomFieldValue(key: string, value: unknown): string | React.Rea
     }
     return JSON.stringify(value);
   }
-
-  // Default: convert to string
   return String(value) || "Not specified";
 }
 
@@ -154,16 +152,10 @@ interface Order {
   };
 }
 
-const STATUS_ORDER = [
-  { key: "DRAFT", label: "Draft", description: "Order is being prepared by researcher" },
-  { key: "SUBMITTED", label: "Submitted", description: "Order submitted, waiting for file assignment" },
-  { key: "COMPLETED", label: "Completed", description: "All samples have sequencing files assigned" },
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  DRAFT: "bg-gray-500",
-  SUBMITTED: "bg-blue-500",
-  COMPLETED: "bg-emerald-500",
+const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string }> = {
+  DRAFT: { label: "Draft", dot: "bg-muted-foreground", color: "text-muted-foreground" },
+  SUBMITTED: { label: "Submitted", dot: "bg-blue-500", color: "text-blue-600" },
+  COMPLETED: { label: "Completed", dot: "bg-emerald-500", color: "text-emerald-600" },
 };
 
 export default function OrderDetailPage({
@@ -192,13 +184,22 @@ export default function OrderDetailPage({
 
   // Simulate reads states
   const [simulateReadsDialogOpen, setSimulateReadsDialogOpen] = useState(false);
+  const [simulateReadsPhase, setSimulateReadsPhase] = useState<"confirm" | "running" | "done">("confirm");
   const [simulatingReads, setSimulatingReads] = useState(false);
   const [simulateReadsResult, setSimulateReadsResult] = useState<{
     success: boolean;
     error?: string;
     createdPath?: string;
     filesCreated?: number;
+    oldFilesRemoved?: number;
     samplesProcessed?: number;
+    files?: Array<{
+      sampleId: string;
+      file1: string;
+      file1Size: number;
+      file2: string | null;
+      file2Size: number | null;
+    }>;
   } | null>(null);
 
   const isResearcher = session?.user?.role === "RESEARCHER";
@@ -238,10 +239,16 @@ export default function OrderDetailPage({
     fetchOrder();
   }, [orderId]);
 
-  const handleSimulateReads = async () => {
-    setSimulatingReads(true);
+  const handleSimulateReadsClick = () => {
+    setSimulateReadsPhase("confirm");
     setSimulateReadsResult(null);
     setSimulateReadsDialogOpen(true);
+  };
+
+  const handleSimulateReadsConfirm = async () => {
+    setSimulateReadsPhase("running");
+    setSimulatingReads(true);
+    setSimulateReadsResult(null);
     setError("");
 
     try {
@@ -261,18 +268,17 @@ export default function OrderDetailPage({
           success: false,
           error: data.error || "Failed to create simulated read files",
         });
-        return;
+      } else {
+        setSimulateReadsResult({
+          success: true,
+          createdPath: data.createdPath,
+          filesCreated: data.filesCreated,
+          oldFilesRemoved: data.oldFilesRemoved,
+          samplesProcessed: data.samplesProcessed,
+          files: data.files,
+        });
+        setTimeout(() => fetchOrder({ silent: true }), 500);
       }
-
-      setSimulateReadsResult({
-        success: true,
-        createdPath: data.createdPath,
-        filesCreated: data.filesCreated,
-        samplesProcessed: data.samplesProcessed,
-      });
-
-      // Refresh order data to show new reads if applicable
-      setTimeout(() => fetchOrder({ silent: true }), 500);
     } catch (err) {
       setSimulateReadsResult({
         success: false,
@@ -280,6 +286,7 @@ export default function OrderDetailPage({
       });
     } finally {
       setSimulatingReads(false);
+      setSimulateReadsPhase("done");
     }
   };
 
@@ -331,7 +338,6 @@ export default function OrderDetailPage({
         return;
       }
 
-      // Refresh order data
       const updatedRes = await fetch(`/api/orders/${order.id}`);
       const updatedOrder = await updatedRes.json();
       setOrder(updatedOrder);
@@ -352,7 +358,6 @@ export default function OrderDetailPage({
 
     const isSubmitted = order.status !== "DRAFT";
 
-    // For submitted orders, require typing DELETE
     if (isSubmitted && deleteConfirmText !== "DELETE") {
       setError("You must type DELETE to confirm deletion of a submitted order.");
       return;
@@ -384,8 +389,6 @@ export default function OrderDetailPage({
       year: "numeric",
       month: "long",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
     });
   };
 
@@ -406,96 +409,82 @@ export default function OrderDetailPage({
             Back to Orders
           </Link>
         </Button>
-        <GlassCard className="p-8 text-center">
+        <div className="bg-card rounded-lg border p-8 text-center">
           <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
           <h2 className="text-xl font-semibold mb-2">Error</h2>
           <p className="text-muted-foreground">{error}</p>
-        </GlassCard>
+        </div>
       </PageContainer>
     );
   }
 
   if (!order) return null;
 
+  const statusCfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
+  const samplesWithFiles = order.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
+
   return (
     <PageContainer>
-      <div className="mb-6">
-        <Button variant="ghost" size="sm" asChild className="mb-4">
+      {/* Header */}
+      <div className="mb-4">
+        <Button variant="ghost" size="sm" asChild className="mb-2">
           <Link href="/dashboard/orders">
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Orders
           </Link>
         </Button>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-lg bg-primary/10 flex items-center justify-center">
-              <FlaskConical className="h-7 w-7 text-primary" />
+
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl font-semibold">{order.name}</h1>
+              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusCfg.color}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${statusCfg.dot}`} />
+                {statusCfg.label}
+              </span>
             </div>
-            <div>
-              <h1 className="text-3xl font-bold">{order.name}</h1>
-              <div className="flex items-center gap-3 mt-1">
-                <Badge className={`${STATUS_COLORS[order.status]} hover:${STATUS_COLORS[order.status]}`}>
-                  {STATUS_ORDER.find(s => s.key === order.status)?.label || order.status}
-                </Badge>
-                <span className="text-muted-foreground text-sm">
-                  Created {formatDate(order.createdAt)}
-                </span>
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {[
+                order.platform,
+                `${order._count.samples} sample${order._count.samples !== 1 ? "s" : ""}`,
+                `Created ${formatDate(order.createdAt)}`,
+              ].filter(Boolean).join(" · ")}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            {(isOwner || isFacilityAdmin) && (
-              <>
-                {order.status === "DRAFT" ? (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={`/dashboard/orders/${order.id}/edit`}>
-                      <Pencil className="h-4 w-4 mr-2" />
-                      Edit
-                    </Link>
-                  </Button>
-                ) : (
-                  <Button variant="outline" size="sm" disabled className="opacity-50">
+
+          {/* Action buttons */}
+          {(isOwner || isFacilityAdmin) && (
+            <div className="flex items-center gap-2">
+              {order.status === "DRAFT" && (isOwner || isFacilityAdmin) && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/dashboard/orders/${order.id}/edit`}>
                     <Pencil className="h-4 w-4 mr-2" />
                     Edit
-                  </Button>
-                )}
-              </>
-            )}
-            {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
-              <Button variant="outline" size="sm" asChild>
-                <Link href={`/dashboard/orders/${order.id}/files`}>
-                  <HardDrive className="h-4 w-4 mr-2" />
-                  Manage Files
-                </Link>
-              </Button>
-            )}
-            {(isOwner || isFacilityAdmin) && (
-              <>
-                {(order.status === "DRAFT" || isFacilityAdmin) ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={handleDeleteClick}
-                    disabled={updating}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled
-                    className="opacity-50"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
-                )}
-              </>
-            )}
-          </div>
+                  </Link>
+                </Button>
+              )}
+              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/dashboard/orders/${order.id}/files`}>
+                    <HardDrive className="h-4 w-4 mr-2" />
+                    Manage Files
+                  </Link>
+                </Button>
+              )}
+              {(order.status === "DRAFT" || isFacilityAdmin) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={handleDeleteClick}
+                  disabled={updating}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -506,103 +495,207 @@ export default function OrderDetailPage({
         </div>
       )}
 
-      {/* Workflow Guide - Show for orders with samples */}
-      {order.samples.length > 0 && (
-        (() => {
-          const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
-          const isCompleted = order.status === "COMPLETED";
+      {/* Tabs */}
+      <Tabs defaultValue="overview">
+        <TabsList className="w-full justify-start mb-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="reads">
+            Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
+          </TabsTrigger>
+        </TabsList>
 
-          // Determine completion status for each step
-          const step1Complete = isSubmitted; // Order submitted
-          const step2Complete = isCompleted; // All files assigned (auto)
+        {/* Overview Tab */}
+        <TabsContent value="overview">
+          {/* Order Progress - only when there are samples */}
+          {order.samples.length > 0 && (() => {
+            const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
+            const allSamplesHaveFiles = order.samples.length > 0 && samplesWithFiles === order.samples.length;
 
-          return (
-            <div className="mb-6 bg-gradient-to-r from-secondary to-emerald-50/50 rounded-xl border border-border p-5">
-              <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-                <ClipboardList className="h-5 w-5 text-blue-600" />
-                Order Progress
-              </h3>
-              <div className="grid grid-cols-2 gap-3">
-                {/* Step 1: Order Submitted */}
-                <div className={`relative p-3 rounded-lg ${step1Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    {step1Complete ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            return (
+              <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-violet-500/10 p-5 mb-4">
+                <h3 className="font-semibold mb-4 flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5" />
+                  Order Progress
+                </h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Step 1: Order Submitted */}
+                  <div className={`p-3 rounded-lg border bg-card ${isSubmitted ? "border-emerald-200" : ""}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {isSubmitted ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
+                          <span className="text-[10px] text-white font-bold">1</span>
+                        </div>
+                      )}
+                      <span className="text-sm font-medium">Order Submitted</span>
+                    </div>
+                    {isSubmitted ? (
+                      <p className="text-xs text-emerald-600">{order.samples.length} sample{order.samples.length !== 1 ? "s" : ""} submitted to facility</p>
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">1</span>
-                      </div>
+                      <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? "s" : ""} added</p>
                     )}
-                    <span className="text-sm font-medium">Order Submitted</span>
+                    {isSubmitted && instructions && (
+                      <button
+                        onClick={() => setShowFullInstructions(!showFullInstructions)}
+                        className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        <Info className="h-3 w-3" />
+                        {showFullInstructions ? "Hide Instructions" : "View Instructions"}
+                      </button>
+                    )}
                   </div>
-                  {step1Complete ? (
-                    <p className="text-xs text-emerald-600">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} submitted to facility</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} added</p>
-                  )}
-                  {step1Complete && instructions && (
-                    <button
-                      onClick={() => setShowFullInstructions(!showFullInstructions)}
-                      className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      <Info className="h-3 w-3" />
-                      {showFullInstructions ? "Hide Instructions" : "View Instructions"}
-                    </button>
-                  )}
+
+                  {/* Step 2: Files Assigned */}
+                  <div className={`p-3 rounded-lg border bg-card ${allSamplesHaveFiles ? "border-emerald-200" : ""}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {allSamplesHaveFiles ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
+                          <span className="text-[10px] text-white font-bold">2</span>
+                        </div>
+                      )}
+                      <span className="text-sm font-medium">Files Assigned</span>
+                    </div>
+                    {allSamplesHaveFiles ? (
+                      <p className="text-xs text-emerald-600">All samples have files</p>
+                    ) : samplesWithFiles > 0 ? (
+                      <p className="text-xs text-amber-600">{samplesWithFiles}/{order.samples.length} samples have files</p>
+                    ) : isSubmitted ? (
+                      <p className="text-xs text-amber-600">Waiting for files</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Submit order first</p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Step 2: Files Assigned (auto) */}
-                <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    {step2Complete ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">2</span>
-                      </div>
-                    )}
-                    <span className="text-sm font-medium">Files Assigned</span>
+                {/* Shipping Instructions */}
+                {isSubmitted && showFullInstructions && instructions && (
+                  <div className="mt-4 p-4 bg-card rounded-lg border">
+                    <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
+                      <ReactMarkdown>{instructions}</ReactMarkdown>
+                    </div>
                   </div>
-                  {step2Complete ? (
-                    <p className="text-xs text-emerald-600">All samples have files</p>
-                  ) : step1Complete ? (
-                    <p className="text-xs text-amber-600">Waiting for files</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Submit order first</p>
-                  )}
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Summary stats */}
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="bg-card rounded-lg border p-4">
+              <p className="text-sm text-muted-foreground">Samples</p>
+              <p className="text-2xl font-semibold mt-1">{order._count.samples}</p>
+            </div>
+            <div className="bg-card rounded-lg border p-4">
+              <p className="text-sm text-muted-foreground">Researcher</p>
+              <p className="text-sm font-medium mt-1 truncate">
+                {order.user.firstName} {order.user.lastName}
+              </p>
+            </div>
+            <div className="bg-card rounded-lg border p-4">
+              <p className="text-sm text-muted-foreground">Platform</p>
+              <p className="text-sm font-medium mt-1 truncate">{order.platform || "Not specified"}</p>
+            </div>
+          </div>
+
+          {/* Sequencing Parameters */}
+          <div className="bg-card rounded-lg border overflow-hidden mb-4">
+            <div className="px-5 py-4">
+              <h2 className="text-sm font-semibold">Sequencing Parameters</h2>
+            </div>
+            <div className="divide-y divide-border border-t">
+              {[
+                { label: "Platform", value: order.platform },
+                { label: "Instrument", value: order.instrumentModel },
+                { label: "Strategy", value: order.libraryStrategy },
+                { label: "Source", value: order.librarySource },
+                { label: "Selection", value: order.librarySelection },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex justify-between px-5 py-3 text-sm">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="font-medium">{value || "Not specified"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Fields */}
+          {order.customFields && (() => {
+            const customData = JSON.parse(order.customFields);
+            const displayFields = Object.entries(customData).filter(
+              ([key]) => !key.startsWith("_mixs")
+            );
+            if (displayFields.length === 0) return null;
+            return (
+              <div className="bg-card rounded-lg border overflow-hidden mb-4">
+                <div className="px-5 py-4">
+                  <h2 className="text-sm font-semibold">Additional Information</h2>
+                </div>
+                <div className="divide-y divide-border border-t">
+                  {displayFields.map(([key, value]) => (
+                    <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
+                      <span className="text-muted-foreground capitalize flex items-center gap-2">
+                        {key === "_projects" && <FolderOpen className="h-4 w-4" />}
+                        {getFieldLabel(key)}
+                      </span>
+                      <span className="font-medium text-right max-w-[60%]">
+                        {formatCustomFieldValue(key, value)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
+            );
+          })()}
 
-              {/* Shipping Instructions - shown when expanded */}
-              {isSubmitted && showFullInstructions && instructions && (
-                <div className="mt-4 p-4 bg-white/80 rounded-lg border border-border">
-                  <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
-                    <ReactMarkdown>{instructions}</ReactMarkdown>
+          {/* Status History */}
+          {order.statusNotes.length > 0 && (
+            <div className="bg-card rounded-lg border overflow-hidden">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  Status History
+                </h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {order.statusNotes.map((note) => (
+                  <div key={note.id} className="flex items-start gap-3 px-5 py-3">
+                    <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Clock className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{note.content}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {note.user
+                          ? `${note.user.firstName} ${note.user.lastName}`
+                          : "System"}{" "}
+                        · {formatDate(note.createdAt)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
-          );
-        })()
-      )}
+          )}
+        </TabsContent>
 
-      {isFacilityAdmin && order.samples.length > 0 && (
-        <div className="mb-6 rounded-lg border p-5 bg-muted/30">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="font-semibold flex items-center gap-2">
-                <FileCode className="h-5 w-5" />
-                Admin Tools
-              </p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Development and testing utilities for this order
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
+        {/* Read Files Tab */}
+        <TabsContent value="reads">
+          {/* Admin: Simulate Reads button */}
+          {isFacilityAdmin && order.samples.length > 0 && (
+            <div className="flex items-center justify-between mb-4 p-4 bg-card rounded-lg border">
+              <div>
+                <p className="text-sm font-medium">Simulate Read Files</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Create simulated FASTQ files for testing
+                </p>
+              </div>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={handleSimulateReads}
+                onClick={handleSimulateReadsClick}
                 disabled={simulatingReads || order.samples.length === 0}
               >
                 {simulatingReads ? (
@@ -613,221 +706,120 @@ export default function OrderDetailPage({
                 Simulate Reads
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Order Details */}
-        <GlassCard className="p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Sequencing Parameters
-          </h2>
-          <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Platform</span>
-              <span className="font-medium">{order.platform || "Not specified"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Instrument</span>
-              <span className="font-medium">{order.instrumentModel || "Not specified"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Strategy</span>
-              <span className="font-medium">{order.libraryStrategy || "Not specified"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Source</span>
-              <span className="font-medium">{order.librarySource || "Not specified"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Selection</span>
-              <span className="font-medium">{order.librarySelection || "Not specified"}</span>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Samples */}
-        <GlassCard className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              Samples ({order._count.samples})
-            </h2>
-            {order.status === "DRAFT" && isOwner && (
-              <Button size="sm" asChild>
-                <Link href={`/dashboard/orders/${order.id}/samples`}>
-                  Update sample information
-                </Link>
-              </Button>
-            )}
-          </div>
-          {order.samples.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
-              <p>No samples added yet</p>
-              {order.status === "DRAFT" && isOwner && (
-                <Button className="mt-4" size="sm" asChild>
-                  <Link href={`/dashboard/orders/${order.id}/samples`}>
-                    Add Samples
+          {/* Samples with file info */}
+          <div className="bg-card rounded-lg border overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <HardDrive className="h-4 w-4" />
+                Samples ({order._count.samples})
+              </h2>
+              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/dashboard/orders/${order.id}/files`}>
+                    Manage Files
                   </Link>
                 </Button>
               )}
             </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Show configured per-sample fields */}
-              {perSampleFields.length > 0 && (
-                <div className="text-sm text-muted-foreground pb-2 border-b">
-                  <span className="font-medium text-foreground">Fields to fill: </span>
-                  {perSampleFields.map((f) => f.label).join(", ")}
-                </div>
-              )}
-              {order.samples.slice(0, 5).map((sample) => (
-                <div
-                  key={sample.id}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30"
-                >
-                  <div>
-                    <span className="font-medium">{sample.sampleId}</span>
-                    {sample.sampleTitle && (
-                      <span className="text-muted-foreground ml-2">
-                        - {sample.sampleTitle}
-                      </span>
-                    )}
-                  </div>
-                  {sample.study && (
-                    <Link
-                      href={`/dashboard/studies/${sample.study.id}`}
-                      className="text-sm text-primary hover:underline flex items-center gap-1"
-                    >
-                      <BookOpen className="h-3 w-3" />
-                      {sample.study.title}
-                    </Link>
-                  )}
-                </div>
-              ))}
-              {order.samples.length > 5 && (
-                <p className="text-sm text-muted-foreground text-center pt-2">
-                  And {order.samples.length - 5} more samples...
-                </p>
-              )}
-            </div>
-          )}
-        </GlassCard>
 
-        {/* Sequencing Files - shown when order is COMPLETED and samples have files */}
-        {order.status === "COMPLETED" && order.samples.some(s => s.reads?.some(r => r.file1 || r.file2)) && (
-          <GlassCard className="p-6 lg:col-span-2">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <HardDrive className="h-5 w-5" />
-              Sequencing Files
-            </h2>
-            <div className="space-y-3">
-              {order.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).map((sample) => (
-                <div key={sample.id} className="p-3 rounded-lg bg-muted/30">
-                  <div className="font-medium mb-2">{sample.sampleId}</div>
-                  {sample.reads.filter(r => r.file1 || r.file2).map((read) => (
-                    <div key={read.id} className="ml-4 space-y-1">
-                      {read.file1 && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">R1:</span>
-                          <span className="truncate">{read.file1.split("/").pop()}</span>
-                          <a
-                            href={`/api/files/download?path=${encodeURIComponent(read.file1)}`}
-                            className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0"
-                          >
-                            <Download className="h-4 w-4" />
-                            <span>Download</span>
-                          </a>
+            {order.samples.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border-t">
+                <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                <p>No samples added yet</p>
+                {order.status === "DRAFT" && isOwner && (
+                  <Button className="mt-4" size="sm" asChild>
+                    <Link href={`/dashboard/orders/${order.id}/samples`}>
+                      Add Samples
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="divide-y divide-border border-t">
+                {order.samples.map((sample) => {
+                  const hasFiles = sample.reads?.some(r => r.file1 || r.file2);
+                  return (
+                    <div key={sample.id} className="px-5 py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`h-7 w-7 rounded-md flex items-center justify-center ${
+                            hasFiles ? "bg-green-500/10" : "bg-muted"
+                          }`}>
+                            <FlaskConical className={`h-3.5 w-3.5 ${
+                              hasFiles ? "text-green-600" : "text-muted-foreground"
+                            }`} />
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium flex items-center gap-2">
+                              {sample.sampleId}
+                              {sample.sampleTitle && (
+                                <span className="text-muted-foreground font-normal">- {sample.sampleTitle}</span>
+                              )}
+                              {hasFiles && (
+                                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                              )}
+                            </div>
+                            {sample.study && (
+                              <Link
+                                href={`/dashboard/studies/${sample.study.id}`}
+                                className="text-xs text-primary hover:underline flex items-center gap-1 mt-0.5"
+                              >
+                                <BookOpen className="h-3 w-3" />
+                                {sample.study.title}
+                              </Link>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      {read.file2 && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">R2:</span>
-                          <span className="truncate">{read.file2.split("/").pop()}</span>
-                          <a
-                            href={`/api/files/download?path=${encodeURIComponent(read.file2)}`}
-                            className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0"
-                          >
-                            <Download className="h-4 w-4" />
-                            <span>Download</span>
-                          </a>
+                        {!hasFiles && (
+                          <span className="text-xs text-muted-foreground">No files</span>
+                        )}
+                      </div>
+
+                      {/* File details */}
+                      {hasFiles && (
+                        <div className="ml-10 mt-2 space-y-1">
+                          {sample.reads.filter(r => r.file1 || r.file2).map((read) => (
+                            <div key={read.id} className="space-y-1">
+                              {read.file1 && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Badge variant="outline" className="border-blue-300 text-blue-700 text-xs">R1</Badge>
+                                  <span className="truncate text-muted-foreground text-xs">{read.file1.split("/").pop()}</span>
+                                  <a
+                                    href={`/api/files/download?path=${encodeURIComponent(read.file1)}`}
+                                    className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 text-xs"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                    Download
+                                  </a>
+                                </div>
+                              )}
+                              {read.file2 && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Badge variant="outline" className="border-purple-300 text-purple-700 text-xs">R2</Badge>
+                                  <span className="truncate text-muted-foreground text-xs">{read.file2.split("/").pop()}</span>
+                                  <a
+                                    href={`/api/files/download?path=${encodeURIComponent(read.file2)}`}
+                                    className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 text-xs"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                    Download
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-        )}
-
-        {/* Custom Fields (if any) */}
-        {order.customFields && (() => {
-          const customData = JSON.parse(order.customFields);
-          // Filter out internal fields like _mixsChecklist, _mixsFields
-          const displayFields = Object.entries(customData).filter(
-            ([key]) => !key.startsWith("_mixs")
-          );
-          if (displayFields.length === 0) return null;
-          return (
-            <GlassCard className="p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <ClipboardList className="h-5 w-5" />
-                Additional Information
-              </h2>
-              <div className="space-y-3">
-                {displayFields.map(([key, value]) => (
-                  <div key={key} className="flex justify-between items-start">
-                    <span className="text-muted-foreground capitalize flex items-center gap-2">
-                      {key === "_projects" && <FolderOpen className="h-4 w-4" />}
-                      {getFieldLabel(key)}
-                    </span>
-                    <span className="font-medium text-right max-w-[60%]">
-                      {formatCustomFieldValue(key, value)}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            </GlassCard>
-          );
-        })()}
-
-        {/* Status History */}
-        {order.statusNotes.length > 0 && (
-          <GlassCard className="p-6 lg:col-span-2">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Status History
-            </h2>
-            <div className="space-y-3">
-              {order.statusNotes.map((note) => (
-                <div
-                  key={note.id}
-                  className="flex items-start gap-3 p-3 rounded-lg bg-muted/30"
-                >
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Clock className="h-4 w-4 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-medium">{note.content}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {note.user
-                        ? `${note.user.firstName} ${note.user.lastName}`
-                        : "System"}{" "}
-                      • {formatDate(note.createdAt)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-        )}
-      </div>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -890,22 +882,76 @@ export default function OrderDetailPage({
               Simulate Reads
             </DialogTitle>
             <DialogDescription>
-              {simulateReadsResult
-                ? simulateReadsResult.success
-                  ? "Simulated read files created successfully"
-                  : "Failed to create simulated reads"
-                : "Creating simulated FASTQ files..."}
+              {simulateReadsPhase === "confirm"
+                ? "Create simulated FASTQ files for testing"
+                : simulateReadsResult
+                  ? simulateReadsResult.success
+                    ? "Simulated read files created successfully"
+                    : "Failed to create simulated reads"
+                  : "Creating simulated FASTQ files..."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="py-4">
-            {simulatingReads && (
+            {/* Confirmation phase */}
+            {simulateReadsPhase === "confirm" && order && (
+              <div className="space-y-3">
+                {(() => {
+                  const existingFileCount = order.samples.reduce(
+                    (count, s) => count + s.reads.filter(r => r.file1 || r.file2).length * 2,
+                    0
+                  );
+                  const samplesWithReads = order.samples.filter(
+                    s => s.reads.some(r => r.file1 || r.file2)
+                  );
+                  return (
+                    <>
+                      <div className="text-sm">
+                        This will create paired-end FASTQ files (R1 + R2) for{" "}
+                        <span className="font-medium">{order.samples.length}</span>{" "}
+                        sample{order.samples.length !== 1 ? "s" : ""}.
+                      </div>
+                      {samplesWithReads.length > 0 && (
+                        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
+                          <div className="text-sm font-medium text-amber-800 mb-2 flex items-center gap-1.5">
+                            <AlertCircle className="h-4 w-4" />
+                            Existing files will be replaced
+                          </div>
+                          <div className="text-xs text-amber-700 space-y-1">
+                            <p>
+                              {samplesWithReads.length} sample{samplesWithReads.length !== 1 ? "s" : ""}{" "}
+                              already {samplesWithReads.length !== 1 ? "have" : "has"} read files
+                              ({existingFileCount} file{existingFileCount !== 1 ? "s" : ""} total).
+                            </p>
+                            <div className="mt-2 max-h-[120px] overflow-y-auto space-y-0.5">
+                              {samplesWithReads.map((s) => (
+                                <div key={s.id} className="flex items-center gap-1.5">
+                                  <FlaskConical className="h-3 w-3 flex-shrink-0" />
+                                  <span className="font-medium">{s.sampleId}</span>
+                                  <span className="text-amber-600">
+                                    -- {s.reads.filter(r => r.file1 || r.file2).length} read record{s.reads.filter(r => r.file1 || r.file2).length !== 1 ? "s" : ""}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Running phase */}
+            {simulateReadsPhase === "running" && (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
             )}
 
-            {simulateReadsResult && (
+            {/* Done phase */}
+            {simulateReadsPhase === "done" && simulateReadsResult && (
               <div
                 className={`p-4 rounded-lg border ${
                   simulateReadsResult.success
@@ -923,18 +969,29 @@ export default function OrderDetailPage({
                           <span className="font-medium">
                             {simulateReadsResult.filesCreated}
                           </span>{" "}
-                          files created
-                        </p>
-                        <p>
+                          files created for{" "}
                           <span className="font-medium">
                             {simulateReadsResult.samplesProcessed}
                           </span>{" "}
-                          samples processed
+                          samples
                         </p>
-                        {simulateReadsResult.createdPath && (
-                          <p className="mt-2 text-xs font-mono bg-muted p-2 rounded break-all">
-                            {simulateReadsResult.createdPath}
+                        {(simulateReadsResult.oldFilesRemoved ?? 0) > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            {simulateReadsResult.oldFilesRemoved} old file{simulateReadsResult.oldFilesRemoved !== 1 ? "s" : ""} replaced
                           </p>
+                        )}
+                        {simulateReadsResult.files && simulateReadsResult.files.length > 0 && (
+                          <div className="mt-3 text-left max-h-[150px] overflow-y-auto space-y-2">
+                            {simulateReadsResult.files.map((f) => (
+                              <div key={f.sampleId} className="text-xs border-t pt-1.5">
+                                <span className="font-medium">{f.sampleId}</span>
+                                <div className="ml-2 text-muted-foreground">
+                                  R1: {formatFileSize(f.file1Size)}
+                                  {f.file2Size != null && <> · R2: {formatFileSize(f.file2Size)}</>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </>
@@ -953,14 +1010,25 @@ export default function OrderDetailPage({
           </div>
 
           <DialogFooter>
-            {simulateReadsResult ? (
-              <Button onClick={() => setSimulateReadsDialogOpen(false)}>
-                Close
-              </Button>
-            ) : (
+            {simulateReadsPhase === "confirm" && (
+              <>
+                <Button variant="outline" onClick={() => setSimulateReadsDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSimulateReadsConfirm}>
+                  Confirm
+                </Button>
+              </>
+            )}
+            {simulateReadsPhase === "running" && (
               <Button variant="outline" disabled>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Creating files...
+              </Button>
+            )}
+            {simulateReadsPhase === "done" && (
+              <Button onClick={() => setSimulateReadsDialogOpen(false)}>
+                Close
               </Button>
             )}
           </DialogFooter>

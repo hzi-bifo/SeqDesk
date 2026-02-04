@@ -37,26 +37,14 @@ interface Order {
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
   DRAFT: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground" },
-  READY_FOR_SEQUENCING: { label: "Ready", color: "text-foreground", dot: "bg-foreground" },
-  SEQUENCING_IN_PROGRESS: { label: "Sequencing", color: "text-amber-600", dot: "bg-amber-500" },
-  SEQUENCING_COMPLETED: { label: "Seq. Done", color: "text-foreground", dot: "bg-foreground" },
-  DATA_PROCESSING: { label: "Processing", color: "text-amber-600", dot: "bg-amber-500" },
-  DATA_DELIVERED: { label: "Delivered", color: "text-emerald-600", dot: "bg-emerald-500" },
+  SUBMITTED: { label: "Submitted", color: "text-blue-600", dot: "bg-blue-500" },
   COMPLETED: { label: "Completed", color: "text-emerald-600", dot: "bg-emerald-500" },
 };
 
 type SortField = "created" | "name" | "status" | "samples";
 type SortDirection = "asc" | "desc";
 
-const STATUS_ORDER = [
-  "DRAFT",
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
 
 export default function OrdersPage() {
   const { data: session } = useSession();
