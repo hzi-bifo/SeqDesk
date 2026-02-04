@@ -38,7 +38,11 @@ export async function GET() {
       try {
         const extra = JSON.parse(settings.extraSettings);
         if (extra.sequencingFiles) {
-          config = { ...DEFAULT_CONFIG, ...extra.sequencingFiles };
+          config = {
+            ...DEFAULT_CONFIG,
+            ...extra.sequencingFiles,
+            allowSingleEnd: true,
+          };
         }
       } catch {
         // ignore parse errors
@@ -88,6 +92,7 @@ export async function PUT(request: NextRequest) {
       extraSettings.sequencingFiles = {
         ...DEFAULT_CONFIG,
         ...config,
+        allowSingleEnd: true,
       };
     }
 

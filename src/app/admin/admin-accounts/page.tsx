@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/glass-card";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -58,6 +60,8 @@ export default function AdminAccountsPage() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(true);
+  const [departmentSharing, setDepartmentSharing] = useState(false);
+  const [savingAccess, setSavingAccess] = useState(false);
 
   // Create invite dialog
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -79,9 +83,10 @@ export default function AdminAccountsPage() {
 
     const fetchData = async () => {
       try {
-        const [adminsRes, invitesRes] = await Promise.all([
+        const [adminsRes, invitesRes, accessRes] = await Promise.all([
           fetch("/api/admin/users?role=FACILITY_ADMIN"),
           fetch("/api/admin/invites"),
+          fetch("/api/admin/settings/access"),
         ]);
 
         if (adminsRes.ok) {
@@ -92,6 +97,11 @@ export default function AdminAccountsPage() {
         if (invitesRes.ok) {
           const invitesData = await invitesRes.json();
           setInvites(invitesData);
+        }
+
+        if (accessRes.ok) {
+          const accessData = await accessRes.json();
+          setDepartmentSharing(accessData.departmentSharing ?? false);
         }
       } catch {
         toast.error("Failed to load data");
@@ -174,6 +184,29 @@ export default function AdminAccountsPage() {
   const pendingInvites = invites.filter((i) => !i.usedAt && !isExpired(i.expiresAt));
   const usedOrExpiredInvites = invites.filter((i) => i.usedAt || isExpired(i.expiresAt));
 
+  const handleDepartmentSharingChange = async (enabled: boolean) => {
+    setSavingAccess(true);
+    setDepartmentSharing(enabled);
+
+    try {
+      const res = await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ departmentSharing: enabled }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save setting");
+      }
+    } catch (error) {
+      console.error("Failed to save setting:", error);
+      setDepartmentSharing(!enabled);
+      toast.error("Failed to save setting");
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -190,6 +223,46 @@ export default function AdminAccountsPage() {
           Facility administrators with full system access
         </p>
       </div>
+
+      {/* Access & Sharing */}
+      <GlassCard className="p-6 mb-8">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
+            <Users className="h-5 w-5 text-blue-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Access & Sharing</h2>
+            <p className="text-sm text-muted-foreground">
+              Control how users can access and share orders
+            </p>
+          </div>
+        </div>
+
+        <div className="border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label htmlFor="department-sharing" className="text-base font-medium">
+                Department Sharing
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                Allow users in the same department to view and edit each other&apos;s orders.
+                When disabled, users can only see their own orders.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {savingAccess && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              )}
+              <Switch
+                id="department-sharing"
+                checked={departmentSharing}
+                onCheckedChange={handleDepartmentSharingChange}
+                disabled={savingAccess}
+              />
+            </div>
+          </div>
+        </div>
+      </GlassCard>
 
       {/* Current Admins */}
       <div className="space-y-3 mb-8">

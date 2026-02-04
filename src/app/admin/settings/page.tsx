@@ -3,18 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Info, Users, Loader2, AlertTriangle, CheckCircle2, FileJson, RefreshCw, Download, ArrowUpCircle, Server } from "lucide-react";
+import { Info, Loader2, AlertTriangle, CheckCircle2, FileJson, RefreshCw, Download, ArrowUpCircle, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [departmentSharing, setDepartmentSharing] = useState(false);
-
   // Detected tool versions
   const [detectedVersions, setDetectedVersions] = useState<{ nextflow?: string; nfcore?: string; conda?: string; java?: string; condaEnv?: string }>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
@@ -53,7 +47,6 @@ export default function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
-    fetchSettings();
     detectInstalledVersions();
     fetchConfigStatus();
     checkForUpdates();
@@ -225,37 +218,6 @@ export default function SettingsPage() {
     }
   };
 
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch("/api/admin/settings/access");
-      const data = await res.json();
-      setDepartmentSharing(data.departmentSharing ?? false);
-    } catch (error) {
-      console.error("Failed to load settings:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDepartmentSharingChange = async (enabled: boolean) => {
-    setSaving(true);
-    setDepartmentSharing(enabled);
-
-    try {
-      await fetch("/api/admin/settings/access", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ departmentSharing: enabled }),
-      });
-    } catch (error) {
-      console.error("Failed to save setting:", error);
-      // Revert on error
-      setDepartmentSharing(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const detectInstalledVersions = async () => {
     setDetectingVersions(true);
     try {
@@ -270,16 +232,6 @@ export default function SettingsPage() {
     setDetectingVersions(false);
   };
 
-  if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      </PageContainer>
-    );
-  }
-
   return (
     <PageContainer>
       <div className="mb-6">
@@ -292,46 +244,8 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* Access & Sharing */}
-      <GlassCard className="p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
-            <Users className="h-5 w-5 text-blue-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Access & Sharing</h2>
-            <p className="text-sm text-muted-foreground">
-              Control how users can access and share orders
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t pt-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <Label htmlFor="department-sharing" className="text-base font-medium">
-                Department Sharing
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                Allow users in the same department to view and edit each other&apos;s orders.
-                When disabled, users can only see their own orders.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {saving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-              <Switch
-                id="department-sharing"
-                checked={departmentSharing}
-                onCheckedChange={handleDepartmentSharingChange}
-                disabled={saving}
-              />
-            </div>
-          </div>
-        </div>
-      </GlassCard>
-
       {/* Software Updates */}
-      <GlassCard className="p-6 mt-6">
+      <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${

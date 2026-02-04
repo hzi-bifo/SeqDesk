@@ -73,10 +73,7 @@ export async function POST(request: NextRequest) {
           config = {
             allowedExtensions:
               extra.sequencingFiles.allowedExtensions || config.allowedExtensions,
-            allowSingleEnd:
-              typeof extra.sequencingFiles.allowSingleEnd === "boolean"
-                ? extra.sequencingFiles.allowSingleEnd
-                : config.allowSingleEnd,
+            allowSingleEnd: true,
           };
         }
       } catch {
