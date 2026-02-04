@@ -159,7 +159,7 @@ export async function GET(
         if (selectedSampleIdSet && !selectedSampleIdSet.has(sample.id)) {
           continue;
         }
-        for (const read of sample.reads) {
+        for (const read of sample.reads ?? []) {
           if (read.file1) {
             inputFiles.push({
               id: `${read.id}_r1`,
