@@ -277,6 +277,14 @@ export async function POST(
       );
     }
 
+    // Validate pipelineRunDir
+    if (!executionSettings.pipelineRunDir || executionSettings.pipelineRunDir === '/') {
+      return NextResponse.json(
+        { error: 'Pipeline run directory not configured properly. Set it in Admin > Data & Compute.' },
+        { status: 400 }
+      );
+    }
+
     // Warn if conda path is not configured (nextflow won't be found)
     if (!executionSettings.condaPath) {
       console.warn('[Start Pipeline] WARNING: condaPath is not configured - nextflow may not be found');
