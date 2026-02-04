@@ -4,42 +4,18 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   SequencingTechConfig,
-  DEFAULT_TECH_CONFIG,
 } from "@/types/sequencing-technology";
-import fs from "fs";
-import path from "path";
+import {
+  loadDefaultTechConfig,
+  parseTechConfig,
+} from "@/lib/sequencing-tech/config";
 
 // Storage key in SiteSettings.extraSettings
 const SETTINGS_KEY = "sequencingTechConfig";
 
 // External API URL for syncing technologies
-const SEQDESK_API_URL = process.env.SEQDESK_API_URL || "https://seqdesk.com/api/technologies";
-
-function loadDefaultsFromFile(): SequencingTechConfig {
-  try {
-    const filePath = path.join(
-      process.cwd(),
-      "data/sequencing-technologies/defaults.json"
-    );
-    const fileContent = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(fileContent) as SequencingTechConfig;
-  } catch (error) {
-    console.error("Error loading defaults file:", error);
-    return DEFAULT_TECH_CONFIG;
-  }
-}
-
-function parseConfig(configJson: string | null): SequencingTechConfig {
-  if (!configJson) {
-    // Load defaults from file on first access
-    return loadDefaultsFromFile();
-  }
-  try {
-    return JSON.parse(configJson) as SequencingTechConfig;
-  } catch {
-    return loadDefaultsFromFile();
-  }
-}
+const SEQDESK_API_URL =
+  process.env.SEQDESK_API_URL || "https://seqdesk.com/api/technologies";
 
 // GET sequencing technologies config
 export async function GET() {
@@ -66,7 +42,7 @@ export async function GET() {
       }
     }
 
-    const config = parseConfig(extraSettings[SETTINGS_KEY] ?? null);
+    const config = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
 
     return NextResponse.json({ config });
   } catch (error) {
@@ -126,6 +102,10 @@ export async function PUT(request: NextRequest) {
     // Update sequencing tech config
     const updatedConfig: SequencingTechConfig = {
       ...config,
+      devices: config.devices ?? [],
+      flowCells: config.flowCells ?? [],
+      kits: config.kits ?? [],
+      software: config.software ?? [],
       version: (config.version || 0) + 1,
     };
     extraSettings[SETTINGS_KEY] = JSON.stringify(updatedConfig);
@@ -166,7 +146,7 @@ export async function POST(request: NextRequest) {
 
     if (action === "reset") {
       // Reset to defaults from file
-      const defaults = loadDefaultsFromFile();
+      const defaults = loadDefaultTechConfig();
 
       // Get current extra settings
       const currentSettings = await db.siteSettings.findUnique({
@@ -240,7 +220,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const currentConfig = parseConfig(extraSettings[SETTINGS_KEY] ?? null);
+        const currentConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
         const currentVersion = currentConfig.version || 0;
         const remoteVersion = parseInt(remoteData.version) || 0;
 
@@ -280,6 +260,7 @@ export async function POST(request: NextRequest) {
 
           // Add new technologies
           const mergedConfig: SequencingTechConfig = {
+            ...currentConfig,
             technologies: [...updatedTechnologies, ...newTechnologies],
             version: remoteVersion,
             lastSyncedAt: new Date().toISOString(),

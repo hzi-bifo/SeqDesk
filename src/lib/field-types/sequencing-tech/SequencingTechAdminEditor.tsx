@@ -18,8 +18,8 @@ export function SequencingTechAdminEditor() {
         <div className="flex-1">
           <h4 className="font-medium">Sequencing Technology Selector</h4>
           <p className="text-sm text-muted-foreground mt-1">
-            Users will see a card-based selector with technology information
-            including specifications, pros/cons, and best-use cases.
+            Users will see a guided selector that starts with the platform,
+            then drills down to device models and compatible accessories.
           </p>
 
           <div className="mt-4 p-3 rounded-lg bg-muted/50 text-sm">
@@ -43,10 +43,10 @@ export function SequencingTechAdminEditor() {
           <div className="mt-4 text-xs text-muted-foreground">
             <strong>What users see:</strong>
             <ul className="list-disc list-inside mt-1 space-y-0.5">
-              <li>Technology cards grouped by manufacturer</li>
-              <li>Quick info: cost indicator, turnaround time</li>
-              <li>Expandable details: specs, pros, cons, best uses</li>
-              <li>Links to official documentation</li>
+              <li>Platform cards grouped by manufacturer</li>
+              <li>Device model selection (auto-skips if only one)</li>
+              <li>Compatible flow cell and kit selection</li>
+              <li>Software shown as informational notes</li>
             </ul>
           </div>
         </div>
