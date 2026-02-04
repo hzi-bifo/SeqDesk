@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
@@ -839,6 +839,7 @@ export default function FormBuilderPage() {
       helpText: "Select the sequencing technology for your samples",
       order: fields.filter((f) => !f.perSample).length,
       groupId: "group_sequencing",
+      moduleSource: "sequencing-tech",
     };
 
     setFields([...fields, newField]);
@@ -910,6 +911,32 @@ export default function FormBuilderPage() {
   const perSampleFieldsList = fields
     .filter((f) => f.perSample)
     .sort((a, b) => a.order - b.order);
+
+  const moduleFieldMeta: Record<
+    string,
+    { label: string; className: string; icon: ComponentType<{ className?: string }> }
+  > = {
+    "sequencing-tech": {
+      label: "Sequencing Tech",
+      className: "bg-sky-500/15 text-sky-700",
+      icon: Dna,
+    },
+    mixs: {
+      label: "MIxS",
+      className: "bg-emerald-500/15 text-emerald-700",
+      icon: Leaf,
+    },
+    funding: {
+      label: "Funding",
+      className: "bg-amber-500/15 text-amber-700",
+      icon: Wallet,
+    },
+    billing: {
+      label: "Billing",
+      className: "bg-teal-500/15 text-teal-700",
+      icon: Receipt,
+    },
+  };
 
   if (loading) {
     return (
@@ -1100,6 +1127,9 @@ export default function FormBuilderPage() {
         </div>
         <p className="text-sm text-muted-foreground mb-4">
           Fields filled <strong>once per order</strong>. Information that applies to the entire order, such as project name, sequencing parameters, or billing details.
+          <span className="block mt-1 text-xs text-muted-foreground">
+            Module-provided fields are marked with a colored badge.
+          </span>
         </p>
 
         <div className="space-y-3">
@@ -1134,6 +1164,25 @@ export default function FormBuilderPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{field.label}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    {FIELD_TYPE_LABELS[field.type] || field.type}
+                  </span>
+                  {field.isSystem && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">
+                      System
+                    </span>
+                  )}
+                  {moduleFieldMeta[field.type] && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${moduleFieldMeta[field.type].className}`}
+                    >
+                      {(() => {
+                        const Icon = moduleFieldMeta[field.type].icon;
+                        return <Icon className="h-2.5 w-2.5" />;
+                      })()}
+                      {moduleFieldMeta[field.type].label}
+                    </span>
+                  )}
                   {/* Module disabled warnings */}
                   {field.type === "mixs" && !mixsModuleEnabled && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="MIxS module is disabled">
@@ -1149,6 +1198,12 @@ export default function FormBuilderPage() {
                   )}
                   {field.type === "billing" && !billingModuleEnabled && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Billing module is disabled">
+                      <AlertTriangle className="h-3 w-3" />
+                      Module Off
+                    </span>
+                  )}
+                  {field.type === "sequencing-tech" && !sequencingTechModuleEnabled && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-1" title="Sequencing Technologies module is disabled">
                       <AlertTriangle className="h-3 w-3" />
                       Module Off
                     </span>
