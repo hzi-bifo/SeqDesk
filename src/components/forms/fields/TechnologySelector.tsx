@@ -175,6 +175,8 @@ export function TechnologySelector({
   const selectFlowCell = useCallback(
     (cell: FlowCell, allowToggle = true) => {
       if (disabled) return;
+      const resolvedTechnologyId = selection?.technologyId ?? selectedDevice?.platformId;
+      if (!resolvedTechnologyId) return;
       if (allowToggle && selection?.flowCellId === cell.id) {
         updateSelection({
           ...selection,
@@ -187,16 +189,19 @@ export function TechnologySelector({
       }
       updateSelection({
         ...selection,
+        technologyId: resolvedTechnologyId,
         flowCellId: cell.id,
         flowCellSku: cell.sku,
       });
     },
-    [disabled, selection, updateSelection]
+    [disabled, selection, selectedDevice, updateSelection]
   );
 
   const selectKit = useCallback(
     (kit: SequencingKit, allowToggle = true) => {
       if (disabled) return;
+      const resolvedTechnologyId = selection?.technologyId ?? selectedDevice?.platformId;
+      if (!resolvedTechnologyId) return;
       if (allowToggle && selection?.kitId === kit.id) {
         updateSelection({
           ...selection,
@@ -207,11 +212,12 @@ export function TechnologySelector({
       }
       updateSelection({
         ...selection,
+        technologyId: resolvedTechnologyId,
         kitId: kit.id,
         kitSku: kit.sku,
       });
     },
-    [disabled, selection, updateSelection]
+    [disabled, selection, selectedDevice, updateSelection]
   );
 
   const autoDevice = availableDevices.length === 1 ? availableDevices[0] : null;
