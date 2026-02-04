@@ -356,8 +356,9 @@ echo "Using nextflow: $(which nextflow)"`;
 #SBATCH -c ${settings.slurmCores || 4}
 #SBATCH --mem='${settings.slurmMemory || '64GB'}'
 #SBATCH -t ${settings.slurmTimeLimit || 12}:0:0
-#SBATCH -o ${runFolder}/logs/slurm-%j.out
-#SBATCH -e ${runFolder}/logs/slurm-%j.err
+#SBATCH -D "${runFolder}"
+#SBATCH --output="logs/slurm-%j.out"
+#SBATCH --error="logs/slurm-%j.err"
 ${settings.slurmOptions ? `#SBATCH ${settings.slurmOptions}` : ''}
 
 ${condaActivation}
