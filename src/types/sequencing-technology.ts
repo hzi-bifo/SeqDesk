@@ -65,6 +65,79 @@ export interface SequencingTechnology {
   localOverrides?: boolean; // Has admin customized this?
 }
 
+// A specific sequencer device (e.g., MinION Mk1D)
+export interface SequencerDevice {
+  id: string;
+  platformId: string; // Parent SequencingTechnology.id
+  name: string;
+  manufacturer: string;
+  sku?: string;
+  productOverview: string;
+  shortDescription: string;
+  image?: string;
+  color?: string;
+  specs: TechnologySpec[];
+  connectivity?: string;
+  features?: string[];
+  compatibleFlowCells: string[];
+  compatibleKits: string[];
+  compatibleSoftware: string[];
+  available: boolean;
+  comingSoon?: boolean;
+  order: number;
+  sourceUrl?: string;
+  lastUpdated?: string;
+}
+
+export interface FlowCell {
+  id: string;
+  name: string;
+  sku: string;
+  description?: string;
+  chemistry?: string;
+  poreCount?: number;
+  maxOutput?: string;
+  category: "standard" | "rna" | "flongle" | "other";
+  image?: string;
+  available: boolean;
+  order: number;
+  sourceUrl?: string;
+}
+
+export interface SequencingKit {
+  id: string;
+  name: string;
+  sku: string;
+  description?: string;
+  category:
+    | "ligation"
+    | "rapid"
+    | "barcoding"
+    | "pcr"
+    | "cdna"
+    | "direct-rna"
+    | "amplicon"
+    | "other";
+  inputType?: "dna" | "rna" | "both";
+  multiplexing?: boolean;
+  barcodeCount?: number;
+  image?: string;
+  available: boolean;
+  order: number;
+  sourceUrl?: string;
+}
+
+export interface SequencingSoftware {
+  id: string;
+  name: string;
+  description?: string;
+  category: "control" | "basecalling" | "analysis" | "other";
+  version?: string;
+  downloadUrl?: string;
+  available: boolean;
+  order: number;
+}
+
 // Technology category/family
 export interface TechnologyCategory {
   id: string;
@@ -73,9 +146,22 @@ export interface TechnologyCategory {
   technologies: string[]; // Technology IDs
 }
 
+// JSON file per platform family
+export interface SequencingDevicesFile {
+  platformId: string;
+  devices?: SequencerDevice[];
+  flowCells?: FlowCell[];
+  kits?: SequencingKit[];
+  software?: SequencingSoftware[];
+}
+
 // Full configuration stored in database
 export interface SequencingTechConfig {
   technologies: SequencingTechnology[];
+  devices?: SequencerDevice[];
+  flowCells?: FlowCell[];
+  kits?: SequencingKit[];
+  software?: SequencingSoftware[];
   categories?: TechnologyCategory[];
   lastSyncedAt?: string; // When last synced with central server
   syncUrl?: string; // URL to fetch updates from
@@ -89,8 +175,25 @@ export interface TechSyncResponse {
   updatedAt: string;
 }
 
+export interface SequencingTechSelection {
+  technologyId: string;
+  technologyName?: string;
+  deviceId?: string;
+  deviceName?: string;
+  flowCellId?: string;
+  flowCellSku?: string;
+  kitId?: string;
+  kitSku?: string;
+  softwareIds?: string[];
+  [optionId: string]: unknown;
+}
+
 // Default empty config
 export const DEFAULT_TECH_CONFIG: SequencingTechConfig = {
   technologies: [],
+  devices: [],
+  flowCells: [],
+  kits: [],
+  software: [],
   version: 1,
 };

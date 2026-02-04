@@ -31,7 +31,6 @@ import {
   Phone,
   MapPin,
   Settings,
-  ArrowRight,
   Pencil,
   Trash2,
   Send,
@@ -40,6 +39,7 @@ import {
   FolderOpen,
   Info,
   HardDrive,
+  Download,
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
 
@@ -64,6 +64,28 @@ function formatCustomFieldValue(key: string, value: unknown): string | React.Rea
 
   // Handle objects (stringify them nicely)
   if (typeof value === "object" && value !== null) {
+    if ("technologyId" in value) {
+      const selection = value as {
+        technologyId?: string;
+        technologyName?: string;
+        deviceId?: string;
+        deviceName?: string;
+        flowCellId?: string;
+        flowCellSku?: string;
+        kitId?: string;
+        kitSku?: string;
+      };
+      const parts: string[] = [];
+      const platform = selection.technologyName || selection.technologyId;
+      const device = selection.deviceName || selection.deviceId;
+      const flowCell = selection.flowCellSku || selection.flowCellId;
+      const kit = selection.kitSku || selection.kitId;
+      if (platform) parts.push(`Platform: ${platform}`);
+      if (device) parts.push(`Device: ${device}`);
+      if (flowCell) parts.push(`Flow Cell: ${flowCell}`);
+      if (kit) parts.push(`Kit: ${kit}`);
+      return parts.length > 0 ? parts.join(" | ") : "Not specified";
+    }
     return JSON.stringify(value);
   }
 
@@ -108,6 +130,11 @@ interface Order {
     id: string;
     sampleId: string;
     sampleTitle: string | null;
+    reads: Array<{
+      id: string;
+      file1: string | null;
+      file2: string | null;
+    }>;
     study: {
       id: string;
       title: string;
@@ -128,21 +155,13 @@ interface Order {
 
 const STATUS_ORDER = [
   { key: "DRAFT", label: "Draft", description: "Order is being prepared by researcher" },
-  { key: "READY_FOR_SEQUENCING", label: "Ready for Sequencing", description: "Waiting for sequencing facility to process" },
-  { key: "SEQUENCING_IN_PROGRESS", label: "Sequencing in Progress", description: "Samples are being sequenced" },
-  { key: "SEQUENCING_COMPLETED", label: "Sequencing Completed", description: "Sequencing finished, data being prepared" },
-  { key: "DATA_PROCESSING", label: "Data Processing", description: "Bioinformatics analysis in progress" },
-  { key: "DATA_DELIVERED", label: "Data Delivered", description: "Sequencing data has been delivered" },
-  { key: "COMPLETED", label: "Completed", description: "Order workflow finished" },
+  { key: "SUBMITTED", label: "Submitted", description: "Order submitted, waiting for file assignment" },
+  { key: "COMPLETED", label: "Completed", description: "All samples have sequencing files assigned" },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-500",
-  READY_FOR_SEQUENCING: "bg-blue-500",
-  SEQUENCING_IN_PROGRESS: "bg-yellow-500",
-  SEQUENCING_COMPLETED: "bg-purple-500",
-  DATA_PROCESSING: "bg-orange-500",
-  DATA_DELIVERED: "bg-green-500",
+  SUBMITTED: "bg-blue-500",
   COMPLETED: "bg-emerald-500",
 };
 
@@ -307,8 +326,6 @@ export default function OrderDetailPage({
     });
   };
 
-  const currentStatusIndex = order ? STATUS_ORDER.findIndex(s => s.key === order.status) : -1;
-
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -392,10 +409,10 @@ export default function OrderDetailPage({
                 ) : (
                   <Send className="h-4 w-4 mr-2" />
                 )}
-                Mark as Ready
+                Submit
               </Button>
             )}
-            {isFacilityAdmin && order.status !== "DRAFT" && (
+            {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
               <Button variant="outline" size="sm" asChild>
                 <Link href={`/dashboard/orders/${order.id}/files`}>
                   <HardDrive className="h-4 w-4 mr-2" />
@@ -443,17 +460,13 @@ export default function OrderDetailPage({
       {/* Workflow Guide - Show for orders with samples */}
       {order.samples.length > 0 && (
         (() => {
-          const isSubmitted = order.status !== "DRAFT";
-          const isSequenced = order.status === "SEQUENCING_COMPLETED" ||
-                              order.status === "DATA_PROCESSING" ||
-                              order.status === "DATA_DELIVERED" ||
-                              order.status === "COMPLETED";
+          const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
+          const isCompleted = order.status === "COMPLETED";
 
           // Determine completion status for each step
           const step1Complete = true; // Order created (always true on this page)
-          const step2Complete = order.samples.length > 0; // Samples added
-          const step3Complete = isSubmitted; // Order submitted (physical samples being shipped)
-          const step4Complete = isSequenced; // Sequencing completed
+          const step2Complete = isSubmitted; // Order submitted
+          const step3Complete = isCompleted; // All files assigned (auto)
 
           return (
             <div className="mb-6 bg-gradient-to-r from-secondary to-emerald-50/50 rounded-xl border border-border p-5">
@@ -461,8 +474,8 @@ export default function OrderDetailPage({
                 <ClipboardList className="h-5 w-5 text-blue-600" />
                 Order Progress
               </h3>
-              <div className="grid grid-cols-4 gap-3">
-                {/* Step 1: Order Created */}
+              <div className="grid grid-cols-3 gap-3">
+                {/* Step 1: Create Order */}
                 <div className={`relative p-3 rounded-lg ${step1Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step1Complete ? (
@@ -474,10 +487,10 @@ export default function OrderDetailPage({
                     )}
                     <span className="text-sm font-medium">Create Order</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">Order details submitted</p>
+                  <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} added</p>
                 </div>
 
-                {/* Step 2: Add Samples */}
+                {/* Step 2: Add Samples & Submit */}
                 <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step2Complete ? (
@@ -487,29 +500,16 @@ export default function OrderDetailPage({
                         <span className="text-[10px] text-white font-bold">2</span>
                       </div>
                     )}
-                    <span className="text-sm font-medium">Add Samples</span>
+                    <span className="text-sm font-medium">Submit</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} added</p>
-                </div>
-
-                {/* Step 3: Mark as Ready - available after adding samples */}
-                <div className={`relative p-3 rounded-lg ${step3Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    {step3Complete ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">3</span>
-                      </div>
-                    )}
-                    <span className="text-sm font-medium">Mark as Ready</span>
-                  </div>
-                  {step3Complete ? (
-                    <p className="text-xs text-emerald-600">Ready for facility</p>
+                  {step2Complete ? (
+                    <p className="text-xs text-emerald-600">Submitted to facility</p>
+                  ) : isFacilityAdmin ? (
+                    <p className="text-xs text-amber-600">Not yet submitted</p>
                   ) : (
                     <p className="text-xs text-muted-foreground">Notify facility</p>
                   )}
-                  {!step3Complete && step2Complete && (
+                  {!step2Complete && !isFacilityAdmin && order.samples.length > 0 && (
                     <button
                       onClick={() => setMarkReadyDialogOpen(true)}
                       disabled={updating}
@@ -522,15 +522,12 @@ export default function OrderDetailPage({
                         </>
                       ) : (
                         <>
-                          Mark as Ready <Send className="h-3 w-3" />
+                          Submit <Send className="h-3 w-3" />
                         </>
                       )}
                     </button>
                   )}
-                  {!step3Complete && !step2Complete && (
-                    <p className="mt-2 text-xs text-muted-foreground/60">Add samples first</p>
-                  )}
-                  {step3Complete && instructions && (
+                  {step2Complete && instructions && (
                     <button
                       onClick={() => setShowFullInstructions(!showFullInstructions)}
                       className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
@@ -541,24 +538,24 @@ export default function OrderDetailPage({
                   )}
                 </div>
 
-                {/* Step 4: Sequenced */}
-                <div className={`relative p-3 rounded-lg ${step4Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
+                {/* Step 3: Files Assigned (auto) */}
+                <div className={`relative p-3 rounded-lg ${step3Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
-                    {step4Complete ? (
+                    {step3Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
                       <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">4</span>
+                        <span className="text-[10px] text-white font-bold">3</span>
                       </div>
                     )}
-                    <span className="text-sm font-medium">Sequenced</span>
+                    <span className="text-sm font-medium">Files Assigned</span>
                   </div>
-                  {step4Complete ? (
-                    <p className="text-xs text-emerald-600">Data ready</p>
-                  ) : step3Complete ? (
-                    <p className="text-xs text-amber-600">In progress</p>
+                  {step3Complete ? (
+                    <p className="text-xs text-emerald-600">All samples have files</p>
+                  ) : step2Complete ? (
+                    <p className="text-xs text-amber-600">Waiting for files</p>
                   ) : (
-                    <p className="text-xs text-muted-foreground">Awaiting samples</p>
+                    <p className="text-xs text-muted-foreground">{isFacilityAdmin ? "Awaiting submission" : "Submit order first"}</p>
                   )}
                 </div>
               </div>
@@ -569,25 +566,6 @@ export default function OrderDetailPage({
                   <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
                     <ReactMarkdown>{instructions}</ReactMarkdown>
                   </div>
-                </div>
-              )}
-
-              {/* Admin controls for submitted orders */}
-              {isSubmitted && isFacilityAdmin && currentStatusIndex < STATUS_ORDER.length - 1 && (
-                <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Admin: Advance order status</span>
-                  <Button
-                    size="sm"
-                    onClick={() => handleStatusChange(STATUS_ORDER[currentStatusIndex + 1].key)}
-                    disabled={updating}
-                  >
-                    {updating ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <ArrowRight className="h-4 w-4 mr-2" />
-                    )}
-                    Advance to {STATUS_ORDER[currentStatusIndex + 1].label}
-                  </Button>
                 </div>
               )}
             </div>
@@ -694,6 +672,55 @@ export default function OrderDetailPage({
             </div>
           )}
         </GlassCard>
+
+        {/* Sequencing Files - shown when order is COMPLETED and samples have files */}
+        {order.status === "COMPLETED" && order.samples.some(s => s.reads?.some(r => r.file1 || r.file2)) && (
+          <GlassCard className="p-6 lg:col-span-2">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <HardDrive className="h-5 w-5" />
+              Sequencing Files
+            </h2>
+            <div className="space-y-3">
+              {order.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).map((sample) => (
+                <div key={sample.id} className="p-3 rounded-lg bg-muted/30">
+                  <div className="font-medium mb-2">{sample.sampleId}</div>
+                  {sample.reads.filter(r => r.file1 || r.file2).map((read) => (
+                    <div key={read.id} className="ml-4 space-y-1">
+                      {read.file1 && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">R1:</span>
+                          <span className="truncate">{read.file1.split("/").pop()}</span>
+                          <a
+                            href={`/api/files/download?path=${encodeURIComponent(read.file1)}`}
+                            className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0"
+                          >
+                            <Download className="h-4 w-4" />
+                            <span>Download</span>
+                          </a>
+                        </div>
+                      )}
+                      {read.file2 && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">R2:</span>
+                          <span className="truncate">{read.file2.split("/").pop()}</span>
+                          <a
+                            href={`/api/files/download?path=${encodeURIComponent(read.file2)}`}
+                            className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0"
+                          >
+                            <Download className="h-4 w-4" />
+                            <span>Download</span>
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        )}
 
         {/* Custom Fields (if any) */}
         {order.customFields && (() => {
@@ -805,13 +832,13 @@ export default function OrderDetailPage({
         </DialogContent>
       </Dialog>
 
-      {/* Mark as Ready Confirmation Dialog */}
+      {/* Submit Order Confirmation Dialog */}
       <Dialog open={markReadyDialogOpen} onOpenChange={setMarkReadyDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Mark Order as Ready</DialogTitle>
+            <DialogTitle>Submit Order</DialogTitle>
             <DialogDescription>
-              Mark this order as ready for sequencing? The sequencing facility will be notified and can begin processing your samples.
+              Submit this order to the sequencing facility? They will be notified and can begin processing your samples.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -821,12 +848,12 @@ export default function OrderDetailPage({
             <Button
               onClick={() => {
                 setMarkReadyDialogOpen(false);
-                handleStatusChange("READY_FOR_SEQUENCING");
+                handleStatusChange("SUBMITTED");
               }}
               disabled={updating}
             >
               {updating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-              Mark as Ready
+              Submit
             </Button>
           </DialogFooter>
         </DialogContent>

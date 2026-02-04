@@ -76,6 +76,7 @@ import { SequencingTechFormRenderer } from "@/lib/field-types/sequencing-tech/Se
 import { useModule } from "@/lib/modules";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
+import type { SequencingTechSelection } from "@/types/sequencing-technology";
 import { toast } from "sonner";
 import { OrganismCell } from "@/lib/field-types/organism";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
@@ -2029,7 +2030,7 @@ export default function NewOrderPage() {
           <SequencingTechFormRenderer
             key={field.id}
             field={field}
-            value={value as string | undefined}
+            value={value as SequencingTechSelection | string | undefined}
             disabled={saving}
             onChange={(newValue) => setFieldValue(field.name, newValue)}
           />
@@ -2091,10 +2092,19 @@ export default function NewOrderPage() {
 
     // Handle sequencing-tech field type
     if (field.type === "sequencing-tech") {
-      // Value is the technology ID
-      if (!value || typeof value !== "string") return "Not selected";
-      // Return the ID for now - could be enhanced to show name if needed
-      return value;
+      if (!value) return "Not selected";
+      if (typeof value === "string") return value;
+      const selection = value as SequencingTechSelection;
+      const parts: string[] = [];
+      const platform = selection.technologyName || selection.technologyId;
+      const device = selection.deviceName || selection.deviceId;
+      const flowCell = selection.flowCellSku || selection.flowCellId;
+      const kit = selection.kitSku || selection.kitId;
+      if (platform) parts.push(`Platform: ${platform}`);
+      if (device) parts.push(`Device: ${device}`);
+      if (flowCell) parts.push(`Flow Cell: ${flowCell}`);
+      if (kit) parts.push(`Kit: ${kit}`);
+      return parts.length > 0 ? parts.join(" | ") : "Not selected";
     }
 
     return String(value);

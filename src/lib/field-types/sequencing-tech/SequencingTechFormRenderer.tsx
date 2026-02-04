@@ -2,11 +2,12 @@
 
 import { TechnologySelector } from "@/components/forms/fields/TechnologySelector";
 import { FormFieldDefinition } from "@/types/form-config";
+import { SequencingTechSelection } from "@/types/sequencing-technology";
 
 interface SequencingTechFormRendererProps {
   field: FormFieldDefinition;
-  value: string | undefined;
-  onChange: (value: string | undefined) => void;
+  value: SequencingTechSelection | string | undefined;
+  onChange: (value: SequencingTechSelection | undefined) => void;
   error?: string;
   disabled?: boolean;
 }

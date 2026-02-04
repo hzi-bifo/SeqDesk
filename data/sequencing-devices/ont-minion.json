@@ -1,0 +1,233 @@
+{
+  "platformId": "ont-minion",
+  "devices": [
+    {
+      "id": "ont-minion-mk1d",
+      "name": "MinION Mk1D",
+      "manufacturer": "Oxford Nanopore",
+      "shortDescription": "Next-generation portable nanopore sequencing device with USB-C",
+      "productOverview": "The MinION Mk1D is the next generation of portable nanopore sequencing devices...",
+      "image": "/images/sequencers/devices/s1.png",
+      "connectivity": "USB-C",
+      "features": [
+        "Improved thermal dissipation",
+        "Status LEDs for device status",
+        "Compatible with MinION and Flongle flow cells",
+        "DNA and RNA sequencing",
+        "Operated via MinKNOW software"
+      ],
+      "specs": [],
+      "compatibleFlowCells": ["flo-min114", "flo-min004ra", "flo-flg114"],
+      "compatibleKits": [
+        "sqk-lsk114",
+        "sqk-lsk114-xl",
+        "sqk-ulk114",
+        "sqk-mlk114-96-xl",
+        "sqk-rad114",
+        "sqk-rbk114-24",
+        "sqk-rbk114-96",
+        "sqk-rpb114-24",
+        "sqk-nbd114-24",
+        "sqk-nbd114-96",
+        "sqk-16s114-24",
+        "sqk-pcs114",
+        "sqk-pcb114-24",
+        "sqk-rna004"
+      ],
+      "compatibleSoftware": ["minknow", "dorado"],
+      "available": true,
+      "order": 1,
+      "sourceUrl": "https://nanoporetech.com/products/minion"
+    }
+  ],
+  "flowCells": [
+    {
+      "id": "flo-min114",
+      "name": "MinION/GridION Flow Cell R10.4.1",
+      "sku": "FLO-MIN114",
+      "chemistry": "R10.4.1",
+      "category": "standard",
+      "available": true,
+      "order": 1
+    },
+    {
+      "id": "flo-min004ra",
+      "name": "MinION/GridION Flow Cell - RNA",
+      "sku": "FLO-MIN004RA",
+      "category": "rna",
+      "available": true,
+      "order": 2
+    },
+    {
+      "id": "flo-flg114",
+      "name": "Flongle Flow Cell",
+      "sku": "FLO-FLG114",
+      "description": "Requires Flongle adapter",
+      "category": "flongle",
+      "available": true,
+      "order": 3
+    }
+  ],
+  "kits": [
+    {
+      "id": "sqk-lsk114",
+      "name": "Ligation Sequencing Kit V14",
+      "sku": "SQK-LSK114",
+      "category": "ligation",
+      "inputType": "dna",
+      "available": true,
+      "order": 1
+    },
+    {
+      "id": "sqk-lsk114-xl",
+      "name": "Ligation Sequencing Kit XL V14",
+      "sku": "SQK-LSK114-XL",
+      "category": "ligation",
+      "inputType": "dna",
+      "available": true,
+      "order": 2
+    },
+    {
+      "id": "sqk-ulk114",
+      "name": "Ultra-Long DNA Sequencing Kit V14",
+      "sku": "SQK-ULK114",
+      "category": "ligation",
+      "inputType": "dna",
+      "available": true,
+      "order": 3
+    },
+    {
+      "id": "sqk-mlk114-96-xl",
+      "name": "Multiplex Ligation Sequencing Kit XL V14",
+      "sku": "SQK-MLK114.96-XL",
+      "category": "ligation",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 96,
+      "available": true,
+      "order": 4
+    },
+    {
+      "id": "sqk-rad114",
+      "name": "Rapid Sequencing Kit V14",
+      "sku": "SQK-RAD114",
+      "category": "rapid",
+      "inputType": "dna",
+      "available": true,
+      "order": 5
+    },
+    {
+      "id": "sqk-rbk114-24",
+      "name": "Rapid Barcoding Kit 24 V14",
+      "sku": "SQK-RBK114.24",
+      "category": "barcoding",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 24,
+      "available": true,
+      "order": 6
+    },
+    {
+      "id": "sqk-rbk114-96",
+      "name": "Rapid Barcoding Kit 96 V14",
+      "sku": "SQK-RBK114.96",
+      "category": "barcoding",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 96,
+      "available": true,
+      "order": 7
+    },
+    {
+      "id": "sqk-rpb114-24",
+      "name": "Rapid PCR Barcoding Kit 24 V14",
+      "sku": "SQK-RPB114.24",
+      "category": "pcr",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 24,
+      "available": true,
+      "order": 8
+    },
+    {
+      "id": "sqk-nbd114-24",
+      "name": "Native Barcoding Kit 24 V14",
+      "sku": "SQK-NBD114.24",
+      "category": "barcoding",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 24,
+      "available": true,
+      "order": 9
+    },
+    {
+      "id": "sqk-nbd114-96",
+      "name": "Native Barcoding Kit 96 V14",
+      "sku": "SQK-NBD114.96",
+      "category": "barcoding",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 96,
+      "available": true,
+      "order": 10
+    },
+    {
+      "id": "sqk-16s114-24",
+      "name": "16S Barcoding Kit 24 V14",
+      "sku": "SQK-16S114.24",
+      "category": "amplicon",
+      "inputType": "dna",
+      "multiplexing": true,
+      "barcodeCount": 24,
+      "available": true,
+      "order": 11
+    },
+    {
+      "id": "sqk-pcs114",
+      "name": "cDNA-PCR Sequencing Kit V14",
+      "sku": "SQK-PCS114",
+      "category": "cdna",
+      "inputType": "rna",
+      "available": true,
+      "order": 12
+    },
+    {
+      "id": "sqk-pcb114-24",
+      "name": "cDNA-PCR Barcoding Kit V14",
+      "sku": "SQK-PCB114.24",
+      "category": "cdna",
+      "inputType": "rna",
+      "multiplexing": true,
+      "barcodeCount": 24,
+      "available": true,
+      "order": 13
+    },
+    {
+      "id": "sqk-rna004",
+      "name": "Direct RNA Sequencing Kit",
+      "sku": "SQK-RNA004",
+      "category": "direct-rna",
+      "inputType": "rna",
+      "available": true,
+      "order": 14
+    }
+  ],
+  "software": [
+    {
+      "id": "minknow",
+      "name": "MinKNOW",
+      "description": "Device control, data acquisition, and basecalling software",
+      "category": "control",
+      "available": true,
+      "order": 1
+    },
+    {
+      "id": "dorado",
+      "name": "Dorado",
+      "description": "High-performance basecalling server",
+      "category": "basecalling",
+      "available": true,
+      "order": 2
+    }
+  ]
+}
