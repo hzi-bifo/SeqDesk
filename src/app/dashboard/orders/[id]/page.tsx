@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use, useMemo } from "react";
+import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -10,13 +10,6 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -207,34 +200,10 @@ export default function OrderDetailPage({
     filesCreated?: number;
     samplesProcessed?: number;
   } | null>(null);
-  const [selectedStudyId, setSelectedStudyId] = useState<string>("");
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isOwner = order?.user.id === session?.user?.id;
-
-  const orderStudies = useMemo(() => {
-    if (!order) return [];
-    const map = new Map<string, { id: string; title: string }>();
-    for (const sample of order.samples) {
-      if (sample.study) {
-        map.set(sample.study.id, { id: sample.study.id, title: sample.study.title });
-      }
-    }
-    return Array.from(map.values());
-  }, [order]);
-
-  const selectedStudy = orderStudies.find((study) => study.id === selectedStudyId) || null;
-
-  useEffect(() => {
-    if (orderStudies.length === 0) {
-      setSelectedStudyId("");
-      return;
-    }
-    if (!selectedStudyId || !orderStudies.some((study) => study.id === selectedStudyId)) {
-      setSelectedStudyId(orderStudies[0].id);
-    }
-  }, [orderStudies, selectedStudyId]);
 
   const orderId = resolvedParams.id;
 
@@ -270,22 +239,13 @@ export default function OrderDetailPage({
   }, [orderId]);
 
   const handleSimulateReads = async () => {
-    if (!selectedStudyId) {
-      setSimulateReadsResult({
-        success: false,
-        error: "Select a study before simulating reads.",
-      });
-      setSimulateReadsDialogOpen(true);
-      return;
-    }
-
     setSimulatingReads(true);
     setSimulateReadsResult(null);
     setSimulateReadsDialogOpen(true);
     setError("");
 
     try {
-      const res = await fetch(`/api/studies/${selectedStudyId}/simulate-reads`, {
+      const res = await fetch(`/api/orders/${orderId}/simulate-reads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -639,35 +599,11 @@ export default function OrderDetailPage({
               </p>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              {orderStudies.length > 1 ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Study</span>
-                  <Select value={selectedStudyId} onValueChange={setSelectedStudyId}>
-                    <SelectTrigger className="h-8 w-[220px]">
-                      <SelectValue placeholder="Select study" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {orderStudies.map((study) => (
-                        <SelectItem key={study.id} value={study.id}>
-                          {study.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : (
-                <div className="text-xs text-muted-foreground">
-                  Study:{" "}
-                  <span className="text-foreground font-medium">
-                    {selectedStudy?.title || "Not linked"}
-                  </span>
-                </div>
-              )}
               <Button
                 size="sm"
                 variant="outline"
                 onClick={handleSimulateReads}
-                disabled={simulatingReads || orderStudies.length === 0}
+                disabled={simulatingReads || order.samples.length === 0}
               >
                 {simulatingReads ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -678,11 +614,6 @@ export default function OrderDetailPage({
               </Button>
             </div>
           </div>
-          {orderStudies.length === 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              No linked studies yet. Add samples to a study to simulate reads.
-            </p>
-          )}
         </div>
       )}
 
@@ -959,9 +890,11 @@ export default function OrderDetailPage({
               Simulate Reads
             </DialogTitle>
             <DialogDescription>
-              {selectedStudy?.title
-                ? `Target study: ${selectedStudy.title}`
-                : "Target study: Not linked"}
+              {simulateReadsResult
+                ? simulateReadsResult.success
+                  ? "Simulated read files created successfully"
+                  : "Failed to create simulated reads"
+                : "Creating simulated FASTQ files..."}
             </DialogDescription>
           </DialogHeader>
 
