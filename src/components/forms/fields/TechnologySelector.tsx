@@ -159,6 +159,7 @@ export function TechnologySelector({
       }
       updateSelection({
         ...selection,
+        technologyId: selection?.technologyId ?? device.platformId,
         deviceId: device.id,
         deviceName: device.name,
         flowCellId: undefined,
