@@ -392,7 +392,42 @@ export async function POST(
     if (prepResult.runFolder) {
       const scriptPath = path.join(prepResult.runFolder, 'run.sh');
 
+      // Verify script exists
+      try {
+        await fs.access(scriptPath);
+      } catch {
+        const message = `Run script not found: ${scriptPath}`;
+        await db.pipelineRun.update({
+          where: { id },
+          data: {
+            status: 'failed',
+            errorTail: message,
+            completedAt: new Date(),
+            statusSource: 'launcher',
+            lastEventAt: new Date(),
+          },
+        });
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+
       if (executionSettings.useSlurm) {
+        // Verify sbatch is available
+        const sbatchAvailable = await commandExists('sbatch');
+        if (!sbatchAvailable) {
+          const message = 'SLURM sbatch command not found. Make sure SLURM is installed and in PATH.';
+          await db.pipelineRun.update({
+            where: { id },
+            data: {
+              status: 'failed',
+              errorTail: message,
+              completedAt: new Date(),
+              statusSource: 'launcher',
+              lastEventAt: new Date(),
+            },
+          });
+          return NextResponse.json({ error: message }, { status: 500 });
+        }
+
         // Submit to SLURM
         try {
           const sbatchProcess = spawn('sbatch', [scriptPath], {
@@ -400,8 +435,12 @@ export async function POST(
           });
 
           let jobId = '';
+          let stdoutData = '';
+          let stderrData = '';
+
           sbatchProcess.stdout.on('data', (data) => {
             const output = data.toString();
+            stdoutData += output;
             // Parse job ID from "Submitted batch job 12345"
             const match = output.match(/Submitted batch job (\d+)/);
             if (match) {
@@ -409,15 +448,22 @@ export async function POST(
             }
           });
 
+          sbatchProcess.stderr.on('data', (data) => {
+            stderrData += data.toString();
+          });
+
           await new Promise<void>((resolve, reject) => {
             sbatchProcess.on('close', (code) => {
               if (code === 0) {
                 resolve();
               } else {
-                reject(new Error(`sbatch exited with code ${code}`));
+                const details = stderrData.trim() || stdoutData.trim() || 'No output captured';
+                reject(new Error(`sbatch exited with code ${code}: ${details}`));
               }
             });
-            sbatchProcess.on('error', reject);
+            sbatchProcess.on('error', (err) => {
+              reject(new Error(`Failed to run sbatch: ${err.message}`));
+            });
           });
 
           // Update run with job ID (queued)
@@ -443,6 +489,7 @@ export async function POST(
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'SLURM submission failed';
+          console.error('[Pipeline Run] SLURM submission failed:', message);
           await db.pipelineRun.update({
             where: { id },
             data: {
