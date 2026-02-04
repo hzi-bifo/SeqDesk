@@ -318,7 +318,7 @@ export function StudyPipelinesSection({
 
   // Check which pipelines can run based on data availability
   const samplesWithReads = samples.filter((s) =>
-    s.reads.some((r) => r.file1 && r.file2)
+    s.reads?.some((r) => r.file1 && r.file2)
   );
   const canRunMag = samplesWithReads.length > 0;
 
@@ -984,7 +984,7 @@ export function StudyPipelinesSection({
                         {sample.sampleId}
                       </Label>
                       <span className="text-xs text-muted-foreground">
-                        {sample.reads.filter((r) => r.file1 && r.file2).length}{" "}
+                        {(sample.reads ?? []).filter((r) => r.file1 && r.file2).length}{" "}
                         read pair(s)
                       </span>
                     </div>

@@ -886,7 +886,7 @@ export default function StudyDetailPage({
                       {/* File details */}
                       {hasFiles && (
                         <div className="ml-10 mt-2 space-y-1">
-                          {sample.reads.filter(r => r.file1 || r.file2).map((read) => (
+                          {(sample.reads ?? []).filter(r => r.file1 || r.file2).map((read) => (
                             <div key={read.id} className="space-y-1">
                               {read.file1 && (
                                 <div className="flex items-center gap-2 text-sm">
