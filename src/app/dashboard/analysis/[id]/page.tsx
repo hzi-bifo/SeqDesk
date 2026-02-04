@@ -220,12 +220,23 @@ export default function AnalysisRunDetailPage({
     `/api/pipelines/runs/${id}`,
     fetcher,
     {
-      refreshInterval: (latestData) =>
-        latestData?.run?.status === "running" ? 15000 : 0,
+      refreshInterval: (latestData) => {
+        const s = latestData?.run?.status;
+        return s === "running" || s === "queued" || s === "pending" ? 15000 : 0;
+      },
     }
   );
 
   const run: Run | undefined = data?.run;
+
+  // Tick every 30s so relative timestamps ("5s ago") stay fresh
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const active = run?.status === "running" || run?.status === "queued" || run?.status === "pending";
+    if (!active) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [run?.status]);
 
   // Load pipeline definition for DAG view
   const { data: defData } = useSWR<{

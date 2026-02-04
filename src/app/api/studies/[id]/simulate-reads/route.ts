@@ -8,10 +8,10 @@ import * as path from "path";
 import { gzipSync } from "zlib";
 
 const DEFAULT_EXTENSION = ".fastq.gz";
-const DEFAULT_READ_COUNT = 50;
+const DEFAULT_READ_COUNT = 1000;
 const DEFAULT_READ_LENGTH = 150;
-const MAX_READ_COUNT = 1000;
-const MAX_READ_LENGTH = 1000;
+const MAX_READ_COUNT = 50_000;
+const MAX_READ_LENGTH = 300;
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -21,27 +21,63 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return rounded;
 }
 
-function buildSequence(length: number, seed: number): string {
-  const pattern = "ACGT";
-  const shift = seed % pattern.length;
-  const rotated = pattern.slice(shift) + pattern.slice(0, shift);
-  return rotated.repeat(Math.ceil(length / rotated.length)).slice(0, length);
+// Simple seeded pseudo-random number generator (xorshift32)
+function createRng(seed: number) {
+  let s = seed | 1;
+  return () => {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return (s >>> 0) / 0x100000000;
+  };
+}
+
+const GC_PROFILES = [0.45, 0.55, 0.65, 0.35, 0.50, 0.60, 0.40, 0.70];
+
+function buildSequence(length: number, rng: () => number, gcContent: number): string {
+  const chars: string[] = new Array(length);
+  for (let i = 0; i < length; i++) {
+    const r = rng();
+    if (r < gcContent / 2) chars[i] = "G";
+    else if (r < gcContent) chars[i] = "C";
+    else if (r < gcContent + (1 - gcContent) / 2) chars[i] = "A";
+    else chars[i] = "T";
+  }
+  return chars.join("");
+}
+
+function buildQuality(length: number, rng: () => number): string {
+  const chars: string[] = new Array(length);
+  for (let i = 0; i < length; i++) {
+    let meanQ: number;
+    if (i < 5) meanQ = 25 + i * 2;
+    else if (i > length - 10) meanQ = Math.max(15, 35 - (i - (length - 10)) * 2);
+    else meanQ = 35;
+    const q = Math.max(2, Math.min(41, Math.round(meanQ + (rng() - 0.5) * 10)));
+    chars[i] = String.fromCharCode(33 + q);
+  }
+  return chars.join("");
 }
 
 function buildFastqContent(
   sampleId: string,
   readCount: number,
   readLength: number,
-  readOffset: number
+  readOffset: number,
+  sampleIndex: number
 ): Buffer {
   const lines: string[] = [];
-  const quality = "I".repeat(readLength);
+  const rng = createRng(sampleIndex * 1_000_000 + readOffset * 10_000 + 42);
+  const gc1 = GC_PROFILES[sampleIndex % GC_PROFILES.length];
+  const gc2 = GC_PROFILES[(sampleIndex + 3) % GC_PROFILES.length];
 
   for (let i = 0; i < readCount; i += 1) {
     const readNum = readOffset + i + 1;
-    const sequence = buildSequence(readLength, readNum);
+    const gc = rng() < 0.6 ? gc1 : gc2;
+    const sequence = buildSequence(readLength, rng, gc);
+    const quality = buildQuality(readLength, rng);
     lines.push(
-      `@${sampleId}_read${readNum}`,
+      `@SIM:1:FC1:1:1:${readNum}:${sampleIndex + 1} ${readOffset === 0 ? 1 : 2}:N:0:${sampleId}`,
       sequence,
       "+",
       quality
@@ -159,12 +195,11 @@ export async function POST(
       }
     }
 
-    // Create folder for this study's simulated reads
+    // Use a stable folder name (no timestamp) so re-runs overwrite in place
     const sanitizedTitle = study.title
       .replace(/[^a-zA-Z0-9]/g, "_")
       .substring(0, 30);
-    const timestamp = Date.now();
-    const folderName = `study_${sanitizedTitle}_${timestamp}`;
+    const folderName = `study_${sanitizedTitle || "study"}`;
     const targetDir = ensureWithinBase(resolvedBase, folderName);
 
     await fs.mkdir(targetDir, { recursive: true });
@@ -177,7 +212,8 @@ export async function POST(
     }> = [];
 
     // Create files for each sample
-    for (const sample of study.samples) {
+    for (let si = 0; si < study.samples.length; si++) {
+      const sample = study.samples[si];
       const file1Name = `${sample.sampleId}_R1${extension}`;
       const file1AbsPath = path.join(targetDir, file1Name);
       // Relative path for database storage (relative to dataBasePath)
@@ -189,14 +225,16 @@ export async function POST(
               sample.sampleId,
               normalizedReadCount,
               normalizedReadLength,
-              0
+              0,
+              si
             )
           )
         : buildFastqContent(
             sample.sampleId,
             normalizedReadCount,
             normalizedReadLength,
-            0
+            0,
+            si
           );
 
       await fs.writeFile(file1AbsPath, buffer1);
@@ -215,14 +253,16 @@ export async function POST(
                 sample.sampleId,
                 normalizedReadCount,
                 normalizedReadLength,
-                normalizedReadCount
+                normalizedReadCount,
+                si
               )
             )
           : buildFastqContent(
               sample.sampleId,
               normalizedReadCount,
               normalizedReadLength,
-              normalizedReadCount
+              normalizedReadCount,
+              si
             );
 
         await fs.writeFile(file2AbsPath, buffer2);

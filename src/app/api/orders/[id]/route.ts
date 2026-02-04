@@ -4,15 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 // Order status progression
-const STATUS_ORDER = [
-  "DRAFT",
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
 
 // GET single order
 export async function GET(
@@ -166,9 +158,9 @@ export async function PUT(
       const currentIdx = STATUS_ORDER.indexOf(existing.status);
       const newIdx = STATUS_ORDER.indexOf(status);
 
-      // Researchers can only advance to READY_FOR_SEQUENCING
+      // Researchers can only advance to SUBMITTED
       if (!isFacilityAdmin) {
-        if (status !== "READY_FOR_SEQUENCING" || existing.status !== "DRAFT") {
+        if (status !== "SUBMITTED" || existing.status !== "DRAFT") {
           return NextResponse.json(
             { error: "Invalid status transition" },
             { status: 400 }

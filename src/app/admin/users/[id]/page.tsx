@@ -95,10 +95,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   const statusConfig: Record<string, { label: string; color: string }> = {
     DRAFT: { label: "Draft", color: "bg-stone-100 text-stone-600" },
     SUBMITTED: { label: "Submitted", color: "bg-blue-50 text-blue-700" },
-    IN_PROGRESS: { label: "In Progress", color: "bg-amber-50 text-amber-700" },
-    SEQUENCING: { label: "Sequencing", color: "bg-purple-50 text-purple-700" },
     COMPLETED: { label: "Completed", color: "bg-emerald-50 text-emerald-700" },
-    CANCELLED: { label: "Cancelled", color: "bg-red-50 text-red-700" },
   };
 
   return (

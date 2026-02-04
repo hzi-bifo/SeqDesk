@@ -228,7 +228,7 @@ export function Sidebar({ user, version }: SidebarProps) {
         {isFacilityAdmin && (
           <Link href="/dashboard/files" className={navItemClass("/dashboard/files")} title="Sequencing Files">
             <HardDrive className="h-4 w-4 shrink-0" />
-            {!collapsed && "Seq. Files"}
+            {!collapsed && "Files"}
             {!collapsed && counts.files > 0 && (
               <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
                 {counts.files > 99 ? "99+" : counts.files}
@@ -503,7 +503,7 @@ export function Sidebar({ user, version }: SidebarProps) {
                 </Link>
                 {sequencingTechEnabled && (
                   <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
-                    Seq. Technologies
+                    Sequencers
                   </Link>
                 )}
                 <Link href="/admin/data-compute" className={adminSubItemClass("/admin/data-compute")}>

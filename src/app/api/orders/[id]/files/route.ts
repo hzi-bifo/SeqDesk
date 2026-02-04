@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import * as path from "path";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import {
   checkFileExists,
   ensureWithinBase,
@@ -11,15 +12,10 @@ import {
   validateFilePair,
 } from "@/lib/files";
 
+import { checkAndCompleteOrder } from "@/lib/orders/auto-complete";
+
 // Status after which files can be assigned
-const FILES_ASSIGNABLE_STATUSES = [
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
 
 interface SampleFileInfo {
   sampleId: string;
@@ -35,47 +31,6 @@ interface SampleFileInfo {
   suggestedRead2: string | null;
   suggestionStatus: "exact" | "partial" | "ambiguous" | "none" | "assigned";
   suggestionConfidence: number;
-}
-
-async function getSequencingFilesConfig(): Promise<{
-  dataBasePath: string | null;
-  config: {
-    allowedExtensions: string[];
-    scanDepth: number;
-    ignorePatterns: string[];
-    allowSingleEnd: boolean;
-    autoAssign: boolean;
-  };
-}> {
-  const settings = await db.siteSettings.findUnique({
-    where: { id: "singleton" },
-    select: { dataBasePath: true, extraSettings: true },
-  });
-
-  const defaultConfig = {
-    allowedExtensions: [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
-    scanDepth: 2,
-    ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
-    allowSingleEnd: true,
-    autoAssign: false,
-  };
-
-  let config = { ...defaultConfig };
-  if (settings?.extraSettings) {
-    try {
-      const extra = JSON.parse(settings.extraSettings);
-      if (extra.sequencingFiles) {
-        config = { ...defaultConfig, ...extra.sequencingFiles };
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return {
-    dataBasePath: settings?.dataBasePath || null,
-    config,
-  };
 }
 
 // GET - list samples with file assignments and suggestions
@@ -244,6 +199,9 @@ export async function PUT(
       if (!dataBasePath) {
         throw new Error("Data base path not configured");
       }
+      if (trimmed.includes("..")) {
+        throw new Error("Path traversal not allowed");
+      }
 
       let relativePath = trimmed;
       if (path.isAbsolute(trimmed)) {
@@ -369,6 +327,11 @@ export async function PUT(
 
     const successCount = results.filter((r) => r.success).length;
     const failCount = results.filter((r) => !r.success).length;
+
+    // Check if order should be auto-completed
+    if (successCount > 0) {
+      await checkAndCompleteOrder(id);
+    }
 
     return NextResponse.json({
       success: failCount === 0,

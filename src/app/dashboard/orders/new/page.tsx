@@ -58,6 +58,8 @@ import {
   Trash2,
   FlaskConical,
   AlertCircle,
+  BookOpen,
+  ArrowRight,
 } from "lucide-react";
 import {
   FormFieldDefinition,
@@ -1452,6 +1454,17 @@ export default function NewOrderPage() {
           // Order was created but samples failed - go to order detail anyway
           console.error("Failed to save samples");
         }
+      }
+
+      // Auto-submit the order
+      const submitRes = await fetch(`/api/orders/${orderId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "SUBMITTED" }),
+      });
+
+      if (!submitRes.ok) {
+        console.error("Failed to auto-submit order");
       }
 
       // Fetch post-submission instructions
@@ -3001,12 +3014,25 @@ export default function NewOrderPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <CheckCircle2 className="h-6 w-6 text-green-500" />
-              Order Submitted Successfully
+              Order Submitted
             </DialogTitle>
           </DialogHeader>
 
-          <div className="prose prose-sm max-w-none dark:prose-invert py-4">
-            <ReactMarkdown>{submissionInstructions}</ReactMarkdown>
+          {submissionInstructions && (
+            <div className="prose prose-sm max-w-none dark:prose-invert py-2">
+              <ReactMarkdown>{submissionInstructions}</ReactMarkdown>
+            </div>
+          )}
+
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <h3 className="font-semibold flex items-center gap-2 mb-2">
+              <BookOpen className="h-5 w-5 text-primary" />
+              Next Step: Create a Study
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Create a study to organize your samples for analysis and ENA submission.
+              You can do this now or come back to it later from the Studies page.
+            </p>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -3014,20 +3040,21 @@ export default function NewOrderPage() {
               variant="outline"
               onClick={() => {
                 setSubmissionDialogOpen(false);
-                router.push("/dashboard/orders");
-              }}
-            >
-              Back to Orders
-            </Button>
-            <Button
-              onClick={() => {
-                setSubmissionDialogOpen(false);
                 if (createdOrderId) {
                   router.push(`/dashboard/orders/${createdOrderId}`);
                 }
               }}
             >
-              View Order Details
+              View Order
+            </Button>
+            <Button
+              onClick={() => {
+                setSubmissionDialogOpen(false);
+                router.push("/dashboard/studies/new");
+              }}
+            >
+              Create Study
+              <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           </DialogFooter>
         </DialogContent>

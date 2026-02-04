@@ -8,10 +8,10 @@ import * as path from "path";
 import { gzipSync } from "zlib";
 
 const DEFAULT_EXTENSION = ".fastq.gz";
-const DEFAULT_READ_COUNT = 50;
+const DEFAULT_READ_COUNT = 1000;
 const DEFAULT_READ_LENGTH = 150;
-const MAX_READ_COUNT = 1000;
-const MAX_READ_LENGTH = 1000;
+const MAX_READ_COUNT = 50_000;
+const MAX_READ_LENGTH = 300;
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -21,27 +21,82 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return rounded;
 }
 
-function buildSequence(length: number, seed: number): string {
-  const pattern = "ACGT";
-  const shift = seed % pattern.length;
-  const rotated = pattern.slice(shift) + pattern.slice(0, shift);
-  return rotated.repeat(Math.ceil(length / rotated.length)).slice(0, length);
+// Simple seeded pseudo-random number generator (xorshift32)
+function createRng(seed: number) {
+  let s = seed | 1; // avoid zero
+  return () => {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return (s >>> 0) / 0x100000000; // 0..1
+  };
+}
+
+const BASES = "ACGT";
+
+// GC content varies per "organism" to create diversity across samples
+const GC_PROFILES = [0.45, 0.55, 0.65, 0.35, 0.50, 0.60, 0.40, 0.70];
+
+function buildSequence(length: number, rng: () => number, gcContent: number): string {
+  const chars: string[] = new Array(length);
+  for (let i = 0; i < length; i++) {
+    const r = rng();
+    if (r < gcContent / 2) {
+      chars[i] = "G";
+    } else if (r < gcContent) {
+      chars[i] = "C";
+    } else if (r < gcContent + (1 - gcContent) / 2) {
+      chars[i] = "A";
+    } else {
+      chars[i] = "T";
+    }
+  }
+  return chars.join("");
+}
+
+// Illumina-like quality scores: high in middle, lower at ends
+function buildQuality(length: number, rng: () => number): string {
+  const chars: string[] = new Array(length);
+  // Phred+33 range: '!' (0) to 'J' (41)
+  for (let i = 0; i < length; i++) {
+    // Position-dependent base quality
+    let meanQ: number;
+    if (i < 5) {
+      meanQ = 25 + i * 2; // ramp up at start
+    } else if (i > length - 10) {
+      meanQ = Math.max(15, 35 - (i - (length - 10)) * 2); // drop at end
+    } else {
+      meanQ = 35; // stable mid-read
+    }
+    // Add some noise
+    const q = Math.max(2, Math.min(41, Math.round(meanQ + (rng() - 0.5) * 10)));
+    chars[i] = String.fromCharCode(33 + q);
+  }
+  return chars.join("");
 }
 
 function buildFastqContent(
   sampleId: string,
   readCount: number,
   readLength: number,
-  readOffset: number
+  readOffset: number,
+  sampleIndex: number
 ): Buffer {
   const lines: string[] = [];
-  const quality = "I".repeat(readLength);
+  const rng = createRng(sampleIndex * 1_000_000 + readOffset * 10_000 + 42);
+  // Each sample gets a mix of 2-3 "organisms" with different GC content
+  const gc1 = GC_PROFILES[sampleIndex % GC_PROFILES.length];
+  const gc2 = GC_PROFILES[(sampleIndex + 3) % GC_PROFILES.length];
 
   for (let i = 0; i < readCount; i += 1) {
     const readNum = readOffset + i + 1;
-    const sequence = buildSequence(readLength, readNum);
+    // 60% from organism 1, 40% from organism 2
+    const gc = rng() < 0.6 ? gc1 : gc2;
+    const sequence = buildSequence(readLength, rng, gc);
+    const quality = buildQuality(readLength, rng);
+    // Illumina-style header: instrument:run:flowcell:lane:tile:x:y
     lines.push(
-      `@${sampleId}_read${readNum}`,
+      `@SIM:1:FC1:1:1:${readNum}:${sampleIndex + 1} ${readOffset === 0 ? 1 : 2}:N:0:${sampleId}`,
       sequence,
       "+",
       quality
@@ -49,6 +104,14 @@ function buildFastqContent(
   }
 
   return Buffer.from(`${lines.join("\n")}\n`, "utf-8");
+}
+
+async function safeUnlink(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // File may already be removed or never existed
+  }
 }
 
 // POST - create dummy sequencing files for an order's samples
@@ -96,7 +159,7 @@ export async function POST(
           select: {
             id: true,
             sampleId: true,
-            reads: { select: { id: true } },
+            reads: { select: { id: true, file1: true, file2: true } },
           },
         },
       },
@@ -155,24 +218,47 @@ export async function POST(
       }
     }
 
+    // Use a stable folder name (no timestamp) so re-runs overwrite in place
     const rawName = order.name || order.id;
     const sanitizedName = rawName
       .replace(/[^a-zA-Z0-9]/g, "_")
       .substring(0, 30);
-    const timestamp = Date.now();
-    const folderName = `order_${sanitizedName || "order"}_${timestamp}`;
+    const folderName = `order_${sanitizedName || "order"}`;
     const targetDir = ensureWithinBase(resolvedBase, folderName);
 
     await fs.mkdir(targetDir, { recursive: true });
+
+    // Delete existing Read records and their physical files for each sample
+    let oldFilesRemoved = 0;
+    for (const sample of order.samples) {
+      for (const read of sample.reads) {
+        // Remove old physical files
+        if (read.file1) {
+          const absPath = path.resolve(resolvedBase, read.file1);
+          await safeUnlink(absPath);
+          oldFilesRemoved++;
+        }
+        if (read.file2) {
+          const absPath = path.resolve(resolvedBase, read.file2);
+          await safeUnlink(absPath);
+          oldFilesRemoved++;
+        }
+        // Delete old Read record
+        await db.read.delete({ where: { id: read.id } });
+      }
+    }
 
     let filesCreated = 0;
     const createdFiles: Array<{
       sampleId: string;
       file1: string;
+      file1Size: number;
       file2: string | null;
+      file2Size: number | null;
     }> = [];
 
-    for (const sample of order.samples) {
+    for (let si = 0; si < order.samples.length; si++) {
+      const sample = order.samples[si];
       const file1Name = `${sample.sampleId}_R1${extension}`;
       const file1AbsPath = path.join(targetDir, file1Name);
       const file1RelPath = path.join(folderName, file1Name);
@@ -183,14 +269,16 @@ export async function POST(
               sample.sampleId,
               normalizedReadCount,
               normalizedReadLength,
-              0
+              0,
+              si
             )
           )
         : buildFastqContent(
             sample.sampleId,
             normalizedReadCount,
             normalizedReadLength,
-            0
+            0,
+            si
           );
 
       await fs.writeFile(file1AbsPath, buffer1);
@@ -198,6 +286,7 @@ export async function POST(
 
       let file2AbsPath: string | null = null;
       let file2RelPath: string | null = null;
+      let buffer2Size: number | null = null;
       if (pairedEnd) {
         const file2Name = `${sample.sampleId}_R2${extension}`;
         file2AbsPath = path.join(targetDir, file2Name);
@@ -209,24 +298,29 @@ export async function POST(
                 sample.sampleId,
                 normalizedReadCount,
                 normalizedReadLength,
-                normalizedReadCount
+                normalizedReadCount,
+                si
               )
             )
           : buildFastqContent(
               sample.sampleId,
               normalizedReadCount,
               normalizedReadLength,
-              normalizedReadCount
+              normalizedReadCount,
+              si
             );
 
         await fs.writeFile(file2AbsPath, buffer2);
+        buffer2Size = buffer2.length;
         filesCreated += 1;
       }
 
       createdFiles.push({
         sampleId: sample.sampleId,
         file1: file1AbsPath,
+        file1Size: buffer1.length,
         file2: file2AbsPath,
+        file2Size: buffer2Size,
       });
 
       if (createRecords) {
@@ -245,6 +339,7 @@ export async function POST(
       createdPath: targetDir,
       folderName,
       filesCreated,
+      oldFilesRemoved,
       samplesProcessed: order.samples.length,
       pairedEnd,
       recordsCreated: createRecords,

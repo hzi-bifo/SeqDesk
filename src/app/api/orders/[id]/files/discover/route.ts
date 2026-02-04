@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import {
   scanDirectory,
   findFilesForSample,
@@ -10,61 +11,13 @@ import {
 } from "@/lib/files";
 
 // Status after which files can be discovered/assigned
-const FILES_ASSIGNABLE_STATUSES = [
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
 
 interface DiscoveryResult {
   sampleId: string;
   sampleAlias: string | null;
   suggestion: FileMatchSuggestion;
   autoAssigned: boolean;
-}
-
-async function getSequencingFilesConfig(): Promise<{
-  dataBasePath: string | null;
-  config: {
-    allowedExtensions: string[];
-    scanDepth: number;
-    ignorePatterns: string[];
-    allowSingleEnd: boolean;
-    autoAssign: boolean;
-  };
-}> {
-  const settings = await db.siteSettings.findUnique({
-    where: { id: "singleton" },
-    select: { dataBasePath: true, extraSettings: true },
-  });
-
-  const defaultConfig = {
-    allowedExtensions: [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
-    scanDepth: 2,
-    ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
-    allowSingleEnd: true,
-    autoAssign: false,
-  };
-
-  let config = { ...defaultConfig };
-  if (settings?.extraSettings) {
-    try {
-      const extra = JSON.parse(settings.extraSettings);
-      if (extra.sequencingFiles) {
-        config = { ...defaultConfig, ...extra.sequencingFiles };
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return {
-    dataBasePath: settings?.dataBasePath || null,
-    config,
-  };
 }
 
 // POST - discover files for an order's samples

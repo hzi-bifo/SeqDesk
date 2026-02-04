@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { scanDirectory, ScanOptions, FileInfo } from "@/lib/files";
 
 interface FileWithAssignment extends FileInfo {
@@ -50,45 +51,6 @@ function getPairFilename(filename: string, currentType: "R1" | "R2"): string {
       .replace(/\.R2([._])/i, ".R1$1")
       .replace(/_2\./, "_1.");
   }
-}
-
-async function getSequencingFilesConfig(): Promise<{
-  dataBasePath: string | null;
-  config: {
-    allowedExtensions: string[];
-    scanDepth: number;
-    ignorePatterns: string[];
-    allowSingleEnd: boolean;
-  };
-}> {
-  const settings = await db.siteSettings.findUnique({
-    where: { id: "singleton" },
-    select: { dataBasePath: true, extraSettings: true },
-  });
-
-  const defaultConfig = {
-    allowedExtensions: [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
-    scanDepth: 2,
-    ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
-    allowSingleEnd: true,
-  };
-
-  let config = { ...defaultConfig };
-  if (settings?.extraSettings) {
-    try {
-      const extra = JSON.parse(settings.extraSettings);
-      if (extra.sequencingFiles) {
-        config = { ...defaultConfig, ...extra.sequencingFiles };
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return {
-    dataBasePath: settings?.dataBasePath || null,
-    config,
-  };
 }
 
 // GET - list all files with assignment status

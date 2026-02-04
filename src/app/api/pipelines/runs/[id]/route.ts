@@ -222,6 +222,12 @@ export async function GET(
       }
     }
 
+    // Convert BigInt fields to numbers so JSON.stringify doesn't throw
+    const serializedArtifacts = run.artifacts.map((a) => ({
+      ...a,
+      size: a.size != null ? Number(a.size) : null,
+    }));
+
     const response = {
       ...run,
       pipelineName: definition?.name || run.pipelineId,
@@ -232,6 +238,7 @@ export async function GET(
       inputSampleIds: selectedSampleIds,
       inputFiles,
       detectedLogFiles,
+      artifacts: serializedArtifacts,
     };
 
     return NextResponse.json({ run: response });

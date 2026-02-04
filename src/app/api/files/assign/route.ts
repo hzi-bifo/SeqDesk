@@ -5,15 +5,10 @@ import { db } from "@/lib/db";
 import * as fs from "fs/promises";
 import * as path from "path";
 
+import { checkAndCompleteOrder } from "@/lib/orders/auto-complete";
+
 // Statuses where files can be assigned
-const FILES_ASSIGNABLE_STATUSES = [
-  "READY_FOR_SEQUENCING",
-  "SEQUENCING_IN_PROGRESS",
-  "SEQUENCING_COMPLETED",
-  "DATA_PROCESSING",
-  "DATA_DELIVERED",
-  "COMPLETED",
-];
+const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
 
 // Detect if filename is R1 or R2
 function detectReadType(filename: string): "file1" | "file2" | null {
@@ -204,6 +199,9 @@ export async function POST(request: NextRequest) {
         },
       });
     }
+
+    // Check if order should be auto-completed
+    await checkAndCompleteOrder(sample.order.id);
 
     return NextResponse.json({
       success: true,
