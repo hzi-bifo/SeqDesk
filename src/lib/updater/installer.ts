@@ -19,6 +19,7 @@ import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
 import type { ReleaseInfo, UpdateProgress } from './types';
 import { releaseUpdateLock } from './status';
 
@@ -34,6 +35,113 @@ type ProgressCallback = (progress: UpdateProgress) => void;
 const INSTALL_DIR = process.cwd();
 const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
+const DB_SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal'];
+
+function isTruthy(value?: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+async function loadDatabaseUrl(): Promise<string | null> {
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
+  }
+
+  try {
+    const envPath = path.join(INSTALL_DIR, '.env');
+    const envContents = await fs.readFile(envPath, 'utf-8');
+    const parsed = dotenv.parse(envContents);
+    return parsed.DATABASE_URL ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSqlitePath(databaseUrl: string): string | null {
+  const trimmed = databaseUrl.trim();
+  if (!trimmed.startsWith('file:')) {
+    return null;
+  }
+
+  let pathPart = trimmed.slice('file:'.length);
+  if (pathPart.startsWith('//')) {
+    pathPart = pathPart.slice(2);
+  }
+
+  const rawPath = pathPart.split('?')[0] || '';
+  if (!rawPath) {
+    return null;
+  }
+
+  const decodedPath = decodeURIComponent(rawPath);
+  if (path.isAbsolute(decodedPath)) {
+    return decodedPath;
+  }
+
+  return path.resolve(INSTALL_DIR, decodedPath);
+}
+
+function relativeToInstall(filePath: string): string | null {
+  const relative = path.relative(INSTALL_DIR, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    return null;
+  }
+  return relative;
+}
+
+async function getDatabaseFiles(): Promise<string[]> {
+  const files = new Set<string>();
+  const defaultDb = path.join(INSTALL_DIR, 'dev.db');
+  files.add(defaultDb);
+
+  const databaseUrl = await loadDatabaseUrl();
+  if (databaseUrl) {
+    const resolved = resolveSqlitePath(databaseUrl);
+    if (resolved) {
+      files.add(resolved);
+    }
+  }
+
+  for (const basePath of Array.from(files)) {
+    for (const suffix of DB_SIDECAR_SUFFIXES) {
+      files.add(`${basePath}${suffix}`);
+    }
+  }
+
+  return Array.from(files);
+}
+
+async function stripDatabaseFilesFromExtract(extractDir: string): Promise<void> {
+  const databaseFiles = await getDatabaseFiles();
+
+  await Promise.all(
+    databaseFiles.map(async (dbPath) => {
+      const relative = relativeToInstall(dbPath);
+      if (!relative) {
+        return;
+      }
+
+      const extractPath = path.join(extractDir, relative);
+      await fs.rm(extractPath, { force: true });
+    })
+  );
+}
+
+async function shouldSkipMigrations(): Promise<boolean> {
+  if (isTruthy(process.env.SEQDESK_SKIP_MIGRATIONS)) {
+    return true;
+  }
+
+  const databaseUrl = await loadDatabaseUrl();
+  const isSqlite = !databaseUrl || databaseUrl.trim().startsWith('file:');
+  if (isSqlite && !isTruthy(process.env.SEQDESK_AUTO_MIGRATE)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Check available disk space
@@ -234,7 +342,7 @@ async function applyUpdate(): Promise<void> {
   const extractDir = path.join(TEMP_DIR, 'extracted');
 
   // Copy new files, preserving .env and config
-  const preserveFiles = ['.env', 'seqdesk.config.json', 'dev.db'];
+  const preserveFiles = ['.env', 'seqdesk.config.json'];
 
   // Backup preserved files
   const preserved: Record<string, Buffer> = {};
@@ -246,6 +354,8 @@ async function applyUpdate(): Promise<void> {
       // File doesn't exist
     }
   }
+
+  await stripDatabaseFilesFromExtract(extractDir);
 
   // Copy new files
   await execAsync(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
@@ -274,6 +384,9 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
  */
 async function runMigrations(): Promise<void> {
   try {
+    if (await shouldSkipMigrations()) {
+      return;
+    }
     await execAsync('npx prisma db push --skip-generate', { cwd: INSTALL_DIR });
   } catch {
     // Migration might fail if no changes - that's OK
