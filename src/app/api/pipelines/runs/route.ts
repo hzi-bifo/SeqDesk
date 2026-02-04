@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
             select: { id: true, title: true, userId: true },
           },
           user: {
-            select: { id: true, firstName: true, lastName: true },
+            select: { id: true, firstName: true, lastName: true, email: true },
           },
           _count: {
             select: { assembliesCreated: true, binsCreated: true },

@@ -322,8 +322,9 @@ export async function POST(
     }
 
     const condaBin = await resolveCondaBin(executionSettings.condaPath);
-    if (!condaBin) {
-      const message = 'Conda profile selected but conda was not found. Configure a conda path or install conda.';
+    if (!condaBin && !executionSettings.useSlurm) {
+      const message =
+        'Conda profile selected but conda was not found. Configure a conda path or install conda.';
       await db.pipelineRun.update({
         where: { id },
         data: {
@@ -335,6 +336,11 @@ export async function POST(
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
+    }
+    if (!condaBin && executionSettings.useSlurm) {
+      console.warn(
+        '[Start Pipeline] Conda not found on the web host. Proceeding because SLURM is enabled.'
+      );
     }
 
     if (selectedSampleIds && !run.inputSampleIds) {
@@ -430,7 +436,7 @@ export async function POST(
 
         // Submit to SLURM
         try {
-          const sbatchProcess = spawn('sbatch', [scriptPath], {
+          const sbatchProcess = spawn('sbatch', ['--parsable', scriptPath], {
             cwd: prepResult.runFolder,
           });
 
@@ -441,8 +447,8 @@ export async function POST(
           sbatchProcess.stdout.on('data', (data) => {
             const output = data.toString();
             stdoutData += output;
-            // Parse job ID from "Submitted batch job 12345"
-            const match = output.match(/Submitted batch job (\d+)/);
+            // Parse job ID from parsable output: "12345" or "12345;cluster"
+            const match = output.trim().match(/^(\d+)/);
             if (match) {
               jobId = match[1];
             }
@@ -455,6 +461,11 @@ export async function POST(
           await new Promise<void>((resolve, reject) => {
             sbatchProcess.on('close', (code) => {
               if (code === 0) {
+                if (!jobId) {
+                  const details = stderrData.trim() || stdoutData.trim() || 'No output captured';
+                  reject(new Error(`sbatch did not return a job id: ${details}`));
+                  return;
+                }
                 resolve();
               } else {
                 const details = stderrData.trim() || stdoutData.trim() || 'No output captured';
