@@ -33,6 +33,7 @@ export async function POST(
         startedAt: true,
         completedAt: true,
         lastEventAt: true,
+        lastTraceAt: true,
         queueJobId: true,
       },
     });
@@ -54,17 +55,52 @@ export async function POST(
     if (!tracePath) {
       // If no trace yet, optionally update status from SLURM queue
       const updateData: Record<string, unknown> = {};
-      if (run.status === 'queued' && run.id) {
-        const jobId = run.queueJobId || '';
-        if (/^\d+$/.test(jobId)) {
+      const jobId = run.queueJobId || '';
+      if (jobId.startsWith('local-')) {
+        const pid = Number(jobId.replace('local-', ''));
+        if (Number.isInteger(pid) && pid > 0) {
           try {
-            const { stdout } = await execFileAsync('squeue', ['-j', jobId, '-h', '-o', '%T'], { timeout: 5000 });
-            const status = stdout.trim().split('\n')[0] || '';
-            if (status.toUpperCase() === 'RUNNING') {
+            await execFileAsync('ps', ['-p', String(pid), '-o', 'pid='], { timeout: 5000 });
+            updateData.queueStatus = 'RUNNING';
+            updateData.queueUpdatedAt = new Date();
+          } catch {
+            updateData.queueStatus = 'EXITED';
+            updateData.queueUpdatedAt = new Date();
+          }
+        }
+      } else if (/^\d+$/.test(jobId)) {
+        try {
+          const { stdout } = await execFileAsync('squeue', ['-j', jobId, '-h', '-o', '%T|%R'], { timeout: 5000 });
+          const line = stdout.trim().split('\n').map((l) => l.trim()).filter(Boolean)[0] || '';
+          if (line) {
+            const [state, reason] = line.split('|');
+            updateData.queueStatus = state || 'UNKNOWN';
+            updateData.queueReason = reason || undefined;
+            updateData.queueUpdatedAt = new Date();
+            if (state?.toUpperCase() === 'RUNNING' && run.status === 'queued') {
               updateData.status = 'running';
               updateData.startedAt = run.startedAt || new Date();
               updateData.lastEventAt = new Date();
               updateData.statusSource = 'queue';
+            }
+          }
+        } catch {
+          // Ignore and try sacct
+        }
+
+        if (!updateData.queueStatus) {
+          try {
+            const { stdout } = await execFileAsync(
+              'sacct',
+              ['-j', jobId, '--format=State,Reason', '--noheader'],
+              { timeout: 5000 }
+            );
+            const line = stdout.trim().split('\n').map((l) => l.trim()).filter(Boolean)[0] || '';
+            if (line) {
+              const [state, reason] = line.split(/\s+/);
+              updateData.queueStatus = state || 'UNKNOWN';
+              updateData.queueReason = reason || undefined;
+              updateData.queueUpdatedAt = new Date();
             }
           } catch {
             // ignore
@@ -208,6 +244,9 @@ export async function POST(
 
     if (latestEventAt && (!run.lastEventAt || latestEventAt > run.lastEventAt)) {
       updateData.lastEventAt = latestEventAt;
+    }
+    if (latestEventAt && (!run.lastTraceAt || latestEventAt > run.lastTraceAt)) {
+      updateData.lastTraceAt = latestEventAt;
     }
 
     if (traceResult.startedAt && !run.startedAt) {

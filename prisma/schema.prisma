@@ -228,6 +228,10 @@ model PipelineRun {
   queuedAt    DateTime?
   startedAt   DateTime?
   completedAt DateTime?
+  lastEventAt DateTime?
+  lastWeblogAt DateTime?
+  lastTraceAt  DateTime?
+  statusSource String? // weblog, trace, process, launcher
 
   // Logs (stored as paths for large outputs)
   outputPath String? // Path to stdout file
@@ -237,6 +241,11 @@ model PipelineRun {
 
   // Results summary
   results String? // JSON summary of outputs
+
+  // Queue tracking (SLURM/local)
+  queueStatus    String? // RUNNING, PENDING, etc.
+  queueReason    String?
+  queueUpdatedAt DateTime?
 
   // Metadata
   createdAt DateTime @default(now())
@@ -250,6 +259,7 @@ model PipelineRun {
   assembliesCreated Assembly[]
   binsCreated       Bin[]
   steps             PipelineRunStep[]
+  events            PipelineRunEvent[]
   artifacts         PipelineArtifact[]
 }
 
@@ -269,6 +279,23 @@ model PipelineRunStep {
   errorTail     String? // Last lines of error
 
   @@unique([pipelineRunId, stepId])
+}
+
+// Event feed for pipeline runs (weblog/trace/queue updates)
+model PipelineRunEvent {
+  id            String      @id @default(cuid())
+  pipelineRunId String
+  pipelineRun   PipelineRun @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+  eventType     String
+  processName   String?
+  stepId        String?
+  status        String?
+  message       String?
+  payload       String? // JSON (trimmed)
+  source        String? // weblog, trace, queue, process
+  occurredAt    DateTime   @default(now())
+
+  @@index([pipelineRunId, occurredAt])
 }
 
 // Artifacts produced by pipeline runs (files, reports, etc.)

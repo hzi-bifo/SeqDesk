@@ -126,6 +126,8 @@ async function finalizeLocalRun(
         completedAt,
         statusSource: 'process',
         lastEventAt: completedAt,
+        queueStatus: 'COMPLETED',
+        queueUpdatedAt: completedAt,
       },
     });
     processCompletedRun(runId, pipelineId).catch((err) => {
@@ -142,6 +144,8 @@ async function finalizeLocalRun(
         completedAt,
         statusSource: 'process',
         lastEventAt: completedAt,
+        queueStatus: 'FAILED',
+        queueUpdatedAt: completedAt,
       },
     });
   }
@@ -423,6 +427,9 @@ export async function POST(
               status: 'queued',
               queueJobId: jobId,
               queuedAt: new Date(),
+              queueStatus: 'PENDING',
+              queueReason: null,
+              queueUpdatedAt: new Date(),
               statusSource: 'launcher',
               lastEventAt: new Date(),
             },
@@ -475,6 +482,8 @@ export async function POST(
               status: 'running',
               queueJobId: `local-${childProcess.pid}`,
               startedAt: new Date(),
+              queueStatus: 'RUNNING',
+              queueUpdatedAt: new Date(),
               statusSource: 'launcher',
               lastEventAt: new Date(),
             },

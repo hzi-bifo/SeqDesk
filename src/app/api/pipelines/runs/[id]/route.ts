@@ -4,6 +4,17 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { spawn } from 'child_process';
+import fs from 'fs/promises';
+import path from 'path';
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // GET - Get run details
 export async function GET(
@@ -79,6 +90,20 @@ export async function GET(
             checksum: true,
             producedByStepId: true,
             metadata: true,
+          },
+        },
+        events: {
+          orderBy: { occurredAt: 'desc' },
+          take: 100,
+          select: {
+            id: true,
+            eventType: true,
+            processName: true,
+            stepId: true,
+            status: true,
+            message: true,
+            source: true,
+            occurredAt: true,
           },
         },
       },
@@ -169,6 +194,34 @@ export async function GET(
       });
     }
 
+    const detectedLogFiles: {
+      id: string;
+      name: string;
+      path: string;
+      type: 'log';
+    }[] = [];
+
+    if (run.runFolder && run.queueJobId && /^\d+$/.test(run.queueJobId)) {
+      const outPath = path.join(run.runFolder, `slurm-${run.queueJobId}.out`);
+      const errPath = path.join(run.runFolder, `slurm-${run.queueJobId}.err`);
+      if (await fileExists(outPath)) {
+        detectedLogFiles.push({
+          id: `slurm:${run.queueJobId}:out`,
+          name: `slurm-${run.queueJobId}.out`,
+          path: outPath,
+          type: 'log',
+        });
+      }
+      if (errPath !== outPath && (await fileExists(errPath))) {
+        detectedLogFiles.push({
+          id: `slurm:${run.queueJobId}:err`,
+          name: `slurm-${run.queueJobId}.err`,
+          path: errPath,
+          type: 'log',
+        });
+      }
+    }
+
     const response = {
       ...run,
       pipelineName: definition?.name || run.pipelineId,
@@ -178,6 +231,7 @@ export async function GET(
       results: parseJson<Record<string, unknown>>(run.results),
       inputSampleIds: selectedSampleIds,
       inputFiles,
+      detectedLogFiles,
     };
 
     return NextResponse.json({ run: response });
@@ -221,13 +275,6 @@ export async function DELETE(
     }
 
     const queueJobId = run.queueJobId;
-
-    if (run.status === 'running' && !queueJobId) {
-      return NextResponse.json(
-        { error: 'Cannot cancel a running job without a queue ID' },
-        { status: 400 }
-      );
-    }
 
     const cancelLocalJob = (jobId: string) => {
       const pidStr = jobId.replace(/^local-/, '');
@@ -279,20 +326,36 @@ export async function DELETE(
         proc.on('error', reject);
       });
 
+    // Determine whether this is a force-stop (no process to kill) or a normal cancel
+    let forceStop = false;
+
     if (queueJobId) {
-      if (queueJobId.startsWith('local-')) {
-        cancelLocalJob(queueJobId);
-      } else {
-        await cancelSlurmJob(queueJobId);
+      try {
+        if (queueJobId.startsWith('local-')) {
+          cancelLocalJob(queueJobId);
+        } else {
+          await cancelSlurmJob(queueJobId);
+        }
+      } catch (err) {
+        // Process is already dead — treat as force-stop
+        console.warn('[Pipeline Run API] Kill failed, force-stopping:', err);
+        forceStop = true;
       }
+    } else if (run.status === 'running') {
+      // Running but no queueJobId — stuck run
+      forceStop = true;
     }
 
-    // Update status to cancelled
+    // Force-stopped (stuck) runs are marked "failed"; normal cancels are "cancelled"
+    const newStatus = forceStop ? 'failed' : 'cancelled';
+
     await db.pipelineRun.update({
       where: { id },
       data: {
-        status: 'cancelled',
+        status: newStatus,
         completedAt: new Date(),
+        statusSource: 'manual',
+        lastEventAt: new Date(),
       },
     });
 

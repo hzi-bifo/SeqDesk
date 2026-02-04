@@ -67,6 +67,13 @@ export async function GET(
         await execFileAsync("ps", ["-p", String(pid), "-o", "pid="], {
           timeout: 5000,
         });
+        await db.pipelineRun.update({
+          where: { id },
+          data: {
+            queueStatus: "RUNNING",
+            queueUpdatedAt: new Date(),
+          },
+        });
         return NextResponse.json({
           available: true,
           type: "local",
@@ -74,6 +81,13 @@ export async function GET(
           pid,
         });
       } catch {
+        await db.pipelineRun.update({
+          where: { id },
+          data: {
+            queueStatus: "EXITED",
+            queueUpdatedAt: new Date(),
+          },
+        });
         return NextResponse.json({
           available: true,
           type: "local",
@@ -99,6 +113,14 @@ export async function GET(
       const line = parseFirstLine(stdout);
       if (line) {
         const [state, reason, elapsed] = line.split("|");
+        await db.pipelineRun.update({
+          where: { id },
+          data: {
+            queueStatus: state || "UNKNOWN",
+            queueReason: reason || null,
+            queueUpdatedAt: new Date(),
+          },
+        });
         return NextResponse.json({
           available: true,
           type: "slurm",
@@ -121,6 +143,14 @@ export async function GET(
       const line = parseFirstLine(stdout);
       if (line) {
         const [state, elapsed, exitCode] = line.split(/\s+/);
+        await db.pipelineRun.update({
+          where: { id },
+          data: {
+            queueStatus: state || "UNKNOWN",
+            queueReason: null,
+            queueUpdatedAt: new Date(),
+          },
+        });
         return NextResponse.json({
           available: true,
           type: "slurm",

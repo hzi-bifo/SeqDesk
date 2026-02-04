@@ -9,6 +9,7 @@ import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+const MAX_EVENT_PAYLOAD = 12000;
 
 /**
  * Process a completed pipeline run - discover outputs and write to DB
@@ -125,6 +126,49 @@ function getProcessName(trace: Record<string, unknown> | null, payload: Record<s
   return null;
 }
 
+function truncateString(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function stringifyPayload(payload: Record<string, unknown>): string | null {
+  try {
+    const json = JSON.stringify(payload);
+    return truncateString(json, MAX_EVENT_PAYLOAD);
+  } catch {
+    return null;
+  }
+}
+
+function extractMessage(
+  payload: Record<string, unknown>,
+  trace: Record<string, unknown> | null
+): string | null {
+  const candidates = [
+    payload.message,
+    payload.error,
+    payload.reason,
+    payload.cause,
+    trace?.error,
+    trace?.message,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return truncateString(candidate.trim(), 500);
+    }
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      'message' in candidate &&
+      typeof (candidate as { message?: unknown }).message === 'string'
+    ) {
+      const message = (candidate as { message?: string }).message?.trim();
+      if (message) return truncateString(message, 500);
+    }
+  }
+  return null;
+}
+
 function deriveStepStatus(event: string, trace: Record<string, unknown> | null): StepStatus | null {
   const traceStatusRaw = trace?.status ?? trace?.state ?? trace?.taskState;
   const traceStatus = typeof traceStatusRaw === 'string' ? traceStatusRaw.toLowerCase() : '';
@@ -176,7 +220,15 @@ export async function POST(request: NextRequest) {
 
     const run = await db.pipelineRun.findUnique({
       where: { id: runId },
-      select: { id: true, pipelineId: true, status: true, startedAt: true, completedAt: true },
+      select: {
+        id: true,
+        pipelineId: true,
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        lastEventAt: true,
+        lastWeblogAt: true,
+      },
     });
 
     if (!run) {
@@ -189,6 +241,7 @@ export async function POST(request: NextRequest) {
       parseDate(trace?.start) ||
       parseDate(trace?.submit) ||
       parseDate(trace?.complete);
+    const eventAt = eventTime || new Date();
 
     const processName = getProcessName(trace, payload);
     const stepDefinition = processName
@@ -244,7 +297,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const runUpdates: Record<string, unknown> = {};
+    const runUpdates: Record<string, unknown> = {
+      statusSource: 'weblog',
+    };
+
+    if (!run.lastEventAt || eventAt >= run.lastEventAt) {
+      runUpdates.lastEventAt = eventAt;
+    }
+    if (!run.lastWeblogAt || eventAt >= run.lastWeblogAt) {
+      runUpdates.lastWeblogAt = eventAt;
+    }
 
     if (event.includes('workflow_start') || event.includes('workflow_begin')) {
       if (!run.startedAt) {
@@ -303,12 +365,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (Object.keys(runUpdates).length > 0) {
-      await db.pipelineRun.update({
-        where: { id: runId },
-        data: runUpdates,
+    const statusRaw = trace?.status ?? trace?.state ?? payload.status ?? payload.state;
+    const statusValue = stepStatus || (typeof statusRaw === 'string' ? statusRaw : undefined);
+    const eventRecord = {
+      pipelineRunId: runId,
+      eventType: event || 'weblog',
+      processName: processName || undefined,
+      stepId,
+      status: statusValue,
+      message: extractMessage(payload, trace) || undefined,
+      payload: stringifyPayload(payload) || undefined,
+      source: 'weblog',
+      occurredAt: eventAt,
+    };
+
+    await db.$transaction(async (tx) => {
+      await tx.pipelineRunEvent.create({ data: eventRecord });
+      if (Object.keys(runUpdates).length > 0) {
+        await tx.pipelineRun.update({
+          where: { id: runId },
+          data: runUpdates,
+        });
+      }
+
+      const excess = await tx.pipelineRunEvent.findMany({
+        where: { pipelineRunId: runId },
+        orderBy: { occurredAt: 'desc' },
+        skip: 100,
+        select: { id: true },
       });
-    }
+      if (excess.length > 0) {
+        await tx.pipelineRunEvent.deleteMany({
+          where: { id: { in: excess.map((entry) => entry.id) } },
+        });
+      }
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
