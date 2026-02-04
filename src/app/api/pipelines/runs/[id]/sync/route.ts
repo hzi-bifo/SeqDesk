@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { parseTraceFile, findTraceFile } from '@/lib/pipelines/nextflow';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 // POST - Sync run status from Nextflow trace file
 export async function POST(
@@ -26,6 +30,10 @@ export async function POST(
         runFolder: true,
         status: true,
         pipelineId: true,
+        startedAt: true,
+        completedAt: true,
+        lastEventAt: true,
+        queueJobId: true,
       },
     });
 
@@ -44,6 +52,30 @@ export async function POST(
     const tracePath = await findTraceFile(run.runFolder);
 
     if (!tracePath) {
+      // If no trace yet, optionally update status from SLURM queue
+      const updateData: Record<string, unknown> = {};
+      if (run.status === 'queued' && run.id) {
+        const jobId = run.queueJobId || '';
+        if (/^\d+$/.test(jobId)) {
+          try {
+            const { stdout } = await execFileAsync('squeue', ['-j', jobId, '-h', '-o', '%T'], { timeout: 5000 });
+            const status = stdout.trim().split('\n')[0] || '';
+            if (status.toUpperCase() === 'RUNNING') {
+              updateData.status = 'running';
+              updateData.startedAt = run.startedAt || new Date();
+              updateData.lastEventAt = new Date();
+              updateData.statusSource = 'queue';
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await db.pipelineRun.update({ where: { id }, data: updateData });
+      }
+
       return NextResponse.json({
         success: true,
         message: 'No trace file found yet',
@@ -60,6 +92,7 @@ export async function POST(
       completedAt?: Date;
     }>();
 
+    const normalizeStatus = (value?: string) => (value ? value.toLowerCase() : '');
     for (const task of traceResult.tasks) {
       const stepDef = findStepByProcess(run.pipelineId, task.process);
       const stepId = stepDef?.id || task.process;
@@ -70,7 +103,7 @@ export async function POST(
       }
 
       const entry = steps.get(stepId)!;
-      const status = task.status.toLowerCase();
+      const status = normalizeStatus(task.status);
 
       if (status.includes('fail') || task.exit !== undefined && task.exit !== 0) {
         entry.status = 'failed';
@@ -89,6 +122,25 @@ export async function POST(
         entry.completedAt = task.complete;
       }
     }
+
+    const latestEventAt = traceResult.tasks
+      .flatMap((task) => [task.submit, task.start, task.complete].filter((t): t is Date => !!t))
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+
+    const hasFailures = traceResult.tasks.some((task) => {
+      const status = normalizeStatus(task.status);
+      return (
+        status.includes('fail') ||
+        status.includes('error') ||
+        status.includes('aborted') ||
+        (task.exit !== undefined && task.exit !== 0)
+      );
+    });
+    const hasRunning = traceResult.tasks.some((task) => {
+      const status = normalizeStatus(task.status);
+      return status.includes('run') || status.includes('start') || status.includes('submit');
+    });
+    const hasTasks = traceResult.tasks.length > 0;
 
     for (const [stepId, entry] of steps) {
       await db.pipelineRunStep.upsert({
@@ -134,16 +186,49 @@ export async function POST(
       ? Math.min(99, Math.round((completedSteps / totalSteps) * 100))
       : traceResult.overallProgress;
 
+    let nextStatus = run.status;
+    if (hasFailures) {
+      nextStatus = 'failed';
+    } else if (traceResult.overallProgress === 100 && hasTasks) {
+      nextStatus = 'completed';
+    } else if (hasRunning) {
+      nextStatus = 'running';
+    }
+
+    const updateData: Record<string, unknown> = {
+      progress: nextStatus === 'completed' ? 100 : progress,
+      currentStep:
+        nextStatus === 'completed'
+          ? 'Completed'
+          : nextStatus === 'failed'
+            ? 'Failed'
+            : currentStep,
+      statusSource: 'trace',
+    };
+
+    if (latestEventAt && (!run.lastEventAt || latestEventAt > run.lastEventAt)) {
+      updateData.lastEventAt = latestEventAt;
+    }
+
+    if (traceResult.startedAt && !run.startedAt) {
+      updateData.startedAt = traceResult.startedAt;
+    }
+
+    if (nextStatus !== run.status) {
+      updateData.status = nextStatus;
+    }
+
+    if (nextStatus === 'completed' && !run.completedAt) {
+      updateData.completedAt = traceResult.completedAt || latestEventAt || new Date();
+    }
+
+    if (nextStatus === 'failed' && !run.completedAt) {
+      updateData.completedAt = latestEventAt || new Date();
+    }
+
     await db.pipelineRun.update({
       where: { id },
-      data: {
-        progress,
-        currentStep,
-        // Update timestamps if available
-        ...(traceResult.startedAt && !run.status.includes('running') ? {
-          startedAt: traceResult.startedAt,
-        } : {}),
-      },
+      data: updateData,
     });
 
     return NextResponse.json({
