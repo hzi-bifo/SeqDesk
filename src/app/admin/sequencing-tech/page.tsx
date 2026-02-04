@@ -21,7 +21,6 @@ import {
 import {
   Loader2,
   Dna,
-  Plus,
   Pencil,
   Trash2,
   RotateCcw,
@@ -50,6 +49,11 @@ type DeleteTarget =
   | { type: "flowCell"; item: FlowCell }
   | { type: "kit"; item: SequencingKit }
   | { type: "software"; item: SequencingSoftware };
+
+type UpdateNotice = {
+  tone: "success" | "error" | "info";
+  message: string;
+};
 
 const FLOW_CELL_CATEGORIES: FlowCell["category"][] = [
   "standard",
@@ -84,6 +88,7 @@ export default function SequencingTechPage() {
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
 
   // Edit dialog state
   const [editDialog, setEditDialog] = useState(false);
@@ -143,6 +148,12 @@ export default function SequencingTechPage() {
   const kitById = new Map(kits.map((kit) => [kit.id, kit]));
   const softwareById = new Map(software.map((tool) => [tool.id, tool]));
 
+  const updateNoticeStyles: Record<UpdateNotice["tone"], string> = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    error: "border-red-200 bg-red-50 text-red-700",
+    info: "border-slate-200 bg-slate-50 text-slate-700",
+  };
+
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -184,6 +195,7 @@ export default function SequencingTechPage() {
   };
 
   const handleCheckUpdates = async () => {
+    setUpdateNotice(null);
     setCheckingUpdates(true);
     try {
       const res = await fetch("/api/admin/sequencing-tech", {
@@ -197,14 +209,17 @@ export default function SequencingTechPage() {
       // Update local config if updates were found and merged
       if (data.hasUpdates && data.config) {
         setConfig(data.config);
-        toast.success(data.message);
+        setUpdateNotice({ tone: "success", message: data.message });
       } else if (data.error) {
-        toast.error(data.message);
+        setUpdateNotice({ tone: "error", message: data.message });
       } else {
-        toast.info(data.message);
+        setUpdateNotice({ tone: "info", message: data.message });
       }
     } catch {
-      toast.error("Failed to check for updates");
+      setUpdateNotice({
+        tone: "error",
+        message: "Failed to check for updates",
+      });
     } finally {
       setCheckingUpdates(false);
     }
@@ -375,24 +390,6 @@ export default function SequencingTechPage() {
     setDeleteTarget(null);
   };
 
-  const addNewTechnology = () => {
-    const newTech: SequencingTechnology = {
-      id: `custom-${Date.now()}`,
-      name: "New Technology",
-      manufacturer: "",
-      shortDescription: "Description here",
-      specs: [],
-      pros: [],
-      cons: [],
-      bestFor: [],
-      available: true,
-      order: config?.technologies.length || 0,
-    };
-    setEditingTech(newTech);
-    setEditForm(newTech);
-    setEditDialog(true);
-  };
-
   const handleAddNewTech = () => {
     if (!config || !editForm.name) return;
 
@@ -423,27 +420,6 @@ export default function SequencingTechPage() {
   const openDeviceDialog = (device: SequencerDevice) => {
     setEditingDevice(device);
     setDeviceForm({ ...device });
-    setDeviceDialogOpen(true);
-  };
-
-  const addNewDevice = () => {
-    const defaultPlatformId = technologies[0]?.id || "";
-    const newDevice: SequencerDevice = {
-      id: `device-${Date.now()}`,
-      platformId: defaultPlatformId,
-      name: "New Device",
-      manufacturer: getTechnologyManufacturer(defaultPlatformId),
-      shortDescription: "",
-      productOverview: "",
-      specs: [],
-      compatibleFlowCells: [],
-      compatibleKits: [],
-      compatibleSoftware: [],
-      available: true,
-      order: devices.length,
-    };
-    setEditingDevice(newDevice);
-    setDeviceForm(newDevice);
     setDeviceDialogOpen(true);
   };
 
@@ -507,20 +483,6 @@ export default function SequencingTechPage() {
     setFlowCellDialogOpen(true);
   };
 
-  const addNewFlowCell = () => {
-    const newFlowCell: FlowCell = {
-      id: `flowcell-${Date.now()}`,
-      name: "New Flow Cell",
-      sku: "",
-      category: "standard",
-      available: true,
-      order: flowCells.length,
-    };
-    setEditingFlowCell(newFlowCell);
-    setFlowCellForm(newFlowCell);
-    setFlowCellDialogOpen(true);
-  };
-
   const handleFlowCellSave = () => {
     if (!config || !flowCellForm.id || !flowCellForm.name || !flowCellForm.sku) return;
 
@@ -562,21 +524,6 @@ export default function SequencingTechPage() {
     setKitDialogOpen(true);
   };
 
-  const addNewKit = () => {
-    const newKit: SequencingKit = {
-      id: `kit-${Date.now()}`,
-      name: "New Kit",
-      sku: "",
-      category: "ligation",
-      inputType: "dna",
-      available: true,
-      order: kits.length,
-    };
-    setEditingKit(newKit);
-    setKitForm(newKit);
-    setKitDialogOpen(true);
-  };
-
   const handleKitSave = () => {
     if (!config || !kitForm.id || !kitForm.name || !kitForm.sku) return;
 
@@ -615,19 +562,6 @@ export default function SequencingTechPage() {
   const openSoftwareDialog = (tool: SequencingSoftware) => {
     setEditingSoftware(tool);
     setSoftwareForm({ ...tool });
-    setSoftwareDialogOpen(true);
-  };
-
-  const addNewSoftware = () => {
-    const newSoftware: SequencingSoftware = {
-      id: `software-${Date.now()}`,
-      name: "New Software",
-      category: "control",
-      available: true,
-      order: software.length,
-    };
-    setEditingSoftware(newSoftware);
-    setSoftwareForm(newSoftware);
     setSoftwareDialogOpen(true);
   };
 
@@ -762,6 +696,25 @@ export default function SequencingTechPage() {
             </Button>
           </div>
         </div>
+
+        {updateNotice && (
+          <div
+            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${updateNoticeStyles[updateNotice.tone]}`}
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              <span>{updateNotice.message}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setUpdateNotice(null)}
+              aria-label="Dismiss update status"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
 
         <Tabs defaultValue="platforms" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
@@ -987,16 +940,12 @@ export default function SequencingTechPage() {
               })}
             </div>
 
-            <Button variant="outline" onClick={addNewTechnology} className="w-full">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Custom Technology
-            </Button>
           </TabsContent>
 
           <TabsContent value="devices" className="space-y-4 mt-0">
             {devices.length === 0 ? (
               <GlassCard className="p-6 text-center text-muted-foreground">
-                No devices configured yet. Add a device model to enable model-level selection.
+                No devices configured yet.
               </GlassCard>
             ) : (
               Object.entries(
@@ -1259,10 +1208,6 @@ export default function SequencingTechPage() {
                 })
             )}
 
-            <Button variant="outline" onClick={addNewDevice} className="w-full">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Device
-            </Button>
           </TabsContent>
 
           <TabsContent value="accessories" className="space-y-4 mt-0">
@@ -1334,10 +1279,6 @@ export default function SequencingTechPage() {
                   </div>
                 )}
 
-                <Button variant="outline" onClick={addNewFlowCell} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Flow Cell
-                </Button>
               </TabsContent>
 
               <TabsContent value="kits" className="space-y-3 mt-0">
@@ -1401,10 +1342,6 @@ export default function SequencingTechPage() {
                   </div>
                 )}
 
-                <Button variant="outline" onClick={addNewKit} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Kit
-                </Button>
               </TabsContent>
 
               <TabsContent value="software" className="space-y-3 mt-0">
@@ -1468,10 +1405,6 @@ export default function SequencingTechPage() {
                   </div>
                 )}
 
-                <Button variant="outline" onClick={addNewSoftware} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Software
-                </Button>
               </TabsContent>
             </Tabs>
           </TabsContent>
