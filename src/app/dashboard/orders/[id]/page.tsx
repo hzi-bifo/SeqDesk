@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, use, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -10,6 +10,13 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +32,7 @@ import {
   AlertCircle,
   Clock,
   CheckCircle2,
+  XCircle,
   FileText,
   User,
   Mail,
@@ -33,13 +41,13 @@ import {
   Settings,
   Pencil,
   Trash2,
-  Send,
   ClipboardList,
   BookOpen,
   FolderOpen,
   Info,
   HardDrive,
   Download,
+  FileCode,
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
 
@@ -181,7 +189,6 @@ export default function OrderDetailPage({
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
-  const [markReadyDialogOpen, setMarkReadyDialogOpen] = useState(false);
 
   // Post-submission instructions
   const [instructions, setInstructions] = useState<string | null>(null);
@@ -190,35 +197,131 @@ export default function OrderDetailPage({
   // Form config for showing per-sample fields
   const [perSampleFields, setPerSampleFields] = useState<Array<{ name: string; label: string }>>([]);
 
+  // Simulate reads states
+  const [simulateReadsDialogOpen, setSimulateReadsDialogOpen] = useState(false);
+  const [simulatingReads, setSimulatingReads] = useState(false);
+  const [simulateReadsResult, setSimulateReadsResult] = useState<{
+    success: boolean;
+    error?: string;
+    createdPath?: string;
+    filesCreated?: number;
+    samplesProcessed?: number;
+  } | null>(null);
+  const [selectedStudyId, setSelectedStudyId] = useState<string>("");
+
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isOwner = order?.user.id === session?.user?.id;
 
+  const orderStudies = useMemo(() => {
+    if (!order) return [];
+    const map = new Map<string, { id: string; title: string }>();
+    for (const sample of order.samples) {
+      if (sample.study) {
+        map.set(sample.study.id, { id: sample.study.id, title: sample.study.title });
+      }
+    }
+    return Array.from(map.values());
+  }, [order]);
+
+  const selectedStudy = orderStudies.find((study) => study.id === selectedStudyId) || null;
+
   useEffect(() => {
-    const fetchOrder = async () => {
-      try {
-        const res = await fetch(`/api/orders/${resolvedParams.id}`);
-        if (!res.ok) {
-          if (res.status === 404) {
-            setError("Order not found");
-          } else if (res.status === 403) {
-            setError("You don't have permission to view this order");
-          } else {
-            throw new Error("Failed to fetch order");
-          }
-          return;
+    if (orderStudies.length === 0) {
+      setSelectedStudyId("");
+      return;
+    }
+    if (!selectedStudyId || !orderStudies.some((study) => study.id === selectedStudyId)) {
+      setSelectedStudyId(orderStudies[0].id);
+    }
+  }, [orderStudies, selectedStudyId]);
+
+  const orderId = resolvedParams.id;
+
+  const fetchOrder = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
+    try {
+      const res = await fetch(`/api/orders/${orderId}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setError("Order not found");
+        } else if (res.status === 403) {
+          setError("You don't have permission to view this order");
+        } else {
+          throw new Error("Failed to fetch order");
         }
-        const data = await res.json();
-        setOrder(data);
-      } catch {
-        setError("Failed to load order");
-      } finally {
+        return;
+      }
+      const data = await res.json();
+      setOrder(data);
+    } catch {
+      setError("Failed to load order");
+    } finally {
+      if (!options?.silent) {
         setLoading(false);
       }
-    };
+    }
+  };
 
+  useEffect(() => {
     fetchOrder();
-  }, [resolvedParams.id]);
+  }, [orderId]);
+
+  const handleSimulateReads = async () => {
+    if (!selectedStudyId) {
+      setSimulateReadsResult({
+        success: false,
+        error: "Select a study before simulating reads.",
+      });
+      setSimulateReadsDialogOpen(true);
+      return;
+    }
+
+    setSimulatingReads(true);
+    setSimulateReadsResult(null);
+    setSimulateReadsDialogOpen(true);
+    setError("");
+
+    try {
+      const res = await fetch(`/api/studies/${selectedStudyId}/simulate-reads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairedEnd: true,
+          createRecords: true,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSimulateReadsResult({
+          success: false,
+          error: data.error || "Failed to create simulated read files",
+        });
+        return;
+      }
+
+      setSimulateReadsResult({
+        success: true,
+        createdPath: data.createdPath,
+        filesCreated: data.filesCreated,
+        samplesProcessed: data.samplesProcessed,
+      });
+
+      // Refresh order data to show new reads if applicable
+      setTimeout(() => fetchOrder({ silent: true }), 500);
+    } catch (err) {
+      setSimulateReadsResult({
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to create simulated reads",
+      });
+    } finally {
+      setSimulatingReads(false);
+    }
+  };
 
   // Fetch post-submission instructions for submitted orders
   useEffect(() => {
@@ -398,20 +501,6 @@ export default function OrderDetailPage({
                 )}
               </>
             )}
-            {(isOwner || isFacilityAdmin) && order.status === "DRAFT" && order.samples.length > 0 && (
-              <Button
-                size="sm"
-                onClick={() => setMarkReadyDialogOpen(true)}
-                disabled={updating}
-              >
-                {updating ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                Submit
-              </Button>
-            )}
             {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
               <Button variant="outline" size="sm" asChild>
                 <Link href={`/dashboard/orders/${order.id}/files`}>
@@ -464,9 +553,8 @@ export default function OrderDetailPage({
           const isCompleted = order.status === "COMPLETED";
 
           // Determine completion status for each step
-          const step1Complete = true; // Order created (always true on this page)
-          const step2Complete = isSubmitted; // Order submitted
-          const step3Complete = isCompleted; // All files assigned (auto)
+          const step1Complete = isSubmitted; // Order submitted
+          const step2Complete = isCompleted; // All files assigned (auto)
 
           return (
             <div className="mb-6 bg-gradient-to-r from-secondary to-emerald-50/50 rounded-xl border border-border p-5">
@@ -474,8 +562,8 @@ export default function OrderDetailPage({
                 <ClipboardList className="h-5 w-5 text-blue-600" />
                 Order Progress
               </h3>
-              <div className="grid grid-cols-3 gap-3">
-                {/* Step 1: Create Order */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Step 1: Order Submitted */}
                 <div className={`relative p-3 rounded-lg ${step1Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     {step1Complete ? (
@@ -485,49 +573,14 @@ export default function OrderDetailPage({
                         <span className="text-[10px] text-white font-bold">1</span>
                       </div>
                     )}
-                    <span className="text-sm font-medium">Create Order</span>
+                    <span className="text-sm font-medium">Order Submitted</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} added</p>
-                </div>
-
-                {/* Step 2: Add Samples & Submit */}
-                <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    {step2Complete ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">2</span>
-                      </div>
-                    )}
-                    <span className="text-sm font-medium">Submit</span>
-                  </div>
-                  {step2Complete ? (
-                    <p className="text-xs text-emerald-600">Submitted to facility</p>
-                  ) : isFacilityAdmin ? (
-                    <p className="text-xs text-amber-600">Not yet submitted</p>
+                  {step1Complete ? (
+                    <p className="text-xs text-emerald-600">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} submitted to facility</p>
                   ) : (
-                    <p className="text-xs text-muted-foreground">Notify facility</p>
+                    <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? 's' : ''} added</p>
                   )}
-                  {!step2Complete && !isFacilityAdmin && order.samples.length > 0 && (
-                    <button
-                      onClick={() => setMarkReadyDialogOpen(true)}
-                      disabled={updating}
-                      className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
-                    >
-                      {updating ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Updating...
-                        </>
-                      ) : (
-                        <>
-                          Submit <Send className="h-3 w-3" />
-                        </>
-                      )}
-                    </button>
-                  )}
-                  {step2Complete && instructions && (
+                  {step1Complete && instructions && (
                     <button
                       onClick={() => setShowFullInstructions(!showFullInstructions)}
                       className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
@@ -538,24 +591,24 @@ export default function OrderDetailPage({
                   )}
                 </div>
 
-                {/* Step 3: Files Assigned (auto) */}
-                <div className={`relative p-3 rounded-lg ${step3Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
+                {/* Step 2: Files Assigned (auto) */}
+                <div className={`relative p-3 rounded-lg ${step2Complete ? 'bg-white border-2 border-emerald-200' : 'bg-white/50 border border-border'}`}>
                   <div className="flex items-center gap-2 mb-1">
-                    {step3Complete ? (
+                    {step2Complete ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     ) : (
                       <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">3</span>
+                        <span className="text-[10px] text-white font-bold">2</span>
                       </div>
                     )}
                     <span className="text-sm font-medium">Files Assigned</span>
                   </div>
-                  {step3Complete ? (
+                  {step2Complete ? (
                     <p className="text-xs text-emerald-600">All samples have files</p>
-                  ) : step2Complete ? (
+                  ) : step1Complete ? (
                     <p className="text-xs text-amber-600">Waiting for files</p>
                   ) : (
-                    <p className="text-xs text-muted-foreground">{isFacilityAdmin ? "Awaiting submission" : "Submit order first"}</p>
+                    <p className="text-xs text-muted-foreground">Submit order first</p>
                   )}
                 </div>
               </div>
@@ -571,6 +624,66 @@ export default function OrderDetailPage({
             </div>
           );
         })()
+      )}
+
+      {isFacilityAdmin && order.samples.length > 0 && (
+        <div className="mb-6 rounded-lg border p-5 bg-muted/30">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="font-semibold flex items-center gap-2">
+                <FileCode className="h-5 w-5" />
+                Admin Tools
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Development and testing utilities for this order
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              {orderStudies.length > 1 ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Study</span>
+                  <Select value={selectedStudyId} onValueChange={setSelectedStudyId}>
+                    <SelectTrigger className="h-8 w-[220px]">
+                      <SelectValue placeholder="Select study" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {orderStudies.map((study) => (
+                        <SelectItem key={study.id} value={study.id}>
+                          {study.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">
+                  Study:{" "}
+                  <span className="text-foreground font-medium">
+                    {selectedStudy?.title || "Not linked"}
+                  </span>
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSimulateReads}
+                disabled={simulatingReads || orderStudies.length === 0}
+              >
+                {simulatingReads ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileCode className="h-4 w-4 mr-2" />
+                )}
+                Simulate Reads
+              </Button>
+            </div>
+          </div>
+          {orderStudies.length === 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              No linked studies yet. Add samples to a study to simulate reads.
+            </p>
+          )}
+        </div>
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -832,32 +945,95 @@ export default function OrderDetailPage({
         </DialogContent>
       </Dialog>
 
-      {/* Submit Order Confirmation Dialog */}
-      <Dialog open={markReadyDialogOpen} onOpenChange={setMarkReadyDialogOpen}>
-        <DialogContent className="max-w-md">
+      {/* Simulate Reads Dialog */}
+      <Dialog
+        open={simulateReadsDialogOpen}
+        onOpenChange={(open) => {
+          if (!simulatingReads) setSimulateReadsDialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Submit Order</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <FileCode className="h-5 w-5" />
+              Simulate Reads
+            </DialogTitle>
             <DialogDescription>
-              Submit this order to the sequencing facility? They will be notified and can begin processing your samples.
+              {selectedStudy?.title
+                ? `Target study: ${selectedStudy.title}`
+                : "Target study: Not linked"}
             </DialogDescription>
           </DialogHeader>
+
+          <div className="py-4">
+            {simulatingReads && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            )}
+
+            {simulateReadsResult && (
+              <div
+                className={`p-4 rounded-lg border ${
+                  simulateReadsResult.success
+                    ? "bg-green-50 border-green-200"
+                    : "bg-red-50 border-red-200"
+                }`}
+              >
+                <div className="text-center">
+                  {simulateReadsResult.success ? (
+                    <>
+                      <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-2" />
+                      <p className="font-medium">Files Created Successfully</p>
+                      <div className="mt-3 text-sm text-muted-foreground space-y-1">
+                        <p>
+                          <span className="font-medium">
+                            {simulateReadsResult.filesCreated}
+                          </span>{" "}
+                          files created
+                        </p>
+                        <p>
+                          <span className="font-medium">
+                            {simulateReadsResult.samplesProcessed}
+                          </span>{" "}
+                          samples processed
+                        </p>
+                        {simulateReadsResult.createdPath && (
+                          <p className="mt-2 text-xs font-mono bg-muted p-2 rounded break-all">
+                            {simulateReadsResult.createdPath}
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
+                      <p className="font-medium text-red-800">Failed</p>
+                      <p className="text-sm text-red-600 mt-1">
+                        {simulateReadsResult.error}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setMarkReadyDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                setMarkReadyDialogOpen(false);
-                handleStatusChange("SUBMITTED");
-              }}
-              disabled={updating}
-            >
-              {updating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-              Submit
-            </Button>
+            {simulateReadsResult ? (
+              <Button onClick={() => setSimulateReadsDialogOpen(false)}>
+                Close
+              </Button>
+            ) : (
+              <Button variant="outline" disabled>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Creating files...
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </PageContainer>
   );
 }
