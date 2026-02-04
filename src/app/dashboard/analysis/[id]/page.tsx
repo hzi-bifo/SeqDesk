@@ -228,6 +228,16 @@ export default function AnalysisRunDetailPage({
   );
 
   const run: Run | undefined = data?.run;
+  const assemblies = run?.assembliesCreated || [];
+  const bins = run?.binsCreated || [];
+  const resultErrors = Array.isArray(run?.results?.errors)
+    ? run?.results?.errors
+    : run?.results?.errors
+      ? [String(run?.results?.errors)]
+      : [];
+  const startedBy = run?.user
+    ? [run.user.firstName, run.user.lastName].filter(Boolean).join(" ") || run.user.email || "Unknown"
+    : "Unknown";
 
   // Tick every 30s so relative timestamps ("5s ago") stay fresh
   const [, setTick] = useState(0);
@@ -856,10 +866,10 @@ export default function AnalysisRunDetailPage({
           {/* Results - Assemblies and Bins */}
           {run.status === "completed" && (
             <>
-              {run.assembliesCreated.length > 0 && (
+              {assemblies.length > 0 && (
                 <GlassCard>
                   <h2 className="text-lg font-semibold mb-4">
-                    Assemblies ({run.assembliesCreated.length})
+                    Assemblies ({assemblies.length})
                   </h2>
                   <Table>
                     <TableHeader>
@@ -869,9 +879,9 @@ export default function AnalysisRunDetailPage({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {run.assembliesCreated.map((assembly) => (
+                      {assemblies.map((assembly) => (
                         <TableRow key={assembly.id}>
-                          <TableCell>{assembly.sample.sampleId}</TableCell>
+                          <TableCell>{assembly.sample?.sampleId || "-"}</TableCell>
                           <TableCell className="font-mono text-sm">
                             {assembly.assemblyName}
                           </TableCell>
@@ -882,10 +892,10 @@ export default function AnalysisRunDetailPage({
                 </GlassCard>
               )}
 
-              {run.binsCreated.length > 0 && (
+              {bins.length > 0 && (
                 <GlassCard>
                   <h2 className="text-lg font-semibold mb-4">
-                    Bins ({run.binsCreated.length})
+                    Bins ({bins.length})
                   </h2>
                   <Table>
                     <TableHeader>
@@ -897,9 +907,9 @@ export default function AnalysisRunDetailPage({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {run.binsCreated.map((bin) => (
+                      {bins.map((bin) => (
                         <TableRow key={bin.id}>
-                          <TableCell>{bin.sample.sampleId}</TableCell>
+                          <TableCell>{bin.sample?.sampleId || "-"}</TableCell>
                           <TableCell className="font-mono text-sm">
                             {bin.binName}
                           </TableCell>
@@ -968,7 +978,7 @@ export default function AnalysisRunDetailPage({
               </div>
               <div>
                 <dt className="text-sm text-muted-foreground">Started By</dt>
-                <dd>{run.user.firstName} {run.user.lastName}</dd>
+                <dd>{startedBy}</dd>
               </div>
               <div>
                 <dt className="text-sm text-muted-foreground">Created</dt>
@@ -1122,13 +1132,13 @@ export default function AnalysisRunDetailPage({
           )}
 
           {/* Errors */}
-          {run.results?.errors && run.results.errors.length > 0 && (
+          {resultErrors.length > 0 && (
             <GlassCard className="border-destructive">
               <h2 className="text-lg font-semibold mb-4 text-destructive">
                 Errors
               </h2>
               <ul className="space-y-2 text-sm">
-                {run.results.errors.map((err, i) => (
+                {resultErrors.map((err, i) => (
                   <li key={i} className="text-destructive">
                     {err}
                   </li>

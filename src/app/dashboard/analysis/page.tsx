@@ -133,7 +133,7 @@ type RunData = {
   lastWeblogAt?: string | null;
   lastTraceAt?: string | null;
   updatedAt?: string;
-  user: { firstName: string; lastName: string };
+  user: { firstName: string; lastName: string; email?: string };
   createdAt: string;
   queueStatus?: string | null;
   queueReason?: string | null;
@@ -388,7 +388,7 @@ export default function AnalysisDashboardPage() {
                     {formatDuration(run.startedAt, run.completedAt)}
                   </TableCell>
                   <TableCell>
-                    {run.user.firstName} {run.user.lastName}
+                    {[run.user?.firstName, run.user?.lastName].filter(Boolean).join(" ") || run.user?.email || "Unknown"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(run.createdAt).toLocaleDateString()}
