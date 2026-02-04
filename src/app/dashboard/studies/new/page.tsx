@@ -36,7 +36,16 @@ import {
   FlaskConical,
   Table as TableIcon,
   Search,
+  AlertTriangle,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
@@ -709,6 +718,8 @@ export default function NewStudyPage() {
   const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [showWarningDialog, setShowWarningDialog] = useState(false);
 
   // Form configuration from admin
   const [formConfig, setFormConfig] = useState<StudyFormConfig | null>(null);
@@ -1305,40 +1316,63 @@ export default function NewStudyPage() {
     },
   });
 
-  const validateBeforeSubmit = () => {
+  // Blur any focused input to commit pending values before validation
+  const commitPendingInputs = () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) {
+      active.blur();
+    }
+  };
+
+  // Returns { canProceed: boolean, warnings: string[] }
+  // Hard errors (title, checklist, samples) return canProceed=false
+  // Soft errors (missing required per-sample data) return warnings but canProceed=true
+  const validateBeforeSubmit = (skipWarnings = false): { canProceed: boolean; warnings: string[] } => {
+    // Commit any pending input values first
+    commitPendingInputs();
+
+    const warnings: string[] = [];
+
     if (!title.trim()) {
       setError("Study title is required");
-      return false;
+      return { canProceed: false, warnings: [] };
     }
 
     if (formConfig?.modules.mixs && !checklistType) {
       setError("Please select a MIxS checklist type");
-      return false;
+      return { canProceed: false, warnings: [] };
     }
 
     if (formConfig?.modules.sampleAssociation && selectedSampleIds.length === 0) {
       setError("Please select at least one sample");
-      return false;
+      return { canProceed: false, warnings: [] };
     }
 
     if (!validateStudyFields()) {
-      return false;
+      return { canProceed: false, warnings: [] };
     }
 
+    // Per-sample field validation - collect as warnings, not hard errors
     if (formConfig?.modules.sampleAssociation && hasPerSampleFields) {
       for (const row of sampleMetadata) {
         for (const field of allPerSampleFields) {
           const value = row[field.name];
           const validationError = validateFieldValue(field as FormFieldDefinition, value);
           if (validationError) {
-            setError(`Sample ${row.sampleId}: ${field.label} ${validationError}`);
-            return false;
+            warnings.push(`${row.sampleId}: ${field.label} ${validationError}`);
           }
         }
       }
     }
 
-    return true;
+    // If there are warnings and we're not skipping them, show the dialog
+    if (warnings.length > 0 && !skipWarnings) {
+      setValidationWarnings(warnings);
+      setShowWarningDialog(true);
+      return { canProceed: false, warnings };
+    }
+
+    return { canProceed: true, warnings };
   };
 
   const buildStudyMetadataPayload = () => {
@@ -1358,10 +1392,12 @@ export default function NewStudyPage() {
     return metadata;
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (skipWarnings = false) => {
     setError("");
+    setShowWarningDialog(false);
 
-    if (!validateBeforeSubmit()) {
+    const { canProceed } = validateBeforeSubmit(skipWarnings);
+    if (!canProceed) {
       return;
     }
 
@@ -2348,6 +2384,44 @@ export default function NewStudyPage() {
 
   return (
     <div className="p-8">
+      {/* Warning Dialog for missing required fields */}
+      <Dialog open={showWarningDialog} onOpenChange={setShowWarningDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Missing Required Information
+            </DialogTitle>
+            <DialogDescription>
+              Some samples have missing required fields. You can still create the study and fill in this information later.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-48 overflow-y-auto">
+            <ul className="text-sm space-y-1 text-muted-foreground">
+              {validationWarnings.slice(0, 10).map((warning, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">-</span>
+                  <span>{warning}</span>
+                </li>
+              ))}
+              {validationWarnings.length > 10 && (
+                <li className="text-muted-foreground italic">
+                  ...and {validationWarnings.length - 10} more
+                </li>
+              )}
+            </ul>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowWarningDialog(false)}>
+              Go Back
+            </Button>
+            <Button onClick={() => handleSubmit(true)}>
+              Create Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
@@ -2456,8 +2530,8 @@ export default function NewStudyPage() {
 
           {currentStep === STEPS.length - 1 ? (
             <Button
-              onClick={handleSubmit}
-              disabled={isLoading || !isTitleValid || !isChecklistValid || !isSamplesValid}
+              onClick={() => handleSubmit()}
+              disabled={isLoading}
               className={cn(
                 isTitleValid && isChecklistValid && isSamplesValid
                   ? ""
