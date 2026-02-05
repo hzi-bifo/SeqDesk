@@ -250,20 +250,18 @@ export function Sidebar({ user, version }: SidebarProps) {
           </Link>
         )}
 
-        {/* Analysis - Admin only */}
-        {isFacilityAdmin && (
-          <Link href="/dashboard/analysis" className={navItemClass("/dashboard/analysis")} title="Analysis">
-            <FlaskConical className="h-4 w-4 shrink-0" />
-            {!collapsed && "Analysis"}
-            {!collapsed && counts.analysis > 0 && (
-              <span
-                className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5"
-              >
-                {counts.analysis > 99 ? "99+" : counts.analysis}
-              </span>
-            )}
-          </Link>
-        )}
+        {/* Analysis */}
+        <Link href="/dashboard/analysis" className={navItemClass("/dashboard/analysis")} title="Analysis">
+          <FlaskConical className="h-4 w-4 shrink-0" />
+          {!collapsed && "Analysis"}
+          {!collapsed && counts.analysis > 0 && (
+            <span
+              className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5"
+            >
+              {counts.analysis > 99 ? "99+" : counts.analysis}
+            </span>
+          )}
+        </Link>
 
         {/* Field Help Panel - show when a field is focused */}
         {focusedField && !collapsed && (

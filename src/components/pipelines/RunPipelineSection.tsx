@@ -295,6 +295,15 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
 
       const runId = (createData as { run?: { id?: string } }).run?.id;
 
+      if (!runId) {
+        setRunResult({
+          success: false,
+          error: "Failed to create pipeline run",
+          details: ["Server returned success but no run ID was provided."],
+        });
+        return;
+      }
+
       // Step 2: Start the run
       const startRes = await fetch(`/api/pipelines/runs/${runId}/start`, {
         method: "POST",

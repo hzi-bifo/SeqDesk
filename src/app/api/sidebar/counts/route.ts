@@ -33,14 +33,13 @@ export async function GET() {
       isFacilityAdmin
         ? db.submission.count()
         : Promise.resolve(0),
-      // Analysis runs count (running or queued) - admin only
-      isFacilityAdmin
-        ? db.pipelineRun.count({
-            where: {
-              status: { in: ['pending', 'queued', 'running'] },
-            },
-          })
-        : Promise.resolve(0),
+      // Analysis runs count (running or queued)
+      db.pipelineRun.count({
+        where: {
+          status: { in: ['pending', 'queued', 'running'] },
+          ...(isFacilityAdmin ? {} : { study: { userId } }),
+        },
+      }),
     ]);
 
     return NextResponse.json({

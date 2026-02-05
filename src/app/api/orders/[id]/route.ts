@@ -180,16 +180,14 @@ export async function PUT(
       updateData.statusUpdatedAt = new Date();
 
       // Create status change note
-      if (statusNote || true) {
-        await db.statusNote.create({
-          data: {
-            orderId: id,
-            userId: session.user.id,
-            noteType: "STATUS_CHANGE",
-            content: statusNote || `Status changed from ${existing.status} to ${status}`,
-          },
-        });
-      }
+      await db.statusNote.create({
+        data: {
+          orderId: id,
+          userId: session.user.id,
+          noteType: "STATUS_CHANGE",
+          content: statusNote || `Status changed from ${existing.status} to ${status}`,
+        },
+      });
     }
 
     const order = await db.order.update({
