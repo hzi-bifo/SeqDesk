@@ -82,7 +82,9 @@ async function generateRunNumber(pipelineId: string): Promise<string> {
   let nextNum = 1;
   if (existingRuns.length > 0) {
     const lastNum = parseInt(existingRuns[0].runNumber.slice(-3), 10);
-    nextNum = lastNum + 1;
+    if (!isNaN(lastNum)) {
+      nextNum = lastNum + 1;
+    }
   }
 
   return `${prefix}${nextNum.toString().padStart(3, '0')}`;
@@ -361,16 +363,24 @@ echo "Using nextflow: $(which nextflow)"`;
 #SBATCH --error="logs/slurm-%j.err"
 ${settings.slurmOptions ? `#SBATCH ${settings.slurmOptions}` : ''}
 
+# Log file paths (read by pipeline monitor)
+STDOUT_LOG="${runFolder}/logs/pipeline.out"
+STDERR_LOG="${runFolder}/logs/pipeline.err"
+
+echo "Starting ${execution.pipeline} v${execution.version} pipeline at $(date)" > "$STDOUT_LOG"
+echo "" > "$STDERR_LOG"
+
 ${condaActivation}
 
 # Run ${execution.pipeline} v${execution.version}
 nextflow run ${execution.pipeline} \\
-  ${nextflowArgs}
+  ${nextflowArgs} \\
+  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
 # Capture exit code
 EXIT_CODE=$?
 
-echo "Pipeline completed with exit code: $EXIT_CODE"
+echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"
 exit $EXIT_CODE
 `;
 }

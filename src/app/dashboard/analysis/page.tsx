@@ -293,8 +293,15 @@ export default function AnalysisDashboardPage() {
             Failed to load pipeline runs
           </div>
         ) : data?.runs?.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            No pipeline runs found
+          <div className="text-center py-12">
+            <FlaskConical className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-muted-foreground font-medium">No pipeline runs found</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Pipeline runs are started from the study page. Open a study and go to the Pipelines tab to launch an analysis.
+            </p>
+            <Button variant="outline" className="mt-4" asChild>
+              <Link href="/dashboard/studies">View Studies</Link>
+            </Button>
           </div>
         ) : (
           <Table>

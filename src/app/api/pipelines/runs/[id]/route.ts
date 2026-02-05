@@ -202,8 +202,8 @@ export async function GET(
     }[] = [];
 
     if (run.runFolder && run.queueJobId && /^\d+$/.test(run.queueJobId)) {
-      const outPath = path.join(run.runFolder, `slurm-${run.queueJobId}.out`);
-      const errPath = path.join(run.runFolder, `slurm-${run.queueJobId}.err`);
+      const outPath = path.join(run.runFolder, 'logs', `slurm-${run.queueJobId}.out`);
+      const errPath = path.join(run.runFolder, 'logs', `slurm-${run.queueJobId}.err`);
       if (await fileExists(outPath)) {
         detectedLogFiles.push({
           id: `slurm:${run.queueJobId}:out`,

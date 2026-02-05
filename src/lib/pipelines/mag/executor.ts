@@ -208,16 +208,24 @@ echo "Using nextflow: $(which nextflow)"`;
 #SBATCH --error="logs/slurm-%j.err"
 ${settings.slurmOptions ? `#SBATCH ${settings.slurmOptions}` : ''}
 
+# Log file paths (read by pipeline monitor)
+STDOUT_LOG="${runFolder}/logs/pipeline.out"
+STDERR_LOG="${runFolder}/logs/pipeline.err"
+
+echo "Starting nf-core/mag pipeline at $(date)" > "$STDOUT_LOG"
+echo "" > "$STDERR_LOG"
+
 ${condaActivation}
 
 # Run nf-core/mag (uses default/latest release)
 nextflow run nf-core/mag \\
-  ${nextflowArgs}
+  ${nextflowArgs} \\
+  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
 # Capture exit code
 EXIT_CODE=$?
 
-echo "Pipeline completed with exit code: $EXIT_CODE"
+echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"
 exit $EXIT_CODE
 `;
 }

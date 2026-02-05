@@ -324,9 +324,8 @@ export async function resolveOutputs(
   // Add any errors from discovery
   result.errors.push(...discovered.errors);
 
-  // Update success flag
-  result.success = result.errors.length === 0 ||
-    (result.assembliesCreated > 0 || result.binsCreated > 0 || result.artifactsCreated > 0);
+  // Update success flag - only true when there are no errors
+  result.success = result.errors.length === 0;
 
   return result;
 }

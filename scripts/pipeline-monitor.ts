@@ -189,7 +189,7 @@ async function syncRun(run: {
     if (derivedStatus === 'completed' || derivedStatus === 'failed' || derivedStatus === 'cancelled') {
       update.completedAt = new Date();
     }
-    if (derivedStatus === 'running' && !run.status.includes('running')) {
+    if (derivedStatus === 'running' && run.status !== 'running') {
       update.startedAt = new Date();
     }
 

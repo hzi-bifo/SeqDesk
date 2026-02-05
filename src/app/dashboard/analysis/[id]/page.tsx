@@ -655,24 +655,6 @@ export default function AnalysisRunDetailPage({
   };
 
   useEffect(() => {
-    if (!run?.id || run.status !== "running") return;
-    let active = true;
-
-    const tick = async () => {
-      await fetch(`/api/pipelines/runs/${run.id}/sync`, { method: "POST" });
-      if (active) {
-        mutate();
-      }
-    };
-
-    const interval = setInterval(tick, 20000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [run?.id, run?.status, mutate]);
-
-  useEffect(() => {
     if (!run?.queueJobId) return;
     if (!["running", "queued", "pending"].includes(run.status)) return;
     fetchQueueStatus();

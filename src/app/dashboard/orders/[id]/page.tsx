@@ -623,7 +623,12 @@ export default function OrderDetailPage({
 
           {/* Custom Fields */}
           {order.customFields && (() => {
-            const customData = JSON.parse(order.customFields);
+            let customData: Record<string, unknown>;
+            try {
+              customData = JSON.parse(order.customFields);
+            } catch {
+              return null;
+            }
             const displayFields = Object.entries(customData).filter(
               ([key]) => !key.startsWith("_mixs")
             );
