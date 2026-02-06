@@ -280,7 +280,7 @@ export async function POST(
     // Validate pipelineRunDir
     if (!executionSettings.pipelineRunDir || executionSettings.pipelineRunDir === '/') {
       return NextResponse.json(
-        { error: 'Pipeline run directory not configured properly. Set it in Admin > Data & Compute.' },
+        { error: 'Pipeline run directory not configured properly. Set it in Admin > Infrastructure.' },
         { status: 400 }
       );
     }

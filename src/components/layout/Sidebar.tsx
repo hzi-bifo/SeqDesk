@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LogOut,
   Home,
@@ -21,6 +21,7 @@ import {
   HardDrive,
   Send,
   FlaskConical,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef } from "react";
@@ -28,6 +29,7 @@ import { useModule } from "@/lib/modules";
 import { signOut } from "next-auth/react";
 import { useSidebar } from "./SidebarContext";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SidebarProps {
   user: {
@@ -40,7 +42,8 @@ interface SidebarProps {
 
 export function Sidebar({ user, version }: SidebarProps) {
   const pathname = usePathname();
-  const { collapsed, toggle } = useSidebar();
+  const router = useRouter();
+  const { collapsed, toggle, mobileOpen, setMobileOpen } = useSidebar();
   const { focusedField, setFocusedField, validationError } = useFieldHelp();
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const { enabled: sequencingTechEnabled } = useModule("sequencing-tech");
@@ -50,7 +53,6 @@ export function Sidebar({ user, version }: SidebarProps) {
     path.startsWith("/admin") &&
     !path.startsWith("/admin/users") &&
     !path.startsWith("/admin/departments");
-
   // Expand Configuration section if we're on a config page
   const [adminExpanded, setAdminExpanded] = useState(isConfigPage(pathname));
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -63,6 +65,26 @@ export function Sidebar({ user, version }: SidebarProps) {
     submissions: number;
     analysis: number;
   }>({ orders: 0, studies: 0, files: 0, submissions: 0, analysis: 0 });
+  const [infrastructureReadiness, setInfrastructureReadiness] = useState<{
+    loading: boolean;
+    ready: boolean;
+    requiredMissingCount: number;
+    recommendedMissingCount: number;
+    firstMissingHref: string;
+    missingItems: Array<{
+      key: string;
+      label: string;
+      href: string;
+      severity: "required" | "recommended";
+    }>;
+  }>({
+    loading: true,
+    ready: true,
+    requiredMissingCount: 0,
+    recommendedMissingCount: 0,
+    firstMissingHref: "/admin/data-compute",
+    missingItems: [],
+  });
 
   // Close user menu when clicking outside
   useEffect(() => {
@@ -115,6 +137,56 @@ export function Sidebar({ user, version }: SidebarProps) {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch infrastructure readiness for sidebar guidance
+  useEffect(() => {
+    if (!isFacilityAdmin) return;
+
+    let mounted = true;
+
+    const fetchInfrastructureReadiness = async () => {
+      try {
+        const res = await fetch("/api/admin/infrastructure/readiness");
+        if (!res.ok) {
+          throw new Error("Failed to load readiness");
+        }
+        const data = (await res.json()) as {
+          ready?: boolean;
+          requiredMissing?: string[];
+          recommendedMissing?: string[];
+          firstMissingHref?: string;
+          missingItems?: Array<{
+            key: string;
+            label: string;
+            href: string;
+            severity: "required" | "recommended";
+          }>;
+        };
+        if (!mounted) return;
+        setInfrastructureReadiness({
+          loading: false,
+          ready: Boolean(data.ready),
+          requiredMissingCount: data.requiredMissing?.length || 0,
+          recommendedMissingCount: data.recommendedMissing?.length || 0,
+          firstMissingHref: data.firstMissingHref || "/admin/data-compute",
+          missingItems: data.missingItems || [],
+        });
+      } catch {
+        if (!mounted) return;
+        setInfrastructureReadiness((prev) => ({
+          ...prev,
+          loading: false,
+        }));
+      }
+    };
+
+    void fetchInfrastructureReadiness();
+    const interval = setInterval(fetchInfrastructureReadiness, 120000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [isFacilityAdmin]);
+
   const handleSignOut = async () => {
     await signOut({ redirect: false });
     window.location.href = "/login";
@@ -125,7 +197,9 @@ export function Sidebar({ user, version }: SidebarProps) {
     if (isConfigPage(pathname)) {
       setAdminExpanded(true);
     }
-  }, [pathname]);
+    // Close mobile sidebar on navigation, but avoid no-op updates.
+    setMobileOpen((isOpen) => (isOpen ? false : isOpen));
+  }, [pathname, setMobileOpen]);
 
   const isActive = (path: string) => {
     if (path === "/dashboard" && pathname === "/dashboard") return true;
@@ -151,12 +225,20 @@ export function Sidebar({ user, version }: SidebarProps) {
         ? "bg-secondary text-foreground font-medium"
         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
+  const hasRequiredInfrastructureGaps =
+    infrastructureReadiness.requiredMissingCount > 0;
+  const hasRecommendedInfrastructureGaps =
+    !hasRequiredInfrastructureGaps &&
+    infrastructureReadiness.recommendedMissingCount > 0;
 
   return (
     <aside
       className={cn(
         "fixed top-0 left-0 bottom-0 bg-card border-r border-border flex flex-col z-40 transition-all duration-300",
-        collapsed ? "w-16" : "w-64"
+        collapsed ? "w-16" : "w-64",
+        // Mobile: hidden by default, shown as overlay when mobileOpen
+        mobileOpen ? "translate-x-0" : "-translate-x-full",
+        "md:translate-x-0"
       )}
     >
       {/* Header */}
@@ -237,11 +319,11 @@ export function Sidebar({ user, version }: SidebarProps) {
           </Link>
         )}
 
-        {/* ENA Submissions - Admin only */}
+        {/* Data Upload - Admin only */}
         {isFacilityAdmin && (
-          <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="ENA Submissions">
+          <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="Data Upload">
             <Send className="h-4 w-4 shrink-0" />
-            {!collapsed && "ENA Submissions"}
+            {!collapsed && "Data Upload"}
             {!collapsed && counts.submissions > 0 && (
               <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
                 {counts.submissions > 99 ? "99+" : counts.submissions}
@@ -504,11 +586,102 @@ export function Sidebar({ user, version }: SidebarProps) {
                     Sequencers
                   </Link>
                 )}
-                <Link href="/admin/data-compute" className={adminSubItemClass("/admin/data-compute")}>
-                  Data & Compute
-                </Link>
-                <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
-                  Pipelines
+                <Link
+                  href="/admin/data-compute"
+                  className={cn(
+                    adminSubItemClass("/admin/data-compute"),
+                    "flex items-center justify-between gap-2"
+                  )}
+                >
+                  <span>Infrastructure</span>
+                  {!infrastructureReadiness.loading &&
+                    (hasRequiredInfrastructureGaps ||
+                      hasRecommendedInfrastructureGaps) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              router.push(infrastructureReadiness.firstMissingHref);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                router.push(infrastructureReadiness.firstMissingHref);
+                              }
+                            }}
+                            className={cn(
+                              "inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full text-[11px] font-semibold",
+                              hasRequiredInfrastructureGaps
+                                ? "bg-red-100 text-red-700"
+                                : "bg-amber-100 text-amber-700"
+                            )}
+                            aria-label={
+                              hasRequiredInfrastructureGaps
+                                ? `${infrastructureReadiness.requiredMissingCount} required infrastructure settings missing`
+                                : `${infrastructureReadiness.recommendedMissingCount} recommended infrastructure settings pending`
+                            }
+                          >
+                            {hasRequiredInfrastructureGaps ? (
+                              "!"
+                            ) : (
+                              <AlertTriangle className="h-3 w-3" />
+                            )}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="right"
+                          align="start"
+                          sideOffset={8}
+                          className="max-w-xs text-left"
+                        >
+                          <div className="space-y-2">
+                            <p className="font-medium">
+                              {hasRequiredInfrastructureGaps
+                                ? `${infrastructureReadiness.requiredMissingCount} required setting${
+                                    infrastructureReadiness.requiredMissingCount ===
+                                    1
+                                      ? ""
+                                      : "s"
+                                  } missing`
+                                : `${infrastructureReadiness.recommendedMissingCount} recommended setting${
+                                    infrastructureReadiness.recommendedMissingCount ===
+                                    1
+                                      ? ""
+                                      : "s"
+                                  } pending`}
+                            </p>
+                            <ul className="space-y-1">
+                              {infrastructureReadiness.missingItems.map((item) => (
+                                <li key={item.key} className="flex items-center gap-1.5">
+                                  <span
+                                    className={cn(
+                                      "h-1.5 w-1.5 rounded-full",
+                                      item.severity === "required"
+                                        ? "bg-red-300"
+                                        : "bg-amber-300"
+                                    )}
+                                  />
+                                  <Link
+                                    href={item.href}
+                                    className="underline underline-offset-2 hover:opacity-90"
+                                  >
+                                    {item.label}
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="opacity-80">
+                              Click the badge to jump to the first missing item.
+                            </p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                 </Link>
                 <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
                   Accounts

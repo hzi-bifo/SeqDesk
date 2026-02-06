@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     // Require credentials for any submission
     if (!hasCredentials) {
       return NextResponse.json(
-        { error: "ENA credentials not configured. Please configure your Webin credentials in Platform Settings > General > ENA Configuration." },
+        { error: "ENA credentials not configured. Please configure your Webin credentials in Admin > Data Upload > ENA Configuration." },
         { status: 400 }
       );
     }
@@ -249,7 +249,7 @@ export async function POST(request: Request) {
       };
 
       // Parse study-level metadata (applies to all samples)
-      let studyLevelMetadata: Record<string, string> = {};
+      const studyLevelMetadata: Record<string, string> = {};
       if (study.studyMetadata) {
         try {
           const studyMeta = JSON.parse(study.studyMetadata);
@@ -269,7 +269,7 @@ export async function POST(request: Request) {
       // Merge studyMetadata, order customFields, sample customFields, and checklistData for sample attributes
       const sampleDataList = study.samples.map(s => {
         // Start with study-level metadata (applies to all samples)
-        let attributes: Record<string, string> = { ...studyLevelMetadata };
+        const attributes: Record<string, string> = { ...studyLevelMetadata };
 
         // Then add order-level customFields (shared by all samples in the order)
         if (s.order?.customFields) {
@@ -350,9 +350,7 @@ export async function POST(request: Request) {
         },
       });
 
-      let studyAccession: string;
       let sampleAccessions: Record<string, string> = {};
-      let enaResponse: string;
 
       const credentials = {
         username: settings!.enaUsername!,
@@ -408,8 +406,8 @@ export async function POST(request: Request) {
         );
       }
 
-      studyAccession = studyResult.accessions?.study || "";
-      enaResponse = studyResult.receiptXml || "";
+      const studyAccession = studyResult.accessions?.study || "";
+      const enaResponse = studyResult.receiptXml || "";
 
       // Log the ENA response for debugging
       console.log("ENA Study Submission Result:", {

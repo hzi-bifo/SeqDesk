@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Loader2,
   Dna,
@@ -185,6 +187,12 @@ function getCategoryColor(category: string): string {
   }
 }
 
+function isSameConfigValue(a: unknown, b: unknown) {
+  if (a === b) return true;
+  if (a === undefined && b === undefined) return true;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export default function PipelineSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR(
     "/api/admin/settings/pipelines",
@@ -204,13 +212,13 @@ export default function PipelineSettingsPage() {
     mutate: mutateStore,
   } = useSWR("/api/admin/settings/pipelines/store", fetcher);
 
-  const [showStore, setShowStore] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [dagDialogOpen, setDagDialogOpen] = useState(false);
   const [selectedPipeline, setSelectedPipeline] = useState<PipelineConfig | null>(null);
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [dagData, setDagData] = useState<{ nodes: DagNode[]; edges: DagEdge[]; pipeline?: PipelineInfo } | null>(null);
   const [loadingDag, setLoadingDag] = useState(false);
   const [pipelineDefinition, setPipelineDefinition] = useState<PipelineDefinitionData | null>(null);
@@ -325,6 +333,7 @@ export default function PipelineSettingsPage() {
   const openConfigDialog = (pipeline: PipelineConfig) => {
     setSelectedPipeline(pipeline);
     setLocalConfig({ ...pipeline.config });
+    setConfigError(null);
     setConfigDialogOpen(true);
   };
 
@@ -361,9 +370,10 @@ export default function PipelineSettingsPage() {
   const handleSaveConfig = async () => {
     if (!selectedPipeline) return;
 
+    setConfigError(null);
     setSaving(true);
     try {
-      await fetch("/api/admin/settings/pipelines", {
+      const res = await fetch("/api/admin/settings/pipelines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -372,10 +382,23 @@ export default function PipelineSettingsPage() {
           config: localConfig,
         }),
       });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          (payload &&
+            typeof payload === "object" &&
+            "error" in payload &&
+            typeof payload.error === "string" &&
+            payload.error) ||
+            "Failed to save pipeline configuration"
+        );
+      }
       mutate();
       setConfigDialogOpen(false);
     } catch (err) {
-      console.error("Failed to save config:", err);
+      setConfigError(
+        err instanceof Error ? err.message : "Failed to save pipeline configuration"
+      );
     }
     setSaving(false);
   };
@@ -386,354 +409,86 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  const installedPipelineIds = new Set(data?.pipelines?.map((p: PipelineConfig) => p.pipelineId) || []);
+  const installedPipelines: PipelineConfig[] = data?.pipelines || [];
+  const installedPipelineIds = new Set(installedPipelines.map((p) => p.pipelineId));
   const storePipelines: StorePipeline[] = storeData?.pipelines || [];
   const storePipelineMap = new Map(storePipelines.map((pipeline) => [pipeline.id, pipeline]));
   const storeCategories: StoreCategory[] = storeData?.categories || [];
+  const filteredInstalledPipelines = installedPipelines.filter(
+    (pipeline) => selectedCategory === "all" || pipeline.category === selectedCategory
+  );
   const availablePipelines = storePipelines.filter(
     (pipeline) => !installedPipelineIds.has(pipeline.id) && (selectedCategory === "all" || pipeline.category === selectedCategory)
   );
-  const installedCount = data?.pipelines?.length || 0;
-  const shouldShowStore = showStore || installedCount === 0;
-  const storeToggleLabel = shouldShowStore && installedCount > 0 ? "Hide store" : "Add pipeline";
+  const installedCount = installedPipelines.length;
+  const availablePipelineCount = storePipelines.filter(
+    (pipeline) => !installedPipelineIds.has(pipeline.id)
+  ).length;
+  const visiblePipelineCount =
+    filteredInstalledPipelines.length + availablePipelines.length;
+  const configEntries = selectedPipeline
+    ? Object.entries(selectedPipeline.configSchema.properties)
+    : [];
+  const changedConfigCount = selectedPipeline
+    ? configEntries.reduce((count, [key]) => {
+        return isSameConfigValue(localConfig[key], selectedPipeline.config[key])
+          ? count
+          : count + 1;
+      }, 0)
+    : 0;
+  const hasConfigChanges = changedConfigCount > 0;
 
   return (
     <PageContainer>
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
-          <p className="text-muted-foreground mt-1">
-            Install and manage nf-core pipelines. Installed pipelines are ready to run. Execution settings live in Data & Compute.
+      <div className="space-y-8">
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold">Pipelines</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Install, update, and cache nf-core pipelines used by analysis workflows.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <a href="/admin/data-compute">Compute settings</a>
-          </Button>
-          <Button size="sm" onClick={() => setShowStore((prev) => !prev)}>
-            <Download className="h-4 w-4 mr-2" />
-            {storeToggleLabel}
-          </Button>
-        </div>
-      </div>
 
-      <section id="installed-pipelines" className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Installed</p>
-            <h2 className="text-2xl font-semibold">Installed pipelines</h2>
-            <p className="text-sm text-muted-foreground mt-2">
-              Installed pipelines are available on this instance and ready to run. Download to warm the workflow cache.
+        <div className="sticky top-16 z-30">
+          <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {storeError
+                ? "Store registry unavailable. Installed pipelines can still be managed."
+                : `${installedCount} installed • ${storeLoading ? "Checking store..." : `${availablePipelineCount} available`} • Download pipeline code to warm runtime cache.`}
             </p>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline" size="sm" className="bg-white">
+                <Link href="/admin/data-compute">Infrastructure</Link>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => {
+                  void mutate();
+                  void mutateStore();
+                }}
+                disabled={isLoading || storeLoading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading || storeLoading ? "animate-spin" : ""}`} />
+                Refresh all
+              </Button>
+            </div>
           </div>
-          <Badge variant="secondary" className="h-6 px-3">
-            {installedCount} installed
-          </Badge>
         </div>
 
-        {downloadError && (
-          <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
-            <XCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">{downloadError}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto"
-              onClick={() => setDownloadError(null)}
-            >
-              Dismiss
-            </Button>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : error ? (
-          <div className="text-center py-12 text-destructive">
-            Failed to load pipeline configurations
-          </div>
-        ) : installedCount > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {data.pipelines.map((pipeline: PipelineConfig) => (
-              <GlassCard key={pipeline.pipelineId} className="relative">
-                {(() => {
-                  const storeEntry = storePipelineMap.get(pipeline.pipelineId);
-                  const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
-                  const updateAvailable =
-                    latestVersion &&
-                    pipeline.version &&
-                    compareVersions(latestVersion, pipeline.version) > 0;
-                  const downloadStatus = pipeline.download;
-                  const expectedCodeVersion = downloadStatus?.expectedVersion;
-                  const downloadedCodeVersion = downloadStatus?.version;
-                  const codeStatus = downloadStatus?.status;
-                  const downloadJob = downloadStatus?.job;
-                  const downloadInProgress = downloadJob?.state === "running";
-                  const downloadFailed = downloadJob?.state === "error";
-                  const downloadFinishedAt = downloadJob?.finishedAt;
-                  const codeUpdateAvailable =
-                    codeStatus === "downloaded" &&
-                    expectedCodeVersion &&
-                    downloadedCodeVersion &&
-                    compareVersions(expectedCodeVersion, downloadedCodeVersion) > 0;
-                  const codeMissing = codeStatus === "missing";
-                  const shouldOfferCodeDownload =
-                    codeMissing || codeUpdateAvailable || (codeStatus === "downloaded" && !downloadedCodeVersion);
-                  const codeActionLabel = codeMissing
-                    ? "Download pipeline"
-                    : codeUpdateAvailable
-                      ? "Update pipeline"
-                      : "Re-download pipeline";
-
-                  return (
-                <>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-4">
-                    <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
-                      {getPipelineIcon(pipeline.icon)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <h3 className="font-semibold truncate">{pipeline.name}</h3>
-                        {pipeline.version && (
-                          <Badge variant="outline" className="text-xs font-normal">
-                            v{pipeline.version}
-                          </Badge>
-                        )}
-                        <Badge variant="outline" className="text-xs font-normal">
-                          Installed
-                        </Badge>
-                        {codeStatus === "downloaded" && (
-                          <Badge variant="outline" className="text-xs font-normal">
-                            Pipeline cached
-                          </Badge>
-                        )}
-                        {downloadInProgress && (
-                          <Badge variant="secondary" className="text-xs">
-                            Downloading pipeline...
-                          </Badge>
-                        )}
-                        {downloadFailed && (
-                          <Badge variant="secondary" className="text-xs">
-                            Pipeline download failed
-                          </Badge>
-                        )}
-                        {codeStatus === "missing" && (
-                          <Badge variant="secondary" className="text-xs">
-                            Pipeline not cached
-                          </Badge>
-                        )}
-                        {codeStatus === "unsupported" && (
-                          <Badge variant="secondary" className="text-xs">
-                            External pipeline
-                          </Badge>
-                        )}
-                        <Badge variant="secondary" className="text-xs capitalize">
-                          {pipeline.category}
-                        </Badge>
-                        {updateAvailable && (
-                          <Badge variant="secondary" className="text-xs">
-                            Package update
-                          </Badge>
-                        )}
-                        {codeUpdateAvailable && (
-                          <Badge variant="secondary" className="text-xs">
-                            Pipeline update
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {pipeline.description}
-                      </p>
-                      <p className="text-xs text-muted-foreground font-mono mt-1">
-                        {pipeline.pipelineId}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {latestVersion
-                          ? `Latest version: v${latestVersion}`
-                          : "Latest version: unknown"}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {codeStatus === "downloaded"
-                          ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
-                          : codeStatus === "missing"
-                            ? "Pipeline cache: not downloaded"
-                            : codeStatus === "unsupported"
-                              ? "Pipeline cache: managed externally"
-                              : "Pipeline cache: unknown"}
-                        {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
-                      </p>
-                      {downloadInProgress && downloadJob?.startedAt && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Download started {formatStoreDate(downloadJob.startedAt)}
-                        </p>
-                      )}
-                      {downloadFailed && (
-                        <p className="text-xs text-destructive mt-1">
-                          {downloadJob?.error ? `Pipeline download failed: ${downloadJob.error}` : "Pipeline download failed"}
-                        </p>
-                      )}
-                      {downloadJob?.state === "success" && downloadFinishedAt && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Last download {formatStoreDate(downloadFinishedAt)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    {shouldOfferCodeDownload && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDownloadPipelineCode(pipeline.pipelineId, expectedCodeVersion, codeUpdateAvailable ? "update" : "download")}
-                        className="h-8"
-                        disabled={downloadingPipeline === pipeline.pipelineId || downloadInProgress}
-                      >
-                        {downloadingPipeline === pipeline.pipelineId || downloadInProgress ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <Download className="h-4 w-4 mr-1" />
-                        )}
-                        {downloadingPipeline === pipeline.pipelineId || downloadInProgress
-                          ? downloadAction === "update"
-                            ? "Updating..."
-                            : "Downloading..."
-                          : codeActionLabel}
-                      </Button>
-                    )}
-                    {updateAvailable && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleUpdatePipeline(pipeline.pipelineId, latestVersion)}
-                        className="h-8"
-                        disabled={installingPipeline === pipeline.pipelineId}
-                      >
-                        {installingPipeline === pipeline.pipelineId && installAction === "update" ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4 mr-1" />
-                        )}
-                        {installingPipeline === pipeline.pipelineId && installAction === "update"
-                          ? "Updating..."
-                          : "Update"}
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openDagDialog(pipeline)}
-                      className="h-8"
-                    >
-                      <Eye className="h-4 w-4 mr-1" />
-                      View
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openConfigDialog(pipeline)}
-                      className="h-8"
-                    >
-                      <Settings2 className="h-4 w-4 mr-1" />
-                      Configure
-                    </Button>
-                  </div>
-                </div>
-                </>
-                  );
-                })()}
-              </GlassCard>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-16 bg-muted/30 rounded-xl border border-dashed">
-            <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="font-semibold mb-2">No Pipelines Installed</h3>
-            <p className="text-muted-foreground mb-4">
-              Install a pipeline from the store to get started.
-            </p>
-            <Button onClick={() => setShowStore(true)}>
-              <Download className="h-4 w-4 mr-2" />
-              Browse Store
-            </Button>
-          </div>
-        )}
-      </section>
-
-      {shouldShowStore && (
-        <section id="pipeline-store" className="space-y-4">
-          <GlassCard className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Pipeline store</p>
-                <h2 className="text-2xl font-semibold">Add pipelines</h2>
-                <p className="text-sm text-muted-foreground mt-2 max-w-2xl">
-                  Install nf-core pipelines packaged for SeqDesk with samplesheet generation and output parsing.
-                  Download the workflow code after install to warm the Nextflow cache.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => mutateStore()}
-                  disabled={storeLoading}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${storeLoading ? "animate-spin" : ""}`} />
-                  Refresh registry
-                </Button>
-                <Button size="sm" asChild>
-                  <a
-                    href={`${storeData?.browseUrl || "https://seqdesk.com/pipelines"}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Browse store
-                    <ExternalLink className="h-4 w-4 ml-2" />
-                  </a>
-                </Button>
-              </div>
+        <section id="pipelines" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Pipelines</p>
+              <h2 className="text-base font-semibold">Pipelines</h2>
+              <p className="text-sm text-muted-foreground mt-2">
+                Installed and not-installed pipelines in one list.
+              </p>
             </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={storeError ? "destructive" : "secondary"} className="uppercase text-[10px]">
-                {storeLoading ? "Checking" : storeError ? "Registry failed" : "Registry online"}
-              </Badge>
-              {!storeLoading && !storeError && (
-                <>
-                  <span>v{storeData?.version || "unknown"}</span>
-                  <span>|</span>
-                  <span>{storePipelines.length} pipelines</span>
-                  <span>|</span>
-                  <span>Updated {formatStoreDate(storeData?.lastUpdated)}</span>
-                </>
-              )}
-            </div>
-
-            {installError && (
-              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
-                <XCircle className="h-5 w-5 text-destructive" />
-                <p className="text-sm text-destructive">{installError}</p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => setInstallError(null)}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="w-56">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-52">
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger>
+                  <SelectTrigger className="bg-white">
                     <SelectValue placeholder="All categories" />
                   </SelectTrigger>
                   <SelectContent>
@@ -746,35 +501,268 @@ export default function PipelineSettingsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <span className="text-xs text-muted-foreground">
-                Showing {availablePipelines.length} available
-              </span>
+              <Badge variant="secondary" className="h-6 px-3">
+                {installedCount} installed
+              </Badge>
+              <Badge variant={storeError ? "destructive" : "outline"} className="h-6 px-3">
+                {storeLoading ? "Checking..." : storeError ? "Registry unavailable" : `${availablePipelineCount} available`}
+              </Badge>
             </div>
+          </div>
 
-            {storeLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : storeError ? (
-              <div className="text-center py-12 text-destructive">
-                Failed to load pipeline registry from the store.
-              </div>
-            ) : availablePipelines.length > 0 ? (
-              <div className="grid gap-3">
-                {availablePipelines.map((pipeline) => (
-                  <div
-                    key={pipeline.id}
-                    className="flex flex-col gap-4 rounded-xl border bg-card p-4 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`p-2.5 rounded-lg ${getCategoryColor(pipeline.category)}`}>
+          {downloadError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+              <XCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">{downloadError}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setDownloadError(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          {installError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+              <XCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">{installError}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setInstallError(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-12 text-destructive">
+              Failed to load pipeline configurations
+            </div>
+          ) : storeLoading && visiblePipelineCount === 0 ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : visiblePipelineCount > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              {filteredInstalledPipelines.map((pipeline: PipelineConfig) => (
+                <GlassCard key={pipeline.pipelineId} className="relative">
+                  {(() => {
+                    const storeEntry = storePipelineMap.get(pipeline.pipelineId);
+                    const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
+                    const updateAvailable =
+                      latestVersion &&
+                      pipeline.version &&
+                      compareVersions(latestVersion, pipeline.version) > 0;
+                    const downloadStatus = pipeline.download;
+                    const expectedCodeVersion = downloadStatus?.expectedVersion;
+                    const downloadedCodeVersion = downloadStatus?.version;
+                    const codeStatus = downloadStatus?.status;
+                    const downloadJob = downloadStatus?.job;
+                    const downloadInProgress = downloadJob?.state === "running";
+                    const downloadFailed = downloadJob?.state === "error";
+                    const downloadFinishedAt = downloadJob?.finishedAt;
+                    const codeUpdateAvailable =
+                      codeStatus === "downloaded" &&
+                      expectedCodeVersion &&
+                      downloadedCodeVersion &&
+                      compareVersions(expectedCodeVersion, downloadedCodeVersion) > 0;
+                    const codeMissing = codeStatus === "missing";
+                    const shouldOfferCodeDownload =
+                      codeMissing || codeUpdateAvailable || (codeStatus === "downloaded" && !downloadedCodeVersion);
+                    const codeActionLabel = codeMissing
+                      ? "Download pipeline"
+                      : codeUpdateAvailable
+                        ? "Update pipeline"
+                        : "Re-download pipeline";
+
+                    return (
+                      <>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                            <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
+                              {getPipelineIcon(pipeline.icon)}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <h3 className="font-semibold truncate">{pipeline.name}</h3>
+                                {pipeline.version && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    v{pipeline.version}
+                                  </Badge>
+                                )}
+                                <Badge variant="outline" className="text-xs font-normal">
+                                  Installed
+                                </Badge>
+                                {codeStatus === "downloaded" && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    Pipeline cached
+                                  </Badge>
+                                )}
+                                {downloadInProgress && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Downloading pipeline...
+                                  </Badge>
+                                )}
+                                {downloadFailed && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Pipeline download failed
+                                  </Badge>
+                                )}
+                                {codeStatus === "missing" && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Pipeline not cached
+                                  </Badge>
+                                )}
+                                {codeStatus === "unsupported" && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    External pipeline
+                                  </Badge>
+                                )}
+                                <Badge variant="secondary" className="text-xs capitalize">
+                                  {pipeline.category}
+                                </Badge>
+                                {updateAvailable && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Package update
+                                  </Badge>
+                                )}
+                                {codeUpdateAvailable && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Pipeline update
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground line-clamp-2">
+                                {pipeline.description}
+                              </p>
+                              <p className="text-xs text-muted-foreground font-mono mt-1">
+                                {pipeline.pipelineId}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {latestVersion
+                                  ? `Latest version: v${latestVersion}`
+                                  : "Latest version: unknown"}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {codeStatus === "downloaded"
+                                  ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
+                                  : codeStatus === "missing"
+                                    ? "Pipeline cache: not downloaded"
+                                    : codeStatus === "unsupported"
+                                      ? "Pipeline cache: managed externally"
+                                      : "Pipeline cache: unknown"}
+                                {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
+                              </p>
+                              {downloadInProgress && downloadJob?.startedAt && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Download started {formatStoreDate(downloadJob.startedAt)}
+                                </p>
+                              )}
+                              {downloadFailed && (
+                                <p className="text-xs text-destructive mt-1">
+                                  {downloadJob?.error ? `Pipeline download failed: ${downloadJob.error}` : "Pipeline download failed"}
+                                </p>
+                              )}
+                              {downloadJob?.state === "success" && downloadFinishedAt && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Last download {formatStoreDate(downloadFinishedAt)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
+                          <div className="ml-auto flex flex-wrap gap-2">
+                            {shouldOfferCodeDownload && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDownloadPipelineCode(pipeline.pipelineId, expectedCodeVersion, codeUpdateAvailable ? "update" : "download")}
+                                className="h-8"
+                                disabled={downloadingPipeline === pipeline.pipelineId || downloadInProgress}
+                              >
+                                {downloadingPipeline === pipeline.pipelineId || downloadInProgress ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4 mr-1" />
+                                )}
+                                {downloadingPipeline === pipeline.pipelineId || downloadInProgress
+                                  ? downloadAction === "update"
+                                    ? "Updating..."
+                                    : "Downloading..."
+                                  : codeActionLabel}
+                              </Button>
+                            )}
+                            {updateAvailable && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleUpdatePipeline(pipeline.pipelineId, latestVersion)}
+                                className="h-8"
+                                disabled={installingPipeline === pipeline.pipelineId}
+                              >
+                                {installingPipeline === pipeline.pipelineId && installAction === "update" ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4 mr-1" />
+                                )}
+                                {installingPipeline === pipeline.pipelineId && installAction === "update"
+                                  ? "Updating..."
+                                  : "Update"}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openDagDialog(pipeline)}
+                              className="h-8"
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openConfigDialog(pipeline)}
+                              className="h-8"
+                            >
+                              <Settings2 className="h-4 w-4 mr-1" />
+                              Configure
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </GlassCard>
+              ))}
+
+              {availablePipelines.map((pipeline) => (
+                <GlassCard key={pipeline.id} className="relative">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
                         {getPipelineIcon(pipeline.icon || "")}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-semibold">{pipeline.name}</h3>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h3 className="font-semibold truncate">{pipeline.name}</h3>
                           <Badge variant="outline" className="text-xs font-normal">
                             v{pipeline.version}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            Not installed
                           </Badge>
                           <Badge variant="secondary" className="text-xs capitalize">
                             {pipeline.category}
@@ -783,117 +771,229 @@ export default function PipelineSettingsPage() {
                         <p className="text-sm text-muted-foreground line-clamp-2">
                           {pipeline.description}
                         </p>
+                        <p className="text-xs text-muted-foreground font-mono mt-1">
+                          {pipeline.id}
+                        </p>
                         <p className="text-xs text-muted-foreground mt-1">
                           by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
-                        disabled={installingPipeline === pipeline.id}
-                      >
-                        {installingPipeline === pipeline.id && installAction === "install" ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Download className="h-4 w-4 mr-2" />
-                        )}
-                        {installingPipeline === pipeline.id && installAction === "install" ? "Installing..." : "Install"}
-                      </Button>
-                    </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                No additional pipelines available in this category.
-              </div>
-            )}
-
-            <details className="rounded-lg border border-dashed px-4 py-3 text-xs text-muted-foreground">
-              <summary className="cursor-pointer text-sm font-medium text-foreground">
-                Store URLs
-              </summary>
-              <div className="mt-2 grid gap-1">
-                <div className="flex flex-wrap gap-2">
-                  <span className="min-w-[110px] text-muted-foreground/70">Store URL</span>
-                  <span className="font-mono break-all">{storeData?.storeBaseUrl || "https://seqdesk.com"}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className="min-w-[110px] text-muted-foreground/70">Registry URL</span>
-                  <span className="font-mono break-all">{storeData?.registryUrl || "https://seqdesk.com/api/registry"}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className="min-w-[110px] text-muted-foreground/70">Browse URL</span>
-                  <span className="font-mono break-all">{storeData?.browseUrl || "https://seqdesk.com/pipelines"}</span>
-                </div>
-              </div>
-            </details>
-          </GlassCard>
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      variant="outline"
+                      className="bg-white"
+                      size="sm"
+                      onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
+                      disabled={installingPipeline === pipeline.id}
+                    >
+                      {installingPipeline === pipeline.id && installAction === "install" ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4 mr-2" />
+                      )}
+                      {installingPipeline === pipeline.id && installAction === "install" ? "Installing..." : "Install"}
+                    </Button>
+                  </div>
+                </GlassCard>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed bg-muted/30 px-6 py-10 text-center">
+              <Package className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
+              <h3 className="text-sm font-semibold">
+                {selectedCategory === "all"
+                  ? "No pipelines found"
+                  : "No pipelines in this category"}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-2">
+                {selectedCategory === "all"
+                  ? "No installed pipelines and no store entries are currently available."
+                  : "Try another category or refresh the store registry."}
+              </p>
+            </div>
+          )}
         </section>
-      )}
+      </div>
 
       {/* Configuration Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Configure {selectedPipeline?.name}</DialogTitle>
-            <DialogDescription>Adjust pipeline-specific settings</DialogDescription>
+        <DialogContent className="max-w-3xl w-[94vw] max-h-[88vh] flex flex-col overflow-hidden">
+          <DialogHeader className="pb-3 border-b">
+            <DialogTitle className="flex items-center gap-3">
+              {selectedPipeline && getPipelineIcon(selectedPipeline.icon)}
+              <span>Configure {selectedPipeline?.name}</span>
+            </DialogTitle>
+            <DialogDescription>
+              Update pipeline-specific settings. Changes apply to future runs.
+            </DialogDescription>
           </DialogHeader>
 
           {selectedPipeline && (
-            <div className="space-y-4 py-4">
-              {Object.entries(selectedPipeline.configSchema.properties).map(([key, schema]) => (
-                <div key={key} className="space-y-2">
-                  {schema.type === "boolean" ? (
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id={key}
-                        checked={localConfig[key] as boolean}
-                        onCheckedChange={(checked) =>
-                          setLocalConfig((prev) => ({ ...prev, [key]: checked }))
-                        }
-                      />
-                      <div className="grid gap-1.5 leading-none">
-                        <Label htmlFor={key}>{schema.title}</Label>
-                        {schema.description && (
-                          <p className="text-sm text-muted-foreground">{schema.description}</p>
+            <div className="flex-1 overflow-auto py-4 pr-1">
+              <div className="rounded-lg border border-border bg-muted/20 p-3 mb-4">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pipeline ID</p>
+                    <p className="text-xs font-mono mt-1 break-all">{selectedPipeline.pipelineId}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Category</p>
+                    <p className="text-xs mt-1 capitalize">{selectedPipeline.category}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Config fields</p>
+                    <p className="text-xs mt-1">{configEntries.length}</p>
+                  </div>
+                </div>
+              </div>
+
+              {configEntries.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center">
+                  <Settings2 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm font-medium">No configurable fields</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This pipeline currently uses default settings only.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {configEntries.map(([key, schema]) => {
+                    const defaultValue =
+                      schema.default !== undefined
+                        ? schema.default
+                        : selectedPipeline.defaultConfig[key];
+                    const changed = !isSameConfigValue(
+                      localConfig[key],
+                      selectedPipeline.config[key]
+                    );
+
+                    return (
+                      <div
+                        key={key}
+                        className={`rounded-lg border p-4 ${
+                          changed
+                            ? "border-amber-200 bg-amber-50/30"
+                            : "border-border bg-background"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                          <div>
+                            <Label htmlFor={key} className="text-sm font-medium">
+                              {schema.title}
+                            </Label>
+                            {schema.description && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {schema.description}
+                              </p>
+                            )}
+                            <p className="text-[11px] font-mono text-muted-foreground mt-1">
+                              {key}
+                            </p>
+                          </div>
+                          {changed && (
+                            <Badge variant="secondary" className="text-xs">
+                              Modified
+                            </Badge>
+                          )}
+                        </div>
+
+                        {schema.type === "boolean" ? (
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              id={key}
+                              checked={Boolean(localConfig[key])}
+                              onCheckedChange={(checked) =>
+                                setLocalConfig((prev) => ({
+                                  ...prev,
+                                  [key]: checked === true,
+                                }))
+                              }
+                            />
+                            <Label htmlFor={key} className="text-sm">
+                              Enabled
+                            </Label>
+                          </div>
+                        ) : (
+                          <Input
+                            id={key}
+                            type={schema.type === "number" ? "number" : "text"}
+                            value={
+                              localConfig[key] === undefined || localConfig[key] === null
+                                ? ""
+                                : String(localConfig[key])
+                            }
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (schema.type === "number") {
+                                setLocalConfig((prev) => {
+                                  const next = { ...prev };
+                                  if (value === "") {
+                                    delete next[key];
+                                  } else {
+                                    next[key] = Number(value);
+                                  }
+                                  return next;
+                                });
+                                return;
+                              }
+                              setLocalConfig((prev) => ({
+                                ...prev,
+                                [key]: value,
+                              }));
+                            }}
+                            className="bg-white"
+                          />
+                        )}
+
+                        {defaultValue !== undefined && (
+                          <p className="text-[11px] text-muted-foreground mt-2">
+                            Default:{" "}
+                            <span className="font-mono">
+                              {typeof defaultValue === "string"
+                                ? defaultValue
+                                : JSON.stringify(defaultValue)}
+                            </span>
+                          </p>
                         )}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <Label htmlFor={key}>{schema.title}</Label>
-                      <input
-                        id={key}
-                        type={schema.type === "number" ? "number" : "text"}
-                        value={String(localConfig[key] || "")}
-                        onChange={(e) =>
-                          setLocalConfig((prev) => ({
-                            ...prev,
-                            [key]: schema.type === "number" ? Number(e.target.value) : e.target.value,
-                          }))
-                        }
-                        className="w-full px-3 py-2 border rounded-md bg-background"
-                      />
-                      {schema.description && (
-                        <p className="text-sm text-muted-foreground">{schema.description}</p>
-                      )}
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
-              ))}
+              )}
+
+              {configError && (
+                <p className="text-sm text-destructive mt-4">{configError}</p>
+              )}
             </div>
           )}
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={handleResetToDefaults}>
-              Reset to Defaults
+          <DialogFooter className="border-t pt-3 flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground mr-auto">
+              {hasConfigChanges
+                ? `${changedConfigCount} unsaved change${
+                    changedConfigCount === 1 ? "" : "s"
+                  }`
+                : "No unsaved changes"}
+            </p>
+            <Button
+              variant="outline"
+              onClick={handleResetToDefaults}
+              disabled={saving || configEntries.length === 0}
+            >
+              Reset
             </Button>
-            <Button onClick={handleSaveConfig} disabled={saving}>
+            <Button
+              variant="outline"
+              onClick={() => setConfigDialogOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveConfig} disabled={saving || !hasConfigChanges}>
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Changes
+              Save changes
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -901,23 +1001,56 @@ export default function PipelineSettingsPage() {
 
       {/* Pipeline View Dialog with Data Integration and Workflow tabs */}
       <Dialog open={dagDialogOpen} onOpenChange={setDagDialogOpen}>
-        <DialogContent className="max-w-6xl w-[95vw] h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3">
-              {selectedPipeline && getPipelineIcon(selectedPipeline.icon)}
-              {selectedPipeline?.name}
-              {pipelineDefinition && (
-                <Badge variant="outline" className="font-normal">
-                  v{dagData?.pipeline?.version || "latest"}
-                </Badge>
-              )}
-            </DialogTitle>
-            <DialogDescription>{selectedPipeline?.description}</DialogDescription>
+        <DialogContent className="max-w-6xl w-[95vw] h-[88vh] flex flex-col overflow-hidden">
+          <DialogHeader className="border-b pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <DialogTitle className="flex items-center gap-3">
+                  {selectedPipeline && getPipelineIcon(selectedPipeline.icon)}
+                  <span>{selectedPipeline?.name}</span>
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  {selectedPipeline?.description}
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedPipeline?.category && (
+                  <Badge variant="secondary" className="capitalize">
+                    {selectedPipeline.category}
+                  </Badge>
+                )}
+                {selectedPipeline?.pipelineId && (
+                  <Badge variant="outline" className="font-mono">
+                    {selectedPipeline.pipelineId}
+                  </Badge>
+                )}
+                {pipelineDefinition && (
+                  <Badge variant="outline" className="font-normal">
+                    v{dagData?.pipeline?.version || "latest"}
+                  </Badge>
+                )}
+                {dagData?.pipeline?.url && (
+                  <Button variant="outline" size="sm" className="bg-white" asChild>
+                    <a
+                      href={dagData.pipeline.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Docs
+                      <ExternalLink className="h-4 w-4 ml-2" />
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </div>
           </DialogHeader>
 
-          {/* View Tabs */}
-          <Tabs value={dialogViewTab} onValueChange={(v) => setDialogViewTab(v as "integration" | "workflow")} className="flex-1 flex flex-col min-h-0">
-            <TabsList className="w-fit">
+          <Tabs
+            value={dialogViewTab}
+            onValueChange={(v) => setDialogViewTab(v as "integration" | "workflow")}
+            className="flex-1 flex flex-col min-h-0 pt-4"
+          >
+            <TabsList className="grid w-full grid-cols-2 max-w-md">
               <TabsTrigger value="integration" className="gap-2">
                 <Layers className="h-4 w-4" />
                 Data Integration
@@ -928,14 +1061,13 @@ export default function PipelineSettingsPage() {
               </TabsTrigger>
             </TabsList>
 
-            {/* Data Integration Tab */}
             <TabsContent value="integration" className="flex-1 overflow-auto mt-4">
               {loadingDag ? (
-                <div className="flex items-center justify-center h-64">
+                <div className="flex items-center justify-center h-full min-h-48">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
               ) : pipelineDefinition ? (
-                <div className="max-w-4xl mx-auto pb-4">
+                <div className="max-w-5xl mx-auto pb-4">
                   <PipelineIntegrationDetails
                     pipelineName={selectedPipeline?.name || "Pipeline"}
                     pipelineId={selectedPipeline?.pipelineId || "unknown"}
@@ -943,21 +1075,6 @@ export default function PipelineSettingsPage() {
                     inputs={pipelineDefinition.inputs}
                     outputs={pipelineDefinition.outputs}
                   />
-
-                  {/* Link to docs */}
-                  {dagData?.pipeline?.url && (
-                    <div className="mt-8 pt-6 border-t text-center">
-                      <a
-                        href={dagData.pipeline.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-                      >
-                        View full nf-core documentation
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="text-center py-12 text-muted-foreground">
@@ -967,19 +1084,20 @@ export default function PipelineSettingsPage() {
               )}
             </TabsContent>
 
-            {/* Workflow Steps Tab */}
             <TabsContent value="workflow" className="flex-1 min-h-0 mt-4">
               {loadingDag ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
               ) : dagData ? (
-                <PipelineDagViewer
-                  nodes={dagData.nodes}
-                  edges={dagData.edges}
-                  pipeline={dagData.pipeline}
-                  className="h-full"
-                />
+                <div className="h-full rounded-lg border border-border overflow-hidden">
+                  <PipelineDagViewer
+                    nodes={dagData.nodes}
+                    edges={dagData.edges}
+                    pipeline={dagData.pipeline}
+                    className="h-full"
+                  />
+                </div>
               ) : (
                 <div className="text-center py-12 text-muted-foreground">
                   Pipeline workflow not available
@@ -988,7 +1106,7 @@ export default function PipelineSettingsPage() {
             </TabsContent>
           </Tabs>
 
-          <DialogFooter>
+          <DialogFooter className="border-t pt-3">
             <Button variant="outline" onClick={() => setDagDialogOpen(false)}>
               Close
             </Button>
