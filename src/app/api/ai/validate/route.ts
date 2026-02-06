@@ -4,17 +4,47 @@ import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
+interface ModulesConfig {
+  modules: Record<string, boolean>;
+  globalDisabled: boolean;
+}
+
+function parseModulesConfig(configString: string | null): ModulesConfig {
+  if (!configString) {
+    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
+  }
+
+  try {
+    const parsed = JSON.parse(configString);
+    if (typeof parsed.modules === "object") {
+      return {
+        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
+        globalDisabled: parsed.globalDisabled ?? false,
+      };
+    }
+    return {
+      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
+      globalDisabled: false,
+    };
+  } catch {
+    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
+  }
+}
+
+function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
+  if (config.globalDisabled) return false;
+  return config.modules[moduleId] ?? false;
+}
+
 // Helper to check if AI module is enabled
 async function isAIModuleEnabled(): Promise<boolean> {
   try {
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
-    if (!settings?.modulesConfig) {
-      return DEFAULT_MODULE_STATES["ai-validation"] ?? true;
-    }
-    const modules = JSON.parse(settings.modulesConfig);
-    return modules["ai-validation"] ?? DEFAULT_MODULE_STATES["ai-validation"] ?? true;
+
+    const config = parseModulesConfig(settings?.modulesConfig ?? null);
+    return isModuleEnabled(config, "ai-validation");
   } catch {
     return true; // Default to enabled on error
   }

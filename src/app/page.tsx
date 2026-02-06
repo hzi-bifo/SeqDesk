@@ -99,7 +99,7 @@ export default function HomePage() {
               className="text-xs font-medium px-2 py-0.5 rounded-full"
               style={{ background: '#171717', color: '#ffffff' }}
             >
-              v0.1.8
+              v{appVersion || "—"}
             </span>
           </div>
 

@@ -11,7 +11,7 @@ interface ModulesConfig {
 
 function parseModulesConfig(configString: string | null): ModulesConfig {
   if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
+    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
   }
 
   try {
@@ -29,7 +29,7 @@ function parseModulesConfig(configString: string | null): ModulesConfig {
       globalDisabled: false,
     };
   } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
+    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
   }
 }
 

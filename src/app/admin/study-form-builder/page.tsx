@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
@@ -46,7 +47,7 @@ import {
   SelectOption,
   FIELD_TYPE_LABELS,
 } from "@/types/form-config";
-import { useModule, ModuleGate } from "@/lib/modules";
+import { ModuleGate, useModule } from "@/lib/modules";
 
 // Default groups for study forms
 const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
@@ -54,8 +55,10 @@ const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
   { id: "group_metadata", name: "Metadata", order: 1 },
 ];
 
+const STUDY_INFO_VISITED_KEY = "studyFormBuilderInfoVisited";
+const STUDY_INFO_COLLAPSED_KEY = "studyFormBuilderInfoCollapsed";
+
 export default function StudyFormBuilderPage() {
-  // Module states
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
 
@@ -65,6 +68,14 @@ export default function StudyFormBuilderPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [jumpTarget, setJumpTarget] = useState<string | undefined>(undefined);
+  const [studyInfoCollapsed, setStudyInfoCollapsed] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveInitializedRef = useRef(false);
+  const lastPersistedSnapshotRef = useRef("");
+  const saveInFlightRef = useRef(false);
 
   // Group dialog state
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -149,6 +160,20 @@ export default function StudyFormBuilderPage() {
     fetchConfig();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const storedCollapsed = window.localStorage.getItem(STUDY_INFO_COLLAPSED_KEY);
+    if (storedCollapsed !== null) {
+      setStudyInfoCollapsed(storedCollapsed === "1");
+      return;
+    }
+
+    const hasVisited = window.localStorage.getItem(STUDY_INFO_VISITED_KEY) === "1";
+    setStudyInfoCollapsed(hasVisited);
+    window.localStorage.setItem(STUDY_INFO_VISITED_KEY, "1");
+  }, []);
+
   // Generate field name from label
   const generateFieldName = (label: string) => {
     return label
@@ -177,7 +202,8 @@ export default function StudyFormBuilderPage() {
     resetFieldForm();
     setFieldPerSample(perSample);
     if (!perSample && groups.length > 0) {
-      setFieldGroupId(groups[0].id);
+      const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
+      setFieldGroupId(sortedGroups[0].id);
     }
     setDialogOpen(true);
   };
@@ -379,13 +405,21 @@ export default function StudyFormBuilderPage() {
     setGroupToDelete(null);
   };
 
-  const handleMoveGroup = (index: number, direction: "up" | "down") => {
-    const newGroups = [...groups];
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= groups.length) return;
-    [newGroups[index], newGroups[targetIndex]] = [newGroups[targetIndex], newGroups[index]];
-    newGroups.forEach((g, i) => (g.order = i));
-    setGroups(newGroups);
+  const handleMoveGroup = (groupId: string, direction: "up" | "down") => {
+    const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
+    const currentIndex = orderedGroups.findIndex((group) => group.id === groupId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= orderedGroups.length) return;
+
+    const reordered = [...orderedGroups];
+    [reordered[currentIndex], reordered[targetIndex]] = [
+      reordered[targetIndex],
+      reordered[currentIndex],
+    ];
+
+    setGroups(reordered.map((group, index) => ({ ...group, order: index })));
   };
 
   // Add MIxS field
@@ -461,41 +495,154 @@ export default function StudyFormBuilderPage() {
     setFields(fields.filter((f) => f.name !== "_sample_association"));
   };
 
-  // Save configuration
-  const handleSave = async () => {
-    setSaving(true);
-    setError("");
-    setSuccess("");
+  const persistConfiguration = useCallback(
+    async (manual: boolean) => {
+      if (saveInFlightRef.current) return false;
 
-    try {
-      const res = await fetch("/api/admin/study-form-config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields, groups }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to save");
-        return;
+      const snapshot = JSON.stringify({ fields, groups });
+      if (!manual && snapshot === lastPersistedSnapshotRef.current) {
+        return true;
       }
 
-      setSuccess("Configuration saved!");
-      setTimeout(() => setSuccess(""), 3000);
-    } catch {
-      setError("Failed to save configuration");
-    } finally {
-      setSaving(false);
+      saveInFlightRef.current = true;
+      setSaving(true);
+      setError("");
+      if (manual) {
+        setSuccess("");
+      }
+      setAutoSaveStatus("saving");
+
+      try {
+        const res = await fetch("/api/admin/study-form-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: snapshot,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          const message = data.error || "Failed to save configuration";
+          setError(message);
+          setAutoSaveStatus("error");
+          return false;
+        }
+
+        lastPersistedSnapshotRef.current = snapshot;
+        setAutoSaveStatus("saved");
+        setLastSavedAt(new Date());
+
+        if (manual) {
+          setSuccess("Configuration saved successfully!");
+          setTimeout(() => setSuccess(""), 3000);
+        }
+
+        return true;
+      } catch {
+        setError("Failed to save configuration");
+        setAutoSaveStatus("error");
+        return false;
+      } finally {
+        saveInFlightRef.current = false;
+        setSaving(false);
+      }
+    },
+    [fields, groups]
+  );
+
+  // Save configuration manually
+  const handleSave = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
     }
+    await persistConfiguration(true);
   };
 
-  const orderedStudyFields = fields
+  // Auto-save study config after edits (debounced)
+  useEffect(() => {
+    if (loading) return;
+
+    const snapshot = JSON.stringify({ fields, groups });
+
+    if (!autoSaveInitializedRef.current) {
+      autoSaveInitializedRef.current = true;
+      lastPersistedSnapshotRef.current = snapshot;
+      setAutoSaveStatus("saved");
+      return;
+    }
+
+    if (snapshot === lastPersistedSnapshotRef.current) {
+      return;
+    }
+
+    setAutoSaveStatus("dirty");
+    setSuccess("");
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      void persistConfiguration(false);
+      autoSaveTimerRef.current = null;
+    }, 1200);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [fields, groups, loading, persistConfiguration]);
+
+  const isFieldAvailableForModules = (field: FormFieldDefinition) => {
+    if (field.type === "mixs" && !mixsModuleEnabled) return false;
+    if (field.type === "funding" && !fundingModuleEnabled) return false;
+    return true;
+  };
+
+  const visibleFields = fields.filter(isFieldAvailableForModules);
+  const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
+
+  const orderedStudyFields = visibleFields
     .filter((f) => !f.perSample && f.name !== "_sample_association")
     .sort((a, b) => a.order - b.order);
 
-  const orderedPerSampleFields = fields
+  const orderedPerSampleFields = visibleFields
     .filter((f) => f.perSample)
     .sort((a, b) => a.order - b.order);
+  const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
+
+  const autoSaveMessage = (() => {
+    if (autoSaveStatus === "saving") return "Saving changes...";
+    if (autoSaveStatus === "dirty") return "Unsaved changes";
+    if (autoSaveStatus === "error") return "Save failed";
+    if (lastSavedAt) {
+      return `All changes saved at ${lastSavedAt.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+    }
+    return "All changes saved";
+  })();
+
+  const handleJumpToSection = (sectionId: string) => {
+    setJumpTarget(undefined);
+    const section = document.getElementById(sectionId);
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const toggleStudyInfo = () => {
+    setStudyInfoCollapsed((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STUDY_INFO_COLLAPSED_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  };
 
   if (loading) {
     return (
@@ -507,41 +654,75 @@ export default function StudyFormBuilderPage() {
 
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <BookOpen className="h-7 w-7" />
-            Study Configuration
-          </h1>
-          <p className="text-muted-foreground">
-            Define what information users provide when creating studies for ENA submission
-          </p>
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold">Study Configuration</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Define what information users provide when creating studies for ENA submission
+        </p>
+      </div>
+
+      <div className="sticky top-16 z-30 mb-6">
+        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div
+            className={`text-xs ${
+              autoSaveStatus === "error"
+                ? "text-destructive"
+                : autoSaveStatus === "dirty"
+                  ? "text-amber-600"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {autoSaveMessage}
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={jumpTarget} onValueChange={handleJumpToSection}>
+              <SelectTrigger className="h-8 w-[200px] bg-white">
+                <SelectValue placeholder="Jump to section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="study-groups-section">Form Groups</SelectItem>
+                <SelectItem value="study-fields-section">Study Fields</SelectItem>
+                <SelectItem value="study-per-sample-section">Per-Sample Fields</SelectItem>
+                <SelectItem value="study-modules-section">Module Forms</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={handleSave} disabled={saving} variant="outline" size="sm" className="bg-white">
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4 mr-2" />
+                  Save Now
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Check className="h-4 w-4 mr-2" />
-              Save Changes
-            </>
-          )}
-        </Button>
       </div>
 
       {/* Info Box */}
       <div className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-emerald-500/10">
         <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
         <div className="relative p-6">
-          <div className="flex items-start gap-4">
-            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <BookOpen className="h-6 w-6 text-primary" />
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-primary" />
+              <h3 className="text-base font-semibold">What is a Study?</h3>
             </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold mb-1">What is a Study?</h3>
+            <Button type="button" variant="ghost" size="sm" onClick={toggleStudyInfo} className="h-7 px-2 text-xs">
+              {studyInfoCollapsed ? "Show details" : "Hide details"}
+              {studyInfoCollapsed ? (
+                <ChevronDown className="h-3 w-3 ml-1" />
+              ) : (
+                <ChevronUp className="h-3 w-3 ml-1" />
+              )}
+            </Button>
+          </div>
+          {!studyInfoCollapsed && (
+            <div className="mt-3">
               <p className="text-sm text-muted-foreground mb-4">
                 A <strong>Study</strong> groups samples that share the same scientific context and metadata requirements.
                 Unlike an Order (which is about logistics: who, when, billing), a Study captures the scientific metadata
@@ -571,7 +752,7 @@ export default function StudyFormBuilderPage() {
                 <strong>User flow:</strong> Researcher submits Order → Assigns samples to Studies → Fills Study metadata → Ready for ENA submission
               </p>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -587,11 +768,22 @@ export default function StudyFormBuilderPage() {
         </div>
       )}
 
+      {hiddenByDisabledModulesCount > 0 && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {hiddenByDisabledModulesCount} field{hiddenByDisabledModulesCount === 1 ? "" : "s"} hidden because related modules are disabled.{" "}
+          <Link href="/admin/modules" className="underline underline-offset-2">
+            Manage modules
+          </Link>
+          .
+        </div>
+      )}
+
       {/* Form Groups */}
+      <div id="study-groups-section" className="scroll-mt-28">
       <GlassCard className="p-6 mb-6">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">Form Groups (Steps)</h2>
-          <Button onClick={handleAddGroup}>
+          <h2 className="text-base font-semibold">Form Groups (Steps)</h2>
+          <Button onClick={handleAddGroup} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
             Add Group
           </Button>
@@ -601,14 +793,14 @@ export default function StudyFormBuilderPage() {
         </p>
 
         <div className="space-y-2">
-          {groups.sort((a, b) => a.order - b.order).map((group, index) => {
-            const fieldCount = fields.filter((f) => f.groupId === group.id).length;
+          {orderedGroups.map((group, index) => {
+            const fieldCount = visibleFields.filter((f) => f.groupId === group.id).length;
             return (
               <div key={group.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border">
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
-                    onClick={() => handleMoveGroup(index, "up")}
+                    onClick={() => handleMoveGroup(group.id, "up")}
                     disabled={index === 0}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
@@ -616,8 +808,8 @@ export default function StudyFormBuilderPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleMoveGroup(index, "down")}
-                    disabled={index === groups.length - 1}
+                    onClick={() => handleMoveGroup(group.id, "down")}
+                    disabled={index === orderedGroups.length - 1}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
                     <ChevronDown className="h-3 w-3" />
@@ -659,17 +851,19 @@ export default function StudyFormBuilderPage() {
           )}
         </div>
       </GlassCard>
+      </div>
 
       {/* Study Fields - filled once per study */}
+      <div id="study-fields-section" className="scroll-mt-28">
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <FileText className="h-4 w-4 text-primary" />
             </div>
-            <h2 className="text-lg font-semibold">Study Fields</h2>
+            <h2 className="text-base font-semibold">Study Fields</h2>
           </div>
-          <Button onClick={() => handleAddField(false)}>
+          <Button onClick={() => handleAddField(false)} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
           </Button>
@@ -792,6 +986,7 @@ export default function StudyFormBuilderPage() {
           )}
         </div>
       </GlassCard>
+      </div>
 
       {/* Suggested Study Fields */}
       <GlassCard className="p-6 mt-4">
@@ -906,15 +1101,16 @@ export default function StudyFormBuilderPage() {
       </GlassCard>
 
       {/* Per-Sample Fields - filled for each sample */}
+      <div id="study-per-sample-section" className="scroll-mt-28">
       <GlassCard className="p-6 border-amber-200 bg-amber-50/30 mt-8">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
               <Table className="h-4 w-4 text-amber-600" />
             </div>
-            <h2 className="text-lg font-semibold">Per-Sample Fields</h2>
+            <h2 className="text-base font-semibold">Per-Sample Fields</h2>
           </div>
-          <Button onClick={() => handleAddField(true)} variant="outline" className="border-amber-300 hover:bg-amber-100">
+          <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="border-amber-300 hover:bg-amber-100">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
           </Button>
@@ -980,7 +1176,7 @@ export default function StudyFormBuilderPage() {
           })}
 
           {/* MIxS Per-Sample Fields Indicator - shown when MIxS is added to study fields */}
-          {fields.some(f => f.type === "mixs") && (
+          {visibleFields.some((f) => f.type === "mixs") && (
             <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-100/50 border border-emerald-200">
               <div className="h-8 w-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
                 <Leaf className="h-4 w-4 text-emerald-600" />
@@ -1002,13 +1198,14 @@ export default function StudyFormBuilderPage() {
             </div>
           )}
 
-          {orderedPerSampleFields.length === 0 && !fields.some(f => f.type === "mixs") && (
+          {orderedPerSampleFields.length === 0 && !visibleFields.some((f) => f.type === "mixs") && (
             <div className="text-center py-6 text-amber-600/70 border border-dashed border-amber-300 rounded-lg bg-amber-50">
               No per-sample fields defined. Add fields here for data that varies between samples.
             </div>
           )}
         </div>
       </GlassCard>
+      </div>
 
       {/* Suggested Per-Sample Fields */}
       <GlassCard className="p-6 mt-4 border-amber-200 bg-amber-50/30">
@@ -1118,12 +1315,12 @@ export default function StudyFormBuilderPage() {
       </GlassCard>
 
       {/* Module Forms Section */}
-      <div className="mt-8">
+      <div id="study-modules-section" className="mt-8 scroll-mt-28">
         <div className="flex items-center gap-3 mb-2">
           <div className="h-8 w-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
             <Package className="h-4 w-4 text-violet-600" />
           </div>
-          <h2 className="text-lg font-semibold">Module Forms</h2>
+          <h2 className="text-base font-semibold">Module Forms</h2>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
           Specialized form components for studies. Enable modules in Configuration &rarr; Modules.
@@ -1139,7 +1336,7 @@ export default function StudyFormBuilderPage() {
                     <Leaf className="h-5 w-5 text-emerald-600" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-emerald-800">MIxS Metadata</h3>
+                    <h3 className="text-sm font-semibold text-emerald-800">MIxS Metadata</h3>
                     <p className="text-sm text-emerald-700/80">
                       Adds two components: <strong>Study level</strong> for selecting the environment checklist (Soil, Water, Human Gut, etc.),
                       and <strong>Per-sample fields</strong> with environment-specific metadata based on the selected checklist.
@@ -1149,10 +1346,11 @@ export default function StudyFormBuilderPage() {
                 <Button
                   onClick={addMixsField}
                   disabled={fields.some((f) => f.type === "mixs")}
-                  variant={fields.some((f) => f.type === "mixs") ? "outline" : "default"}
+                  variant="outline"
+                  size="sm"
                   className={fields.some((f) => f.type === "mixs")
                     ? "border-emerald-300 text-emerald-700 hover:bg-emerald-100"
-                    : "bg-emerald-600 hover:bg-emerald-700"}
+                    : "border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100"}
                 >
                   {fields.some((f) => f.type === "mixs") ? (
                     <>
@@ -1185,7 +1383,7 @@ export default function StudyFormBuilderPage() {
                   <Link2 className="h-5 w-5 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-blue-800">Sample Association</h3>
+                  <h3 className="text-sm font-semibold text-blue-800">Sample Association</h3>
                   <p className="text-sm text-blue-700/80">
                     Provides an interface for users to select and associate samples from their orders to this study.
                     Samples can be added or removed from a study at any time.
@@ -1194,10 +1392,11 @@ export default function StudyFormBuilderPage() {
               </div>
               <Button
                 onClick={fields.some((f) => f.name === "_sample_association") ? removeSampleAssociationField : addSampleAssociationField}
-                variant={fields.some((f) => f.name === "_sample_association") ? "outline" : "default"}
+                variant="outline"
+                size="sm"
                 className={fields.some((f) => f.name === "_sample_association")
                   ? "border-blue-300 text-blue-700 hover:bg-blue-100"
-                  : "bg-blue-600 hover:bg-blue-700"}
+                  : "border-blue-300 text-blue-700 bg-white hover:bg-blue-100"}
               >
                 {fields.some((f) => f.name === "_sample_association") ? (
                   <>
@@ -1230,7 +1429,7 @@ export default function StudyFormBuilderPage() {
                     <Wallet className="h-5 w-5 text-amber-600" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold">Funding Information</h3>
+                    <h3 className="text-sm font-semibold">Funding Information</h3>
                     <p className="text-sm text-muted-foreground">
                       Collect grant and funding details including agency (NIH, DFG, ERC, etc.), grant number,
                       project title, and PI information. Supports multiple funding sources per study.
@@ -1240,7 +1439,9 @@ export default function StudyFormBuilderPage() {
                 <Button
                   onClick={addFundingField}
                   disabled={fields.some((f) => f.type === "funding")}
-                  variant={fields.some((f) => f.type === "funding") ? "outline" : "default"}
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-300 text-amber-700 bg-white hover:bg-amber-100"
                 >
                   {fields.some((f) => f.type === "funding") ? (
                     <>
@@ -1321,7 +1522,7 @@ export default function StudyFormBuilderPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No group</SelectItem>
-                    {groups.map((group) => (
+                    {orderedGroups.map((group) => (
                       <SelectItem key={group.id} value={group.id}>
                         {group.name}
                       </SelectItem>
@@ -1331,34 +1532,58 @@ export default function StudyFormBuilderPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fieldVisible}
-                  onChange={(e) => setFieldVisible(e.target.checked)}
-                  className="rounded border-input h-4 w-4"
-                />
-                <span className="text-sm">Visible</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fieldRequired}
-                  onChange={(e) => setFieldRequired(e.target.checked)}
-                  className="rounded border-input h-4 w-4"
-                />
-                <span className="text-sm">Required</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer" title="Collect this field for each sample in the study">
-                <input
-                  type="checkbox"
-                  checked={fieldPerSample}
-                  onChange={(e) => setFieldPerSample(e.target.checked)}
-                  className="rounded border-input h-4 w-4"
-                />
-                <span className="text-sm">Per Sample</span>
-              </label>
+            <div className="space-y-3">
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={fieldVisible}
+                    onChange={(e) => setFieldVisible(e.target.checked)}
+                    className="rounded border-input h-4 w-4"
+                  />
+                  <span className="text-sm">Visible</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={fieldRequired}
+                    onChange={(e) => setFieldRequired(e.target.checked)}
+                    className="rounded border-input h-4 w-4"
+                  />
+                  <span className="text-sm">Required</span>
+                </label>
+              </div>
+              <div className="space-y-2">
+                <Label>Field Scope</Label>
+                <div
+                  className="inline-flex rounded-md border border-input bg-muted/30 p-1"
+                  role="group"
+                  aria-label="Field scope"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setFieldPerSample(false)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                      !fieldPerSample
+                        ? "bg-background shadow-sm text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Study-level
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFieldPerSample(true)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                      fieldPerSample
+                        ? "bg-amber-100 text-amber-700 shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Per-sample
+                  </button>
+                </div>
+              </div>
             </div>
 
             {fieldPerSample && (

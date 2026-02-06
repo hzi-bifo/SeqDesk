@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -10,6 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +38,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Users,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -53,6 +61,8 @@ interface Invite {
   usedBy: { firstName: string; lastName: string; email: string } | null;
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function AdminAccountsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -60,19 +70,77 @@ export default function AdminAccountsPage() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [departmentSharing, setDepartmentSharing] = useState(false);
   const [savingAccess, setSavingAccess] = useState(false);
 
-  // Create invite dialog
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteExpires, setInviteExpires] = useState("7");
   const [creating, setCreating] = useState(false);
 
-  // Delete invite dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [inviteToDelete, setInviteToDelete] = useState<Invite | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const isExpired = useCallback((date: string) => new Date() > new Date(date), []);
+
+  const pendingInvites = useMemo(
+    () => invites.filter((invite) => !invite.usedAt && !isExpired(invite.expiresAt)),
+    [invites, isExpired]
+  );
+
+  const usedOrExpiredInvites = useMemo(
+    () => invites.filter((invite) => invite.usedAt || isExpired(invite.expiresAt)),
+    [invites, isExpired]
+  );
+
+  const fetchData = useCallback(async (showFullLoading = false) => {
+    if (showFullLoading) {
+      setLoading(true);
+    }
+    setRefreshing(true);
+
+    try {
+      const [adminsRes, invitesRes, accessRes] = await Promise.all([
+        fetch("/api/admin/users?role=FACILITY_ADMIN"),
+        fetch("/api/admin/invites"),
+        fetch("/api/admin/settings/access"),
+      ]);
+
+      let hasPartialError = false;
+
+      if (adminsRes.ok) {
+        const adminsData = (await adminsRes.json()) as Admin[];
+        setAdmins(adminsData);
+      } else {
+        hasPartialError = true;
+      }
+
+      if (invitesRes.ok) {
+        const invitesData = (await invitesRes.json()) as Invite[];
+        setInvites(invitesData);
+      } else {
+        hasPartialError = true;
+      }
+
+      if (accessRes.ok) {
+        const accessData = (await accessRes.json()) as { departmentSharing?: boolean };
+        setDepartmentSharing(accessData.departmentSharing ?? false);
+      } else {
+        hasPartialError = true;
+      }
+
+      if (hasPartialError) {
+        toast.error("Some account data could not be loaded");
+      }
+    } catch {
+      toast.error("Failed to load account data");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (status === "loading") return;
@@ -80,68 +148,71 @@ export default function AdminAccountsPage() {
       router.push("/dashboard");
       return;
     }
+    void fetchData(true);
+  }, [session, status, router, fetchData]);
 
-    const fetchData = async () => {
-      try {
-        const [adminsRes, invitesRes, accessRes] = await Promise.all([
-          fetch("/api/admin/users?role=FACILITY_ADMIN"),
-          fetch("/api/admin/invites"),
-          fetch("/api/admin/settings/access"),
-        ]);
-
-        if (adminsRes.ok) {
-          const adminsData = await adminsRes.json();
-          setAdmins(adminsData);
-        }
-
-        if (invitesRes.ok) {
-          const invitesData = await invitesRes.json();
-          setInvites(invitesData);
-        }
-
-        if (accessRes.ok) {
-          const accessData = await accessRes.json();
-          setDepartmentSharing(accessData.departmentSharing ?? false);
-        }
-      } catch {
-        toast.error("Failed to load data");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [session, status, router]);
-
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString("en-US", {
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     });
-  };
+
+  const formatDateTime = (date: string) =>
+    new Date(date).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   const handleCreateInvite = async () => {
+    const trimmedEmail = inviteEmail.trim().toLowerCase();
+    if (trimmedEmail && !EMAIL_PATTERN.test(trimmedEmail)) {
+      toast.error("Please enter a valid email address");
+      return;
+    }
+
+    const expiresInDays = Number.parseInt(inviteExpires, 10);
+    if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 30) {
+      toast.error("Please select a valid expiration period");
+      return;
+    }
+
     setCreating(true);
     try {
       const res = await fetch("/api/admin/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: inviteEmail || null,
-          expiresInDays: parseInt(inviteExpires),
+          email: trimmedEmail || null,
+          expiresInDays,
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to create invite");
+      const payload = (await res.json().catch(() => null)) as
+        | Invite
+        | { error?: string }
+        | null;
 
-      const invite = await res.json();
-      setInvites([invite, ...invites]);
+      if (!res.ok) {
+        throw new Error(
+          payload && "error" in payload && payload.error
+            ? payload.error
+            : "Failed to create invite"
+        );
+      }
+
+      setInvites((prev) => [payload as Invite, ...prev]);
       setCreateDialogOpen(false);
       setInviteEmail("");
+      setInviteExpires("7");
       toast.success("Invite created successfully");
-    } catch {
-      toast.error("Failed to create invite");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create invite"
+      );
     } finally {
       setCreating(false);
     }
@@ -150,39 +221,49 @@ export default function AdminAccountsPage() {
   const handleDeleteInvite = async () => {
     if (!inviteToDelete) return;
     setDeleting(true);
+
     try {
       const res = await fetch(`/api/admin/invites/${inviteToDelete.id}`, {
         method: "DELETE",
       });
 
-      if (!res.ok) throw new Error("Failed to delete invite");
+      const payload = (await res.json().catch(() => null)) as
+        | { success?: boolean; error?: string }
+        | null;
 
-      setInvites(invites.filter((i) => i.id !== inviteToDelete.id));
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to revoke invite");
+      }
+
+      setInvites((prev) => prev.filter((invite) => invite.id !== inviteToDelete.id));
       setDeleteDialogOpen(false);
       setInviteToDelete(null);
       toast.success("Invite revoked");
-    } catch {
-      toast.error("Failed to revoke invite");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to revoke invite");
     } finally {
       setDeleting(false);
     }
   };
 
-  const copyInviteLink = (code: string) => {
-    const link = `${window.location.origin}/register/admin?code=${code}`;
-    navigator.clipboard.writeText(link);
-    toast.success("Invite link copied to clipboard");
+  const copyInviteLink = async (code: string) => {
+    try {
+      const link = `${window.location.origin}/register/admin?code=${code}`;
+      await navigator.clipboard.writeText(link);
+      toast.success("Invite link copied");
+    } catch {
+      toast.error("Failed to copy invite link");
+    }
   };
 
-  const copyInviteCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    toast.success("Invite code copied to clipboard");
+  const copyInviteCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast.success("Invite code copied");
+    } catch {
+      toast.error("Failed to copy invite code");
+    }
   };
-
-  const isExpired = (date: string) => new Date() > new Date(date);
-
-  const pendingInvites = invites.filter((i) => !i.usedAt && !isExpired(i.expiresAt));
-  const usedOrExpiredInvites = invites.filter((i) => i.usedAt || isExpired(i.expiresAt));
 
   const handleDepartmentSharingChange = async (enabled: boolean) => {
     setSavingAccess(true);
@@ -215,238 +296,295 @@ export default function AdminAccountsPage() {
     );
   }
 
+  if (status !== "loading" && (!session || session.user.role !== "FACILITY_ADMIN")) {
+    return null;
+  }
+
   return (
     <PageContainer>
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-xl font-semibold">Admin Accounts</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Facility administrators with full system access
+          Manage facility administrators and invitation access
         </p>
       </div>
 
-      {/* Access & Sharing */}
-      <GlassCard className="p-6 mb-8">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
-            <Users className="h-5 w-5 text-blue-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Access & Sharing</h2>
-            <p className="text-sm text-muted-foreground">
-              Control how users can access and share orders
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t pt-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <Label htmlFor="department-sharing" className="text-base font-medium">
-                Department Sharing
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                Allow users in the same department to view and edit each other&apos;s orders.
-                When disabled, users can only see their own orders.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {savingAccess && (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              )}
-              <Switch
-                id="department-sharing"
-                checked={departmentSharing}
-                onCheckedChange={handleDepartmentSharingChange}
-                disabled={savingAccess}
-              />
-            </div>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* Current Admins */}
-      <div className="space-y-3 mb-8">
-        {admins.map((admin) => (
-          <div
-            key={admin.id}
-            className="bg-white rounded-xl p-5 flex items-center gap-4"
-          >
-            <div
-              className="h-12 w-12 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0"
-              style={{ backgroundColor: "#1e3a8a" }}
+      <div className="sticky top-16 z-30 mb-6">
+        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            {refreshing ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Refreshing account data...
+              </span>
+            ) : (
+              `${admins.length} admins • ${pendingInvites.length} pending invites • ${usedOrExpiredInvites.length} past invites`
+            )}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-white"
+              onClick={() => void fetchData(false)}
+              disabled={refreshing}
             >
-              {admin.firstName.charAt(0)}
-              {admin.lastName.charAt(0)}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <p className="font-medium">
-                  {admin.firstName} {admin.lastName}
-                </p>
-                <Badge className="text-[10px]">
-                  <Shield className="h-3 w-3 mr-1" />
-                  Admin
-                </Badge>
-                {admin.id === session?.user?.id && (
-                  <span className="text-xs text-muted-foreground">(You)</span>
-                )}
-              </div>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <Mail className="h-3.5 w-3.5" />
-                  {admin.email}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5" />
-                  Joined {formatDate(admin.createdAt)}
-                </span>
-              </div>
-            </div>
+              <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Create Invite
+            </Button>
           </div>
-        ))}
+        </div>
       </div>
 
-      {/* Invite Section */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">Invite New Admin</h2>
-            <p className="text-sm text-muted-foreground">
-              Generate invite links for new administrators
-            </p>
+      <div className="space-y-6">
+        <GlassCard className="p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+              <Users className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold">Access & Sharing</h2>
+              <p className="text-sm text-muted-foreground">
+                Control department-level order visibility for researchers
+              </p>
+            </div>
           </div>
-          <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Create Invite
-          </Button>
-        </div>
 
-        {/* Pending Invites */}
-        {pendingInvites.length > 0 && (
-          <div className="space-y-3">
-            {pendingInvites.map((invite) => (
-              <GlassCard key={invite.id} className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <LinkIcon className="h-5 w-5 text-primary" />
+          <div className="border-t pt-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <Label htmlFor="department-sharing" className="text-sm font-medium">
+                  Department Sharing
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  Allow users in the same department to view and edit each other&apos;s orders.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {savingAccess && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+                <Switch
+                  id="department-sharing"
+                  checked={departmentSharing}
+                  onCheckedChange={handleDepartmentSharingChange}
+                  disabled={savingAccess}
+                />
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold">Current Administrators</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Accounts with full facility administration permissions
+              </p>
+            </div>
+            <Badge variant="secondary">{admins.length}</Badge>
+          </div>
+
+          {admins.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-muted-foreground text-sm">
+              No administrator accounts found
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {admins.map((admin) => (
+                <div
+                  key={admin.id}
+                  className="rounded-lg border border-border bg-background p-4 flex items-start gap-3"
+                >
+                  <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center text-sm font-medium shrink-0">
+                    {admin.firstName.charAt(0)}
+                    {admin.lastName.charAt(0)}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium">
+                        {admin.firstName} {admin.lastName}
+                      </p>
+                      <Badge className="text-[10px]">
+                        <Shield className="h-3 w-3 mr-1" />
+                        Admin
+                      </Badge>
+                      {admin.id === session?.user?.id && (
+                        <span className="text-xs text-muted-foreground">(You)</span>
+                      )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <code className="text-sm font-mono font-semibold bg-stone-100 px-2 py-0.5 rounded">
+                    <div className="mt-1 flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Mail className="h-3.5 w-3.5" />
+                        {admin.email}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5" />
+                        Joined {formatDate(admin.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+
+        <GlassCard className="p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold">Pending Invites</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Invite codes that are active and can still be used
+              </p>
+            </div>
+            <Badge variant="secondary">{pendingInvites.length}</Badge>
+          </div>
+
+          {pendingInvites.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center">
+              <LinkIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground opacity-60" />
+              <p className="text-sm font-medium">No pending invites</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Use &quot;Create Invite&quot; to add another administrator.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pendingInvites.map((invite) => (
+                <div key={invite.id} className="rounded-lg border border-border bg-background p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="text-xs font-mono font-semibold bg-secondary px-2 py-1 rounded">
                           {invite.code}
                         </code>
-                        {invite.email && (
+                        {invite.email ? (
                           <span className="text-xs text-muted-foreground">
-                            for {invite.email}
+                            restricted to {invite.email}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            unrestricted
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
+                      <div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
+                        <span className="inline-flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          Expires {formatDate(invite.expiresAt)}
+                          Expires {formatDateTime(invite.expiresAt)}
                         </span>
                         <span>
                           Created by {invite.createdBy.firstName} {invite.createdBy.lastName}
                         </span>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => copyInviteCode(invite.code)}
-                    >
-                      <Copy className="h-3.5 w-3.5 mr-1.5" />
-                      Code
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => copyInviteLink(invite.code)}
-                    >
-                      <LinkIcon className="h-3.5 w-3.5 mr-1.5" />
-                      Link
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setInviteToDelete(invite);
-                        setDeleteDialogOpen(true);
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-white"
+                        onClick={() => void copyInviteCode(invite.code)}
+                      >
+                        <Copy className="h-3.5 w-3.5 mr-1.5" />
+                        Code
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-white"
+                        onClick={() => void copyInviteLink(invite.code)}
+                      >
+                        <LinkIcon className="h-3.5 w-3.5 mr-1.5" />
+                        Link
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => {
+                          setInviteToDelete(invite);
+                          setDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </GlassCard>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </GlassCard>
 
-        {pendingInvites.length === 0 && (
-          <div className="bg-stone-50 rounded-xl p-8 text-center">
-            <LinkIcon className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-30" />
-            <p className="text-muted-foreground mb-1">No pending invites</p>
-            <p className="text-sm text-muted-foreground">
-              Create an invite to add new administrators
-            </p>
+        <GlassCard className="p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-base font-semibold">Past Invites</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Used or expired invite history
+              </p>
+            </div>
+            <Badge variant="outline">{usedOrExpiredInvites.length}</Badge>
           </div>
-        )}
+
+          {usedOrExpiredInvites.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground">
+              No past invites yet
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {usedOrExpiredInvites.map((invite) => (
+                <div
+                  key={invite.id}
+                  className="rounded-lg border border-border bg-background px-3 py-2 flex items-center justify-between gap-3 text-sm"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {invite.usedAt ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <code className="font-mono text-xs text-muted-foreground">
+                        {invite.code}
+                      </code>
+                      {invite.usedBy ? (
+                        <p className="text-xs text-muted-foreground">
+                          Used by {invite.usedBy.firstName} {invite.usedBy.lastName}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Expired unused</p>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {invite.usedAt ? formatDate(invite.usedAt) : formatDate(invite.expiresAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
       </div>
 
-      {/* Used/Expired Invites */}
-      {usedOrExpiredInvites.length > 0 && (
-        <div className="mt-8">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">
-            Past Invites
-          </h3>
-          <div className="space-y-2">
-            {usedOrExpiredInvites.map((invite) => (
-              <div
-                key={invite.id}
-                className="bg-stone-50 rounded-lg p-3 flex items-center justify-between text-sm"
-              >
-                <div className="flex items-center gap-3">
-                  {invite.usedAt ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4 text-stone-400" />
-                  )}
-                  <div>
-                    <code className="font-mono text-xs text-muted-foreground">
-                      {invite.code}
-                    </code>
-                    {invite.usedBy && (
-                      <span className="text-xs text-muted-foreground ml-2">
-                        Used by {invite.usedBy.firstName} {invite.usedBy.lastName}
-                      </span>
-                    )}
-                    {!invite.usedAt && isExpired(invite.expiresAt) && (
-                      <span className="text-xs text-muted-foreground ml-2">
-                        Expired
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {invite.usedAt
-                    ? formatDate(invite.usedAt)
-                    : formatDate(invite.expiresAt)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Create Invite Dialog */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open);
+          if (!open) {
+            setInviteEmail("");
+            setInviteExpires("7");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Admin Invite</DialogTitle>
@@ -457,41 +595,38 @@ export default function AdminAccountsPage() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email (optional)</Label>
+              <Label htmlFor="invite-email">Email (optional)</Label>
               <Input
-                id="email"
+                id="invite-email"
                 type="email"
                 value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
+                onChange={(event) => setInviteEmail(event.target.value)}
                 placeholder="Leave empty for any email"
               />
               <p className="text-xs text-muted-foreground">
-                If specified, only this email can use the invite
+                If specified, only this email can redeem the invite.
               </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="expires">Expires in</Label>
-              <select
-                id="expires"
-                value={inviteExpires}
-                onChange={(e) => setInviteExpires(e.target.value)}
-                className="w-full h-10 rounded-md border border-input bg-background px-3"
-              >
-                <option value="1">1 day</option>
-                <option value="3">3 days</option>
-                <option value="7">7 days</option>
-                <option value="14">14 days</option>
-                <option value="30">30 days</option>
-              </select>
+              <Label htmlFor="invite-expires">Expires in</Label>
+              <Select value={inviteExpires} onValueChange={setInviteExpires}>
+                <SelectTrigger id="invite-expires" className="bg-white">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 day</SelectItem>
+                  <SelectItem value="3">3 days</SelectItem>
+                  <SelectItem value="7">7 days</SelectItem>
+                  <SelectItem value="14">14 days</SelectItem>
+                  <SelectItem value="30">30 days</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setCreateDialogOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Cancel
             </Button>
             <Button onClick={handleCreateInvite} disabled={creating}>
@@ -511,31 +646,23 @@ export default function AdminAccountsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Invite Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Revoke Invite</DialogTitle>
             <DialogDescription>
-              Are you sure you want to revoke invite code{" "}
-              <code className="font-mono bg-stone-100 px-1 rounded">
+              Revoke invite code{" "}
+              <code className="font-mono bg-secondary px-1 rounded">
                 {inviteToDelete?.code}
               </code>
               ? This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteInvite}
-              disabled={deleting}
-            >
+            <Button variant="destructive" onClick={handleDeleteInvite} disabled={deleting}>
               {deleting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

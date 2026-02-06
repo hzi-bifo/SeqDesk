@@ -103,7 +103,7 @@ export default function OrdersPage() {
 
   // Filter and sort orders
   const filteredOrders = useMemo(() => {
-    let result = orders.filter((order) => {
+    const result = orders.filter((order) => {
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -222,7 +222,7 @@ export default function OrdersPage() {
         <div className="bg-card rounded-xl overflow-hidden border border-border">
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-border">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               {/* Search */}
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -235,53 +235,75 @@ export default function OrdersPage() {
                 />
               </div>
 
-              {/* Status Filter */}
-              <div className="relative">
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
-                >
-                  <option value="">All Status</option>
-                  {Object.entries(STATUS_CONFIG).map(([key, config]) => (
-                    <option key={key} value={key}>{config.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-              </div>
-
-              {/* User Filter (Admin only) */}
-              {isFacilityAdmin && (
-                <div className="relative">
+              <div className="flex items-center gap-2 sm:gap-3">
+                {/* Status Filter */}
+                <div className="relative flex-1 sm:flex-none">
                   <select
-                    value={userFilter}
-                    onChange={(e) => setUserFilter(e.target.value)}
-                    className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full sm:w-auto appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                   >
-                    <option value="">All Researchers</option>
-                    {uniqueUsers.map((user) => (
-                      <option key={user.id} value={user.id}>{user.name}</option>
+                    <option value="">All Status</option>
+                    {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                      <option key={key} value={key}>{config.label}</option>
                     ))}
                   </select>
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 </div>
-              )}
 
-              {/* Clear Filters */}
-              {hasActiveFilters && (
-                <button
-                  onClick={clearFilters}
-                  className="flex items-center gap-1 px-2 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                {/* User Filter (Admin only) */}
+                {isFacilityAdmin && (
+                  <div className="relative flex-1 sm:flex-none">
+                    <select
+                      value={userFilter}
+                      onChange={(e) => setUserFilter(e.target.value)}
+                      className="w-full sm:w-auto appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                    >
+                      <option value="">All Researchers</option>
+                      {uniqueUsers.map((user) => (
+                        <option key={user.id} value={user.id}>{user.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  </div>
+                )}
+
+                {/* Clear Filters */}
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearFilters}
+                    className="flex items-center gap-1 px-2 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Mobile sort controls */}
+              <div className="flex items-center gap-2 md:hidden">
+                <select
+                  value={sortField}
+                  onChange={(e) => setSortField(e.target.value as SortField)}
+                  className="flex-1 appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                 >
-                  <X className="h-3 w-3" />
-                  Clear
+                  <option value="created">Sort: Created</option>
+                  <option value="name">Sort: Name</option>
+                  <option value="status">Sort: Status</option>
+                  <option value="samples">Sort: Samples</option>
+                </select>
+                <button
+                  onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
+                  className="px-3 py-2 text-xs bg-secondary rounded-lg border border-border hover:bg-secondary/80 transition-colors shrink-0"
+                >
+                  {sortDirection === "asc" ? "Asc" : "Desc"}
                 </button>
-              )}
+              </div>
             </div>
           </div>
 
-          {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+          {/* Table Header - hidden on mobile */}
+          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("name")}
               className="col-span-4 flex items-center gap-1 hover:text-foreground transition-colors text-left"
@@ -331,54 +353,83 @@ export default function OrdersPage() {
                 <Link
                   key={order.id}
                   href={`/dashboard/orders/${order.id}`}
-                  className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors group items-center"
+                  className="block px-4 py-3 hover:bg-secondary/80 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center"
                 >
-                  {/* Order Info */}
-                  <div className="col-span-4 min-w-0">
-                    <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
-                      {order.name || order.orderNumber}
-                    </p>
-                    <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                      {order.orderNumber}
-                    </p>
-                  </div>
-
-                  {/* Status */}
-                  <div className="col-span-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                      <span className={`text-xs font-medium ${statusConfig.color}`}>
-                        {statusConfig.label}
-                      </span>
+                  {/* Mobile layout */}
+                  <div className="md:hidden">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          {order.name || order.orderNumber}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
+                        </p>
+                        {isFacilityAdmin && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {order.user.firstName} {order.user.lastName}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                        <span className={`text-xs font-medium ${statusConfig.color}`}>
+                          {statusConfig.label}
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Researcher (Admin only) */}
-                  {isFacilityAdmin && (
-                    <div className="col-span-2 min-w-0">
-                      <p className="text-sm truncate">
-                        {order.user.firstName} {order.user.lastName}
+                  {/* Desktop layout */}
+                  <div className="hidden md:contents">
+                    {/* Order Info */}
+                    <div className="col-span-4 min-w-0">
+                      <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                        {order.name || order.orderNumber}
+                      </p>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                        {order.orderNumber}
                       </p>
                     </div>
-                  )}
 
-                  {/* Samples */}
-                  <div className={`${isFacilityAdmin ? "col-span-1" : "col-span-2"} text-right`}>
-                    <span className="text-sm text-muted-foreground tabular-nums">
-                      {order._count.samples}
-                    </span>
-                  </div>
+                    {/* Status */}
+                    <div className="col-span-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                        <span className={`text-xs font-medium ${statusConfig.color}`}>
+                          {statusConfig.label}
+                        </span>
+                      </div>
+                    </div>
 
-                  {/* Date */}
-                  <div className={isFacilityAdmin ? "col-span-2" : "col-span-3"}>
-                    <span className="text-sm text-muted-foreground tabular-nums">
-                      {formatDate(order.createdAt)}
-                    </span>
-                  </div>
+                    {/* Researcher (Admin only) */}
+                    {isFacilityAdmin && (
+                      <div className="col-span-2 min-w-0">
+                        <p className="text-sm truncate">
+                          {order.user.firstName} {order.user.lastName}
+                        </p>
+                      </div>
+                    )}
 
-                  {/* Arrow */}
-                  <div className="col-span-1 flex justify-end">
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+                    {/* Samples */}
+                    <div className={`${isFacilityAdmin ? "col-span-1" : "col-span-2"} text-right`}>
+                      <span className="text-sm text-muted-foreground tabular-nums">
+                        {order._count.samples}
+                      </span>
+                    </div>
+
+                    {/* Date */}
+                    <div className={isFacilityAdmin ? "col-span-2" : "col-span-3"}>
+                      <span className="text-sm text-muted-foreground tabular-nums">
+                        {formatDate(order.createdAt)}
+                      </span>
+                    </div>
+
+                    {/* Arrow */}
+                    <div className="col-span-1 flex justify-end">
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+                    </div>
                   </div>
                 </Link>
               );

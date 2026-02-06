@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, type ComponentType } from "react";
+import { useState, useEffect, useCallback, useRef, type ComponentType } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
@@ -122,6 +123,13 @@ export default function FormBuilderPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [jumpTarget, setJumpTarget] = useState<string | undefined>(undefined);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveInitializedRef = useRef(false);
+  const lastPersistedSnapshotRef = useRef("");
+  const saveInFlightRef = useRef(false);
 
   // Integration service banner
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -624,36 +632,105 @@ export default function FormBuilderPage() {
     }
   };
 
-  // Save configuration
-  const handleSave = async () => {
-    setSaving(true);
-    setError("");
-    setSuccess("");
+  const persistConfiguration = useCallback(
+    async (manual: boolean) => {
+      if (saveInFlightRef.current) return false;
 
-    try {
-      const res = await fetch("/api/admin/form-config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fields,
-          groups,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to save configuration");
-        return;
+      const snapshot = JSON.stringify({ fields, groups });
+      if (!manual && snapshot === lastPersistedSnapshotRef.current) {
+        return true;
       }
 
-      setSuccess("Configuration saved successfully!");
-      setTimeout(() => setSuccess(""), 3000);
-    } catch {
-      setError("Failed to save configuration");
-    } finally {
-      setSaving(false);
+      saveInFlightRef.current = true;
+      setSaving(true);
+      setError("");
+      if (manual) {
+        setSuccess("");
+      }
+      setAutoSaveStatus("saving");
+
+      try {
+        const res = await fetch("/api/admin/form-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: snapshot,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          const message = data.error || "Failed to save configuration";
+          setError(message);
+          setAutoSaveStatus("error");
+          return false;
+        }
+
+        lastPersistedSnapshotRef.current = snapshot;
+        setAutoSaveStatus("saved");
+        setLastSavedAt(new Date());
+
+        if (manual) {
+          setSuccess("Configuration saved successfully!");
+          setTimeout(() => setSuccess(""), 3000);
+        }
+
+        return true;
+      } catch {
+        setError("Failed to save configuration");
+        setAutoSaveStatus("error");
+        return false;
+      } finally {
+        saveInFlightRef.current = false;
+        setSaving(false);
+      }
+    },
+    [fields, groups]
+  );
+
+  // Save configuration manually
+  const handleSave = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
     }
+    await persistConfiguration(true);
   };
+
+  // Auto-save form config after edits (debounced)
+  useEffect(() => {
+    if (loading) return;
+
+    const snapshot = JSON.stringify({ fields, groups });
+
+    if (!autoSaveInitializedRef.current) {
+      autoSaveInitializedRef.current = true;
+      lastPersistedSnapshotRef.current = snapshot;
+      setAutoSaveStatus("saved");
+      return;
+    }
+
+    if (snapshot === lastPersistedSnapshotRef.current) {
+      return;
+    }
+
+    setAutoSaveStatus("dirty");
+    setSuccess("");
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      void persistConfiguration(false);
+      autoSaveTimerRef.current = null;
+    }, 1200);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [fields, groups, loading, persistConfiguration]);
 
   // Group management functions
   const handleAddGroup = () => {
@@ -715,14 +792,17 @@ export default function FormBuilderPage() {
     setGroupToDelete(null);
   };
 
-  const handleMoveGroup = (index: number, direction: "up" | "down") => {
-    const newGroups = [...groups];
+  const handleMoveGroup = (groupId: string, direction: "up" | "down") => {
+    const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
+    const index = sortedGroups.findIndex((g) => g.id === groupId);
+    if (index === -1) return;
+
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= groups.length) return;
-    [newGroups[index], newGroups[targetIndex]] = [newGroups[targetIndex], newGroups[index]];
-    // Update order values
-    newGroups.forEach((g, i) => (g.order = i));
-    setGroups(newGroups);
+    if (targetIndex < 0 || targetIndex >= sortedGroups.length) return;
+
+    const reordered = [...sortedGroups];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    setGroups(reordered.map((group, i) => ({ ...group, order: i })));
   };
 
   // Helper to add a suggested field
@@ -906,12 +986,46 @@ export default function FormBuilderPage() {
   // Check if ENA sample fields are added
   const hasEnaSampleFields = fields.some((f) => f.type === "organism" || f.name === "_organism");
 
-  const orderFields = fields
+  const isFieldAvailableForModules = (field: FormFieldDefinition) => {
+    if (field.type === "mixs" && !mixsModuleEnabled) return false;
+    if (field.type === "funding" && !fundingModuleEnabled) return false;
+    if (field.type === "billing" && !billingModuleEnabled) return false;
+    if (field.type === "sequencing-tech" && !sequencingTechModuleEnabled) return false;
+    if (field.moduleSource === "ena-sample-fields" && !enaSampleFieldsEnabled) return false;
+    return true;
+  };
+
+  const visibleFields = fields.filter(isFieldAvailableForModules);
+  const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
+
+  const orderFields = visibleFields
     .filter((f) => !f.perSample)
     .sort((a, b) => a.order - b.order);
-  const perSampleFieldsList = fields
+  const perSampleFieldsList = visibleFields
     .filter((f) => f.perSample)
     .sort((a, b) => a.order - b.order);
+  const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
+
+  const autoSaveMessage = (() => {
+    if (autoSaveStatus === "saving") return "Saving changes...";
+    if (autoSaveStatus === "dirty") return "Unsaved changes";
+    if (autoSaveStatus === "error") return "Save failed";
+    if (lastSavedAt) {
+      return `All changes saved at ${lastSavedAt.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+    }
+    return "All changes saved";
+  })();
+
+  const handleJumpToSection = (sectionId: string) => {
+    setJumpTarget(undefined);
+    const section = document.getElementById(sectionId);
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   const moduleFieldMeta: Record<
     string,
@@ -949,26 +1063,53 @@ export default function FormBuilderPage() {
 
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold">Order Configuration</h1>
-          <p className="text-muted-foreground">
-            Define what information users provide when creating sequencing orders
-          </p>
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold">Order Configuration</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Define what information users provide when creating sequencing orders
+        </p>
+      </div>
+
+      <div className="sticky top-16 z-30 mb-6">
+        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div
+            className={`text-xs ${
+              autoSaveStatus === "error"
+                ? "text-destructive"
+                : autoSaveStatus === "dirty"
+                  ? "text-amber-600"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {autoSaveMessage}
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={jumpTarget} onValueChange={handleJumpToSection}>
+              <SelectTrigger className="h-8 w-[200px] bg-white">
+                <SelectValue placeholder="Jump to section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="order-groups-section">Form Groups</SelectItem>
+                <SelectItem value="order-fields-section">Order Fields</SelectItem>
+                <SelectItem value="order-per-sample-section">Per-Sample Fields</SelectItem>
+                <SelectItem value="order-modules-section">Module Forms</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={handleSave} disabled={saving} variant="outline" size="sm" className="bg-white">
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4 mr-2" />
+                  Save Now
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Check className="h-4 w-4 mr-2" />
-              Save Changes
-            </>
-          )}
-        </Button>
       </div>
 
       {error && (
@@ -980,6 +1121,16 @@ export default function FormBuilderPage() {
       {success && (
         <div className="mb-6 p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600">
           {success}
+        </div>
+      )}
+
+      {hiddenByDisabledModulesCount > 0 && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {hiddenByDisabledModulesCount} field{hiddenByDisabledModulesCount === 1 ? "" : "s"} hidden because related modules are disabled.{" "}
+          <Link href="/admin/modules" className="underline underline-offset-2">
+            Manage modules
+          </Link>
+          .
         </div>
       )}
 
@@ -1001,7 +1152,7 @@ export default function FormBuilderPage() {
                 <Rocket className="h-6 w-6 text-primary" />
               </div>
               <div className="flex-1 pr-8">
-                <h3 className="text-lg font-semibold mb-1">Need help setting up SeqDesk?</h3>
+                <h3 className="text-base font-semibold mb-1">Need help setting up SeqDesk?</h3>
                 <p className="text-sm text-muted-foreground mb-4">
                   Our integration team can configure your forms, set up workflows, and customize SeqDesk
                   to match your sequencing facility&apos;s specific requirements. Get a tailored solution
@@ -1029,99 +1180,102 @@ export default function FormBuilderPage() {
       )}
 
       {/* Form Groups */}
-      <GlassCard className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">Form Groups (Steps)</h2>
-          <Button onClick={handleAddGroup}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Group
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          Groups organize your form into steps. When users create a new order, they&apos;ll navigate through each group as a separate step in a wizard.
-          Use the arrows to reorder groups - the order here determines the step order in the form.
-        </p>
+      <div id="order-groups-section" className="scroll-mt-28">
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-base font-semibold">Form Groups (Steps)</h2>
+            <Button onClick={handleAddGroup} variant="outline" size="sm" className="bg-white">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Group
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Groups organize your form into steps. When users create a new order, they&apos;ll navigate through each group as a separate step in a wizard.
+            Use the arrows to reorder groups - the order here determines the step order in the form.
+          </p>
 
-        <div className="space-y-2">
-          {groups.sort((a, b) => a.order - b.order).map((group, index) => {
-            const fieldCount = fields.filter((f) => f.groupId === group.id).length;
-            return (
-              <div
-                key={group.id}
-                className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border"
-              >
-                <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleMoveGroup(index, "up")}
-                    disabled={index === 0}
-                    className="p-1 hover:bg-muted rounded disabled:opacity-30"
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveGroup(index, "down")}
-                    disabled={index === groups.length - 1}
-                    className="p-1 hover:bg-muted rounded disabled:opacity-30"
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </div>
-
-                <GripVertical className="h-4 w-4 text-muted-foreground" />
-
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{group.name}</span>
-                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                      {fieldCount} field{fieldCount !== 1 ? "s" : ""}
-                    </span>
+          <div className="space-y-2">
+            {orderedGroups.map((group, index) => {
+              const fieldCount = visibleFields.filter((f) => f.groupId === group.id).length;
+              return (
+                <div
+                  key={group.id}
+                  className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border"
+                >
+                  <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleMoveGroup(group.id, "up")}
+                        disabled={index === 0}
+                        className="p-1 hover:bg-muted rounded disabled:opacity-30"
+                      >
+                      <ChevronUp className="h-3 w-3" />
+                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveGroup(group.id, "down")}
+                        disabled={index === orderedGroups.length - 1}
+                        className="p-1 hover:bg-muted rounded disabled:opacity-30"
+                      >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
                   </div>
-                  {group.description && (
-                    <p className="text-sm text-muted-foreground">{group.description}</p>
-                  )}
-                </div>
 
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleEditGroup(group)}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDeleteGroup(group.id)}
-                    className="text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <GripVertical className="h-4 w-4 text-muted-foreground" />
+
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{group.name}</span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
+                        {fieldCount} field{fieldCount !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {group.description && (
+                      <p className="text-sm text-muted-foreground">{group.description}</p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleEditGroup(group)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDeleteGroup(group.id)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+              );
+            })}
+
+            {groups.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                No groups defined. Add a group to organize your form fields into steps.
               </div>
-            );
-          })}
-
-          {groups.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No groups defined. Add a group to organize your form fields into steps.
-            </div>
-          )}
-        </div>
-      </GlassCard>
+            )}
+          </div>
+        </GlassCard>
+      </div>
 
       {/* Order Fields - filled once per order */}
+      <div id="order-fields-section" className="scroll-mt-28">
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <FileText className="h-4 w-4 text-primary" />
             </div>
-            <h2 className="text-lg font-semibold">Order Fields</h2>
+            <h2 className="text-base font-semibold">Order Fields</h2>
           </div>
-          <Button onClick={() => handleAddField(false)}>
+          <Button onClick={() => handleAddField(false)} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
           </Button>
@@ -1260,12 +1414,13 @@ export default function FormBuilderPage() {
           )}
         </div>
       </GlassCard>
+      </div>
 
       {/* General Suggested Fields - for Order Fields */}
       {generalTemplates.length > 0 && (
         <GlassCard className="p-6 mt-4">
           <div className="mb-4">
-            <h3 className="text-base font-medium">Suggested Order Fields</h3>
+            <h3 className="text-sm font-medium">Suggested Order Fields</h3>
             <p className="text-sm text-muted-foreground">
               Common fields for sequencing orders. Click to add.
             </p>
@@ -1309,15 +1464,16 @@ export default function FormBuilderPage() {
       )}
 
       {/* Per-Sample Fields - filled for each sample */}
+      <div id="order-per-sample-section" className="scroll-mt-28">
       <GlassCard className="p-6 border-amber-200 bg-amber-50/30 mt-8">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
               <Table className="h-4 w-4 text-amber-600" />
             </div>
-            <h2 className="text-lg font-semibold">Per-Sample Fields</h2>
+            <h2 className="text-base font-semibold">Per-Sample Fields</h2>
           </div>
-          <Button onClick={() => handleAddField(true)} variant="outline" className="border-amber-300 hover:bg-amber-100">
+          <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="border-amber-300 hover:bg-amber-100">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
           </Button>
@@ -1413,11 +1569,12 @@ export default function FormBuilderPage() {
           )}
         </div>
       </GlassCard>
+      </div>
 
       {/* Suggested Per-Sample Fields */}
       <GlassCard className="p-6 mt-4 border-amber-200 bg-amber-50/30">
         <div className="mb-4">
-          <h3 className="text-base font-medium flex items-center gap-2">
+          <h3 className="text-sm font-medium flex items-center gap-2">
             <Table className="h-4 w-4 text-amber-600" />
             Suggested Per-Sample Fields
           </h3>
@@ -1927,12 +2084,12 @@ export default function FormBuilderPage() {
       </GlassCard>
 
       {/* Module Forms Section */}
-      <div className="mt-8">
+      <div id="order-modules-section" className="mt-8 scroll-mt-28">
         <div className="flex items-center gap-3 mb-2">
           <div className="h-8 w-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
             <Package className="h-4 w-4 text-violet-600" />
           </div>
-          <h2 className="text-lg font-semibold">Module Forms</h2>
+          <h2 className="text-base font-semibold">Module Forms</h2>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
           Modules extend SeqDesk with specialized form components. Enable modules in Configuration &rarr; Modules to unlock additional form features.
@@ -1949,7 +2106,7 @@ export default function FormBuilderPage() {
                     <Receipt className="h-5 w-5 text-teal-600" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold">Billing Information</h3>
+                    <h3 className="text-sm font-medium">Billing Information</h3>
                     <p className="text-sm text-muted-foreground">
                       Add a billing field to collect Cost Center and PSP Element (SAP project structure plan) for internal cost allocation.
                     </p>
@@ -1958,7 +2115,9 @@ export default function FormBuilderPage() {
                 <Button
                   onClick={addBillingField}
                   disabled={fields.some((f) => f.type === "billing")}
-                  variant={fields.some((f) => f.type === "billing") ? "outline" : "default"}
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
                 >
                   {fields.some((f) => f.type === "billing") ? (
                     <>
@@ -1990,7 +2149,7 @@ export default function FormBuilderPage() {
                     <Dna className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold">Sequencing Technologies</h3>
+                    <h3 className="text-sm font-medium">Sequencing Technologies</h3>
                     <p className="text-sm text-muted-foreground">
                       Add a technology selector with pre-configured information about sequencing platforms, specs, pros/cons, and best-use cases.
                     </p>
@@ -1999,7 +2158,9 @@ export default function FormBuilderPage() {
                 <Button
                   onClick={addSequencingTechField}
                   disabled={fields.some((f) => f.type === "sequencing-tech")}
-                  variant={fields.some((f) => f.type === "sequencing-tech") ? "outline" : "default"}
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
                 >
                   {fields.some((f) => f.type === "sequencing-tech") ? (
                     <>
@@ -2034,7 +2195,7 @@ export default function FormBuilderPage() {
                     <Database className="h-5 w-5 text-emerald-600" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-emerald-800">ENA Sample Fields</h3>
+                    <h3 className="text-sm font-medium text-emerald-800">ENA Sample Fields</h3>
                     <p className="text-sm text-emerald-700/80">
                       Essential per-sample fields for ENA (European Nucleotide Archive) submission.
                       Includes <strong>Organism</strong> with NCBI taxonomy lookup, <strong>Sample Title</strong>, and <strong>Sample Alias</strong>.
@@ -2047,10 +2208,9 @@ export default function FormBuilderPage() {
                 <Button
                   onClick={addEnaSampleFields}
                   disabled={hasEnaSampleFields}
-                  variant={hasEnaSampleFields ? "outline" : "default"}
-                  className={hasEnaSampleFields
-                    ? "border-emerald-300 text-emerald-700 hover:bg-emerald-100"
-                    : "bg-emerald-600 hover:bg-emerald-700"}
+                  variant="outline"
+                  size="sm"
+                  className="bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-100"
                 >
                   {hasEnaSampleFields ? (
                     <>
@@ -2083,7 +2243,7 @@ export default function FormBuilderPage() {
                 <Plus className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-muted-foreground">Your Custom Module</h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Your Custom Module</h3>
                 <p className="text-sm text-muted-foreground">
                   Need specialized fields for your workflow? We can develop a custom module tailored to your facility&apos;s specific requirements.{" "}
                   <a
@@ -2105,7 +2265,7 @@ export default function FormBuilderPage() {
           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
             <Settings2 className="h-4 w-4 text-muted-foreground" />
           </div>
-          <h2 className="text-lg font-semibold">Advanced Settings</h2>
+          <h2 className="text-base font-semibold">Advanced Settings</h2>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
           Configure post-submission behavior and data handling policies for orders.
@@ -2119,7 +2279,7 @@ export default function FormBuilderPage() {
                 <FileText className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
-                <h3 className="text-base font-semibold">Post-Submission Instructions</h3>
+                <h3 className="text-sm font-medium">Post-Submission Instructions</h3>
                 <p className="text-sm text-muted-foreground">
                   Instructions shown to users after they submit an order (supports Markdown)
                 </p>
@@ -2163,7 +2323,7 @@ export default function FormBuilderPage() {
                 <Database className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="flex-1">
-                <h3 className="text-base font-semibold">Data Handling</h3>
+                <h3 className="text-sm font-medium">Data Handling</h3>
                 <p className="text-sm text-muted-foreground mb-4">
                   Control data deletion and modification policies
                 </p>
@@ -2317,7 +2477,7 @@ export default function FormBuilderPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">No group</SelectItem>
-                        {groups.map((group) => (
+                        {orderedGroups.map((group) => (
                           <SelectItem key={group.id} value={group.id}>
                             {group.name}
                           </SelectItem>
@@ -2327,34 +2487,58 @@ export default function FormBuilderPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6 py-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={fieldVisible}
-                      onChange={(e) => setFieldVisible(e.target.checked)}
-                      className="rounded border-input h-4 w-4"
-                    />
-                    <span className="text-sm">Visible</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={fieldRequired}
-                      onChange={(e) => setFieldRequired(e.target.checked)}
-                      className="rounded border-input h-4 w-4"
-                    />
-                    <span className="text-sm">Required</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer" title="Collect this field for each sample in a table view">
-                    <input
-                      type="checkbox"
-                      checked={fieldPerSample}
-                      onChange={(e) => setFieldPerSample(e.target.checked)}
-                      className="rounded border-input h-4 w-4"
-                    />
-                    <span className="text-sm">Per Sample</span>
-                  </label>
+                <div className="space-y-3 py-2">
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={fieldVisible}
+                        onChange={(e) => setFieldVisible(e.target.checked)}
+                        className="rounded border-input h-4 w-4"
+                      />
+                      <span className="text-sm">Visible</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={fieldRequired}
+                        onChange={(e) => setFieldRequired(e.target.checked)}
+                        className="rounded border-input h-4 w-4"
+                      />
+                      <span className="text-sm">Required</span>
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Field Scope</Label>
+                    <div
+                      className="inline-flex rounded-md border border-input bg-muted/30 p-1"
+                      role="group"
+                      aria-label="Field scope"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setFieldPerSample(false)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                          !fieldPerSample
+                            ? "bg-background shadow-sm text-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        Order-level
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFieldPerSample(true)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                          fieldPerSample
+                            ? "bg-amber-100 text-amber-700 shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        Per-sample
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {fieldPerSample && (

@@ -476,7 +476,7 @@ export default function AnalysisRunDetailPage({
   };
 
   useEffect(() => {
-    if (!run || run.status !== "running") return;
+    if (run?.status !== "running") return;
     let active = true;
 
     const tick = async () => {
@@ -492,7 +492,7 @@ export default function AnalysisRunDetailPage({
       active = false;
       clearInterval(interval);
     };
-  }, [run?.id, run?.status, mutate, syncRun]);
+  }, [run?.status, mutate, syncRun]);
 
   const handleRetry = async () => {
     if (!run) return;
@@ -552,6 +552,42 @@ export default function AnalysisRunDetailPage({
       setRetrying(false);
     }
   };
+
+  const fetchQueueStatus = useCallback(async () => {
+    const runId = run?.id;
+    const queueJobId = run?.queueJobId;
+    if (!runId || !queueJobId) return;
+
+    setCheckingQueue(true);
+    try {
+      const res = await fetch(`/api/pipelines/runs/${runId}/queue`);
+      if (!res.ok) {
+        setQueueStatus({
+          available: false,
+          message: `Failed to fetch queue status (HTTP ${res.status})`,
+        });
+        return;
+      }
+      const data = (await res.json()) as QueueStatus;
+      setQueueStatus(data);
+    } catch {
+      setQueueStatus({
+        available: false,
+        message: "Failed to fetch queue status",
+      });
+    } finally {
+      setCheckingQueue(false);
+    }
+  }, [run?.id, run?.queueJobId]);
+
+  useEffect(() => {
+    if (!run?.queueJobId) return;
+    if (!["running", "queued", "pending"].includes(run.status)) return;
+
+    void fetchQueueStatus();
+    const interval = setInterval(fetchQueueStatus, 20000);
+    return () => clearInterval(interval);
+  }, [run?.queueJobId, run?.status, fetchQueueStatus]);
 
   if (isLoading) {
     return (
@@ -629,38 +665,6 @@ export default function AnalysisRunDetailPage({
     : run?.queueStatus
       ? "text-muted-foreground"
       : "text-muted-foreground";
-
-  const fetchQueueStatus = async () => {
-    if (!run?.queueJobId) return;
-    setCheckingQueue(true);
-    try {
-      const res = await fetch(`/api/pipelines/runs/${run.id}/queue`);
-      if (!res.ok) {
-        setQueueStatus({
-          available: false,
-          message: `Failed to fetch queue status (HTTP ${res.status})`,
-        });
-        return;
-      }
-      const data = (await res.json()) as QueueStatus;
-      setQueueStatus(data);
-    } catch {
-      setQueueStatus({
-        available: false,
-        message: "Failed to fetch queue status",
-      });
-    } finally {
-      setCheckingQueue(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!run?.queueJobId) return;
-    if (!["running", "queued", "pending"].includes(run.status)) return;
-    fetchQueueStatus();
-    const interval = setInterval(fetchQueueStatus, 20000);
-    return () => clearInterval(interval);
-  }, [run?.queueJobId, run?.status]);
 
   return (
     <PageContainer>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useModules } from "@/lib/modules";
+import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Switch } from "@/components/ui/switch";
@@ -9,10 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Loader2,
-  Package,
-  Mail,
   Clock,
-  Settings,
   Plus,
   X,
   Shield,
@@ -23,7 +21,7 @@ import {
   ArrowRight,
   Receipt,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   type AccountValidationSettings,
@@ -33,12 +31,22 @@ import {
   DEFAULT_BILLING_SETTINGS,
 } from "@/lib/modules/types";
 
+const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }>> = {
+  "mixs-metadata": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
+  "funding-info": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
+  "billing-info": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "sequencing-tech": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "ena-sample-fields": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "ai-validation": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+};
+
 export default function ModulesPage() {
   const {
     availableModules,
     moduleStates,
     setModuleEnabled,
     loading,
+    globalDisabled,
   } = useModules();
   const [updating, setUpdating] = useState<string | null>(null);
 
@@ -104,6 +112,11 @@ export default function ModulesPage() {
     } finally {
       setUpdating(null);
     }
+  };
+
+  const parseNumberOrFallback = (value: string, fallback: number) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? fallback : parsed;
   };
 
   const handleAddDomain = () => {
@@ -190,22 +203,38 @@ export default function ModulesPage() {
   return (
     <PageContainer>
       <div className="space-y-8">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Package className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold">Modules</h1>
-            <p className="text-muted-foreground">
-              Enable or disable features for your installation
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold">Modules</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Enable or disable features for your installation
+          </p>
+        </div>
+
+        <div className="sticky top-16 z-30">
+          <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              Module toggles control feature availability and module-specific fields in the form builders.
             </p>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline" size="sm" className="bg-white">
+                <Link href="/admin/form-builder">Order Form Builder</Link>
+              </Button>
+              <Button asChild variant="outline" size="sm" className="bg-white">
+                <Link href="/admin/study-form-builder">Study Form Builder</Link>
+              </Button>
+            </div>
           </div>
         </div>
 
+        {globalDisabled && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Modules are globally disabled at installation level. Individual module toggles are paused until global modules are re-enabled.
+          </div>
+        )}
+
         {/* Category icon mapping */}
         {(() => {
-          const categoryIcons: Record<ModuleCategory, React.ReactNode> = {
+          const categoryIcons: Record<ModuleCategory, ReactNode> = {
             "order-form": <FormInput className="h-5 w-5" />,
             validation: <CheckCircle2 className="h-5 w-5" />,
             access: <Lock className="h-5 w-5" />,
@@ -240,7 +269,7 @@ export default function ModulesPage() {
                     {categoryIcons[category]}
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold">{categoryInfo.label}</h2>
+                    <h2 className="text-base font-semibold">{categoryInfo.label}</h2>
                     <p className="text-sm text-muted-foreground">
                       {categoryInfo.description}
                     </p>
@@ -248,16 +277,18 @@ export default function ModulesPage() {
                 </div>
 
                 {/* Module Cards */}
-                <div className="grid gap-3 pl-[52px]">
+                <div className="grid gap-3">
                   {categoryModules.map((module) => {
                     const isEnabled = moduleStates[module.id] ?? false;
+                    const isEffectivelyEnabled = isEnabled && !globalDisabled;
                     const isUpdating = updating === module.id;
                     const isComingSoon = module.comingSoon;
+                    const builderLinks = MODULE_BUILDER_LINKS[module.id] ?? [];
 
                     return (
                       <GlassCard
                         key={module.id}
-                        className={`p-5 ${isComingSoon ? "opacity-60" : ""}`}
+                        className={`p-4 ${isComingSoon ? "opacity-60" : ""}`}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 space-y-2">
@@ -268,9 +299,13 @@ export default function ModulesPage() {
                                   <Clock className="h-3 w-3" />
                                   Coming Soon
                                 </span>
-                              ) : isEnabled ? (
+                              ) : isEffectivelyEnabled ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium">
                                   Active
+                                </span>
+                              ) : globalDisabled && isEnabled ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 font-medium">
+                                  Paused (Global Off)
                                 </span>
                               ) : (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
@@ -287,6 +322,21 @@ export default function ModulesPage() {
                                 {module.featureLocation}
                               </p>
                             )}
+                            {builderLinks.length > 0 && (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {builderLinks.map((target) => (
+                                  <Button
+                                    key={`${module.id}-${target.href}`}
+                                    asChild
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs bg-white"
+                                  >
+                                    <Link href={target.href}>{target.label}</Link>
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-3 flex-shrink-0">
@@ -299,7 +349,11 @@ export default function ModulesPage() {
                               onCheckedChange={(checked) =>
                                 handleToggle(module.id, checked)
                               }
-                              disabled={isUpdating || isComingSoon}
+                              disabled={
+                                isUpdating ||
+                                isComingSoon ||
+                                globalDisabled
+                              }
                             />
                             <Label htmlFor={module.id} className="sr-only">
                               Toggle {module.name}
@@ -308,7 +362,7 @@ export default function ModulesPage() {
                         </div>
 
                         {/* Account Validation Settings Panel */}
-                        {module.id === "account-validation" && isEnabled && (
+                        {module.id === "account-validation" && isEffectivelyEnabled && (
                     <div className="mt-6 pt-6 border-t border-border">
                       <div className="flex items-center gap-2 mb-4">
                         <Shield className="h-4 w-4 text-primary" />
@@ -428,7 +482,7 @@ export default function ModulesPage() {
                   )}
 
                         {/* Billing Settings Panel */}
-                        {module.id === "billing-info" && isEnabled && (
+                        {module.id === "billing-info" && isEffectivelyEnabled && (
                           <div className="mt-6 pt-6 border-t border-border">
                             <div className="flex items-center gap-2 mb-4">
                               <Receipt className="h-4 w-4 text-teal-600" />
@@ -496,7 +550,7 @@ export default function ModulesPage() {
                                                 ...prev,
                                                 pspPrefixRange: {
                                                   ...prev.pspPrefixRange,
-                                                  min: parseInt(e.target.value) || 0,
+                                                  min: parseNumberOrFallback(e.target.value, 0),
                                                 },
                                               }))
                                             }
@@ -513,7 +567,7 @@ export default function ModulesPage() {
                                                 ...prev,
                                                 pspPrefixRange: {
                                                   ...prev.pspPrefixRange,
-                                                  max: parseInt(e.target.value) || 9,
+                                                  max: parseNumberOrFallback(e.target.value, 9),
                                                 },
                                               }))
                                             }
@@ -532,7 +586,10 @@ export default function ModulesPage() {
                                           onChange={(e) =>
                                             setBillingSettings((prev) => ({
                                               ...prev,
-                                              pspMainDigits: parseInt(e.target.value) || 7,
+                                              pspMainDigits: parseNumberOrFallback(
+                                                e.target.value,
+                                                7
+                                              ),
                                             }))
                                           }
                                           className="w-20 h-8 text-center"
@@ -552,7 +609,7 @@ export default function ModulesPage() {
                                                 ...prev,
                                                 pspSuffixRange: {
                                                   ...prev.pspSuffixRange,
-                                                  min: parseInt(e.target.value) || 0,
+                                                  min: parseNumberOrFallback(e.target.value, 0),
                                                 },
                                               }))
                                             }
@@ -569,7 +626,7 @@ export default function ModulesPage() {
                                                 ...prev,
                                                 pspSuffixRange: {
                                                   ...prev.pspSuffixRange,
-                                                  max: parseInt(e.target.value) || 99,
+                                                  max: parseNumberOrFallback(e.target.value, 99),
                                                 },
                                               }))
                                             }

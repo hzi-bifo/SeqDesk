@@ -27,7 +27,7 @@ interface ModuleGateProps {
  * </ModuleGate>
  */
 export function ModuleGate({ moduleId, children, fallback = "message", adminView = false }: ModuleGateProps) {
-  const { enabled, module } = useModule(moduleId);
+  const { enabled } = useModule(moduleId);
 
   if (enabled) {
     return <>{children}</>;
@@ -46,7 +46,9 @@ export function ModuleGate({ moduleId, children, fallback = "message", adminView
     // Admin view - show greyed out content with enable message
     return (
       <div className="opacity-50">
-        {children}
+        <div className="pointer-events-none">
+          {children}
+        </div>
         <p className="text-xs text-muted-foreground mt-2">
           Enable in <a href="/admin/modules" className="text-primary hover:underline">Modules</a> to activate
         </p>

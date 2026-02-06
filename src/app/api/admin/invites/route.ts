@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { randomBytes } from "crypto";
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // GET /api/admin/invites - List all invites
 export async function GET() {
@@ -45,27 +48,67 @@ export async function POST(request: NextRequest) {
 
   try {
     const { email, expiresInDays = 7 } = await request.json();
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : null;
+    const parsedExpiresInDays = Number.parseInt(String(expiresInDays), 10);
 
-    // Generate a unique invite code (8 characters, alphanumeric)
-    const code = randomBytes(4).toString("hex").toUpperCase();
+    if (
+      !Number.isInteger(parsedExpiresInDays) ||
+      parsedExpiresInDays < 1 ||
+      parsedExpiresInDays > 30
+    ) {
+      return NextResponse.json(
+        { error: "expiresInDays must be an integer between 1 and 30" },
+        { status: 400 }
+      );
+    }
+
+    if (normalizedEmail && !EMAIL_PATTERN.test(normalizedEmail)) {
+      return NextResponse.json(
+        { error: "Invalid invite email address" },
+        { status: 400 }
+      );
+    }
 
     // Calculate expiration date
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+    expiresAt.setDate(expiresAt.getDate() + parsedExpiresInDays);
 
-    const invite = await db.adminInvite.create({
-      data: {
-        code,
-        email: email || null,
-        expiresAt,
-        createdById: session.user.id,
-      },
-      include: {
-        createdBy: {
-          select: { firstName: true, lastName: true },
-        },
-      },
-    });
+    let invite = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = randomBytes(4).toString("hex").toUpperCase();
+      try {
+        invite = await db.adminInvite.create({
+          data: {
+            code,
+            email: normalizedEmail || null,
+            expiresAt,
+            createdById: session.user.id,
+          },
+          include: {
+            createdBy: {
+              select: { firstName: true, lastName: true },
+            },
+          },
+        });
+        break;
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (!invite) {
+      return NextResponse.json(
+        { error: "Failed to generate a unique invite code" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json(invite, { status: 201 });
   } catch (error) {

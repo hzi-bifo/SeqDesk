@@ -164,7 +164,7 @@ export default async function DashboardPage() {
     return (
       <PageContainer>
         {/* Welcome Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
           <div>
             <h1 className="text-xl font-semibold">
               Welcome back, {session.user.name?.split(" ")[0] || "Researcher"}
@@ -186,7 +186,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-3 gap-3 md:gap-4 mb-6">
           <div className="bg-card rounded-lg p-4 border border-border">
             <p className="text-2xl font-semibold">{sampleCount}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Total Samples</p>
@@ -341,7 +341,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Key Metrics */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
         <div className="bg-card rounded-lg p-4 border border-border">
           <p className="text-2xl font-semibold">{orderCount}</p>
           <p className="text-xs text-muted-foreground mt-0.5">Total Orders</p>
@@ -377,7 +377,7 @@ export default async function DashboardPage() {
             View all
           </Link>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 md:gap-2">
           {Object.entries(ORDER_STATUS_CONFIG).map(([status, config]) => {
             const count = orderStatusCounts[status] || 0;
             return (
