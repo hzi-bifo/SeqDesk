@@ -1,0 +1,122 @@
+{
+  "pipeline": "submg",
+  "name": "SubMG Submission",
+  "description": "Submit reads, assemblies, and bins to ENA and import returned accession numbers",
+  "url": "https://github.com/ttubb/submg",
+  "version": "1.0.0",
+  "authors": ["SeqDesk"],
+  "inputs": [
+    {
+      "id": "paired_reads",
+      "name": "Paired-end reads",
+      "description": "Sample FASTQ pairs with MD5 checksums",
+      "fileTypes": ["fastq.gz"],
+      "source": "sample_reads",
+      "sourceDescription": "Linked reads from study samples"
+    },
+    {
+      "id": "assemblies",
+      "name": "Assemblies",
+      "description": "Assembly FASTA files produced by analysis pipelines",
+      "fileTypes": ["fa", "fasta", "fa.gz", "fasta.gz"],
+      "source": "sample_assemblies",
+      "sourceDescription": "Assemblies stored on each sample"
+    },
+    {
+      "id": "bins",
+      "name": "Bins (optional)",
+      "description": "Genome bins for optional bin submission",
+      "fileTypes": ["fa", "fasta"],
+      "source": "sample_bins",
+      "sourceDescription": "Bins stored on each sample"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_accessions",
+      "name": "Sample Accessions",
+      "description": "ERS/SAMEA accession updates for samples",
+      "fromStep": "parse_receipts",
+      "destination": "sample_metadata",
+      "destinationField": "sampleAccessionNumber",
+      "destinationDescription": "Updates sampleAccessionNumber and biosampleNumber"
+    },
+    {
+      "id": "read_accessions",
+      "name": "Read Accessions",
+      "description": "ERX/ERR accession updates for reads",
+      "fromStep": "parse_receipts",
+      "destination": "sample_metadata",
+      "destinationField": "readAccessionNumbers",
+      "destinationDescription": "Updates read experiment and run accessions"
+    },
+    {
+      "id": "assembly_accessions",
+      "name": "Assembly Accessions",
+      "description": "Assembly accession updates",
+      "fromStep": "parse_receipts",
+      "destination": "sample_metadata",
+      "destinationField": "assemblyAccession",
+      "destinationDescription": "Updates assemblyAccession on Assembly records"
+    },
+    {
+      "id": "bin_accessions",
+      "name": "Bin Accessions",
+      "description": "Bin accession updates",
+      "fromStep": "parse_receipts",
+      "destination": "sample_metadata",
+      "destinationField": "binAccession",
+      "destinationDescription": "Updates binAccession on Bin records"
+    },
+    {
+      "id": "submission_logs",
+      "name": "Submission Logs",
+      "description": "SubMG logging and staging outputs",
+      "fromStep": "submit",
+      "destination": "run_artifact",
+      "destinationDescription": "Available in run artifacts"
+    }
+  ],
+  "steps": [
+    {
+      "id": "validate_inputs",
+      "name": "Validate Inputs",
+      "description": "Validate study/sample prerequisites and credentials",
+      "category": "qc",
+      "dependsOn": [],
+      "processMatchers": ["VALIDATE"],
+      "tools": ["submg"],
+      "outputs": ["validation"]
+    },
+    {
+      "id": "generate_config",
+      "name": "Generate Config",
+      "description": "Generate SubMG YAML manifests and helper files",
+      "category": "preprocessing",
+      "dependsOn": ["validate_inputs"],
+      "processMatchers": ["GENERATE_CONFIG"],
+      "tools": ["submg"],
+      "outputs": ["yaml", "tsv"]
+    },
+    {
+      "id": "submit",
+      "name": "Submit to ENA",
+      "description": "Execute submg submit for each generated manifest",
+      "category": "annotation",
+      "dependsOn": ["generate_config"],
+      "processMatchers": ["SUBMIT"],
+      "tools": ["submg"],
+      "outputs": ["logs", "receipts"]
+    },
+    {
+      "id": "parse_receipts",
+      "name": "Parse Accessions",
+      "description": "Parse output receipts and persist accession numbers",
+      "category": "reporting",
+      "dependsOn": ["submit"],
+      "processMatchers": ["PARSE"],
+      "tools": ["SeqDesk"],
+      "outputs": ["accessions"]
+    }
+  ]
+}

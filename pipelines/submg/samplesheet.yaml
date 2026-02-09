@@ -1,0 +1,28 @@
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample
+  columns:
+    - name: sample
+      source: sample.sampleId
+
+    - name: short_reads_1
+      source: read.file1
+      filters:
+        paired: true
+      required: true
+
+    - name: short_reads_2
+      source: read.file2
+      filters:
+        paired: true
+      required: true
+
+    - name: short_reads_platform
+      source: order.platform
+      required: false
+
+    - name: study_accession
+      source: study.id
+      required: true

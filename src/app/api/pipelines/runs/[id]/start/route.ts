@@ -5,9 +5,8 @@ import { db } from '@/lib/db';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
-import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
-import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
-import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
+import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
+import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -59,57 +58,6 @@ function resolveEffectiveProfile(
   return parts.join(',');
 }
 
-async function processCompletedRun(runId: string, pipelineId: string): Promise<void> {
-  let adapter = getAdapter(pipelineId);
-  if (!adapter) {
-    const genericAdapter = createGenericAdapter(pipelineId);
-    if (genericAdapter) {
-      registerAdapter(genericAdapter);
-      adapter = genericAdapter;
-      console.log(`[Pipeline Run] Created generic adapter for pipeline: ${pipelineId}`);
-    }
-  }
-
-  if (!adapter) {
-    console.log(`[Pipeline Run] No adapter available for pipeline: ${pipelineId}`);
-    return;
-  }
-
-  const run = await db.pipelineRun.findUnique({
-    where: { id: runId },
-    include: {
-      study: {
-        include: {
-          samples: {
-            select: { id: true, sampleId: true },
-          },
-        },
-      },
-    },
-  });
-
-  if (!run || !run.runFolder) {
-    console.log(`[Pipeline Run] Run ${runId} missing run folder`);
-    return;
-  }
-
-  const samples = run.study?.samples || [];
-  if (samples.length === 0) {
-    console.log(`[Pipeline Run] Run ${runId} has no samples`);
-    return;
-  }
-
-  const outputDir = path.join(run.runFolder, 'output');
-  const discovered = await adapter.discoverOutputs({
-    runId,
-    outputDir,
-    samples: samples.map((s) => ({ id: s.id, sampleId: s.sampleId })),
-  });
-
-  const result = await resolveOutputs(pipelineId, runId, discovered);
-  await saveRunResults(runId, result);
-}
-
 async function finalizeLocalRun(
   runId: string,
   pipelineId: string,
@@ -130,7 +78,7 @@ async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       },
     });
-    processCompletedRun(runId, pipelineId).catch((err) => {
+    processCompletedPipelineRun(runId, pipelineId).catch((err) => {
       console.error('[Pipeline Run] Output resolution failed:', err);
     });
   } else {
@@ -295,7 +243,15 @@ export async function POST(
       ? effectiveProfile.split(',').map((p) => p.trim()).filter(Boolean)
       : [];
 
-    if (executionSettings.runtimeMode === 'conda' && process.platform === 'darwin' && process.arch === 'arm64') {
+    const pipelineId = run.pipelineId;
+    const isSubmgPipeline = pipelineId === 'submg';
+
+    if (
+      !isSubmgPipeline &&
+      executionSettings.runtimeMode === 'conda' &&
+      process.platform === 'darwin' &&
+      process.arch === 'arm64'
+    ) {
       const message = 'Conda runtime on macOS ARM is not supported for nf-core/mag (packages like bowtie2 are unavailable). Use a Linux/SLURM server instead.';
       await db.pipelineRun.update({
         where: { id },
@@ -330,7 +286,7 @@ export async function POST(
     }
 
     const condaBin = await resolveCondaBin(executionSettings.condaPath);
-    if (!condaBin && !executionSettings.useSlurm) {
+    if (!condaBin && !executionSettings.useSlurm && !isSubmgPipeline) {
       const message =
         'Conda profile selected but conda was not found. Configure a conda path or install conda.';
       await db.pipelineRun.update({
@@ -359,7 +315,6 @@ export async function POST(
     }
 
     // Verify pipeline package exists
-    const pipelineId = run.pipelineId;
     const pkg = getPackage(pipelineId);
     if (!pkg) {
       return NextResponse.json(
@@ -368,20 +323,33 @@ export async function POST(
       );
     }
 
-    // Prepare the run (generates samplesheet, scripts, etc.)
-    const prepResult = await prepareGenericRun({
-      runId: run.id,
-      pipelineId,
-      studyId: run.studyId!,
-      sampleIds: selectedSampleIds,
-      config,
-      executionSettings: {
-        ...executionSettings,
-        dataBasePath: siteSettings.dataBasePath,
-        nextflowProfile: effectiveProfile,
-      },
-      userId: session.user.id,
-    });
+    // Prepare the run (generates config/scripts and staging files)
+    const prepResult = isSubmgPipeline
+      ? await prepareSubmgRun({
+          runId: run.id,
+          studyId: run.studyId!,
+          sampleIds: selectedSampleIds,
+          config,
+          executionSettings: {
+            ...executionSettings,
+            dataBasePath: siteSettings.dataBasePath,
+            nextflowProfile: effectiveProfile,
+          },
+          dataBasePath: siteSettings.dataBasePath,
+        })
+      : await prepareGenericRun({
+          runId: run.id,
+          pipelineId,
+          studyId: run.studyId!,
+          sampleIds: selectedSampleIds,
+          config,
+          executionSettings: {
+            ...executionSettings,
+            dataBasePath: siteSettings.dataBasePath,
+            nextflowProfile: effectiveProfile,
+          },
+          userId: session.user.id,
+        });
 
     if (!prepResult.success) {
       // Update run status to failed
@@ -404,7 +372,9 @@ export async function POST(
 
     // Now actually execute the run
     if (prepResult.runFolder) {
-      const scriptPath = path.join(prepResult.runFolder, 'run.sh');
+      const scriptPath =
+        ('scriptPath' in prepResult ? prepResult.scriptPath : undefined) ||
+        path.join(prepResult.runFolder, 'run.sh');
 
       // Verify script exists
       try {
@@ -526,16 +496,18 @@ export async function POST(
           );
         }
       } else {
-        // Run locally in background
-        try {
-          const childProcess = spawn('bash', [scriptPath], {
-            cwd: prepResult.runFolder,
-            stdio: 'ignore',
-          });
+          // Run locally in background
+          try {
+            const childProcess = spawn('bash', [scriptPath], {
+              cwd: prepResult.runFolder,
+              stdio: 'ignore',
+              detached: true,
+            });
+            childProcess.unref();
 
-          childProcess.on('close', (code) => {
-            void finalizeLocalRun(run.id, pipelineId, code);
-          });
+            childProcess.on('close', (code) => {
+              void finalizeLocalRun(run.id, pipelineId, code);
+            });
           childProcess.on('error', (error) => {
             console.error('[Pipeline Run] Local execution error:', error);
             void finalizeLocalRun(run.id, pipelineId, 1);
@@ -585,7 +557,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      runId: prepResult.runId,
+      runId: run.id,
       runFolder: prepResult.runFolder,
     });
   } catch (error) {

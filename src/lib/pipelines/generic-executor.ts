@@ -180,6 +180,55 @@ function mergeProfiles(
   return profiles.join(',');
 }
 
+function buildRuntimeBootstrap(settings: ExecutionSettings): string {
+  const condaEnv = settings.condaEnv || 'seqdesk-pipelines';
+  const lines: string[] = [];
+
+  lines.push(`CONDA_ENV="${condaEnv}"`);
+  lines.push('NEXTFLOW_RUNNER=(nextflow)');
+  lines.push('');
+
+  if (settings.condaPath) {
+    lines.push('# Initialize and activate conda environment');
+    lines.push(`CONDA_BASE="${settings.condaPath}"`);
+    lines.push('CONDA_SH="$CONDA_BASE/etc/profile.d/conda.sh"');
+    lines.push('export PATH="$CONDA_BASE/bin:$PATH"');
+    lines.push('if [ ! -f "$CONDA_SH" ]; then');
+    lines.push('  echo "ERROR: conda init script not found at $CONDA_SH" >> "$STDERR_LOG"');
+    lines.push('  exit 1');
+    lines.push('fi');
+    lines.push('source "$CONDA_SH"');
+    lines.push('if ! conda env list | awk \'{print $1}\' | grep -qx "$CONDA_ENV"; then');
+    lines.push('  echo "ERROR: conda env $CONDA_ENV not found" >> "$STDERR_LOG"');
+    lines.push('  conda env list >> "$STDERR_LOG" 2>&1 || true');
+    lines.push('  exit 1');
+    lines.push('fi');
+    lines.push('if ! conda activate "$CONDA_ENV" >> "$STDOUT_LOG" 2>> "$STDERR_LOG"; then');
+    lines.push('  echo "ERROR: failed to activate conda env $CONDA_ENV" >> "$STDERR_LOG"');
+    lines.push('  exit 1');
+    lines.push('fi');
+    lines.push('');
+  }
+
+  lines.push('# Resolve Nextflow binary');
+  lines.push('if command -v nextflow >/dev/null 2>&1; then');
+  lines.push('  NEXTFLOW_RUNNER=(nextflow)');
+  lines.push('  echo "Using nextflow: $(command -v nextflow)" >> "$STDOUT_LOG"');
+  lines.push('elif command -v conda >/dev/null 2>&1 && conda run -n "$CONDA_ENV" nextflow -version >/dev/null 2>&1; then');
+  lines.push('  NEXTFLOW_RUNNER=(conda run -n "$CONDA_ENV" nextflow)');
+  lines.push('  echo "Using nextflow via conda run in env $CONDA_ENV" >> "$STDOUT_LOG"');
+  lines.push('else');
+  lines.push('  echo "ERROR: nextflow not found after conda activation" >> "$STDERR_LOG"');
+  lines.push('  echo "PATH=$PATH" >> "$STDERR_LOG"');
+  lines.push('  if command -v conda >/dev/null 2>&1; then');
+  lines.push('    conda info --envs >> "$STDERR_LOG" 2>&1 || true');
+  lines.push('  fi');
+  lines.push('  exit 1');
+  lines.push('fi');
+
+  return lines.join('\n');
+}
+
 /**
  * Check if a rule condition matches the current config
  */
@@ -309,27 +358,7 @@ function generateSlurmScript(
   const dagFile = `${runFolder}/dag.dot`;
   const reportFile = `${runFolder}/report.html`;
   const timelineFile = `${runFolder}/timeline.html`;
-
-  // Build conda activation commands
-  const condaEnv = settings.condaEnv || 'seqdesk-pipelines';
-  let condaActivation = '# No conda path configured - using system PATH';
-  if (settings.condaPath) {
-    condaActivation = `# Initialize and activate conda environment
-export PATH="${settings.condaPath}/bin:$PATH"
-source "${settings.condaPath}/etc/profile.d/conda.sh"
-if ! conda env list | awk '{print $1}' | grep -qx "${condaEnv}"; then
-    echo "ERROR: conda env ${condaEnv} not found"
-    exit 1
-fi
-conda activate ${condaEnv}
-
-# Verify nextflow is available
-if ! command -v nextflow &> /dev/null; then
-    echo "ERROR: nextflow not found after conda activation"
-    exit 1
-fi
-echo "Using nextflow: $(which nextflow)"`;
-  }
+  const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
   const nameFlag = `-name ${runNumber}`;
   // Merge manifest profiles with admin-configured profile
@@ -354,6 +383,8 @@ echo "Using nextflow: $(which nextflow)"`;
   ].filter(Boolean).join(' \\\n  ');
 
   return `#!/bin/bash
+set -euo pipefail
+
 #SBATCH -p ${settings.slurmQueue || 'cpu'}
 #SBATCH -c ${settings.slurmCores || 4}
 #SBATCH --mem='${settings.slurmMemory || '64GB'}'
@@ -370,10 +401,10 @@ STDERR_LOG="${runFolder}/logs/pipeline.err"
 echo "Starting ${execution.pipeline} v${execution.version} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
-${condaActivation}
+${runtimeBootstrap}
 
 # Run ${execution.pipeline} v${execution.version}
-nextflow run ${execution.pipeline} \\
+"\${NEXTFLOW_RUNNER[@]}" run ${execution.pipeline} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
@@ -403,28 +434,7 @@ function generateLocalScript(
   const dagFile = `${runFolder}/dag.dot`;
   const reportFile = `${runFolder}/report.html`;
   const timelineFile = `${runFolder}/timeline.html`;
-
-  // Build conda activation commands
-  const condaEnv = settings.condaEnv || 'seqdesk-pipelines';
-  let condaActivation = '# No conda path configured - using system PATH';
-  if (settings.condaPath) {
-    condaActivation = `# Initialize and activate conda environment
-export PATH="${settings.condaPath}/bin:$PATH"
-source "${settings.condaPath}/etc/profile.d/conda.sh"
-if ! conda env list | awk '{print $1}' | grep -qx "${condaEnv}"; then
-    echo "ERROR: conda env ${condaEnv} not found" >> "$STDERR_LOG"
-    exit 1
-fi
-conda activate ${condaEnv}
-
-# Verify nextflow is available
-if ! command -v nextflow &> /dev/null; then
-    echo "ERROR: nextflow not found after conda activation" >> "$STDERR_LOG"
-    echo "PATH=$PATH" >> "$STDERR_LOG"
-    exit 1
-fi
-echo "Using nextflow: $(which nextflow)" >> "$STDOUT_LOG"`;
-  }
+  const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
   const nameFlag = `-name ${runNumber}`;
   // Merge manifest profiles with admin-configured profile
@@ -449,7 +459,7 @@ echo "Using nextflow: $(which nextflow)" >> "$STDOUT_LOG"`;
   ].filter(Boolean).join(' \\\n  ');
 
   return `#!/bin/bash
-set -e
+set -euo pipefail
 
 # Log file paths
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
@@ -458,10 +468,10 @@ STDERR_LOG="${runFolder}/logs/pipeline.err"
 echo "Starting ${execution.pipeline} v${execution.version} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
-${condaActivation}
+${runtimeBootstrap}
 
 # Run ${execution.pipeline} v${execution.version}
-nextflow run ${execution.pipeline} \\
+"\${NEXTFLOW_RUNNER[@]}" run ${execution.pipeline} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 

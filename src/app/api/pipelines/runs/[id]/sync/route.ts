@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { parseTraceFile, findTraceFile } from '@/lib/pipelines/nextflow';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
+import {
+  inferPipelineExitCode,
+  processCompletedPipelineRun,
+} from '@/lib/pipelines/run-completion';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -53,19 +57,24 @@ export async function POST(
     const tracePath = await findTraceFile(run.runFolder);
 
     if (!tracePath) {
-      // If no trace yet, optionally update status from SLURM queue
+      // If no trace yet, sync status from local process/SLURM queue state.
+      const now = new Date();
       const updateData: Record<string, unknown> = {};
       const jobId = run.queueJobId || '';
+      let queueState: string | null = null;
+      let queueReason: string | null = null;
+      let queueSource: 'local' | 'squeue' | 'sacct' | null = null;
+
       if (jobId.startsWith('local-')) {
         const pid = Number(jobId.replace('local-', ''));
         if (Number.isInteger(pid) && pid > 0) {
           try {
             await execFileAsync('ps', ['-p', String(pid), '-o', 'pid='], { timeout: 5000 });
-            updateData.queueStatus = 'RUNNING';
-            updateData.queueUpdatedAt = new Date();
+            queueState = 'RUNNING';
+            queueSource = 'local';
           } catch {
-            updateData.queueStatus = 'EXITED';
-            updateData.queueUpdatedAt = new Date();
+            queueState = 'EXITED';
+            queueSource = 'local';
           }
         }
       } else if (/^\d+$/.test(jobId)) {
@@ -74,21 +83,15 @@ export async function POST(
           const line = stdout.trim().split('\n').map((l) => l.trim()).filter(Boolean)[0] || '';
           if (line) {
             const [state, reason] = line.split('|');
-            updateData.queueStatus = state || 'UNKNOWN';
-            updateData.queueReason = reason || undefined;
-            updateData.queueUpdatedAt = new Date();
-            if (state?.toUpperCase() === 'RUNNING' && run.status === 'queued') {
-              updateData.status = 'running';
-              updateData.startedAt = run.startedAt || new Date();
-              updateData.lastEventAt = new Date();
-              updateData.statusSource = 'queue';
-            }
+            queueState = state || 'UNKNOWN';
+            queueReason = reason || null;
+            queueSource = 'squeue';
           }
         } catch {
           // Ignore and try sacct
         }
 
-        if (!updateData.queueStatus) {
+        if (!queueState) {
           try {
             const { stdout } = await execFileAsync(
               'sacct',
@@ -98,9 +101,9 @@ export async function POST(
             const line = stdout.trim().split('\n').map((l) => l.trim()).filter(Boolean)[0] || '';
             if (line) {
               const [state, reason] = line.split(/\s+/);
-              updateData.queueStatus = state || 'UNKNOWN';
-              updateData.queueReason = reason || undefined;
-              updateData.queueUpdatedAt = new Date();
+              queueState = state || 'UNKNOWN';
+              queueReason = reason || null;
+              queueSource = 'sacct';
             }
           } catch {
             // ignore
@@ -108,14 +111,95 @@ export async function POST(
         }
       }
 
+      if (queueState) {
+        updateData.queueStatus = queueState;
+        updateData.queueReason = queueReason || undefined;
+        updateData.queueUpdatedAt = now;
+      }
+
+      const normalizedQueueState = queueState ? queueState.toUpperCase() : null;
+      const isRunningQueueState = normalizedQueueState === 'RUNNING';
+      const isCompletedQueueState = normalizedQueueState === 'COMPLETED';
+      const isExitedLocalState = normalizedQueueState === 'EXITED';
+      const isCancelledQueueState =
+        normalizedQueueState?.startsWith('CANCELLED') ||
+        normalizedQueueState?.startsWith('CANCELED') ||
+        normalizedQueueState === 'REVOKED';
+      const isFailedQueueState = Boolean(
+        normalizedQueueState &&
+          (
+            normalizedQueueState.startsWith('FAILED') ||
+            normalizedQueueState === 'TIMEOUT' ||
+            normalizedQueueState === 'OUT_OF_MEMORY' ||
+            normalizedQueueState === 'NODE_FAIL' ||
+            normalizedQueueState === 'BOOT_FAIL' ||
+            normalizedQueueState === 'PREEMPTED' ||
+            normalizedQueueState === 'DEADLINE'
+          )
+      );
+
+      if (isRunningQueueState && run.status === 'queued') {
+        updateData.status = 'running';
+        updateData.startedAt = run.startedAt || now;
+        updateData.lastEventAt = now;
+        updateData.statusSource = 'queue';
+      }
+
+      const inTerminalCandidateState = ['pending', 'queued', 'running'].includes(run.status);
+      const shouldFinalize = inTerminalCandidateState && (isCompletedQueueState || isExitedLocalState || isCancelledQueueState || isFailedQueueState);
+
+      if (shouldFinalize) {
+        let inferredExitCode: number | null = null;
+        if (isCompletedQueueState || isExitedLocalState) {
+          inferredExitCode = await inferPipelineExitCode(run.runFolder);
+        }
+
+        const consideredSuccessful = isCompletedQueueState || (isExitedLocalState && inferredExitCode === 0);
+        if (consideredSuccessful) {
+          updateData.status = 'completed';
+          updateData.progress = 100;
+          updateData.currentStep = 'Completed';
+          updateData.completedAt = now;
+          updateData.statusSource = 'queue';
+          updateData.lastEventAt = now;
+          updateData.queueStatus = queueState || 'COMPLETED';
+        } else if (isCancelledQueueState) {
+          updateData.status = 'cancelled';
+          updateData.currentStep = 'Cancelled';
+          updateData.completedAt = now;
+          updateData.statusSource = 'queue';
+          updateData.lastEventAt = now;
+        } else {
+          updateData.status = 'failed';
+          updateData.currentStep = 'Failed';
+          updateData.completedAt = now;
+          updateData.statusSource = 'queue';
+          updateData.lastEventAt = now;
+        }
+      }
+
+      const nextStatus =
+        typeof updateData.status === 'string' ? (updateData.status as string) : run.status;
+
       if (Object.keys(updateData).length > 0) {
         await db.pipelineRun.update({ where: { id }, data: updateData });
+      }
+
+      if (nextStatus === 'completed' && run.status !== 'completed') {
+        try {
+          await processCompletedPipelineRun(id, run.pipelineId);
+        } catch (processError) {
+          console.error('[Sync Pipeline Run API] Post-completion processing failed:', processError);
+        }
       }
 
       return NextResponse.json({
         success: true,
         message: 'No trace file found yet',
         synced: false,
+        status: nextStatus,
+        queueStatus: queueState,
+        queueSource,
       });
     }
 
@@ -223,10 +307,10 @@ export async function POST(
       : traceResult.overallProgress;
 
     let nextStatus = run.status;
-    if (hasFailures) {
-      nextStatus = 'failed';
-    } else if (traceResult.overallProgress === 100 && hasTasks) {
+    if (traceResult.overallProgress === 100 && hasTasks) {
       nextStatus = 'completed';
+    } else if (hasFailures) {
+      nextStatus = 'failed';
     } else if (hasRunning) {
       nextStatus = 'running';
     }
@@ -269,6 +353,14 @@ export async function POST(
       where: { id },
       data: updateData,
     });
+
+    if (nextStatus === 'completed' && run.status !== 'completed') {
+      try {
+        await processCompletedPipelineRun(id, run.pipelineId);
+      } catch (processError) {
+        console.error('[Sync Pipeline Run API] Post-completion processing failed:', processError);
+      }
+    }
 
     return NextResponse.json({
       success: true,

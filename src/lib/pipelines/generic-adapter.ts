@@ -81,9 +81,32 @@ async function simpleGlob(pattern: string): Promise<string[]> {
 
   return matches;
 }
+
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasChecklistData(value: string | null): boolean {
+  if (!hasNonEmptyString(value)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.length > 0;
+    }
+    if (parsed && typeof parsed === 'object') {
+      return Object.keys(parsed).length > 0;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 import {
   getPackage,
-  type LoadedPackage,
+  getAllPackages,
   type PackageOutput,
 } from './package-loader';
 import { generateSamplesheetFromConfig } from './samplesheet-generator';
@@ -96,6 +119,7 @@ import {
   type DiscoverOutputsResult,
   type DiscoverOutputsOptions,
   type DiscoveredFile,
+  getAdapter,
   registerAdapter,
 } from './adapters/types';
 
@@ -307,15 +331,31 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         whereClause.id = { in: sampleIds };
       }
 
-      const samples = await db.sample.findMany({
-        where: whereClause,
-        include: {
-          reads: true,
-          order: {
-            select: { platform: true },
+      const [study, samples] = await Promise.all([
+        db.study.findUnique({
+          where: { id: studyId },
+          select: {
+            id: true,
+            studyAccessionId: true,
           },
-        },
-      });
+        }),
+        db.sample.findMany({
+          where: whereClause,
+          include: {
+            reads: true,
+            assemblies: true,
+            bins: true,
+            order: {
+              select: { platform: true },
+            },
+          },
+        }),
+      ]);
+
+      if (!study) {
+        issues.push('Study not found');
+        return { valid: false, issues };
+      }
 
       if (samples.length === 0) {
         issues.push('No samples found');
@@ -327,7 +367,8 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         if (!input.required) continue;
 
         if (input.scope === 'sample' && input.source === 'sample.reads') {
-          const paired = input.filters?.paired;
+          const paired = input.filters?.paired === true;
+          const checksums = input.filters?.checksums === true;
 
           for (const sample of samples) {
             if (sample.reads.length === 0) {
@@ -335,11 +376,27 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
               continue;
             }
 
-            if (paired === true) {
-              const pairedRead = sample.reads.find((r) => r.file1 && r.file2);
-              if (!pairedRead) {
+            const readsToValidate = paired
+              ? sample.reads.filter((r) => r.file1 && r.file2)
+              : sample.reads;
+
+            if (paired && readsToValidate.length === 0) {
+              issues.push(
+                `Sample ${sample.sampleId}: No paired-end reads (R1+R2) found`
+              );
+              continue;
+            }
+
+            if (checksums) {
+              const hasMissingChecksums = readsToValidate.some((read) => {
+                if (!hasNonEmptyString(read.checksum1)) return true;
+                if (paired && !hasNonEmptyString(read.checksum2)) return true;
+                return false;
+              });
+
+              if (hasMissingChecksums) {
                 issues.push(
-                  `Sample ${sample.sampleId}: No paired-end reads (R1+R2) found`
+                  `Sample ${sample.sampleId}: Read checksums are required`
                 );
               }
             }
@@ -353,6 +410,52 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
                 `Sample ${sample.sampleId}: Order platform is required`
               );
             }
+          }
+        }
+
+        if (input.scope === 'sample' && input.source === 'sample.assemblies') {
+          for (const sample of samples) {
+            const hasAssemblyFile = sample.assemblies.some((assembly) =>
+              hasNonEmptyString(assembly.assemblyFile)
+            );
+            if (!hasAssemblyFile) {
+              issues.push(`Sample ${sample.sampleId}: Assembly file is required`);
+            }
+          }
+        }
+
+        if (input.scope === 'sample' && input.source === 'sample.bins') {
+          for (const sample of samples) {
+            const hasBinFile = sample.bins.some((bin) =>
+              hasNonEmptyString(bin.binFile)
+            );
+            if (!hasBinFile) {
+              issues.push(`Sample ${sample.sampleId}: At least one bin file is required`);
+            }
+          }
+        }
+
+        if (input.scope === 'sample' && input.source === 'sample.taxId') {
+          for (const sample of samples) {
+            if (!hasNonEmptyString(sample.taxId)) {
+              issues.push(`Sample ${sample.sampleId}: taxId is required`);
+            }
+          }
+        }
+
+        if (input.scope === 'sample' && input.source === 'sample.checklistData') {
+          for (const sample of samples) {
+            if (!hasChecklistData(sample.checklistData)) {
+              issues.push(
+                `Sample ${sample.sampleId}: Checklist data is required and must be valid JSON`
+              );
+            }
+          }
+        }
+
+        if (input.scope === 'study' && input.source === 'study.studyAccessionId') {
+          if (!hasNonEmptyString(study.studyAccessionId)) {
+            issues.push('Study accession (PRJ*) is required');
           }
         }
       }
@@ -400,7 +503,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
       const parsedData = await runAllParsers(packageId, outputDir);
 
       // Collect parser errors
-      for (const [parserId, data] of parsedData) {
+      for (const [, data] of parsedData) {
         errors.push(...data.errors);
       }
 
@@ -463,9 +566,6 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
  * Note: If a custom adapter is already registered, it takes precedence.
  */
 export function registerGenericAdapters(): void {
-  const { getAllPackages } = require('./package-loader');
-  const { getAdapter } = require('./adapters/types');
-
   for (const pkg of getAllPackages()) {
     // Skip if a custom adapter is already registered
     if (getAdapter(pkg.id)) {

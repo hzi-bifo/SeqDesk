@@ -454,9 +454,9 @@ fi
 
 if [ -z "$PIPELINES_ENABLED" ]; then
     if command_exists conda; then
-        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "n"
+        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
     else
-        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "n"
+        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
     fi
 fi
 
@@ -518,6 +518,11 @@ git clone --branch "$SEQDESK_BRANCH" --depth 1 "$SEQDESK_REPO" "$SEQDESK_DIR"
 cd "$SEQDESK_DIR"
 
 print_success "Downloaded to $SEQDESK_DIR"
+
+INSTALLED_VERSION=""
+if command_exists node && [ -f package.json ]; then
+    INSTALLED_VERSION=$(node -p "try{const pkg=require('./package.json'); pkg.version||''}catch(e){''}" 2>/dev/null || true)
+fi
 
 # Install npm dependencies
 print_step "Installing Node dependencies"
@@ -630,6 +635,9 @@ print_header "Installation Complete!"
 
 echo -e "${GREEN}SeqDesk has been installed successfully!${NC}"
 echo ""
+if [ -n "$INSTALLED_VERSION" ]; then
+    echo "Installed version: v$INSTALLED_VERSION"
+fi
 echo "App directory: $SEQDESK_DIR"
 if [ -n "$NODE_VERSION" ]; then
     echo "Node: v$NODE_VERSION"

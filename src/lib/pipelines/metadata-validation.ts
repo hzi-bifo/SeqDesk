@@ -30,6 +30,10 @@ const PIPELINE_REQUIREMENTS: Record<string, {
     required: ['platform'],
     optional: ['instrumentModel', 'libraryStrategy'],
   },
+  submg: {
+    required: ['studyAccession', 'sampleMetadata', 'taxId', 'checksums', 'assemblies'],
+    optional: ['bins'],
+  },
 };
 
 const MAG_SHORT_READ_PLATFORM_OPTIONS = [
@@ -101,6 +105,20 @@ export async function validatePipelineMetadata(
     include: {
       samples: {
         include: {
+          reads: {
+            select: {
+              file1: true,
+              file2: true,
+              checksum1: true,
+              checksum2: true,
+            },
+          },
+          assemblies: {
+            select: { id: true, assemblyFile: true },
+          },
+          bins: {
+            select: { id: true },
+          },
           order: {
             select: {
               id: true,
@@ -137,6 +155,71 @@ export async function validatePipelineMetadata(
   if (!requirements) {
     // No specific requirements defined, assume valid
     return { valid: true, issues: [], metadata };
+  }
+
+  if (pipelineId === 'submg') {
+    if (!study.studyAccessionId) {
+      issues.push({
+        field: 'studyAccessionId',
+        message: 'Study must have an ENA accession (PRJ*) before SubMG submission',
+        severity: 'error',
+      });
+    }
+
+    for (const sample of study.samples) {
+      if (!sample.checklistData) {
+        issues.push({
+          field: 'checklistData',
+          message: `Sample ${sample.sampleId} is missing metadata (checklist data)`,
+          severity: 'error',
+        });
+      }
+
+      if (!sample.taxId) {
+        issues.push({
+          field: 'taxId',
+          message: `Sample ${sample.sampleId} is missing TAX_ID`,
+          severity: 'error',
+        });
+      }
+
+      const pairedReads = sample.reads.filter((read) => Boolean(read.file1 && read.file2));
+      if (pairedReads.length === 0) {
+        issues.push({
+          field: 'reads',
+          message: `Sample ${sample.sampleId} is missing paired-end read files`,
+          severity: 'error',
+        });
+      } else if (pairedReads.some((read) => !read.checksum1 || !read.checksum2)) {
+        issues.push({
+          field: 'checksums',
+          message: `Sample ${sample.sampleId} has paired reads without MD5 checksums`,
+          severity: 'error',
+        });
+      }
+
+      if (sample.assemblies.length === 0 || sample.assemblies.every((assembly) => !assembly.assemblyFile)) {
+        issues.push({
+          field: 'assemblies',
+          message: `Sample ${sample.sampleId} has no assembly file`,
+          severity: 'error',
+        });
+      }
+
+      if (sample.bins.length === 0) {
+        issues.push({
+          field: 'bins',
+          message: `Sample ${sample.sampleId} has no bins (optional, but recommended)`,
+          severity: 'warning',
+        });
+      }
+    }
+
+    return {
+      valid: issues.filter((issue) => issue.severity === 'error').length === 0,
+      issues,
+      metadata,
+    };
   }
 
   // Collect metadata from all orders

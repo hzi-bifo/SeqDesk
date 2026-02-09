@@ -29,6 +29,7 @@ import {
   RefreshCw,
   XCircle,
   Download,
+  Upload,
   ExternalLink,
   Package,
   Microscope,
@@ -161,6 +162,9 @@ function getPipelineIcon(icon: string) {
       return <Microscope className="h-6 w-6" />;
     case "download":
       return <Download className="h-6 w-6" />;
+    case "Upload":
+    case "upload":
+      return <Upload className="h-6 w-6" />;
     default:
       return <FlaskConical className="h-6 w-6" />;
   }
@@ -231,6 +235,8 @@ export default function PipelineSettingsPage() {
   const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
   const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [togglingPipeline, setTogglingPipeline] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   const compareVersions = (a?: string, b?: string) => {
     if (!a || !b) return 0;
@@ -403,6 +409,40 @@ export default function PipelineSettingsPage() {
     setSaving(false);
   };
 
+  const handleTogglePipelineEnabled = async (pipeline: PipelineConfig) => {
+    setTogglingPipeline(pipeline.pipelineId);
+    setToggleError(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: pipeline.pipelineId,
+          enabled: !pipeline.enabled,
+          config: pipeline.config,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          (payload &&
+            typeof payload === "object" &&
+            "error" in payload &&
+            typeof payload.error === "string" &&
+            payload.error) ||
+            "Failed to update pipeline state"
+        );
+      }
+      mutate();
+    } catch (err) {
+      setToggleError(
+        err instanceof Error ? err.message : "Failed to update pipeline state"
+      );
+    } finally {
+      setTogglingPipeline(null);
+    }
+  };
+
   const handleResetToDefaults = () => {
     if (selectedPipeline) {
       setLocalConfig({ ...selectedPipeline.defaultConfig });
@@ -540,6 +580,21 @@ export default function PipelineSettingsPage() {
             </div>
           )}
 
+          {toggleError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+              <XCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">{toggleError}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setToggleError(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -602,6 +657,12 @@ export default function PipelineSettingsPage() {
                                 )}
                                 <Badge variant="outline" className="text-xs font-normal">
                                   Installed
+                                </Badge>
+                                <Badge
+                                  variant={pipeline.enabled ? "outline" : "secondary"}
+                                  className="text-xs font-normal"
+                                >
+                                  {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
                                 {codeStatus === "downloaded" && (
                                   <Badge variant="outline" className="text-xs font-normal">
@@ -722,6 +783,20 @@ export default function PipelineSettingsPage() {
                                   : "Update"}
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleTogglePipelineEnabled(pipeline)}
+                              className="h-8"
+                              disabled={togglingPipeline === pipeline.pipelineId}
+                            >
+                              {togglingPipeline === pipeline.pipelineId ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Settings2 className="h-4 w-4 mr-1" />
+                              )}
+                              {pipeline.enabled ? "Disable" : "Enable"}
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
