@@ -1,0 +1,128 @@
+{
+  "id": "submg",
+  "name": "SubMG Submission",
+  "description": "Submit study data, reads, assemblies, and bins to ENA using submg",
+  "category": "submission",
+  "version": "1.0.0",
+  "website": "https://github.com/ttubb/submg",
+  "requires": {
+    "reads": true,
+    "assemblies": true,
+    "bins": false,
+    "checksums": true,
+    "studyAccession": true,
+    "sampleMetadata": true
+  },
+  "outputs": [
+    {
+      "type": "data",
+      "name": "sample_accessions",
+      "description": "Sample and BioSample accessions",
+      "model": "Sample",
+      "visibility": "both",
+      "downloadable": false
+    },
+    {
+      "type": "data",
+      "name": "read_accessions",
+      "description": "Run and experiment accessions",
+      "model": "Read",
+      "visibility": "both",
+      "downloadable": false
+    },
+    {
+      "type": "data",
+      "name": "assembly_accessions",
+      "description": "Assembly accession numbers",
+      "model": "Assembly",
+      "visibility": "both",
+      "downloadable": false
+    },
+    {
+      "type": "data",
+      "name": "bin_accessions",
+      "description": "Bin accession numbers",
+      "model": "Bin",
+      "visibility": "both",
+      "downloadable": false
+    },
+    {
+      "type": "report",
+      "name": "submission_logs",
+      "description": "Submission logs and receipts",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "study",
+      "samples"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": true,
+      "assemblies": true,
+      "bins": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "skipChecks": {
+        "type": "boolean",
+        "title": "Skip Validation Checks",
+        "description": "Pass --skip_checks to submg submit",
+        "default": true
+      },
+      "submitBins": {
+        "type": "boolean",
+        "title": "Submit Bins",
+        "description": "Submit bins when available",
+        "default": true
+      },
+      "condaEnv": {
+        "type": "string",
+        "title": "Conda Environment",
+        "description": "Environment containing submg CLI",
+        "default": "submg"
+      },
+      "assemblySoftware": {
+        "type": "string",
+        "title": "Assembly Software",
+        "description": "Value written to SubMG assembly manifest",
+        "default": "MEGAHIT"
+      },
+      "completenessSoftware": {
+        "type": "string",
+        "title": "Completeness Software",
+        "description": "Value written to SubMG bins manifest",
+        "default": "CheckM"
+      },
+      "binningSoftware": {
+        "type": "string",
+        "title": "Binning Software",
+        "description": "Value written to SubMG bins manifest",
+        "default": "MetaBAT2"
+      }
+    }
+  },
+  "defaultConfig": {
+    "skipChecks": true,
+    "submitBins": true,
+    "condaEnv": "submg",
+    "assemblySoftware": "MEGAHIT",
+    "completenessSoftware": "CheckM",
+    "binningSoftware": "MetaBAT2"
+  },
+  "icon": "Upload"
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +18,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Dna, FlaskConical, Loader2, Play, AlertCircle, CheckCircle2, XCircle, AlertTriangle, ChevronDown, Settings, ExternalLink } from "lucide-react";
+import { Dna, FlaskConical, Upload, Loader2, Play, AlertCircle, CheckCircle2, XCircle, AlertTriangle, ChevronDown, Settings, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -90,6 +90,8 @@ function getPipelineIcon(icon: string) {
   switch (icon) {
     case "Dna":
       return <Dna className="h-5 w-5" />;
+    case "Upload":
+      return <Upload className="h-5 w-5" />;
     default:
       return <FlaskConical className="h-5 w-5" />;
   }
@@ -148,7 +150,10 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
     checkSystem();
   }, []);
 
-  const enabledPipelines: Pipeline[] = pipelinesData?.pipelines || [];
+  const enabledPipelines: Pipeline[] = useMemo(
+    () => pipelinesData?.pipelines || [],
+    [pipelinesData]
+  );
 
   // Pre-check metadata for enabled pipelines
   useEffect(() => {
@@ -424,7 +429,13 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
         ) : (
           <div className="flex flex-wrap gap-3">
             {enabledPipelines.map((pipeline) => {
-              const canRun = pipeline.pipelineId === "mag" ? canRunMag : true;
+              const validation = metadataPrecheck[pipeline.pipelineId];
+              const hasMetadataErrors = validation
+                ? validation.issues.some((issue) => issue.severity === "error")
+                : pipeline.pipelineId === "submg";
+              const canRun =
+                (pipeline.pipelineId === "mag" ? canRunMag : true) &&
+                !hasMetadataErrors;
 
               return (
                 <Button

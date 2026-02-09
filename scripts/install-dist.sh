@@ -640,9 +640,9 @@ fi
 
 if [ -z "$PIPELINES_ENABLED" ]; then
     if command_exists conda; then
-        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "n"
+        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
     else
-        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "n"
+        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
     fi
 fi
 
@@ -777,6 +777,14 @@ print_success "Extracted"
 
 cd "$SEQDESK_DIR"
 
+INSTALLED_VERSION="$LATEST_VERSION"
+if command_exists node && [ -f package.json ]; then
+    DETECTED_VERSION=$(node -p "try{const pkg=require('./package.json'); pkg.version||''}catch(e){''}" 2>/dev/null || true)
+    if [ -n "$DETECTED_VERSION" ]; then
+        INSTALLED_VERSION="$DETECTED_VERSION"
+    fi
+fi
+
 # Configure environment
 print_step "Configuring environment"
 
@@ -853,6 +861,9 @@ else
         npx prisma db push $PRISMA_SKIP_GENERATE
     fi
 fi
+print_info "Seeding initial data..."
+npx prisma db seed
+
 print_success "Database initialized"
 
 # Pipeline environment
@@ -910,8 +921,9 @@ fi
 # Done
 print_header "Installation Complete!"
 
-echo -e "${GREEN}SeqDesk $LATEST_VERSION installed successfully!${NC}"
+echo -e "${GREEN}SeqDesk v$INSTALLED_VERSION installed successfully!${NC}"
 echo ""
+echo "Installed version: v$INSTALLED_VERSION"
 echo "App directory: $SEQDESK_DIR"
 echo "Node: v$NODE_VERSION"
 if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then

@@ -73,6 +73,7 @@ export async function GET(
           select: {
             id: true,
             binName: true,
+            binAccession: true,
             binFile: true,
             completeness: true,
             contamination: true,

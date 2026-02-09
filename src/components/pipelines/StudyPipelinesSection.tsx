@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import {
 import {
   Dna,
   FlaskConical,
+  Upload,
   Loader2,
   Play,
   AlertCircle,
@@ -160,6 +161,8 @@ function getPipelineIcon(icon: string) {
   switch (icon) {
     case "Dna":
       return <Dna className="h-5 w-5" />;
+    case "Upload":
+      return <Upload className="h-5 w-5" />;
     default:
       return <FlaskConical className="h-5 w-5" />;
   }
@@ -276,6 +279,9 @@ export function StudyPipelinesSection({
   const [metadataValidation, setMetadataValidation] =
     useState<MetadataValidation | null>(null);
   const [loadingMetadata, setLoadingMetadata] = useState(false);
+  const [metadataPrecheck, setMetadataPrecheck] = useState<
+    Record<string, MetadataValidation>
+  >({});
 
   // Pipeline definition for data flow display
   const [pipelineDefinition, setPipelineDefinition] = useState<{
@@ -313,8 +319,37 @@ export function StudyPipelinesSection({
     checkSystem();
   }, []);
 
-  const enabledPipelines: Pipeline[] = pipelinesData?.pipelines || [];
+  const enabledPipelines: Pipeline[] = useMemo(
+    () => pipelinesData?.pipelines || [],
+    [pipelinesData]
+  );
   const pipelineRuns: PipelineRun[] = runsData?.runs || [];
+
+  // Pre-check metadata for enabled pipelines so cards reflect runability
+  useEffect(() => {
+    const checkMetadata = async () => {
+      if (!enabledPipelines.length) return;
+
+      const checks: Record<string, MetadataValidation> = {};
+      for (const pipeline of enabledPipelines) {
+        try {
+          const res = await fetch("/api/pipelines/validate-metadata", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studyId, pipelineId: pipeline.pipelineId }),
+          });
+          if (res.ok) {
+            checks[pipeline.pipelineId] = await res.json();
+          }
+        } catch {
+          // Ignore errors in precheck
+        }
+      }
+      setMetadataPrecheck(checks);
+    };
+
+    checkMetadata();
+  }, [enabledPipelines, studyId]);
 
   // Check which pipelines can run based on data availability
   const samplesWithReads = samples.filter((s) =>
@@ -445,6 +480,14 @@ export function StudyPipelinesSection({
       }
 
       const runId = (createData as { run?: { id?: string } }).run?.id;
+      if (!runId) {
+        setRunResult({
+          success: false,
+          error: "Failed to create pipeline run",
+          details: ["Server returned success but no run ID was provided."],
+        });
+        return;
+      }
 
       // Step 2: Start the run
       const startRes = await fetch(`/api/pipelines/runs/${runId}/start`, {
@@ -556,8 +599,13 @@ export function StudyPipelinesSection({
           {/* Pipeline cards - admin-style */}
           <div className="grid gap-4 sm:grid-cols-2 mb-6">
             {enabledPipelines.map((pipeline) => {
+              const validation = metadataPrecheck[pipeline.pipelineId];
+              const hasMetadataErrors = validation
+                ? validation.issues.some((issue) => issue.severity === "error")
+                : pipeline.pipelineId === "submg";
               const canRun =
-                pipeline.pipelineId === "mag" ? canRunMag : true;
+                (pipeline.pipelineId === "mag" ? canRunMag : true) &&
+                !hasMetadataErrors;
               const category = pipeline.category || "metagenomics";
 
               return (

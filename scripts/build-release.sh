@@ -153,6 +153,13 @@ if [[ -n "${1:-}" ]]; then
 elif [[ -z "${PORT:-}" ]]; then
   export PORT=3000
 fi
+APP_VERSION=""
+if [[ -f package.json ]]; then
+  APP_VERSION=$(node -p "try { require('./package.json').version || '' } catch (e) { '' }" 2>/dev/null || true)
+fi
+if [[ -n "$APP_VERSION" ]]; then
+  echo "SeqDesk version: v${APP_VERSION}"
+fi
 exec node server.js
 EOF
 chmod +x "${RELEASE_DIR}/start.sh"

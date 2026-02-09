@@ -450,15 +450,26 @@ async function restartApplication(): Promise<void> {
     // Not running under PM2
   }
 
-  // For systemd:
+  // For systemd user service (no sudo required):
   try {
-    await execAsync('sudo systemctl restart seqdesk');
+    await execAsync('systemctl --user restart seqdesk');
     return;
   } catch {
-    // Not running under systemd
+    // Not running as a user service
+  }
+
+  // For systemd system service.
+  // Use non-interactive sudo to avoid hanging on password prompts during updates.
+  try {
+    await execAsync('sudo -n systemctl restart seqdesk');
+    return;
+  } catch {
+    // Not running under systemd or sudo requires a password
   }
 
   // Fallback: Exit and let the process manager restart us
-  console.log('Update complete. Please restart the application manually.');
+  console.log(
+    'Update complete. Automatic restart unavailable. Please restart SeqDesk manually.'
+  );
   process.exit(0);
 }

@@ -16,6 +16,9 @@ import {
 } from "@/components/ui/table";
 import {
   ArrowLeft,
+  AlertTriangle,
+  Check,
+  Copy,
   Loader2,
   RefreshCw,
   StopCircle,
@@ -132,6 +135,39 @@ function formatEventType(value?: string | null): string {
   return value.replace(/_/g, " ");
 }
 
+function getLastLogLine(content?: string | null): string | null {
+  if (!content) return null;
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (let idx = lines.length - 1; idx >= 0; idx -= 1) {
+    const line = lines[idx];
+    if (line.toLowerCase().startsWith("pipeline completed with exit code")) {
+      continue;
+    }
+    return line;
+  }
+  return null;
+}
+
+function buildFailureSignals(signals: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const signal of signals) {
+    const value = signal?.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+
+  return result;
+}
+
 interface Run {
   id: string;
   runNumber: string;
@@ -214,6 +250,10 @@ export default function AnalysisRunDetailPage({
   const [retryError, setRetryError] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [checkingQueue, setCheckingQueue] = useState(false);
+  const [copyingDebugBundle, setCopyingDebugBundle] = useState(false);
+  const [debugBundleCopied, setDebugBundleCopied] = useState(false);
+  const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
+  const [showPipelineProgress, setShowPipelineProgress] = useState(true);
   const router = useRouter();
 
   const { data, error, isLoading, mutate } = useSWR(
@@ -553,6 +593,33 @@ export default function AnalysisRunDetailPage({
     }
   };
 
+  const handleCopyDebugBundle = async () => {
+    setCopyingDebugBundle(true);
+    setDebugBundleError(null);
+    setDebugBundleCopied(false);
+    try {
+      const res = await fetch(`/api/pipelines/runs/${id}/debug?format=text`);
+      if (!res.ok) {
+        setDebugBundleError(`Failed to build session info (HTTP ${res.status})`);
+        return;
+      }
+
+      const text = await res.text();
+      if (!text.trim()) {
+        setDebugBundleError("Session info is empty");
+        return;
+      }
+
+      await navigator.clipboard.writeText(text);
+      setDebugBundleCopied(true);
+      setTimeout(() => setDebugBundleCopied(false), 3000);
+    } catch {
+      setDebugBundleError("Failed to copy session info");
+    } finally {
+      setCopyingDebugBundle(false);
+    }
+  };
+
   const fetchQueueStatus = useCallback(async () => {
     const runId = run?.id;
     const queueJobId = run?.queueJobId;
@@ -582,12 +649,20 @@ export default function AnalysisRunDetailPage({
 
   useEffect(() => {
     if (!run?.queueJobId) return;
-    if (!["running", "queued", "pending"].includes(run.status)) return;
+
+    if (!["running", "queued", "pending"].includes(run.status)) {
+      void fetchQueueStatus();
+      return;
+    }
 
     void fetchQueueStatus();
     const interval = setInterval(fetchQueueStatus, 20000);
     return () => clearInterval(interval);
   }, [run?.queueJobId, run?.status, fetchQueueStatus]);
+
+  useEffect(() => {
+    setShowPipelineProgress(run?.status !== "failed");
+  }, [run?.id, run?.status]);
 
   if (isLoading) {
     return (
@@ -665,6 +740,23 @@ export default function AnalysisRunDetailPage({
     : run?.queueStatus
       ? "text-muted-foreground"
       : "text-muted-foreground";
+  const detectedSlurmLogs = (run.detectedLogFiles || []).filter((file) =>
+    file.name.startsWith("slurm-")
+  );
+  const failureSignals = buildFailureSignals([
+    run.status === "failed" ? getLastLogLine(run.errorTail) : null,
+    run.status === "failed" ? getLastLogLine(run.outputTail) : null,
+    run.status === "failed" && queueBadge?.reason
+      ? `Queue reason: ${queueBadge.reason}`
+      : null,
+    run.status === "failed" ? resultErrors[0] : null,
+  ]);
+  const primaryFailureSignal =
+    failureSignals[0] ||
+    (run.status === "failed"
+      ? "Run failed before Nextflow completed. Open logs for details."
+      : null);
+  const secondaryFailureSignals = failureSignals.slice(1, 4);
 
   return (
     <PageContainer>
@@ -753,92 +845,269 @@ export default function AnalysisRunDetailPage({
         <div className="mb-4 text-sm text-destructive">{retryError}</div>
       )}
 
+      <GlassCard
+        className={
+          run.status === "failed"
+            ? "mb-6 border-destructive/40 bg-destructive/5"
+            : "mb-6"
+        }
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Run Health</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              {run.status === "failed"
+                ? "Primary failure reason and queue diagnostics."
+                : "Current queue and launcher status at a glance."}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {run.queueJobId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchQueueStatus}
+                disabled={checkingQueue}
+              >
+                {checkingQueue ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : null}
+                Check queue
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyDebugBundle}
+              disabled={copyingDebugBundle}
+            >
+              {copyingDebugBundle ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : debugBundleCopied ? (
+                <Check className="h-4 w-4 mr-2 text-green-600" />
+              ) : (
+                <Copy className="h-4 w-4 mr-2" />
+              )}
+              Copy session info
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                document.getElementById("logs-section")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+            >
+              Go to logs
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                document.getElementById("files-section")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+            >
+              Go to files
+            </Button>
+          </div>
+        </div>
+        {debugBundleError && (
+          <p className="mt-3 text-sm text-destructive">{debugBundleError}</p>
+        )}
+        {debugBundleCopied && (
+          <p className="mt-3 text-sm text-green-700">
+            Session info copied. Paste it directly in chat.
+          </p>
+        )}
+
+        <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+          <div className="rounded-md border bg-background/70 p-3">
+            <dt className="text-muted-foreground">Queue</dt>
+            <dd className="font-medium mt-1">
+              {queueStatusLine || "Not available"}
+            </dd>
+          </div>
+          <div className="rounded-md border bg-background/70 p-3">
+            <dt className="text-muted-foreground">Status Source</dt>
+            <dd className="font-medium mt-1">
+              {formatStatusSource(run.statusSource)}
+            </dd>
+          </div>
+          <div className="rounded-md border bg-background/70 p-3">
+            <dt className="text-muted-foreground">Last Event</dt>
+            <dd className="font-medium mt-1">
+              {lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}
+            </dd>
+          </div>
+          <div className="rounded-md border bg-background/70 p-3">
+            <dt className="text-muted-foreground">Queue Job ID</dt>
+            <dd className="font-mono text-sm mt-1">{run.queueJobId || "-"}</dd>
+          </div>
+        </dl>
+
+        {run.status === "failed" && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-start gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <p className="text-sm font-medium">{primaryFailureSignal}</p>
+            </div>
+            {secondaryFailureSignals.map((signal) => (
+              <p key={signal} className="text-sm text-muted-foreground">
+                {signal}
+              </p>
+            ))}
+            {detectedSlurmLogs.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Detected SLURM logs:{" "}
+                <span className="font-mono">
+                  {detectedSlurmLogs.map((file) => file.name).join(", ")}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
+      </GlassCard>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main content - 2 columns */}
         <div className="lg:col-span-2 space-y-6">
           {/* Pipeline Steps - DAG or List View */}
-          <GlassCard>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Pipeline Progress</h2>
-              <div className="flex items-center gap-1 bg-muted rounded-md p-1">
-                <Button
-                  variant={viewMode === "dag" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-7 px-2"
-                  onClick={() => setViewMode("dag")}
-                >
-                  <GitBranch className="h-4 w-4 mr-1" />
-                  DAG
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-7 px-2"
-                  onClick={() => setViewMode("list")}
-                >
-                  <List className="h-4 w-4 mr-1" />
-                  List
-                </Button>
-              </div>
-            </div>
-
-            {viewMode === "dag" && defData?.nodes && defData?.edges ? (
-              <PipelineProgressViewer
-                nodes={defData.nodes}
-                edges={defData.edges}
-                stepStatuses={stepStatuses}
-                inputFiles={inputFiles}
-                outputFiles={outputFiles}
-                showFiles={true}
-                runStatus={run.status}
-                currentStepId={currentStepId}
-                currentStepLabel={currentStepLabel}
-                className="min-h-[500px]"
-              />
-            ) : viewMode === "dag" && !defData ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <div className="relative">
-                {stepRows.map((step, index) => (
-                  <div key={step.id} className="flex items-start gap-4 mb-4 last:mb-0">
-                    <div className="flex flex-col items-center">
-                      {getStepIcon(step.status)}
-                      {index < stepRows.length - 1 && (
-                        <div className="w-0.5 h-8 bg-border mt-2" />
-                      )}
-                    </div>
-                    <div className="flex-1 pb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{step.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {step.status}
-                        </Badge>
-                      </div>
-                      {step.startedAt && (
-                        <p className="text-sm text-muted-foreground">
-                          Started: {new Date(step.startedAt).toLocaleString()}
-                          {step.completedAt && (
-                            <> - Completed: {new Date(step.completedAt).toLocaleString()}</>
-                          )}
-                        </p>
-                      )}
-                    </div>
+          {showPipelineProgress ? (
+            <GlassCard>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Pipeline Progress</h2>
+                <div className="flex items-center gap-2">
+                  {run.status === "failed" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowPipelineProgress(false)}
+                    >
+                      Hide for now
+                    </Button>
+                  )}
+                  <div className="flex items-center gap-1 bg-muted rounded-md p-1">
+                    <Button
+                      variant={viewMode === "dag" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => setViewMode("dag")}
+                    >
+                      <GitBranch className="h-4 w-4 mr-1" />
+                      DAG
+                    </Button>
+                    <Button
+                      variant={viewMode === "list" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => setViewMode("list")}
+                    >
+                      <List className="h-4 w-4 mr-1" />
+                      List
+                    </Button>
                   </div>
-                ))}
-
-                {stepRows.length === 0 && (
-                  <p className="text-muted-foreground text-center py-4">
-                    No steps recorded yet
-                  </p>
-                )}
+                </div>
               </div>
-            )}
+
+              {viewMode === "dag" && defData?.nodes && defData?.edges ? (
+                <PipelineProgressViewer
+                  nodes={defData.nodes}
+                  edges={defData.edges}
+                  stepStatuses={stepStatuses}
+                  inputFiles={inputFiles}
+                  outputFiles={outputFiles}
+                  showFiles={true}
+                  runStatus={run.status}
+                  currentStepId={currentStepId}
+                  currentStepLabel={currentStepLabel}
+                  className="min-h-[500px]"
+                />
+              ) : viewMode === "dag" && !defData ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="relative">
+                  {stepRows.map((step, index) => (
+                    <div key={step.id} className="flex items-start gap-4 mb-4 last:mb-0">
+                      <div className="flex flex-col items-center">
+                        {getStepIcon(step.status)}
+                        {index < stepRows.length - 1 && (
+                          <div className="w-0.5 h-8 bg-border mt-2" />
+                        )}
+                      </div>
+                      <div className="flex-1 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{step.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {step.status}
+                          </Badge>
+                        </div>
+                        {step.startedAt && (
+                          <p className="text-sm text-muted-foreground">
+                            Started: {new Date(step.startedAt).toLocaleString()}
+                            {step.completedAt && (
+                              <> - Completed: {new Date(step.completedAt).toLocaleString()}</>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {stepRows.length === 0 && (
+                    <p className="text-muted-foreground text-center py-4">
+                      No steps recorded yet
+                    </p>
+                  )}
+                </div>
+              )}
+            </GlassCard>
+          ) : (
+            <GlassCard>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Pipeline Progress</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Hidden to keep failure diagnostics in focus.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowPipelineProgress(true)}
+                >
+                  Show progress
+                </Button>
+              </div>
+            </GlassCard>
+          )}
+
+          {/* Logs */}
+          <GlassCard id="logs-section">
+            <h2 className="text-lg font-semibold mb-4">
+              Logs
+              {run.status === "running" && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  (live)
+                </span>
+              )}
+            </h2>
+            <LiveLogViewer
+              runId={run.id}
+              isRunning={run.status === "running"}
+              initialOutputTail={run.outputTail}
+              initialErrorTail={run.errorTail}
+            />
           </GlassCard>
 
           {/* Pipeline Files Browser */}
-          <GlassCard>
+          <GlassCard id="files-section">
             <h2 className="text-lg font-semibold mb-4">Pipeline Files</h2>
             <PipelineFileBrowser
               inputFiles={inputFiles}
@@ -918,23 +1187,6 @@ export default function AnalysisRunDetailPage({
             </>
           )}
 
-          {/* Logs */}
-          <GlassCard>
-            <h2 className="text-lg font-semibold mb-4">
-              Logs
-              {run.status === "running" && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  (live)
-                </span>
-              )}
-            </h2>
-            <LiveLogViewer
-              runId={run.id}
-              isRunning={run.status === "running"}
-              initialOutputTail={run.outputTail}
-              initialErrorTail={run.errorTail}
-            />
-          </GlassCard>
         </div>
 
         {/* Sidebar - 1 column */}
@@ -988,51 +1240,31 @@ export default function AnalysisRunDetailPage({
                   <dd>{new Date(run.completedAt).toLocaleString()}</dd>
                 </div>
               )}
-              <div>
-                <dt className="text-sm text-muted-foreground">Last Event</dt>
-                <dd>{lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-sm text-muted-foreground">Last Weblog</dt>
-                <dd>{run.lastWeblogAt ? new Date(run.lastWeblogAt).toLocaleString() : "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-sm text-muted-foreground">Last Trace</dt>
-                <dd>{run.lastTraceAt ? new Date(run.lastTraceAt).toLocaleString() : "-"}</dd>
-              </div>
-              {run.queueJobId && (
-                <div>
-                  <dt className="text-sm text-muted-foreground">Queue Job</dt>
-                  <dd className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm">{run.queueJobId}</span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchQueueStatus}
-                        disabled={checkingQueue}
-                      >
-                        {checkingQueue ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          "Check queue"
-                        )}
-                      </Button>
-                    </div>
-                    {queueStatusLine && (
-                      <p className={`text-xs ${queueStatusTone}`}>
-                        {queueStatusLine}
-                      </p>
-                    )}
-                  </dd>
-                </div>
-              )}
-              <div>
-                <dt className="text-sm text-muted-foreground">Status Source</dt>
-                <dd>{formatStatusSource(run.statusSource)}</dd>
-              </div>
             </dl>
           </GlassCard>
+
+          {run.queueJobId && (
+            <GlassCard>
+              <h2 className="text-lg font-semibold mb-4">Queue Job</h2>
+              <div className="space-y-2">
+                <p className="font-mono text-sm">{run.queueJobId}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchQueueStatus}
+                  disabled={checkingQueue}
+                >
+                  {checkingQueue ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : null}
+                  Check queue
+                </Button>
+                {queueStatusLine && (
+                  <p className={`text-xs ${queueStatusTone}`}>{queueStatusLine}</p>
+                )}
+              </div>
+            </GlassCard>
+          )}
 
           {/* Event Feed */}
           <GlassCard>

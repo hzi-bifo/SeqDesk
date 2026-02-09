@@ -1,0 +1,98 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "submg",
+    "name": "SubMG ENA Submission",
+    "version": "1.0.0",
+    "description": "Submit reads, assemblies, and bins to ENA using submg",
+    "website": "https://github.com/ttubb/submg",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md"
+  },
+  "inputs": [
+    {
+      "id": "paired_reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true,
+      "filters": {
+        "paired": true,
+        "checksums": true
+      }
+    },
+    {
+      "id": "sample_taxonomy",
+      "scope": "sample",
+      "source": "sample.taxId",
+      "required": true
+    },
+    {
+      "id": "sample_metadata",
+      "scope": "sample",
+      "source": "sample.checklistData",
+      "required": true
+    },
+    {
+      "id": "assemblies",
+      "scope": "sample",
+      "source": "sample.assemblies",
+      "required": true
+    },
+    {
+      "id": "bins",
+      "scope": "sample",
+      "source": "sample.bins",
+      "required": false
+    },
+    {
+      "id": "study_accession",
+      "scope": "study",
+      "source": "study.studyAccessionId",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./submg",
+    "version": "1.0.0",
+    "profiles": ["conda"],
+    "defaultParams": {
+      "skipChecks": true,
+      "submitBins": true,
+      "condaEnv": "submg",
+      "assemblySoftware": "MEGAHIT",
+      "completenessSoftware": "CheckM",
+      "binningSoftware": "MetaBAT2"
+    },
+    "paramMap": {
+      "skipChecks": "--skip_checks",
+      "submitBins": "--submit_bins"
+    }
+  },
+  "outputs": [
+    {
+      "id": "submission_logs",
+      "scope": "run",
+      "destination": "run_artifact",
+      "discovery": {
+        "pattern": "logging*/**/*"
+      }
+    },
+    {
+      "id": "submission_summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "discovery": {
+        "pattern": "submg-metadata.json"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": ["Sample", "Read", "Assembly", "Bin", "PipelineRun", "PipelineArtifact"]
+  }
+}

@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { checkDatabaseStatus } from "@/lib/db-status";
 import { Database, Terminal, CheckCircle2, AlertCircle, ArrowRight } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function SetupPage() {
   // Check if database is already configured
   const status = await checkDatabaseStatus();

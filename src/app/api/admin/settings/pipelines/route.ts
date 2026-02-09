@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
         category: definition.category,
         version: definition.version,
         icon: definition.icon,
-        enabled: true,
+        enabled: dbConfig ? dbConfig.enabled : true,
         config: dbConfig?.config ? JSON.parse(dbConfig.config) : definition.defaultConfig,
         configSchema: definition.configSchema,
         defaultConfig: definition.defaultConfig,
@@ -84,22 +84,25 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { pipelineId, config } = body;
+    const { pipelineId, config, enabled } = body;
 
     if (!pipelineId || !PIPELINE_REGISTRY[pipelineId]) {
       return NextResponse.json({ error: 'Invalid pipeline ID' }, { status: 400 });
     }
+
+    const effectiveEnabled =
+      typeof enabled === 'boolean' ? enabled : true;
 
     // Upsert the configuration
     const result = await db.pipelineConfig.upsert({
       where: { pipelineId },
       create: {
         pipelineId,
-        enabled: true,
+        enabled: effectiveEnabled,
         config: config ? JSON.stringify(config) : null,
       },
       update: {
-        enabled: true,
+        enabled: effectiveEnabled,
         config: config ? JSON.stringify(config) : null,
       },
     });

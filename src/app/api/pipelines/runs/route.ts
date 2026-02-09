@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
+import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
+import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 
 // GET - List pipeline runs
 export async function GET(request: NextRequest) {
@@ -130,6 +132,29 @@ export async function POST(request: NextRequest) {
       if (invalidIds.length > 0) {
         return NextResponse.json(
           { error: `Invalid sample IDs: ${invalidIds.join(', ')}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Validate pipeline-specific input prerequisites before creating the run
+    let adapter = getAdapter(pipelineId);
+    if (!adapter) {
+      const genericAdapter = createGenericAdapter(pipelineId);
+      if (genericAdapter) {
+        registerAdapter(genericAdapter);
+        adapter = genericAdapter;
+      }
+    }
+
+    if (adapter) {
+      const validation = await adapter.validateInputs(studyId, sampleIds);
+      if (!validation.valid) {
+        return NextResponse.json(
+          {
+            error: 'Pipeline input validation failed',
+            details: validation.issues,
+          },
           { status: 400 }
         );
       }

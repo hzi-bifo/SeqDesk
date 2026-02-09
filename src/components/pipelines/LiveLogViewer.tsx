@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw, Download, Pause, Play, CheckCircle2, Loader2, XCircle, Clock, Copy, Check } from "lucide-react";
 
@@ -35,10 +35,12 @@ export function LiveLogViewer({
   const [copied, setCopied] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
   const errorRef = useRef<HTMLPreElement>(null);
+  const outputUrl = `/api/pipelines/runs/${runId}/logs?type=output&tail=200`;
+  const errorUrl = `/api/pipelines/runs/${runId}/logs?type=error&tail=200`;
 
-  // Poll for output logs when running
+  // Poll for output logs when running, but fetch once for finished/failed runs
   const { data: outputData, mutate: mutateOutput } = useSWR(
-    isRunning ? `/api/pipelines/runs/${runId}/logs?type=output&tail=200` : null,
+    outputUrl,
     fetcher,
     {
       refreshInterval: isRunning ? 3000 : 0,
@@ -46,9 +48,9 @@ export function LiveLogViewer({
     }
   );
 
-  // Poll for error logs when running
+  // Poll for error logs when running, but fetch once for finished/failed runs
   const { data: errorData, mutate: mutateError } = useSWR(
-    isRunning ? `/api/pipelines/runs/${runId}/logs?type=error&tail=200` : null,
+    errorUrl,
     fetcher,
     {
       refreshInterval: isRunning ? 3000 : 0,
@@ -58,7 +60,7 @@ export function LiveLogViewer({
 
   const outputContent = outputData?.content || initialOutputTail || "";
   const errorContent = errorData?.content || initialErrorTail || "";
-  const steps: StepInfo[] = outputData?.steps || [];
+  const steps: StepInfo[] = useMemo(() => outputData?.steps || [], [outputData?.steps]);
 
   // Notify parent of step updates
   useEffect(() => {

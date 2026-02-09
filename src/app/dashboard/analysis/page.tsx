@@ -35,7 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, Dna, FlaskConical, MoreHorizontal, Square } from "lucide-react";
+import { Loader2, RefreshCw, Dna, FlaskConical, Upload, MoreHorizontal, Square } from "lucide-react";
 import Link from "next/link";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -71,6 +71,8 @@ function getPipelineIcon(icon: string) {
   switch (icon) {
     case "Dna":
       return <Dna className="h-4 w-4" />;
+    case "Upload":
+      return <Upload className="h-4 w-4" />;
     default:
       return <FlaskConical className="h-4 w-4" />;
   }

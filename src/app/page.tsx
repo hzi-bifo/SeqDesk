@@ -21,7 +21,10 @@ export default function HomePage() {
   useEffect(() => {
     const checkDatabase = async () => {
       try {
-        const res = await fetch("/api/setup/status");
+        const res = await fetch("/api/setup/status", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error("Failed to load setup status");
+        }
         const status = await res.json();
         if (!status.exists || !status.configured) {
           router.replace("/setup");

@@ -179,6 +179,7 @@ model Assembly {
 model Bin {
   id                         String       @id @default(cuid())
   binName                    String?
+  binAccession               String?
   binFile                    String?
   completeness               Float?
   contamination              Float?
