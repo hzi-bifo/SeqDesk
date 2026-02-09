@@ -593,13 +593,13 @@ PRISMA_SKIP_GENERATE=""
 if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
     PRISMA_SKIP_GENERATE="--skip-generate"
 fi
+if command_exists node && [ -f package.json ]; then
+    PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
+    PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
+fi
 if [ -x "$PRISMA_CLI" ]; then
     "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
 else
-    if command_exists node && [ -f package.json ]; then
-        PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
-        PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
-    fi
     if [ -n "$PRISMA_VERSION" ]; then
         print_info "Using Prisma CLI v$PRISMA_VERSION"
         npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
@@ -609,7 +609,14 @@ else
 fi
 
 print_info "Seeding initial data..."
-npx prisma db seed
+if [ -x "$PRISMA_CLI" ]; then
+    "$PRISMA_CLI" db seed
+elif [ -n "$PRISMA_VERSION" ]; then
+    print_info "Using Prisma CLI v$PRISMA_VERSION for seeding"
+    npx prisma@"$PRISMA_VERSION" db seed
+else
+    npx prisma db seed
+fi
 
 print_success "Database initialized"
 

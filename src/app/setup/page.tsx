@@ -8,34 +8,55 @@ export const revalidate = 0;
 export default async function SetupPage() {
   // Check if database is already configured
   const status = await checkDatabaseStatus();
+  const appDir = process.cwd();
 
   // If everything is set up, redirect to login
   if (status.exists && status.configured) {
     redirect("/login");
   }
 
-  const steps = [
-    {
-      title: "Navigate to the v2 directory",
-      command: "cd v2",
-      description: "Make sure you're in the Next.js application directory",
-    },
-    {
-      title: "Create the database and tables",
-      command: "npx prisma db push",
-      description: "This creates the SQLite database file and all required tables",
-    },
-    {
-      title: "Seed initial data",
-      command: "npx prisma db seed",
-      description: "Creates default users, departments, and form configurations",
-    },
-    {
-      title: "Start the application",
-      command: "npm run dev",
-      description: "Then refresh this page or go to /login",
-    },
-  ];
+  const needsSeedOnly = status.exists && !status.configured;
+
+  const steps = needsSeedOnly
+    ? [
+        {
+          title: "Go to your SeqDesk directory",
+          command: `cd ${appDir}`,
+          description: "Run the following commands from your SeqDesk install directory",
+        },
+        {
+          title: "Seed initial data",
+          command: "npm run db:seed",
+          description: "Creates default users, departments, and form configurations",
+        },
+        {
+          title: "Restart SeqDesk",
+          command: "pm2 restart seqdesk",
+          description: "If not using PM2, restart your normal app process instead",
+        },
+      ]
+    : [
+        {
+          title: "Go to your SeqDesk directory",
+          command: `cd ${appDir}`,
+          description: "Run the following commands from your SeqDesk install directory",
+        },
+        {
+          title: "Create the database and tables",
+          command: "npx prisma db push",
+          description: "This creates the database file and all required tables",
+        },
+        {
+          title: "Seed initial data",
+          command: "npm run db:seed",
+          description: "Creates default users, departments, and form configurations",
+        },
+        {
+          title: "Restart SeqDesk",
+          command: "pm2 restart seqdesk",
+          description: "If not using PM2, restart your normal app process instead",
+        },
+      ];
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
