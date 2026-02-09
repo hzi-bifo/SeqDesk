@@ -1,62 +1,53 @@
-import { redirect } from "next/navigation";
-import { checkDatabaseStatus } from "@/lib/db-status";
-import { Database, Terminal, CheckCircle2, AlertCircle, ArrowRight } from "lucide-react";
+"use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Database, CheckCircle2, Loader2 } from "lucide-react";
 
-export default async function SetupPage() {
-  // Check if database is already configured
-  const status = await checkDatabaseStatus();
-  const appDir = process.cwd();
+type DbStatus = {
+  exists: boolean;
+  configured: boolean;
+  error?: string;
+};
 
-  // If everything is set up, redirect to login
-  if (status.exists && status.configured) {
-    redirect("/login");
-  }
+export default function SetupPage() {
+  const router = useRouter();
+  const [status, setStatus] = useState<DbStatus | null>(null);
+  const [failed, setFailed] = useState(false);
 
-  const needsSeedOnly = status.exists && !status.configured;
+  useEffect(() => {
+    let attempts = 0;
+    const maxAttempts = 15;
 
-  const steps = needsSeedOnly
-    ? [
-        {
-          title: "Go to your SeqDesk directory",
-          command: `cd ${appDir}`,
-          description: "Run the following commands from your SeqDesk install directory",
-        },
-        {
-          title: "Seed initial data",
-          command: "npm run db:seed",
-          description: "Creates default users, departments, and form configurations",
-        },
-        {
-          title: "Restart SeqDesk",
-          command: "pm2 restart seqdesk",
-          description: "If not using PM2, restart your normal app process instead",
-        },
-      ]
-    : [
-        {
-          title: "Go to your SeqDesk directory",
-          command: `cd ${appDir}`,
-          description: "Run the following commands from your SeqDesk install directory",
-        },
-        {
-          title: "Create the database and tables",
-          command: "npx prisma db push",
-          description: "This creates the database file and all required tables",
-        },
-        {
-          title: "Seed initial data",
-          command: "npm run db:seed",
-          description: "Creates default users, departments, and form configurations",
-        },
-        {
-          title: "Restart SeqDesk",
-          command: "pm2 restart seqdesk",
-          description: "If not using PM2, restart your normal app process instead",
-        },
-      ];
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("/api/setup/status", { cache: "no-store" });
+        if (!res.ok) throw new Error("Failed to check status");
+        const data: DbStatus = await res.json();
+        setStatus(data);
+
+        if (data.exists && data.configured) {
+          router.replace("/login");
+          return;
+        }
+
+        attempts++;
+        if (attempts >= maxAttempts) {
+          setFailed(true);
+        }
+      } catch {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          setFailed(true);
+        }
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 2000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -66,79 +57,90 @@ export default async function SetupPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-secondary mb-4">
             <Database className="h-8 w-8 text-foreground" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Database Setup Required</h1>
+          <h1 className="text-3xl font-bold text-foreground mb-2">
+            {failed ? "Database Setup Required" : "Setting Up Database..."}
+          </h1>
           <p className="text-muted-foreground">
-            Welcome to SeqDesk! The database needs to be initialized before you can use the application.
+            {failed
+              ? "Automatic setup could not be completed. Please follow the manual steps below."
+              : "Creating initial users, settings, and form configurations. This only takes a moment."}
           </p>
         </div>
 
         {/* Status Card */}
         <div className="bg-card rounded-2xl border border-border p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-amber-500" />
+            {!failed ? (
+              <Loader2 className="h-5 w-5 animate-spin text-foreground" />
+            ) : (
+              <Database className="h-5 w-5 text-foreground" />
+            )}
             Current Status
           </h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3 text-sm">
-              <div className={`h-2 w-2 rounded-full ${status.exists ? "bg-emerald-500" : "bg-red-500"}`} />
+              <div
+                className={`h-2 w-2 rounded-full ${status?.exists ? "bg-emerald-500" : "bg-red-500"}`}
+              />
               <span className="text-muted-foreground">Database file:</span>
-              <span className={status.exists ? "text-emerald-600" : "text-red-600"}>
-                {status.exists ? "Found" : "Not found"}
+              <span className={status?.exists ? "text-emerald-600" : "text-red-600"}>
+                {status === null ? "Checking..." : status.exists ? "Found" : "Not found"}
               </span>
             </div>
             <div className="flex items-center gap-3 text-sm">
-              <div className={`h-2 w-2 rounded-full ${status.configured ? "bg-emerald-500" : "bg-red-500"}`} />
+              <div
+                className={`h-2 w-2 rounded-full ${
+                  !failed && !status?.configured
+                    ? "bg-amber-500 animate-pulse"
+                    : status?.configured
+                      ? "bg-emerald-500"
+                      : "bg-red-500"
+                }`}
+              />
               <span className="text-muted-foreground">Initial data:</span>
-              <span className={status.configured ? "text-emerald-600" : "text-red-600"}>
-                {status.configured ? "Configured" : "Not seeded"}
+              <span
+                className={
+                  !failed && !status?.configured
+                    ? "text-amber-600"
+                    : status?.configured
+                      ? "text-emerald-600"
+                      : "text-red-600"
+                }
+              >
+                {status === null
+                  ? "Checking..."
+                  : !failed && !status.configured
+                    ? "Setting up..."
+                    : status.configured
+                      ? "Configured"
+                      : "Not seeded"}
               </span>
             </div>
-            {status.error && (
-              <div className="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-                {status.error}
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Setup Instructions */}
-        <div className="bg-card rounded-2xl border border-border p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Terminal className="h-5 w-5 text-foreground" />
-            Setup Instructions
-          </h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            Run the following commands in your terminal to set up the database:
-          </p>
-
-          <div className="space-y-4">
-            {steps.map((step, index) => (
-              <div key={index} className="relative">
-                {index < steps.length - 1 && (
-                  <div className="absolute left-4 top-10 bottom-0 w-px bg-border" />
-                )}
-                <div className="flex gap-4">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-secondary text-foreground flex items-center justify-center text-sm font-medium">
-                    {index + 1}
-                  </div>
-                  <div className="flex-1 pb-4">
-                    <h3 className="font-medium text-foreground mb-1">{step.title}</h3>
-                    <p className="text-sm text-muted-foreground mb-2">{step.description}</p>
-                    <div className="bg-foreground rounded-lg p-3 font-mono text-sm text-background flex items-center justify-between group">
-                      <code>{step.command}</code>
-                      <button
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-background text-xs"
-                        title="Copy command"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
+        {/* Manual steps - only shown if auto-seed failed */}
+        {failed && (
+          <div className="bg-card rounded-2xl border border-border p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-4">Manual Setup</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Run the following commands in your SeqDesk directory:
+            </p>
+            <div className="space-y-3">
+              {!status?.exists && (
+                <div className="bg-foreground rounded-lg p-3 font-mono text-sm text-background">
+                  <code>npx prisma db push</code>
                 </div>
+              )}
+              <div className="bg-foreground rounded-lg p-3 font-mono text-sm text-background">
+                <code>npm run db:seed</code>
               </div>
-            ))}
+            </div>
+            <p className="text-sm text-muted-foreground mt-4">
+              Then refresh this page.
+            </p>
           </div>
-        </div>
+        )}
 
         {/* Default Credentials */}
         <div className="bg-card rounded-2xl border border-border p-6 mb-6">
@@ -147,38 +149,40 @@ export default async function SetupPage() {
             Default Login Credentials
           </h2>
           <p className="text-sm text-muted-foreground mb-4">
-            After seeding, you can log in with these accounts:
+            After setup, you can log in with these accounts:
           </p>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="p-4 rounded-lg bg-secondary border border-border">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Admin Account</div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Admin Account
+              </div>
               <div className="space-y-1 text-sm">
-                <div><span className="text-muted-foreground">Email:</span> <code className="text-foreground">admin@example.com</code></div>
-                <div><span className="text-muted-foreground">Password:</span> <code className="text-foreground">admin</code></div>
+                <div>
+                  <span className="text-muted-foreground">Email:</span>{" "}
+                  <code className="text-foreground">admin@example.com</code>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Password:</span>{" "}
+                  <code className="text-foreground">admin</code>
+                </div>
               </div>
             </div>
             <div className="p-4 rounded-lg bg-secondary border border-border">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Researcher Account</div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Researcher Account
+              </div>
               <div className="space-y-1 text-sm">
-                <div><span className="text-muted-foreground">Email:</span> <code className="text-foreground">user@example.com</code></div>
-                <div><span className="text-muted-foreground">Password:</span> <code className="text-foreground">user</code></div>
+                <div>
+                  <span className="text-muted-foreground">Email:</span>{" "}
+                  <code className="text-foreground">user@example.com</code>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Password:</span>{" "}
+                  <code className="text-foreground">user</code>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Refresh Button */}
-        <div className="text-center">
-          <a
-            href="/setup"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90 transition-colors"
-          >
-            Check Again
-            <ArrowRight className="h-4 w-4" />
-          </a>
-          <p className="text-sm text-muted-foreground mt-3">
-            Click after running the setup commands to check if the database is ready.
-          </p>
         </div>
       </div>
     </div>

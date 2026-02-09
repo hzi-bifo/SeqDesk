@@ -1,19 +1,19 @@
 {
   "name": "seqdesk",
-  "version": "1.1.32",
+  "version": "1.1.33",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "node prisma/seed.mjs",
     "pipeline:validate": "tsx scripts/validate-pipeline-package.ts",
     "pipeline:monitor": "tsx scripts/pipeline-monitor.ts",
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node prisma/seed.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
