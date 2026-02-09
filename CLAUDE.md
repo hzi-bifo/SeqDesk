@@ -125,3 +125,15 @@ vim pipelines/<pipeline-name>/definition.json
 
 **Available pipelines:**
 - `mag` - Metagenome assembly and binning
+
+## Release Process
+
+The landing page / website repo is at `/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk.com`.
+
+When making a new release:
+1. Bump version in `package.json`
+2. Commit and push
+3. Run `scripts/build-release.sh` to create the tarball
+4. Run `scripts/release.sh` to upload and publish (or `node scripts/upload-release.js <version>`)
+5. Add the release entry to `SeqDesk.com/src/data/releases.json`
+6. Commit and push the SeqDesk.com repo to deploy the landing page update
