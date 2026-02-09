@@ -862,16 +862,35 @@ else
     fi
 fi
 print_info "Seeding initial data..."
+SEED_OK="false"
 if [ -x "$PRISMA_CLI" ]; then
-    "$PRISMA_CLI" db seed
+    if "$PRISMA_CLI" db seed; then
+        SEED_OK="true"
+    fi
 elif [ -n "$PRISMA_VERSION" ]; then
     print_info "Using Prisma CLI v$PRISMA_VERSION for seeding"
-    npx prisma@"$PRISMA_VERSION" db seed
+    if npx prisma@"$PRISMA_VERSION" db seed; then
+        SEED_OK="true"
+    fi
 else
-    npx prisma db seed
+    if npx prisma db seed; then
+        SEED_OK="true"
+    fi
 fi
-
-print_success "Database initialized"
+# Fallback: run seed.mjs directly if prisma db seed failed
+if [ "$SEED_OK" = "false" ]; then
+    print_info "Prisma seed command failed, trying direct seed..."
+    if [ -f prisma/seed.mjs ] && node prisma/seed.mjs; then
+        SEED_OK="true"
+    elif [ -f prisma/seed.js ] && node prisma/seed.js; then
+        SEED_OK="true"
+    fi
+fi
+if [ "$SEED_OK" = "true" ]; then
+    print_success "Database initialized"
+else
+    print_info "Seed did not complete during install -- the app will auto-seed on first launch"
+fi
 
 # Pipeline environment
 print_step "Pipeline environment"

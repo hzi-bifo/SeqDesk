@@ -51,7 +51,7 @@ const MAG_SHORT_READ_PLATFORM_OPTIONS = [
 ];
 
 const MAG_SHORT_READ_PLATFORM_MAPPING: Record<string, string> = {
-  // Standard form values (from seed.ts)
+  // Standard form values (from prisma/seed.mjs)
   'illumina': 'ILLUMINA',
   'ion_torrent': 'ION_TORRENT',
   'bgi': 'BGISEQ',
