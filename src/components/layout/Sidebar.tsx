@@ -217,11 +217,11 @@ export function Sidebar({ user, version }: SidebarProps) {
         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
 
-  const adminSubItemClass = (path: string) =>
+  const adminSubItemClass = (path: string, exact = false) =>
     cn(
       "block px-3 py-1.5 rounded-lg transition-all text-sm",
       collapsed ? "ml-0 text-center" : "ml-7",
-      isActive(path)
+      (exact ? pathname === path : isActive(path))
         ? "bg-secondary text-foreground font-medium"
         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
@@ -689,8 +689,11 @@ export function Sidebar({ user, version }: SidebarProps) {
                 <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
                   Data Upload
                 </Link>
-                <Link href="/admin/settings" className={adminSubItemClass("/admin/settings")}>
-                  Info
+                <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
+                  Settings
+                </Link>
+                <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
+                  Pipelines
                 </Link>
               </div>
             </>

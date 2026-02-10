@@ -6,6 +6,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -262,6 +263,8 @@ export default function AnalysisRunDetailPage({
   const [copiedCommandKey, setCopiedCommandKey] = useState<string | null>(null);
   const [commandCopyError, setCommandCopyError] = useState<string | null>(null);
   const [showPipelineProgress, setShowPipelineProgress] = useState(true);
+  const [activeTab, setActiveTab] = useState<"overview" | "health">("overview");
+  const [queueHeartbeatAt, setQueueHeartbeatAt] = useState<string | null>(null);
   const router = useRouter();
 
   const { data, error, isLoading, mutate } = useSWR(
@@ -641,6 +644,18 @@ export default function AnalysisRunDetailPage({
     }
   };
 
+  const goToSection = useCallback((sectionId: string) => {
+    setActiveTab("overview");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById(sectionId)?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }, []);
+
   const fetchQueueStatus = useCallback(async () => {
     const runId = run?.id;
     const queueJobId = run?.queueJobId;
@@ -658,6 +673,9 @@ export default function AnalysisRunDetailPage({
       }
       const data = (await res.json()) as QueueStatus;
       setQueueStatus(data);
+      if (data.available && data.status) {
+        setQueueHeartbeatAt(new Date().toISOString());
+      }
     } catch {
       setQueueStatus({
         available: false,
@@ -685,6 +703,11 @@ export default function AnalysisRunDetailPage({
     setShowPipelineProgress(run?.status !== "failed");
   }, [run?.id, run?.status]);
 
+  useEffect(() => {
+    setActiveTab("overview");
+    setQueueHeartbeatAt(null);
+  }, [run?.id]);
+
   if (isLoading) {
     return (
       <PageContainer>
@@ -711,21 +734,59 @@ export default function AnalysisRunDetailPage({
     );
   }
 
-  const lastEventAt = (() => {
-    if (!run) return null;
-    const candidates = [
-      run.lastEventAt,
-      run.lastWeblogAt,
-      run.lastTraceAt,
-      run.queuedAt,
-      run.startedAt,
-      run.updatedAt,
-      run.createdAt,
-    ]
-      .filter((value): value is string => Boolean(value))
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    return candidates[0] || null;
+  const latestEventSnapshot = (() => {
+    if (!run) {
+      return {
+        timestamp: null as string | null,
+        source: null as string | null,
+      };
+    }
+
+    const candidates: Array<{ timestamp?: string | null; source?: string | null }> = [
+      { timestamp: run.lastEventAt, source: run.statusSource || null },
+      { timestamp: run.lastWeblogAt, source: "weblog" },
+      { timestamp: run.lastTraceAt, source: "trace" },
+      { timestamp: run.queueUpdatedAt, source: "queue" },
+      {
+        timestamp: ["running", "queued", "pending"].includes(run.status)
+          ? queueHeartbeatAt
+          : null,
+        source: "queue",
+      },
+      { timestamp: run.startedAt, source: "launcher" },
+      { timestamp: run.queuedAt, source: "queue" },
+      { timestamp: run.updatedAt, source: null },
+      { timestamp: run.createdAt, source: null },
+    ];
+
+    let latest: { timestamp: string; source: string | null; time: number } | null = null;
+    for (const candidate of candidates) {
+      if (!candidate.timestamp) continue;
+      const time = new Date(candidate.timestamp).getTime();
+      if (Number.isNaN(time)) continue;
+      if (!latest || time > latest.time) {
+        latest = {
+          timestamp: candidate.timestamp,
+          source: candidate.source || null,
+          time,
+        };
+      }
+    }
+
+    if (!latest) {
+      return {
+        timestamp: null,
+        source: run.statusSource || null,
+      };
+    }
+
+    return {
+      timestamp: latest.timestamp,
+      source: latest.source || run.statusSource || null,
+    };
   })();
+  const lastEventAt = latestEventSnapshot.timestamp;
+  const lastEventSource = latestEventSnapshot.source;
   const lastUpdateAgeMs = lastEventAt
     ? Date.now() - new Date(lastEventAt).getTime()
     : null;
@@ -844,7 +905,7 @@ export default function AnalysisRunDetailPage({
             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
               <span>Last event: {formatRelativeTime(lastEventAt)}</span>
               <Badge variant="outline" className="text-xs">
-                Source: {formatStatusSource(run.statusSource)}
+                Source: {formatStatusSource(lastEventSource)}
               </Badge>
               {queueBadge && queueBadge.status && (
                 <Badge
@@ -902,182 +963,185 @@ export default function AnalysisRunDetailPage({
         <div className="mb-4 text-sm text-destructive">{retryError}</div>
       )}
 
-      <GlassCard
-        className={
-          run.status === "failed"
-            ? "mb-6 border-destructive/40 bg-destructive/5"
-            : "mb-6"
-        }
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as "overview" | "health")}
+        className="mb-6"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">Run Health</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {run.status === "failed"
-                ? "Primary failure reason and queue diagnostics."
-                : "Current queue and launcher status at a glance."}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            {run.queueJobId && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={fetchQueueStatus}
-                disabled={checkingQueue}
-              >
-                {checkingQueue ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : null}
-                Check queue
-              </Button>
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="health">Run Health</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="mt-0" />
+        <TabsContent value="health" className="mt-4">
+          <GlassCard
+            className={
+              run.status === "failed"
+                ? "border-destructive/40 bg-destructive/5"
+                : undefined
+            }
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold">Run Health</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {run.status === "failed"
+                    ? "Primary failure reason and queue diagnostics."
+                    : "Current queue and launcher status at a glance."}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {run.queueJobId && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchQueueStatus}
+                    disabled={checkingQueue}
+                  >
+                    {checkingQueue ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    Check queue
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyDebugBundle}
+                  disabled={copyingDebugBundle}
+                >
+                  {copyingDebugBundle ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : debugBundleCopied ? (
+                    <Check className="h-4 w-4 mr-2 text-green-600" />
+                  ) : (
+                    <Copy className="h-4 w-4 mr-2" />
+                  )}
+                  Copy session info
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToSection("logs-section")}
+                >
+                  Go to logs
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToSection("files-section")}
+                >
+                  Go to files
+                </Button>
+              </div>
+            </div>
+            {debugBundleError && (
+              <p className="mt-3 text-sm text-destructive">{debugBundleError}</p>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCopyDebugBundle}
-              disabled={copyingDebugBundle}
-            >
-              {copyingDebugBundle ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : debugBundleCopied ? (
-                <Check className="h-4 w-4 mr-2 text-green-600" />
-              ) : (
-                <Copy className="h-4 w-4 mr-2" />
-              )}
-              Copy session info
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                document.getElementById("logs-section")?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "start",
-                })
-              }
-            >
-              Go to logs
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                document.getElementById("files-section")?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "start",
-                })
-              }
-            >
-              Go to files
-            </Button>
-          </div>
-        </div>
-        {debugBundleError && (
-          <p className="mt-3 text-sm text-destructive">{debugBundleError}</p>
-        )}
-        {debugBundleCopied && (
-          <p className="mt-3 text-sm text-green-700">
-            Session info copied. Paste it directly in chat.
-          </p>
-        )}
-
-        <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-          <div className="rounded-md border bg-background/70 p-3">
-            <dt className="text-muted-foreground">Queue</dt>
-            <dd className="font-medium mt-1">
-              {queueStatusLine || "Not available"}
-            </dd>
-          </div>
-          <div className="rounded-md border bg-background/70 p-3">
-            <dt className="text-muted-foreground">Status Source</dt>
-            <dd className="font-medium mt-1">
-              {formatStatusSource(run.statusSource)}
-            </dd>
-          </div>
-          <div className="rounded-md border bg-background/70 p-3">
-            <dt className="text-muted-foreground">Last Event</dt>
-            <dd className="font-medium mt-1">
-              {lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}
-            </dd>
-          </div>
-          <div className="rounded-md border bg-background/70 p-3">
-            <dt className="text-muted-foreground">Queue Job ID</dt>
-            <dd className="font-mono text-sm mt-1">{run.queueJobId || "-"}</dd>
-          </div>
-        </dl>
-
-        {(run.executionCommands?.scriptPath || commandEntries.length > 0) && (
-          <div className="mt-4 rounded-md border bg-background/70 p-3">
-            <h3 className="text-sm font-semibold">Reproduce Manually</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Run these on the same host where SeqDesk starts pipelines.
-            </p>
-
-            {run.executionCommands?.scriptPath && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Script:{" "}
-                <span className="font-mono break-all">
-                  {run.executionCommands.scriptPath}
-                </span>
+            {debugBundleCopied && (
+              <p className="mt-3 text-sm text-green-700">
+                Session info copied. Paste it directly in chat.
               </p>
             )}
 
-            <div className="mt-3 space-y-3">
-              {commandEntries.map((entry) => (
-                <div key={entry.key} className="rounded-md border bg-muted/40 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium">{entry.label}</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleCopyCommand(entry.value, entry.key)}
-                    >
-                      {copiedCommandKey === entry.key ? (
-                        <Check className="h-4 w-4 mr-2 text-green-600" />
-                      ) : (
-                        <Copy className="h-4 w-4 mr-2" />
-                      )}
-                      {copiedCommandKey === entry.key ? "Copied" : "Copy"}
-                    </Button>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {entry.description}
+            <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+              <div className="rounded-md border bg-background/70 p-3">
+                <dt className="text-muted-foreground">Queue</dt>
+                <dd className="font-medium mt-1">
+                  {queueStatusLine || "Not available"}
+                </dd>
+              </div>
+              <div className="rounded-md border bg-background/70 p-3">
+                <dt className="text-muted-foreground">Status Source</dt>
+                <dd className="font-medium mt-1">
+                  {formatStatusSource(lastEventSource)}
+                </dd>
+              </div>
+              <div className="rounded-md border bg-background/70 p-3">
+                <dt className="text-muted-foreground">Last Event</dt>
+                <dd className="font-medium mt-1">
+                  {lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}
+                </dd>
+              </div>
+              <div className="rounded-md border bg-background/70 p-3">
+                <dt className="text-muted-foreground">Queue Job ID</dt>
+                <dd className="font-mono text-sm mt-1">{run.queueJobId || "-"}</dd>
+              </div>
+            </dl>
+
+            {(run.executionCommands?.scriptPath || commandEntries.length > 0) && (
+              <div className="mt-4 rounded-md border bg-background/70 p-3">
+                <h3 className="text-sm font-semibold">Reproduce Manually</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Run these on the same host where SeqDesk starts pipelines.
+                </p>
+
+                {run.executionCommands?.scriptPath && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Script:{" "}
+                    <span className="font-mono break-all">
+                      {run.executionCommands.scriptPath}
+                    </span>
                   </p>
-                  <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs font-mono">
-                    {entry.value}
-                  </pre>
-                </div>
-              ))}
-            </div>
-            {commandCopyError && (
-              <p className="mt-2 text-xs text-destructive">{commandCopyError}</p>
-            )}
-          </div>
-        )}
+                )}
 
-        {run.status === "failed" && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-start gap-2 text-destructive">
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-              <p className="text-sm font-medium">{primaryFailureSignal}</p>
-            </div>
-            {secondaryFailureSignals.map((signal) => (
-              <p key={signal} className="text-sm text-muted-foreground">
-                {signal}
-              </p>
-            ))}
-            {detectedSlurmLogs.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Detected SLURM logs:{" "}
-                <span className="font-mono">
-                  {detectedSlurmLogs.map((file) => file.name).join(", ")}
-                </span>
-              </p>
+                <div className="mt-3 space-y-3">
+                  {commandEntries.map((entry) => (
+                    <div key={entry.key} className="rounded-md border bg-muted/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium">{entry.label}</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleCopyCommand(entry.value, entry.key)}
+                        >
+                          {copiedCommandKey === entry.key ? (
+                            <Check className="h-4 w-4 mr-2 text-green-600" />
+                          ) : (
+                            <Copy className="h-4 w-4 mr-2" />
+                          )}
+                          {copiedCommandKey === entry.key ? "Copied" : "Copy"}
+                        </Button>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {entry.description}
+                      </p>
+                      <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs font-mono">
+                        {entry.value}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+                {commandCopyError && (
+                  <p className="mt-2 text-xs text-destructive">{commandCopyError}</p>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </GlassCard>
+
+            {run.status === "failed" && (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-start gap-2 text-destructive">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <p className="text-sm font-medium">{primaryFailureSignal}</p>
+                </div>
+                {secondaryFailureSignals.map((signal) => (
+                  <p key={signal} className="text-sm text-muted-foreground">
+                    {signal}
+                  </p>
+                ))}
+                {detectedSlurmLogs.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Detected SLURM logs:{" "}
+                    <span className="font-mono">
+                      {detectedSlurmLogs.map((file) => file.name).join(", ")}
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
+          </GlassCard>
+        </TabsContent>
+      </Tabs>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main content - 2 columns */}
