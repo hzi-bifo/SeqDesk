@@ -5,6 +5,11 @@ import { db } from '@/lib/db';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
+import {
+  detectRuntimePlatform,
+  isMacOsArmRuntime,
+  resolveCondaBin,
+} from '@/lib/pipelines/runtime-platform';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { spawn, exec } from 'child_process';
@@ -21,25 +26,6 @@ async function commandExists(command: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function resolveCondaBin(condaPath?: string): Promise<string | null> {
-  if (condaPath) {
-    const possiblePaths = [
-      path.join(condaPath, 'condabin', 'conda'),
-      path.join(condaPath, 'bin', 'conda'),
-    ];
-    for (const p of possiblePaths) {
-      try {
-        await fs.access(p);
-        return p;
-      } catch {
-        // try next
-      }
-    }
-  }
-
-  return (await commandExists('conda')) ? 'conda' : null;
 }
 
 function resolveEffectiveProfile(
@@ -245,14 +231,16 @@ export async function POST(
 
     const pipelineId = run.pipelineId;
     const isSubmgPipeline = pipelineId === 'submg';
+    const runtimePlatform = await detectRuntimePlatform(executionSettings.condaPath);
+    const runtimeDetails = `${runtimePlatform.raw} (${runtimePlatform.source})`;
 
     if (
       !isSubmgPipeline &&
       executionSettings.runtimeMode === 'conda' &&
-      process.platform === 'darwin' &&
-      process.arch === 'arm64'
+      !executionSettings.useSlurm &&
+      isMacOsArmRuntime(runtimePlatform)
     ) {
-      const message = 'Conda runtime on macOS ARM is not supported for nf-core/mag (packages like bowtie2 are unavailable). Use a Linux/SLURM server instead.';
+      const message = `Conda runtime on macOS ARM is not supported for nf-core/mag (detected: ${runtimeDetails}; packages like bowtie2 are unavailable). Use a Linux/SLURM server instead.`;
       await db.pipelineRun.update({
         where: { id },
         data: {
@@ -264,6 +252,11 @@ export async function POST(
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
+    }
+    if (executionSettings.useSlurm && isMacOsArmRuntime(runtimePlatform)) {
+      console.warn(
+        `[Start Pipeline] macOS ARM controller detected (${runtimeDetails}), but proceeding because SLURM is enabled.`
+      );
     }
 
     const forbiddenProfiles = new Set(['docker', 'singularity', 'apptainer', 'podman']);

@@ -16,6 +16,80 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+async function extractPipelineCommand(scriptPath: string): Promise<string | null> {
+  try {
+    const content = await fs.readFile(scriptPath, 'utf-8');
+    const lines = content.split(/\r?\n/);
+    const startIndex = lines.findIndex((line) => {
+      const trimmed = line.trim();
+      return (
+        trimmed.startsWith('"${NEXTFLOW_RUNNER[@]}" run ') ||
+        trimmed.startsWith('"$SUBMG_BIN" submit ')
+      );
+    });
+
+    if (startIndex < 0) return null;
+
+    const commandLines: string[] = [];
+    for (let idx = startIndex; idx < lines.length; idx += 1) {
+      const trimmed = lines[idx].trim();
+      if (!trimmed) {
+        if (commandLines.length > 0) break;
+        continue;
+      }
+      commandLines.push(trimmed);
+      if (!trimmed.endsWith('\\')) break;
+    }
+
+    if (commandLines.length === 0) return null;
+
+    return commandLines
+      .map((line) => line.replace(/\\\s*$/, '').trim())
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
+async function buildExecutionCommands(
+  runFolder: string | null,
+  queueJobId: string | null
+): Promise<{
+  scriptPath: string | null;
+  launchCommand: string | null;
+  scriptCommand: string | null;
+  pipelineCommand: string | null;
+}> {
+  if (!runFolder) {
+    return {
+      scriptPath: null,
+      launchCommand: null,
+      scriptCommand: null,
+      pipelineCommand: null,
+    };
+  }
+
+  const scriptPath = path.join(runFolder, 'run.sh');
+  const scriptExists = await fileExists(scriptPath);
+  const isLocalRun = Boolean(queueJobId?.startsWith('local-'));
+  const launchCommand = isLocalRun
+    ? `cd ${shellQuote(runFolder)} && bash ${shellQuote(scriptPath)}`
+    : `cd ${shellQuote(runFolder)} && sbatch --parsable ${shellQuote(scriptPath)}`;
+
+  return {
+    scriptPath,
+    launchCommand,
+    scriptCommand: `bash ${shellQuote(scriptPath)}`,
+    pipelineCommand: scriptExists ? await extractPipelineCommand(scriptPath) : null,
+  };
+}
+
 // GET - Get run details
 export async function GET(
   request: NextRequest,
@@ -223,6 +297,11 @@ export async function GET(
       }
     }
 
+    const executionCommands = await buildExecutionCommands(
+      run.runFolder,
+      run.queueJobId
+    );
+
     // Convert BigInt fields to numbers so JSON.stringify doesn't throw
     const serializedArtifacts = run.artifacts.map((a) => ({
       ...a,
@@ -240,6 +319,7 @@ export async function GET(
       inputFiles,
       detectedLogFiles,
       artifacts: serializedArtifacts,
+      executionCommands,
     };
 
     return NextResponse.json({ run: response });

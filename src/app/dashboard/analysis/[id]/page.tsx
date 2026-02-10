@@ -198,6 +198,12 @@ interface Run {
   queueStatus?: string | null;
   queueReason?: string | null;
   queueUpdatedAt?: string | null;
+  executionCommands?: {
+    scriptPath: string | null;
+    launchCommand: string | null;
+    scriptCommand: string | null;
+    pipelineCommand: string | null;
+  };
   study: {
     id: string;
     title: string;
@@ -253,6 +259,8 @@ export default function AnalysisRunDetailPage({
   const [copyingDebugBundle, setCopyingDebugBundle] = useState(false);
   const [debugBundleCopied, setDebugBundleCopied] = useState(false);
   const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
+  const [copiedCommandKey, setCopiedCommandKey] = useState<string | null>(null);
+  const [commandCopyError, setCommandCopyError] = useState<string | null>(null);
   const [showPipelineProgress, setShowPipelineProgress] = useState(true);
   const router = useRouter();
 
@@ -620,6 +628,19 @@ export default function AnalysisRunDetailPage({
     }
   };
 
+  const handleCopyCommand = async (command: string, key: string) => {
+    setCommandCopyError(null);
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopiedCommandKey(key);
+      setTimeout(() => {
+        setCopiedCommandKey((current) => (current === key ? null : current));
+      }, 3000);
+    } catch {
+      setCommandCopyError("Failed to copy command");
+    }
+  };
+
   const fetchQueueStatus = useCallback(async () => {
     const runId = run?.id;
     const queueJobId = run?.queueJobId;
@@ -757,6 +778,42 @@ export default function AnalysisRunDetailPage({
       ? "Run failed before Nextflow completed. Open logs for details."
       : null);
   const secondaryFailureSignals = failureSignals.slice(1, 4);
+  const commandEntries: Array<{
+    key: string;
+    label: string;
+    description: string;
+    value: string;
+  }> = [];
+
+  if (run.executionCommands?.launchCommand) {
+    commandEntries.push({
+      key: "launch",
+      label: "SeqDesk launcher command",
+      description:
+        "This is the same command SeqDesk uses to submit the run.",
+      value: run.executionCommands.launchCommand,
+    });
+  }
+
+  if (run.executionCommands?.scriptCommand) {
+    commandEntries.push({
+      key: "script",
+      label: "Run script directly",
+      description:
+        "Use this to execute the generated run script manually.",
+      value: run.executionCommands.scriptCommand,
+    });
+  }
+
+  if (run.executionCommands?.pipelineCommand) {
+    commandEntries.push({
+      key: "pipeline",
+      label: "Pipeline command in run.sh",
+      description:
+        "Primary command found inside run.sh (variables are resolved in the script).",
+      value: run.executionCommands.pipelineCommand,
+    });
+  }
 
   return (
     <PageContainer>
@@ -949,6 +1006,55 @@ export default function AnalysisRunDetailPage({
             <dd className="font-mono text-sm mt-1">{run.queueJobId || "-"}</dd>
           </div>
         </dl>
+
+        {(run.executionCommands?.scriptPath || commandEntries.length > 0) && (
+          <div className="mt-4 rounded-md border bg-background/70 p-3">
+            <h3 className="text-sm font-semibold">Reproduce Manually</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Run these on the same host where SeqDesk starts pipelines.
+            </p>
+
+            {run.executionCommands?.scriptPath && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Script:{" "}
+                <span className="font-mono break-all">
+                  {run.executionCommands.scriptPath}
+                </span>
+              </p>
+            )}
+
+            <div className="mt-3 space-y-3">
+              {commandEntries.map((entry) => (
+                <div key={entry.key} className="rounded-md border bg-muted/40 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium">{entry.label}</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleCopyCommand(entry.value, entry.key)}
+                    >
+                      {copiedCommandKey === entry.key ? (
+                        <Check className="h-4 w-4 mr-2 text-green-600" />
+                      ) : (
+                        <Copy className="h-4 w-4 mr-2" />
+                      )}
+                      {copiedCommandKey === entry.key ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {entry.description}
+                  </p>
+                  <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs font-mono">
+                    {entry.value}
+                  </pre>
+                </div>
+              ))}
+            </div>
+            {commandCopyError && (
+              <p className="mt-2 text-xs text-destructive">{commandCopyError}</p>
+            )}
+          </div>
+        )}
 
         {run.status === "failed" && (
           <div className="mt-4 space-y-2">
