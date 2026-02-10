@@ -5,6 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+import { detectRuntimePlatform, isMacOsArmRuntime } from './runtime-platform';
 
 const execAsync = promisify(exec);
 
@@ -39,6 +40,17 @@ interface ExecutionSettings {
 
 function resolveCondaEnvName(condaEnv?: string): string {
   return condaEnv?.trim() || 'seqdesk-pipelines';
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function hasCondaEnv(envListOutput: string, envName: string): boolean {
+  const escapedName = envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const envNameRegex = new RegExp(`(^|\\s)${escapedName}(\\s|$)`, 'm');
+  const envPathRegex = new RegExp(`[\\\\/]envs[\\\\/]${escapedName}(\\s|$)`, 'm');
+  return envNameRegex.test(envListOutput) || envPathRegex.test(envListOutput);
 }
 
 async function checkCondaChannels(condaPath?: string): Promise<PrerequisiteCheck> {
@@ -121,7 +133,10 @@ async function checkCondaChannels(condaPath?: string): Promise<PrerequisiteCheck
   }
 }
 
-async function checkCondaPlatform(): Promise<PrerequisiteCheck> {
+async function checkCondaPlatform(
+  useSlurm: boolean,
+  condaPath?: string
+): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'conda_platform',
     name: 'Conda Platform Support',
@@ -131,15 +146,26 @@ async function checkCondaPlatform(): Promise<PrerequisiteCheck> {
     required: false,
   };
 
-  if (process.platform === 'darwin' && process.arch === 'arm64') {
+  const runtimePlatform = await detectRuntimePlatform(condaPath);
+  const detected = `${runtimePlatform.raw} (${runtimePlatform.source})`;
+
+  if (useSlurm) {
+    check.status = 'pass';
+    check.message = 'Handled by SLURM execution';
+    check.details = `SLURM is enabled. Detected runtime: ${detected}`;
+    return check;
+  }
+
+  if (isMacOsArmRuntime(runtimePlatform)) {
     check.status = 'fail';
     check.message = 'Conda envs for nf-core often fail on macOS ARM';
-    check.details = 'Use a Linux/SLURM server instead.';
+    check.details = `Detected runtime: ${detected}. Use a Linux/SLURM server instead.`;
     return check;
   }
 
   check.status = 'pass';
-  check.message = 'Platform compatible';
+  check.message = `Platform compatible (${runtimePlatform.raw})`;
+  check.details = `Detected runtime: ${detected}`;
   return check;
 }
 
@@ -516,6 +542,9 @@ async function checkNfcoreTools(condaPath?: string, condaEnv?: string): Promise<
   };
 
   const envName = resolveCondaEnvName(condaEnv);
+  let envExists = false;
+  let envInstallHint = '';
+  let envErrorDetails = '';
 
   // Find conda executable
   let condaBin = '';
@@ -544,37 +573,81 @@ async function checkNfcoreTools(condaPath?: string, condaEnv?: string): Promise<
       // No conda available
     }
   }
+  if (condaBin) {
+    envInstallHint = `Install with: ${condaBin} install -n ${envName} -c conda-forge -c bioconda nf-core`;
+  }
 
   // Check in conda environment first
   if (condaBin) {
     try {
-      const { stdout: envList } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-      if (envList.includes(envName)) {
-        try {
-          const { stdout } = await execAsync(`${condaBin} run -n ${envName} nf-core --version 2>&1`, { timeout: 20000 });
-          check.status = 'pass';
-          check.message = 'Installed in conda env';
-          check.details = stdout.trim();
-          return check;
-        } catch {
-          // Fall through to system check
+      const { stdout: envList } = await execAsync(
+        `${shellQuote(condaBin)} env list`,
+        { timeout: 10000 }
+      );
+      envExists = hasCondaEnv(envList, envName);
+      if (envExists) {
+        const commands = [
+          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} nf-core --version 2>&1`,
+          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} python -m nf_core --version 2>&1`,
+          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} python -c "import nf_core as n; print(getattr(n, '__version__', 'installed'))" 2>&1`,
+        ];
+
+        for (const command of commands) {
+          try {
+            const { stdout, stderr } = await execAsync(command, { timeout: 30000 });
+            const output = (stdout || stderr).trim();
+            if (!output) {
+              continue;
+            }
+            check.status = 'pass';
+            check.message = 'Installed in conda env';
+            check.details = output;
+            return check;
+          } catch (error) {
+            envErrorDetails = (error as Error).message;
+          }
         }
       }
-    } catch {
-      // Fall through to system check
+    } catch (error) {
+      envErrorDetails = (error as Error).message;
     }
   }
 
   // Fall back to system PATH
   try {
-    const { stdout } = await execAsync('nf-core --version', { timeout: 10000 });
+    const { stdout, stderr } = await execAsync('nf-core --version 2>&1', { timeout: 15000 });
+    const output = (stdout || stderr).trim();
+
+    if (envExists) {
+      check.status = 'warning';
+      check.message = 'Installed in PATH only';
+      check.details = [
+        output || 'nf-core available in PATH',
+        `nf-core was not detected in conda env "${envName}".`,
+        envInstallHint,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      return check;
+    }
+
     check.status = 'pass';
     check.message = 'Installed';
-    check.details = stdout.trim();
+    check.details = output || 'nf-core available in PATH';
   } catch {
     check.status = 'warning';
-    check.message = 'Not installed';
-    check.details = 'Install with: pip install nf-core (optional but helpful)';
+    if (envExists) {
+      check.message = `Not installed in conda env (${envName})`;
+      check.details = [
+        envInstallHint,
+        envErrorDetails ? `Last error: ${envErrorDetails}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    } else {
+      check.message = 'Not installed';
+      check.details = 'Install with: pip install nf-core (optional but helpful)';
+    }
   }
 
   return check;
@@ -610,7 +683,7 @@ export async function checkAllPrerequisites(
     checkDataBasePath(dataBasePath),
     checkNfcoreTools(executionSettings.condaPath, executionSettings.condaEnv),
     checkCondaChannels(executionSettings.condaPath),
-    checkCondaPlatform(),
+    checkCondaPlatform(executionSettings.useSlurm, executionSettings.condaPath),
   ]);
 
   checks.push(
