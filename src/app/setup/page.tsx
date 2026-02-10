@@ -117,6 +117,11 @@ export default function SetupPage() {
               </span>
             </div>
           </div>
+          {status?.error && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {status.error}
+            </div>
+          )}
         </div>
 
         {/* Manual steps - only shown if auto-seed failed */}

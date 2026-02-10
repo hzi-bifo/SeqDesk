@@ -127,15 +127,65 @@ function buildWeblogUrl(
 }
 
 /**
- * Build Nextflow config content for weblog
+ * Escape values for single-quoted Nextflow config strings.
  */
-function buildRunConfig(weblogUrl: string | null): string | null {
-  if (!weblogUrl) return null;
-  return `weblog {\n  enabled = true\n  url = "${weblogUrl}"\n}\n`;
+function escapeNextflowString(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r?\n/g, ' ');
+}
+
+/**
+ * Build run-specific Nextflow config (weblog + executor overrides).
+ */
+function buildRunConfig(
+  weblogUrl: string | null,
+  settings: ExecutionSettings
+): string | null {
+  const sections: string[] = [];
+
+  if (weblogUrl) {
+    sections.push(`weblog {\n  enabled = true\n  url = "${weblogUrl}"\n}`);
+  }
+
+  if (settings.useSlurm) {
+    const processLines = [`process {`, `  executor = 'slurm'`];
+    if (typeof settings.slurmCores === 'number' && Number.isFinite(settings.slurmCores) && settings.slurmCores > 0) {
+      processLines.push(`  cpus = ${Math.floor(settings.slurmCores)}`);
+    }
+    if (settings.slurmMemory?.trim()) {
+      processLines.push(`  memory = '${escapeNextflowString(settings.slurmMemory.trim())}'`);
+    }
+    if (
+      typeof settings.slurmTimeLimit === 'number' &&
+      Number.isFinite(settings.slurmTimeLimit) &&
+      settings.slurmTimeLimit > 0
+    ) {
+      processLines.push(`  time = '${settings.slurmTimeLimit}h'`);
+    }
+    if (settings.slurmQueue?.trim()) {
+      processLines.push(`  queue = '${escapeNextflowString(settings.slurmQueue.trim())}'`);
+    }
+    if (settings.slurmOptions?.trim()) {
+      processLines.push(
+        `  clusterOptions = '${escapeNextflowString(settings.slurmOptions.trim())}'`
+      );
+    }
+    processLines.push('}');
+    sections.push(processLines.join('\n'));
+  }
+
+  if (sections.length === 0) return null;
+  return `${sections.join('\n\n')}\n`;
 }
 
 function normalizeParamKey(value: string): string {
   return value.replace(/^--?/, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function isBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length === 0;
 }
 
 /**
@@ -283,7 +333,7 @@ function buildPipelineFlags(
       if (value === true) {
         // Boolean true -> add flag
         flags.push(nfFlag);
-      } else if (value === false || value === null || value === undefined) {
+      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
         // Boolean false/null/undefined -> skip
         continue;
       } else {
@@ -303,7 +353,7 @@ function buildPipelineFlags(
 
       if (value === true) {
         flags.push(`--${key}`);
-      } else if (value === false || value === null || value === undefined) {
+      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
         flags.push(`--${key} ${value}`);
@@ -316,7 +366,7 @@ function buildPipelineFlags(
 
       if (value === true) {
         flags.push(`--${key}`);
-      } else if (value === false || value === null || value === undefined) {
+      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
         flags.push(`--${key} ${value}`);
@@ -561,7 +611,7 @@ export async function prepareGenericRun(
       runId,
       executionSettings.weblogSecret
     );
-    const runConfig = buildRunConfig(weblogUrl);
+    const runConfig = buildRunConfig(weblogUrl, executionSettings);
     const runConfigPath = runConfig ? path.join(runFolder, 'nextflow.config') : null;
     if (runConfig && runConfigPath) {
       await fs.writeFile(runConfigPath, runConfig);

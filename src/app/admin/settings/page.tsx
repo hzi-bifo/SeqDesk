@@ -369,7 +369,9 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to start update");
       }
 
-      toast.success("Update started. The page will reload once restart finishes.");
+      toast.success(
+        "Update started. SeqDesk will attempt restart; if it does not return, restart it manually."
+      );
       await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
     } catch (error) {
       console.error("Update failed:", error);
@@ -571,7 +573,13 @@ export default function SettingsPage() {
 
                 {restartPending && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    Update is installed on disk and waiting for restart completion.
+                    <p>Update is installed on disk and waiting for restart completion.</p>
+                    <p className="mt-1 text-xs text-amber-800">
+                      If it does not restart automatically, restart your process manager
+                      (for example <code className="font-mono">pm2 restart seqdesk</code> or{" "}
+                      <code className="font-mono">systemctl --user restart seqdesk</code>),
+                      or restart the server process manually.
+                    </p>
                   </div>
                 )}
 

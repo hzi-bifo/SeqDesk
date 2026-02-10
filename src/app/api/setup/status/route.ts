@@ -14,6 +14,11 @@ export async function GET() {
     if (result.seeded) {
       // Re-check status after seeding
       status = await checkDatabaseStatus();
+    } else if (result.error) {
+      status = {
+        ...status,
+        error: result.error,
+      };
     }
   }
 
