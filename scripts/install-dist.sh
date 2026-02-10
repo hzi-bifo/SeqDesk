@@ -48,6 +48,7 @@ SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 
 PM2_CONFIGURED="false"
+PM2_STARTUP_ENABLED="false"
 
 MIN_NODE_VERSION=18
 INSTALL_START_TS=$(date +%s)
@@ -934,8 +935,10 @@ if is_truthy "$SEQDESK_USE_PM2"; then
         if pm2 start "$SEQDESK_DIR/start.sh" --name seqdesk; then
             PM2_CONFIGURED="true"
             pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
-            if ! pm2 startup >/dev/null 2>&1; then
-                print_warning "PM2 startup not enabled. Run: pm2 startup"
+            if pm2 startup >/dev/null 2>&1; then
+                PM2_STARTUP_ENABLED="true"
+            else
+                print_warning "PM2 boot startup is not enabled yet. Run: pm2 startup"
             fi
             print_success "PM2 configured for auto-restart"
         else
@@ -990,6 +993,22 @@ if [ "$PM2_CONFIGURED" = "true" ]; then
     echo "SeqDesk is running under PM2."
     echo "  pm2 status"
     echo "  pm2 logs seqdesk"
+    echo "  pm2 restart seqdesk"
+    echo ""
+    echo "Recommended run mode:"
+    echo "  Keep SeqDesk running under PM2."
+    echo "  ./start.sh is manual/foreground mode and does not provide PM2 restart behavior."
+    echo ""
+    echo "If the PM2 process was removed (for example with 'pm2 delete'):"
+    echo "  pm2 start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
+    echo "  pm2 save"
+    if [ "$PM2_STARTUP_ENABLED" != "true" ]; then
+        echo ""
+        echo "Enable PM2 on reboot (one-time):"
+        echo "  pm2 startup"
+        echo "  # then run the sudo command printed by pm2 startup"
+        echo "  pm2 save"
+    fi
 else
     echo "To start SeqDesk manually:"
     echo ""

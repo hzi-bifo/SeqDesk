@@ -36,6 +36,33 @@ function inferBaseFromPrefix(prefix?: string | null): string | null {
   return prefix;
 }
 
+function normalizeEnvName(name?: string | null): string | null {
+  const trimmed = name?.trim();
+  return trimmed ? trimmed : null;
+}
+
+async function detectCondaEnvNames(): Promise<string[]> {
+  if (!(await commandExists('conda'))) {
+    return [];
+  }
+
+  try {
+    const { stdout } = await execAsync('conda env list --json', { timeout: 8000 });
+    const parsed = JSON.parse(stdout) as { envs?: unknown };
+    if (!Array.isArray(parsed.envs)) {
+      return [];
+    }
+
+    const names = parsed.envs
+      .map((envPath) => (typeof envPath === 'string' ? inferEnvFromPrefix(envPath) : null))
+      .map((name) => normalizeEnvName(name))
+      .filter((name): name is string => Boolean(name));
+    return [...new Set(names)];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -44,8 +71,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const envName = process.env.CONDA_DEFAULT_ENV || inferEnvFromPrefix(process.env.CONDA_PREFIX);
+    const processEnvName = normalizeEnvName(
+      process.env.CONDA_DEFAULT_ENV || inferEnvFromPrefix(process.env.CONDA_PREFIX)
+    );
     let condaBase = inferBaseFromPrefix(process.env.CONDA_PREFIX);
+    const envNames = await detectCondaEnvNames();
 
     if (!condaBase && await commandExists('conda')) {
       try {
@@ -55,6 +85,12 @@ export async function GET() {
         // ignore
       }
     }
+
+    // Prefer the SeqDesk pipeline env if it exists, even when the process runs in base.
+    const envName =
+      envNames.includes('seqdesk-pipelines')
+        ? 'seqdesk-pipelines'
+        : processEnvName;
 
     const detected = Boolean(envName || condaBase);
 

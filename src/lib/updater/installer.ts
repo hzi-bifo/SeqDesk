@@ -33,6 +33,7 @@ type ProgressCallback = (progress: UpdateProgress) => void;
 
 // Installation directory (where SeqDesk is installed)
 const INSTALL_DIR = process.cwd();
+const PRISMA_DIR = path.join(INSTALL_DIR, 'prisma');
 const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
 const DB_SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal'];
@@ -80,7 +81,9 @@ function resolveSqlitePath(databaseUrl: string): string | null {
     return decodedPath;
   }
 
-  return path.resolve(INSTALL_DIR, decodedPath);
+  // Prisma resolves relative SQLite paths against the schema directory.
+  // SeqDesk keeps schema.prisma in `<install>/prisma`.
+  return path.resolve(PRISMA_DIR, decodedPath);
 }
 
 function relativeToInstall(filePath: string): string | null {
@@ -93,8 +96,10 @@ function relativeToInstall(filePath: string): string | null {
 
 async function getDatabaseFiles(): Promise<string[]> {
   const files = new Set<string>();
-  const defaultDb = path.join(INSTALL_DIR, 'dev.db');
-  files.add(defaultDb);
+  // Primary Prisma default.
+  files.add(path.join(PRISMA_DIR, 'dev.db'));
+  // Legacy/alternate location used in some historical installs.
+  files.add(path.join(INSTALL_DIR, 'dev.db'));
 
   const databaseUrl = await loadDatabaseUrl();
   if (databaseUrl) {
@@ -365,7 +370,14 @@ async function applyUpdate(): Promise<void> {
   for (const dbPath of databaseFiles) {
     try {
       await fs.access(dbPath);
-      const backupPath = path.join(dbBackupDir, path.basename(dbPath));
+      const relative = relativeToInstall(dbPath);
+      const backupPath = relative
+        ? path.join(dbBackupDir, relative)
+        : path.join(
+            dbBackupDir,
+            `${crypto.createHash('sha1').update(dbPath).digest('hex')}-${path.basename(dbPath)}`
+          );
+      await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await fs.copyFile(dbPath, backupPath);
       dbBackups.push({ original: dbPath, backup: backupPath });
     } catch {
@@ -467,9 +479,10 @@ async function restartApplication(): Promise<void> {
     // Not running under systemd or sudo requires a password
   }
 
-  // Fallback: Exit and let the process manager restart us
+  // Fallback: Exit with non-zero so process managers configured with
+  // Restart=on-failure can relaunch us.
   console.log(
-    'Update complete. Automatic restart unavailable. Please restart SeqDesk manually.'
+    'Update complete. Automatic restart command unavailable. Exiting for supervisor restart; if SeqDesk does not come back, restart it manually.'
   );
-  process.exit(0);
+  process.exit(1);
 }

@@ -67,7 +67,7 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: `Installing update to version ${result.latest.version}. The application will restart automatically.`,
+      message: `Installing update to version ${result.latest.version}. SeqDesk will attempt automatic restart.`,
       version: result.latest.version,
     });
   } catch (error) {

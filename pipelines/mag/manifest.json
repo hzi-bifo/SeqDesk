@@ -72,6 +72,7 @@
       "skipProkka": "--skip_prokka",
       "skipBinQc": "--skip_binqc",
       "skipQuast": "--skip_quast",
+      "skipGtdb": "--skip_gtdbtk",
       "skipGtdbtk": "--skip_gtdbtk",
       "gtdbDb": "--gtdb_db"
     },
