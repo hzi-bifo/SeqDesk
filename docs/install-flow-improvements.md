@@ -31,10 +31,11 @@ must continue to satisfy. It is not a user guide.
 7. Step 7/7: Pipeline environment setup (skipped if disabled).
 
 ## Prompts and Defaults
-- Data base path: default `./data`
-- Pipeline run directory: default `./pipeline_runs` (only if pipelines enabled)
-- `NEXTAUTH_URL`: optional (blank by default)
-- `DATABASE_URL`: optional (blank by default)
+- App port: default `3000`
+- `NEXTAUTH_URL`: auto-derived as `http://localhost:<port>` unless explicitly set
+- Data base path: not prompted in installer (configure later in Admin > Data Storage, or set `SEQDESK_DATA_PATH`)
+- Pipeline run directory: not prompted in installer (configure later in Admin > Pipeline Runtime, or set `SEQDESK_RUN_DIR`)
+- `DATABASE_URL`: optional via env override (`SEQDESK_DATABASE_URL`)
 
 Prompts read from `/dev/tty` so `curl | bash` still works interactively.
 If a TTY is present, the installer will invoke `scripts/install-wizard.mjs`
@@ -70,10 +71,11 @@ confirmation (skipped when `SEQDESK_YES=1`).
 - [x] If no: skip pipeline setup and note in summary.
 
 ### Configuration Prompts
-- [x] Prompt for data base path (default: `./data`).
-- [x] Prompt for pipeline run dir (default: `./pipeline_runs`).
-- [x] Prompt for `NEXTAUTH_URL` (optional).
-- [x] Prompt for `DATABASE_URL` (optional; default stays sqlite).
+- [x] Prompt for app port (default: `3000`).
+- [x] Auto-set `NEXTAUTH_URL` to `http://localhost:<port>` unless provided.
+- [x] Data base path configured later in app (or via `SEQDESK_DATA_PATH`).
+- [x] Pipeline run dir configured later in app (or via `SEQDESK_RUN_DIR`).
+- [x] `DATABASE_URL` remains optional via env override (`SEQDESK_DATABASE_URL`).
 - [x] Prompt for enabling pipelines when conda is already installed.
 
 ### Non-Interactive Mode

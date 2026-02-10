@@ -1,5 +1,13 @@
 import { db } from "./db";
-import { hash } from "bcryptjs";
+
+// Keep auto-seeding independent from external module resolution.
+// These hashes correspond to the default credentials:
+// admin@example.com / admin
+// user@example.com  / user
+const DEFAULT_ADMIN_PASSWORD_HASH =
+  "$2b$12$x9euVVfr0IcQPHFKwCDO3OTz0cGPvO0AwwsgUnHOLmSVuT3wM1VzC";
+const DEFAULT_USER_PASSWORD_HASH =
+  "$2b$12$kbd8ye8jMpaIwxH8nVP79u/witxktRivlfVQ59IlUzyzVKCVIox2m";
 
 let seedingInProgress = false;
 
@@ -29,7 +37,7 @@ export async function autoSeedIfNeeded(): Promise<{
     console.log("[auto-seed] Database not seeded, seeding now...");
 
     // 1. Create admin user
-    const adminPassword = await hash("admin", 12);
+    const adminPassword = DEFAULT_ADMIN_PASSWORD_HASH;
     await db.user.upsert({
       where: { email: "admin@example.com" },
       update: {},
@@ -45,7 +53,7 @@ export async function autoSeedIfNeeded(): Promise<{
     console.log("[auto-seed] Created admin user");
 
     // 2. Create test researcher user
-    const userPassword = await hash("user", 12);
+    const userPassword = DEFAULT_USER_PASSWORD_HASH;
     await db.user.upsert({
       where: { email: "user@example.com" },
       update: {},

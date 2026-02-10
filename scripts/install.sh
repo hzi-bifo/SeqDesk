@@ -10,10 +10,10 @@
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
 #   SEQDESK_WITH_PIPELINES=1       - Install pipeline dependencies (Conda + Nextflow)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
-#   SEQDESK_DATA_PATH=/data        - Sequencing data base path
-#   SEQDESK_RUN_DIR=/data/runs     - Pipeline run directory
+#   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
+#   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PORT=3000              - App port (default: 3000)
-#   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL
+#   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
 #
@@ -122,29 +122,6 @@ prompt_value() {
     printf -v "$var_name" '%s' "$reply"
 }
 
-prompt_optional() {
-    local var_name="$1"
-    local prompt="$2"
-    local default_value="$3"
-    local current_value="${!var_name:-}"
-
-    if [ -n "$current_value" ]; then
-        return 0
-    fi
-
-    if is_truthy "$SEQDESK_YES"; then
-        printf -v "$var_name" '%s' "$default_value"
-        return 0
-    fi
-
-    local reply
-    reply=$(read_input "$prompt [$default_value]: ")
-    if [ -z "$reply" ]; then
-        reply="$default_value"
-    fi
-    printf -v "$var_name" '%s' "$reply"
-}
-
 prompt_yes_no() {
     local var_name="$1"
     local prompt="$2"
@@ -201,8 +178,6 @@ run_wizard() {
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
-    SEQDESK_WIZARD_DEFAULT_DATA_PATH="${SEQDESK_DATA_PATH:-./data}" \
-    SEQDESK_WIZARD_DEFAULT_RUN_DIR="${SEQDESK_RUN_DIR:-./pipeline_runs}" \
     SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-3000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \
@@ -236,6 +211,33 @@ set_env_var() {
     fi
 }
 
+ensure_seed_dependency() {
+    local module_name="$1"
+
+    if ! command_exists node; then
+        return 0
+    fi
+
+    if node -e "require.resolve('${module_name}')" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    print_warning "Missing dependency '${module_name}' required for seeding."
+    if ! command_exists npm; then
+        print_warning "npm not available; skipping install of ${module_name}"
+        return 1
+    fi
+
+    print_info "Installing missing dependency: ${module_name}"
+    if npm install --no-save "${module_name}"; then
+        print_success "Installed ${module_name}"
+        return 0
+    fi
+
+    print_warning "Could not install ${module_name}; seed may fail."
+    return 1
+}
+
 write_config() {
     local pipelines_enabled="$1"
     local data_path="$2"
@@ -266,7 +268,8 @@ function readJson(filePath) {
   }
 }
 
-const config = readJson('seqdesk.config.json') || readJson('seqdesk.config.example.json') || {};
+const config = readJson('seqdesk.config.json') || {};
+if (!config.$schema) config.$schema = './docs/seqdesk-config-schema.json';
 
 config.site = config.site || {};
 if (dataPath) config.site.dataBasePath = dataPath;
@@ -545,14 +548,14 @@ if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
 elif [ $wizard_status -ne 0 ]; then
-    prompt_value SEQDESK_DATA_PATH "Sequencing data base path" "./data"
-    if [ "$PIPELINES_ENABLED" = "true" ]; then
-        prompt_value SEQDESK_RUN_DIR "Pipeline run directory" "./pipeline_runs"
-    fi
-
     prompt_value SEQDESK_PORT "App port" "3000"
-    prompt_optional SEQDESK_NEXTAUTH_URL "NEXTAUTH_URL (optional)" ""
-    prompt_optional SEQDESK_DATABASE_URL "DATABASE_URL (optional)" ""
+fi
+
+if [ -z "$SEQDESK_PORT" ]; then
+    SEQDESK_PORT="3000"
+fi
+if [ -z "$SEQDESK_NEXTAUTH_URL" ]; then
+    SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
 fi
 
 if [ ! -f .env ]; then
@@ -609,6 +612,7 @@ else
 fi
 
 print_info "Seeding initial data..."
+ensure_seed_dependency "bcryptjs" || true
 SEED_OK="false"
 if [ -x "$PRISMA_CLI" ]; then
     if "$PRISMA_CLI" db seed; then
@@ -648,8 +652,8 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
         --yes
         --write-config
         --pipelines-enabled
-        --data-path "$SEQDESK_DATA_PATH"
-        --run-dir "$SEQDESK_RUN_DIR"
+        --data-path "${SEQDESK_DATA_PATH:-./data}"
+        --run-dir "${SEQDESK_RUN_DIR:-./pipeline_runs}"
     )
     ./scripts/setup-conda-env.sh "${setup_args[@]}"
 else
@@ -696,8 +700,8 @@ echo "  Admin:      admin@example.com / admin"
 echo "  Researcher: user@example.com / user"
 echo ""
 echo "Next steps:"
-echo "  1. Update seqdesk.config.json for your facility"
-echo "  2. Configure pipeline execution under Admin > Settings > Compute"
+echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
+echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
 echo "  3. See docs/installation.md for production deployment"
 echo ""
 echo -e "Documentation: ${BLUE}https://github.com/hzi-bifo/SeqDesk/tree/main/docs${NC}"

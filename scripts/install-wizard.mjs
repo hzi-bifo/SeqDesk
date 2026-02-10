@@ -23,13 +23,11 @@ if (!outPath) {
 }
 
 const pipelinesEnabled = isTruthy(process.env.SEQDESK_WIZARD_PIPELINES_ENABLED);
-const defaultDataPath = process.env.SEQDESK_WIZARD_DEFAULT_DATA_PATH || "./data";
-const defaultRunDir = process.env.SEQDESK_WIZARD_DEFAULT_RUN_DIR || "./pipeline_runs";
 const defaultPort = process.env.SEQDESK_WIZARD_DEFAULT_PORT || "3000";
 
 const defaults = {
-  dataPath: process.env.SEQDESK_DATA_PATH || defaultDataPath,
-  runDir: process.env.SEQDESK_RUN_DIR || defaultRunDir,
+  dataPath: process.env.SEQDESK_DATA_PATH || "",
+  runDir: process.env.SEQDESK_RUN_DIR || "",
   port: process.env.SEQDESK_PORT || defaultPort,
   nextAuthUrl: process.env.SEQDESK_NEXTAUTH_URL || "",
   databaseUrl: process.env.SEQDESK_DATABASE_URL || "",
@@ -60,31 +58,10 @@ async function runClackWizard(clack) {
   const { intro, outro, text, confirm, note, isCancel, cancel } = clack;
 
   intro("SeqDesk Setup Wizard");
-  note("Press Enter to accept the default shown in brackets.", "Configuration");
-
-  const dataPath = await text({
-    message: "Sequencing data base path",
-    placeholder: defaults.dataPath,
-    defaultValue: defaults.dataPath,
-  });
-  if (isCancel(dataPath)) {
-    cancel("Installation cancelled");
-    process.exit(2);
-  }
-
-  let runDir = defaults.runDir;
-  if (pipelinesEnabled) {
-    const runDirValue = await text({
-      message: "Pipeline run directory",
-      placeholder: defaults.runDir,
-      defaultValue: defaults.runDir,
-    });
-    if (isCancel(runDirValue)) {
-      cancel("Installation cancelled");
-      process.exit(2);
-    }
-    runDir = String(runDirValue || defaults.runDir);
-  }
+  note(
+    "Minimal setup mode: configure data and pipeline paths later in Admin settings.",
+    "Configuration"
+  );
 
   const portValue = await text({
     message: "App port",
@@ -96,34 +73,20 @@ async function runClackWizard(clack) {
     process.exit(2);
   }
   const port = String(portValue || defaults.port);
-
-  const nextAuthUrl = await text({
-    message: "NEXTAUTH_URL (optional)",
-    placeholder: defaults.nextAuthUrl || "https://your-domain",
-    defaultValue: defaults.nextAuthUrl,
-  });
-  if (isCancel(nextAuthUrl)) {
-    cancel("Installation cancelled");
-    process.exit(2);
-  }
-
-  const databaseUrl = await text({
-    message: "DATABASE_URL (optional)",
-    placeholder: defaults.databaseUrl || "postgres://...",
-    defaultValue: defaults.databaseUrl,
-  });
-  if (isCancel(databaseUrl)) {
-    cancel("Installation cancelled");
-    process.exit(2);
-  }
+  const nextAuthUrl = defaults.nextAuthUrl || `http://localhost:${port}`;
+  const databaseUrl = defaults.databaseUrl || "";
 
   note(
     [
-      `Data path: ${dataPath || defaults.dataPath}`,
-      `Run dir:   ${pipelinesEnabled ? (runDir || defaults.runDir) : "(pipelines disabled)"}`,
       `Port:      ${port || defaults.port}`,
-      `NEXTAUTH_URL: ${nextAuthUrl || "(not set)"}`,
-      `DATABASE_URL: ${databaseUrl || "(not set)"}`,
+      `NEXTAUTH_URL: ${nextAuthUrl}`,
+      `Data path: ${defaults.dataPath || "configure later in Admin > Data Storage"}`,
+      `Run dir:   ${
+        pipelinesEnabled
+          ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
+          : "(pipelines disabled)"
+      }`,
+      `DATABASE_URL: ${databaseUrl || "(default sqlite)"}`,
     ].join("\n"),
     "Review"
   );
@@ -139,11 +102,11 @@ async function runClackWizard(clack) {
 
   writeOutput(
     {
-      dataPath: String(dataPath || defaults.dataPath),
-      runDir: String(runDir || defaults.runDir),
+      dataPath: String(defaults.dataPath || ""),
+      runDir: String(defaults.runDir || ""),
       port: String(port || defaults.port),
-      nextAuthUrl: String(nextAuthUrl || ""),
-      databaseUrl: String(databaseUrl || ""),
+      nextAuthUrl: String(nextAuthUrl),
+      databaseUrl: String(databaseUrl),
     },
     pipelinesEnabled
   );
@@ -156,32 +119,31 @@ async function runReadlineWizard() {
   try {
     clearScreen();
     printHeader("SeqDesk Setup Wizard");
-    printLine("Let's configure your installation. Press Enter to accept defaults.");
+    printLine(
+      "Minimal setup mode. Configure data and pipeline paths later in Admin settings."
+    );
     printLine("");
 
-    const dataPath = await ask(rl, "Sequencing data base path", defaults.dataPath);
-    let runDir = defaults.runDir;
-    if (pipelinesEnabled) {
-      runDir = await ask(rl, "Pipeline run directory", defaults.runDir);
-    }
     const port = await ask(rl, "App port", defaults.port);
-    const nextAuthUrl = await askOptional(rl, "NEXTAUTH_URL (optional)", defaults.nextAuthUrl);
-    const databaseUrl = await askOptional(rl, "DATABASE_URL (optional)", defaults.databaseUrl);
+    const nextAuthUrl = defaults.nextAuthUrl || `http://localhost:${port}`;
+    const databaseUrl = defaults.databaseUrl || "";
 
     const summary = {
-      dataPath,
-      runDir: pipelinesEnabled ? runDir : "(pipelines disabled)",
       port,
-      nextAuthUrl: nextAuthUrl || "(not set)",
-      databaseUrl: databaseUrl || "(not set)",
+      nextAuthUrl,
+      dataPath: defaults.dataPath || "configure later in Admin > Data Storage",
+      runDir: pipelinesEnabled
+        ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
+        : "(pipelines disabled)",
+      databaseUrl: databaseUrl || "(default sqlite)",
     };
 
     printLine("");
     printHeader("Review");
-    printLine(`Data path: ${summary.dataPath}`);
-    printLine(`Run dir:   ${summary.runDir}`);
     printLine(`Port:      ${summary.port}`);
     printLine(`NEXTAUTH_URL: ${summary.nextAuthUrl}`);
+    printLine(`Data path: ${summary.dataPath}`);
+    printLine(`Run dir:   ${summary.runDir}`);
     printLine(`DATABASE_URL: ${summary.databaseUrl}`);
     printLine("");
 
@@ -193,8 +155,8 @@ async function runReadlineWizard() {
 
     writeOutput(
       {
-        dataPath,
-        runDir,
+        dataPath: defaults.dataPath,
+        runDir: defaults.runDir,
         port,
         nextAuthUrl,
         databaseUrl,
@@ -208,11 +170,6 @@ async function runReadlineWizard() {
 
 function ask(rl, label, defaultValue) {
   return prompt(rl, `${label} [${defaultValue}]: `, defaultValue);
-}
-
-function askOptional(rl, label, defaultValue) {
-  const placeholder = defaultValue || "";
-  return prompt(rl, `${label}${placeholder ? ` [${placeholder}]` : ""}: `, defaultValue);
 }
 
 async function prompt(rl, question, defaultValue) {
@@ -232,15 +189,17 @@ async function confirmText(rl, question, defaultYes) {
 }
 
 function writeOutput(values, pipelinesEnabled) {
+  const port = values.port || defaultPort;
+  const nextAuthUrl = values.nextAuthUrl || `http://localhost:${port}`;
   const lines = [];
   lines.push(`SEQDESK_DATA_PATH="${escapeShell(values.dataPath)}"`);
   if (pipelinesEnabled) {
-    lines.push(`SEQDESK_RUN_DIR="${escapeShell(values.runDir || defaultRunDir)}"`);
+    lines.push(`SEQDESK_RUN_DIR="${escapeShell(values.runDir || "")}"`);
   } else {
     lines.push("SEQDESK_RUN_DIR=\"\"");
   }
-  lines.push(`SEQDESK_PORT="${escapeShell(values.port || defaultPort)}"`);
-  lines.push(`SEQDESK_NEXTAUTH_URL="${escapeShell(values.nextAuthUrl || "")}"`);
+  lines.push(`SEQDESK_PORT="${escapeShell(port)}"`);
+  lines.push(`SEQDESK_NEXTAUTH_URL="${escapeShell(nextAuthUrl)}"`);
   lines.push(`SEQDESK_DATABASE_URL="${escapeShell(values.databaseUrl || "")}"`);
   fs.writeFileSync(outPath, lines.join("\n") + "\n");
 }

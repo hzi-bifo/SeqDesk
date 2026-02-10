@@ -116,6 +116,13 @@ if [[ -d "${ROOT_DIR}/node_modules/@prisma/client" ]]; then
   cp -R "${ROOT_DIR}/node_modules/@prisma/client" "${RELEASE_DIR}/node_modules/@prisma/"
 fi
 
+if [[ -d "${ROOT_DIR}/node_modules/bcryptjs" ]]; then
+  echo "Copying bcryptjs runtime dependency..."
+  mkdir -p "${RELEASE_DIR}/node_modules"
+  rm -rf "${RELEASE_DIR}/node_modules/bcryptjs"
+  cp -R "${ROOT_DIR}/node_modules/bcryptjs" "${RELEASE_DIR}/node_modules/"
+fi
+
 echo "Copying Next.js static assets..."
 mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"

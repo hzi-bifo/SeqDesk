@@ -1,5 +1,13 @@
 import { PrismaClient } from "@prisma/client";
-import { hash } from "bcryptjs";
+
+// Keep seeding independent from runtime dependency resolution.
+// These are bcrypt hashes for the default credentials:
+// admin@example.com / admin
+// user@example.com  / user
+const DEFAULT_ADMIN_PASSWORD_HASH =
+  "$2b$12$x9euVVfr0IcQPHFKwCDO3OTz0cGPvO0AwwsgUnHOLmSVuT3wM1VzC";
+const DEFAULT_USER_PASSWORD_HASH =
+  "$2b$12$kbd8ye8jMpaIwxH8nVP79u/witxktRivlfVQ59IlUzyzVKCVIox2m";
 
 const prisma = new PrismaClient();
 
@@ -7,7 +15,7 @@ async function main() {
   console.log("Seeding database...\n");
 
   // 1. Create admin user
-  const adminPassword = await hash("admin", 12);
+  const adminPassword = DEFAULT_ADMIN_PASSWORD_HASH;
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@example.com" },
@@ -24,7 +32,7 @@ async function main() {
   console.log("Created admin user: admin@example.com / admin");
 
   // 2. Create test researcher user
-  const userPassword = await hash("user", 12);
+  const userPassword = DEFAULT_USER_PASSWORD_HASH;
 
   const testUser = await prisma.user.upsert({
     where: { email: "user@example.com" },
