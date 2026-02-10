@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
+import type { ExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
   detectRuntimePlatform,
   isMacOsArmRuntime,
@@ -42,6 +43,40 @@ function resolveEffectiveProfile(
     parts.push('conda');
   }
   return parts.join(',');
+}
+
+function splitSbatchOptions(value: string): string[] {
+  const tokens = value.match(/(?:[^\s"'\\]+|"[^"]*"|'[^']*')+/g);
+  if (!tokens) return [];
+
+  return tokens.map((token) => {
+    if (
+      (token.startsWith('"') && token.endsWith('"')) ||
+      (token.startsWith("'") && token.endsWith("'"))
+    ) {
+      return token.slice(1, -1);
+    }
+    return token;
+  });
+}
+
+function buildSbatchSubmitArgs(
+  scriptPath: string,
+  executionSettings: ExecutionSettings
+): string[] {
+  const args = ['--parsable'];
+  const queue = executionSettings.slurmQueue?.trim();
+  if (queue) {
+    args.push('-p', queue);
+  }
+
+  const options = executionSettings.slurmOptions?.trim();
+  if (options) {
+    args.push(...splitSbatchOptions(options));
+  }
+
+  args.push(scriptPath);
+  return args;
 }
 
 async function finalizeLocalRun(
@@ -407,7 +442,8 @@ export async function POST(
 
         // Submit to SLURM
         try {
-          const sbatchProcess = spawn('sbatch', ['--parsable', scriptPath], {
+          const sbatchArgs = buildSbatchSubmitArgs(scriptPath, executionSettings);
+          const sbatchProcess = spawn('sbatch', sbatchArgs, {
             cwd: prepResult.runFolder,
           });
 

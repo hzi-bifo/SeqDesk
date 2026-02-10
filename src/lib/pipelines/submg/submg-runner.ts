@@ -324,7 +324,6 @@ function buildSubmgScript(params: {
   const lines: string[] = [];
 
   lines.push("#!/bin/bash");
-  lines.push("set -euo pipefail");
   lines.push(`#SBATCH -p ${executionSettings.slurmQueue || "cpu"}`);
   lines.push(`#SBATCH -c ${executionSettings.slurmCores || 4}`);
   lines.push(`#SBATCH --mem='${executionSettings.slurmMemory || "32GB"}'`);
@@ -335,6 +334,8 @@ function buildSubmgScript(params: {
   if (executionSettings.slurmOptions) {
     lines.push(`#SBATCH ${executionSettings.slurmOptions}`);
   }
+  lines.push("");
+  lines.push("set -euo pipefail");
   lines.push("");
   lines.push(`RUN_FOLDER=${shellEscape(runFolder)}`);
   lines.push('STDOUT_LOG="$RUN_FOLDER/logs/pipeline.out"');

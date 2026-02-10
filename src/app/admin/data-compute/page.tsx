@@ -31,18 +31,19 @@ interface InfrastructureImportResponse {
 
 const EXAMPLE_INFRA_CONFIG = {
   port: 8000,
-  sequencingDataDir: "/data/seqdesk_data",
-  pipelineRunDir: "/data/pipeline_runs",
+  sequencingDataDir: "/net/broker/devphil/seqdesk_data",
+  pipelineRunDir: "/net/broker/devphil/pipeline",
   useSlurm: true,
   slurmQueue: "cpu",
   slurmCores: 4,
   slurmMemory: "64GB",
   slurmTimeLimit: 12,
   slurmOptions: "--qos=broker",
-  condaPath: "/opt/miniconda3",
+  condaPath: "/net/broker/devphil/miniconda3",
   condaEnv: "seqdesk-pipelines",
   nextflowProfile: "conda",
-  nextflowWeblogUrl: "http://your-host:8000/api/pipelines/weblog",
+  nextflowWeblogUrl: "http://dzif-student-0205:8000/api/pipelines/weblog",
+  weblogSecret: "replace-with-random-secret",
 };
 
 export default function InfrastructureOverviewPage() {
@@ -275,7 +276,7 @@ export default function InfrastructureOverviewPage() {
             <Textarea
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
-              placeholder={`{\n  "port": 8000,\n  "sequencingDataDir": "/data/seqdesk_data",\n  "pipelineRunDir": "/data/pipeline_runs",\n  "useSlurm": true,\n  "slurmQueue": "cpu",\n  "slurmCores": 4,\n  "slurmMemory": "64GB",\n  "slurmTimeLimit": 12,\n  "slurmOptions": "--qos=broker",\n  "condaPath": "/opt/miniconda3",\n  "condaEnv": "seqdesk-pipelines",\n  "nextflowProfile": "conda",\n  "nextflowWeblogUrl": "http://your-host:8000/api/pipelines/weblog"\n}`}
+              placeholder={`{\n  "port": 8000,\n  "sequencingDataDir": "/net/broker/devphil/seqdesk_data",\n  "pipelineRunDir": "/net/broker/devphil/pipeline",\n  "useSlurm": true,\n  "slurmQueue": "cpu",\n  "slurmCores": 4,\n  "slurmMemory": "64GB",\n  "slurmTimeLimit": 12,\n  "slurmOptions": "--qos=broker",\n  "condaPath": "/net/broker/devphil/miniconda3",\n  "condaEnv": "seqdesk-pipelines",\n  "nextflowProfile": "conda",\n  "nextflowWeblogUrl": "http://dzif-student-0205:8000/api/pipelines/weblog",\n  "weblogSecret": "replace-with-random-secret"\n}`}
               rows={12}
               className="font-mono text-xs leading-relaxed"
             />

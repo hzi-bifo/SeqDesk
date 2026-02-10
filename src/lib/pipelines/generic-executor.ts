@@ -90,6 +90,12 @@ async function generateRunNumber(pipelineId: string): Promise<string> {
   return `${prefix}${nextNum.toString().padStart(3, '0')}`;
 }
 
+function buildNextflowRunName(runNumber: string, runId: string): string {
+  const safeRunId = runId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 8);
+  if (!safeRunId) return runNumber;
+  return `${runNumber}-${safeRunId}`;
+}
+
 /**
  * Create run directory and prepare files
  */
@@ -175,6 +181,16 @@ function buildRunConfig(
     processLines.push('}');
     sections.push(processLines.join('\n'));
   }
+
+  // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
+  sections.push(
+    [
+      `conda {`,
+      `  channels = ['conda-forge', 'bioconda']`,
+      `  createOptions = '--override-channels -c conda-forge -c bioconda'`,
+      `}`,
+    ].join('\n')
+  );
 
   if (sections.length === 0) return null;
   return `${sections.join('\n\n')}\n`;
@@ -401,7 +417,8 @@ function generateSlurmScript(
   flags: string[],
   settings: ExecutionSettings,
   runConfigPath: string | null,
-  runNumber: string
+  runNumber: string,
+  runId: string
 ): string {
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
@@ -410,7 +427,8 @@ function generateSlurmScript(
   const timelineFile = `${runFolder}/timeline.html`;
   const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
-  const nameFlag = `-name ${runNumber}`;
+  const runName = buildNextflowRunName(runNumber, runId);
+  const nameFlag = `-name ${runName}`;
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
@@ -433,8 +451,6 @@ function generateSlurmScript(
   ].filter(Boolean).join(' \\\n  ');
 
   return `#!/bin/bash
-set -euo pipefail
-
 #SBATCH -p ${settings.slurmQueue || 'cpu'}
 #SBATCH -c ${settings.slurmCores || 4}
 #SBATCH --mem='${settings.slurmMemory || '64GB'}'
@@ -443,6 +459,8 @@ set -euo pipefail
 #SBATCH --output="logs/slurm-%j.out"
 #SBATCH --error="logs/slurm-%j.err"
 ${settings.slurmOptions ? `#SBATCH ${settings.slurmOptions}` : ''}
+
+set -euo pipefail
 
 # Log file paths (read by pipeline monitor)
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
@@ -477,7 +495,8 @@ function generateLocalScript(
   flags: string[],
   settings: ExecutionSettings,
   runConfigPath: string | null,
-  runNumber: string
+  runNumber: string,
+  runId: string
 ): string {
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
@@ -486,7 +505,8 @@ function generateLocalScript(
   const timelineFile = `${runFolder}/timeline.html`;
   const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
-  const nameFlag = `-name ${runNumber}`;
+  const runName = buildNextflowRunName(runNumber, runId);
+  const nameFlag = `-name ${runName}`;
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
@@ -631,7 +651,8 @@ export async function prepareGenericRun(
           flags,
           executionSettings,
           runConfigPath,
-          runNumber
+          runNumber,
+          runId
         )
       : generateLocalScript(
           pkg,
@@ -641,7 +662,8 @@ export async function prepareGenericRun(
           flags,
           executionSettings,
           runConfigPath,
-          runNumber
+          runNumber,
+          runId
         );
 
     const scriptPath = path.join(runFolder, 'run.sh');

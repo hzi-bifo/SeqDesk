@@ -53,6 +53,98 @@ function hasCondaEnv(envListOutput: string, envName: string): boolean {
   return envNameRegex.test(envListOutput) || envPathRegex.test(envListOutput);
 }
 
+async function resolveCondaBinary(condaPath?: string): Promise<string | null> {
+  if (condaPath) {
+    const possiblePaths = [
+      path.join(condaPath, 'condabin', 'conda'),
+      path.join(condaPath, 'bin', 'conda'),
+    ];
+    for (const candidate of possiblePaths) {
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        // Try next
+      }
+    }
+  }
+
+  try {
+    await execAsync('which conda', { timeout: 5000 });
+    return 'conda';
+  } catch {
+    return null;
+  }
+}
+
+function extractExecErrorDetails(error: unknown): string {
+  const err = error as { stdout?: string; stderr?: string; message?: string };
+  return [err.stderr, err.stdout, err.message]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join('\n');
+}
+
+async function checkCondaTermsOfService(condaPath?: string): Promise<PrerequisiteCheck> {
+  const check: PrerequisiteCheck = {
+    id: 'conda_tos',
+    name: 'Conda Terms',
+    description: 'Non-interactive runs require accepted Terms of Service for defaults channels',
+    status: 'unchecked',
+    message: '',
+    required: false,
+  };
+
+  const condaBin = await resolveCondaBinary(condaPath);
+  if (!condaBin) {
+    check.status = 'warning';
+    check.message = 'Conda not found';
+    check.details = 'Cannot verify channel Terms of Service acceptance';
+    return check;
+  }
+
+  const probeCommand = `${shellQuote(condaBin)} create --yes --quiet --dry-run --override-channels -c defaults python=3.11`;
+
+  try {
+    await execAsync(probeCommand, { timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
+    check.status = 'pass';
+    check.message = 'Terms accepted for defaults channels';
+    return check;
+  } catch (error) {
+    const details = extractExecErrorDetails(error);
+    if (
+      /CondaToSNonInteractiveError/i.test(details) ||
+      /Terms of Service have not been accepted/i.test(details)
+    ) {
+      check.status = 'warning';
+      check.message = 'Defaults channel blocked by Terms of Service';
+      check.details = [
+        'SeqDesk now configures Nextflow to use only conda-forge + bioconda.',
+        'If you want to remove defaults globally, run:',
+        `${condaBin} config --remove channels defaults`,
+        `${condaBin} config --add channels conda-forge`,
+        `${condaBin} config --add channels bioconda`,
+      ].join('\n');
+      return check;
+    }
+
+    if (
+      /timed out|temporary failure|network|could not resolve|name or service not known|ssl|connection/i.test(
+        details
+      )
+    ) {
+      check.status = 'warning';
+      check.message = 'Unable to verify Conda Terms (network issue)';
+      check.details = details;
+      return check;
+    }
+
+    check.status = 'warning';
+    check.message = 'Unable to verify Conda Terms';
+    check.details = details || 'Unknown error';
+    return check;
+  }
+}
+
 async function checkCondaChannels(condaPath?: string): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'conda_channels',
@@ -668,6 +760,7 @@ export async function checkAllPrerequisites(
     nextflowCheck,
     javaCheck,
     condaCheck,
+    condaTosCheck,
     slurmCheck,
     runDirCheck,
     dataPathCheck,
@@ -678,6 +771,7 @@ export async function checkAllPrerequisites(
     checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
     checkJava(executionSettings.condaPath, executionSettings.condaEnv),
     checkConda(executionSettings.condaPath),
+    checkCondaTermsOfService(executionSettings.condaPath),
     checkSlurm(executionSettings.useSlurm),
     checkRunDirectory(executionSettings.pipelineRunDir),
     checkDataBasePath(dataBasePath),
@@ -690,6 +784,7 @@ export async function checkAllPrerequisites(
     nextflowCheck,
     javaCheck,
     condaCheck,
+    condaTosCheck,
     slurmCheck,
     runDirCheck,
     dataPathCheck,
@@ -827,7 +922,10 @@ export async function quickPrerequisiteCheck(
       checkRunDirectory(executionSettings.pipelineRunDir),
       checkDataBasePath(dataBasePath),
     ]);
-    const runtimeCheck = await checkConda(executionSettings.condaPath);
+    const [runtimeCheck, condaTosCheck] = await Promise.all([
+      checkConda(executionSettings.condaPath),
+      checkCondaTermsOfService(executionSettings.condaPath),
+    ]);
 
     const [nextflow, runDir, dataPath] = baseChecks;
 
@@ -841,7 +939,9 @@ export async function quickPrerequisiteCheck(
       return { ready: true, summary: 'Ready to run pipelines' };
     }
 
-    const failed = [nextflow, runDir, dataPath].filter(c => c.status === 'fail');
+    const failed = [nextflow, runDir, dataPath, runtimeCheck].filter(
+      (check) => check.status === 'fail'
+    );
     return {
       ready: false,
       summary: `Missing: ${failed.map(c => c.name).join(', ')}`
@@ -876,10 +976,15 @@ export async function testSetting(
         // Check system conda
         try {
           const { stdout } = await execAsync('conda --version', { timeout: 10000 });
+          const tosCheck = await checkCondaTermsOfService();
           return {
             success: true,
-            message: 'Available in PATH',
+            message:
+              tosCheck.status === 'warning'
+                ? 'Available in PATH (defaults channel not usable without ToS)'
+                : 'Available in PATH',
             version: stdout.trim(),
+            details: tosCheck.details,
           };
         } catch {
           return { success: false, message: 'Conda not found in PATH' };
@@ -894,11 +999,15 @@ export async function testSetting(
         try {
           await fs.access(bin);
           const { stdout } = await execAsync(`${bin} --version`, { timeout: 10000 });
+          const tosCheck = await checkCondaTermsOfService(value);
           return {
             success: true,
-            message: 'Found and working',
+            message:
+              tosCheck.status === 'warning'
+                ? 'Found and working (defaults channel not usable without ToS)'
+                : 'Found and working',
             version: stdout.trim(),
-            details: bin,
+            details: tosCheck.details ? `${bin}\n${tosCheck.details}` : bin,
           };
         } catch {
           // Try next path

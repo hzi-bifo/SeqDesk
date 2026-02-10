@@ -235,13 +235,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 });
     }
 
-    const eventTime =
+    const parsedEventTime =
       parseDate(payload.utcTime) ||
       parseDate(payload.timestamp) ||
       parseDate(trace?.start) ||
       parseDate(trace?.submit) ||
       parseDate(trace?.complete);
-    const eventAt = eventTime || new Date();
+    const eventAt = new Date();
 
     const processName = getProcessName(trace, payload);
     const stepDefinition = processName
@@ -265,10 +265,10 @@ export async function POST(request: NextRequest) {
 
       const startedAt =
         existingStep?.startedAt ||
-        (stepStatus === 'running' ? eventTime : undefined);
+        (stepStatus === 'running' ? parsedEventTime : undefined);
       const completedAt =
         existingStep?.completedAt ||
-        (stepStatus === 'completed' || stepStatus === 'failed' ? eventTime : undefined);
+        (stepStatus === 'completed' || stepStatus === 'failed' ? parsedEventTime : undefined);
 
       const nextStatus: StepStatus =
         existingStep?.status === 'failed' ? 'failed' : stepStatus;
@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
 
     if (event.includes('workflow_start') || event.includes('workflow_begin')) {
       if (!run.startedAt) {
-        runUpdates.startedAt = eventTime || new Date();
+        runUpdates.startedAt = parsedEventTime || eventAt;
       }
       if (run.status === 'pending' || run.status === 'queued') {
         runUpdates.status = 'running';
@@ -323,20 +323,20 @@ export async function POST(request: NextRequest) {
         runUpdates.status = 'running';
       }
       if (!run.startedAt) {
-        runUpdates.startedAt = eventTime || new Date();
+        runUpdates.startedAt = parsedEventTime || eventAt;
       }
     }
 
     if (stepStatus === 'failed' && stepName) {
       runUpdates.status = 'failed';
       runUpdates.currentStep = `Failed at ${stepName}`;
-      runUpdates.completedAt = eventTime || new Date();
+      runUpdates.completedAt = parsedEventTime || eventAt;
     }
 
     if (event.includes('workflow_complete') || event.includes('workflow_finish')) {
       runUpdates.status = 'completed';
       runUpdates.currentStep = 'Completed';
-      runUpdates.completedAt = eventTime || new Date();
+      runUpdates.completedAt = parsedEventTime || eventAt;
       runUpdates.progress = 100;
 
       // Trigger output resolution asynchronously
@@ -348,7 +348,7 @@ export async function POST(request: NextRequest) {
     if (event.includes('workflow_error') || event.includes('workflow_fail')) {
       runUpdates.status = 'failed';
       runUpdates.currentStep = 'Failed';
-      runUpdates.completedAt = eventTime || new Date();
+      runUpdates.completedAt = parsedEventTime || eventAt;
     }
 
     if (stepStatus === 'completed' || stepStatus === 'failed') {

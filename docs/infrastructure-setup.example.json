@@ -1,16 +1,16 @@
 {
   "port": 8000,
-  "sequencingDataDir": "/data/seqdesk_data",
-  "pipelineRunDir": "/data/pipeline_runs",
+  "sequencingDataDir": "/net/broker/devphil/seqdesk_data",
+  "pipelineRunDir": "/net/broker/devphil/pipeline",
   "useSlurm": true,
   "slurmQueue": "cpu",
   "slurmCores": 4,
   "slurmMemory": "64GB",
   "slurmTimeLimit": 12,
   "slurmOptions": "--qos=broker",
-  "condaPath": "/opt/miniconda3",
+  "condaPath": "/net/broker/devphil/miniconda3",
   "condaEnv": "seqdesk-pipelines",
   "nextflowProfile": "conda",
-  "nextflowWeblogUrl": "http://your-host:8000/api/pipelines/weblog",
-  "weblogSecret": ""
+  "nextflowWeblogUrl": "http://dzif-student-0205:8000/api/pipelines/weblog",
+  "weblogSecret": "replace-with-random-secret"
 }
