@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
+import { buildSimulatedFastq } from "@/lib/simulation/fastq";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { gzipSync } from "zlib";
@@ -19,91 +20,6 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   if (rounded < min) return min;
   if (rounded > max) return max;
   return rounded;
-}
-
-// Simple seeded pseudo-random number generator (xorshift32)
-function createRng(seed: number) {
-  let s = seed | 1; // avoid zero
-  return () => {
-    s ^= s << 13;
-    s ^= s >> 17;
-    s ^= s << 5;
-    return (s >>> 0) / 0x100000000; // 0..1
-  };
-}
-
-const BASES = "ACGT";
-
-// GC content varies per "organism" to create diversity across samples
-const GC_PROFILES = [0.45, 0.55, 0.65, 0.35, 0.50, 0.60, 0.40, 0.70];
-
-function buildSequence(length: number, rng: () => number, gcContent: number): string {
-  const chars: string[] = new Array(length);
-  for (let i = 0; i < length; i++) {
-    const r = rng();
-    if (r < gcContent / 2) {
-      chars[i] = "G";
-    } else if (r < gcContent) {
-      chars[i] = "C";
-    } else if (r < gcContent + (1 - gcContent) / 2) {
-      chars[i] = "A";
-    } else {
-      chars[i] = "T";
-    }
-  }
-  return chars.join("");
-}
-
-// Illumina-like quality scores: high in middle, lower at ends
-function buildQuality(length: number, rng: () => number): string {
-  const chars: string[] = new Array(length);
-  // Phred+33 range: '!' (0) to 'J' (41)
-  for (let i = 0; i < length; i++) {
-    // Position-dependent base quality
-    let meanQ: number;
-    if (i < 5) {
-      meanQ = 25 + i * 2; // ramp up at start
-    } else if (i > length - 10) {
-      meanQ = Math.max(15, 35 - (i - (length - 10)) * 2); // drop at end
-    } else {
-      meanQ = 35; // stable mid-read
-    }
-    // Add some noise
-    const q = Math.max(2, Math.min(41, Math.round(meanQ + (rng() - 0.5) * 10)));
-    chars[i] = String.fromCharCode(33 + q);
-  }
-  return chars.join("");
-}
-
-function buildFastqContent(
-  sampleId: string,
-  readCount: number,
-  readLength: number,
-  readOffset: number,
-  sampleIndex: number
-): Buffer {
-  const lines: string[] = [];
-  const rng = createRng(sampleIndex * 1_000_000 + readOffset * 10_000 + 42);
-  // Each sample gets a mix of 2-3 "organisms" with different GC content
-  const gc1 = GC_PROFILES[sampleIndex % GC_PROFILES.length];
-  const gc2 = GC_PROFILES[(sampleIndex + 3) % GC_PROFILES.length];
-
-  for (let i = 0; i < readCount; i += 1) {
-    const readNum = readOffset + i + 1;
-    // 60% from organism 1, 40% from organism 2
-    const gc = rng() < 0.6 ? gc1 : gc2;
-    const sequence = buildSequence(readLength, rng, gc);
-    const quality = buildQuality(readLength, rng);
-    // Illumina-style header: instrument:run:flowcell:lane:tile:x:y
-    lines.push(
-      `@SIM:1:FC1:1:1:${readNum}:${sampleIndex + 1} ${readOffset === 0 ? 1 : 2}:N:0:${sampleId}`,
-      sequence,
-      "+",
-      quality
-    );
-  }
-
-  return Buffer.from(`${lines.join("\n")}\n`, "utf-8");
 }
 
 async function safeUnlink(filePath: string): Promise<void> {
@@ -262,24 +178,17 @@ export async function POST(
       const file1Name = `${sample.sampleId}_R1${extension}`;
       const file1AbsPath = path.join(targetDir, file1Name);
       const file1RelPath = path.join(folderName, file1Name);
+      const simulatedReads = buildSimulatedFastq({
+        sampleId: sample.sampleId,
+        sampleIndex: si,
+        readCount: normalizedReadCount,
+        readLength: normalizedReadLength,
+        pairedEnd,
+      });
 
       const buffer1 = extension.endsWith(".gz")
-        ? gzipSync(
-            buildFastqContent(
-              sample.sampleId,
-              normalizedReadCount,
-              normalizedReadLength,
-              0,
-              si
-            )
-          )
-        : buildFastqContent(
-            sample.sampleId,
-            normalizedReadCount,
-            normalizedReadLength,
-            0,
-            si
-          );
+        ? gzipSync(simulatedReads.read1)
+        : simulatedReads.read1;
 
       await fs.writeFile(file1AbsPath, buffer1);
       filesCreated += 1;
@@ -291,28 +200,14 @@ export async function POST(
         const file2Name = `${sample.sampleId}_R2${extension}`;
         file2AbsPath = path.join(targetDir, file2Name);
         file2RelPath = path.join(folderName, file2Name);
-
-        const buffer2 = extension.endsWith(".gz")
-          ? gzipSync(
-              buildFastqContent(
-                sample.sampleId,
-                normalizedReadCount,
-                normalizedReadLength,
-                normalizedReadCount,
-                si
-              )
-            )
-          : buildFastqContent(
-              sample.sampleId,
-              normalizedReadCount,
-              normalizedReadLength,
-              normalizedReadCount,
-              si
-            );
-
-        await fs.writeFile(file2AbsPath, buffer2);
-        buffer2Size = buffer2.length;
-        filesCreated += 1;
+        if (simulatedReads.read2) {
+          const buffer2 = extension.endsWith(".gz")
+            ? gzipSync(simulatedReads.read2)
+            : simulatedReads.read2;
+          await fs.writeFile(file2AbsPath, buffer2);
+          buffer2Size = buffer2.length;
+          filesCreated += 1;
+        }
       }
 
       createdFiles.push({

@@ -3,16 +3,24 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
+import { buildSimulatedFastq } from "@/lib/simulation/fastq";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { gzipSync } from "zlib";
 
 const DEFAULT_EXTENSION = ".fastq.gz";
 const DEFAULT_SAMPLE_COUNT = 3;
+const DEFAULT_READ_COUNT = 1000;
+const DEFAULT_READ_LENGTH = 150;
+const MAX_READ_COUNT = 50_000;
+const MAX_READ_LENGTH = 300;
 
-function buildFastqContent(sampleId: string): Buffer {
-  const content = `@${sampleId}\nACGTACGTACGT\n+\nFFFFFFFFFFFF\n`;
-  return Buffer.from(content, "utf-8");
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const rounded = Math.floor(value);
+  if (rounded < min) return min;
+  if (rounded > max) return max;
+  return rounded;
 }
 
 // POST - create dummy sequencing files in the configured base path
@@ -25,7 +33,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const { count } = body as { count?: number };
+    const { count, readCount, readLength } = body as {
+      count?: number;
+      readCount?: number;
+      readLength?: number;
+    };
 
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
@@ -88,6 +100,18 @@ export async function POST(request: NextRequest) {
       typeof count === "number" && count > 0
         ? Math.min(count, 50)
         : DEFAULT_SAMPLE_COUNT;
+    const normalizedReadCount = clampInt(
+      readCount,
+      DEFAULT_READ_COUNT,
+      2,
+      MAX_READ_COUNT
+    );
+    const normalizedReadLength = clampInt(
+      readLength,
+      DEFAULT_READ_LENGTH,
+      25,
+      MAX_READ_LENGTH
+    );
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const folderName = `seqdesk-test-${timestamp}`;
@@ -107,17 +131,25 @@ export async function POST(request: NextRequest) {
       const read1Name = `${sampleId}_R1${extension}`;
       const read2Name = `${sampleId}_R2${extension}`;
       const isSingleEnd = config.allowSingleEnd && i === sampleCount;
+      const simulatedReads = buildSimulatedFastq({
+        sampleId,
+        sampleIndex: i - 1,
+        readCount: normalizedReadCount,
+        readLength: normalizedReadLength,
+        pairedEnd: !isSingleEnd,
+      });
+      const buffer1 = extension.endsWith(".gz")
+        ? gzipSync(simulatedReads.read1)
+        : simulatedReads.read1;
 
-      const baseBuffer = buildFastqContent(sampleId);
-      const buffer = extension.endsWith(".gz")
-        ? gzipSync(baseBuffer)
-        : baseBuffer;
-
-      await fs.writeFile(path.join(targetDir, read1Name), buffer);
+      await fs.writeFile(path.join(targetDir, read1Name), buffer1);
       filesCreated += 1;
 
-      if (!isSingleEnd) {
-        await fs.writeFile(path.join(targetDir, read2Name), buffer);
+      if (!isSingleEnd && simulatedReads.read2) {
+        const buffer2 = extension.endsWith(".gz")
+          ? gzipSync(simulatedReads.read2)
+          : simulatedReads.read2;
+        await fs.writeFile(path.join(targetDir, read2Name), buffer2);
         filesCreated += 1;
         pairedCount += 1;
       } else {
@@ -132,6 +164,8 @@ export async function POST(request: NextRequest) {
       filesCreated,
       pairedCount,
       singleEndCount,
+      readCount: normalizedReadCount,
+      readLength: normalizedReadLength,
       samples,
       extension,
     });

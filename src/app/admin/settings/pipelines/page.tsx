@@ -101,6 +101,7 @@ interface PipelineConfig {
   enabled: boolean;
   config: Record<string, unknown>;
   download?: PipelineDownloadInfo;
+  databaseDownloads?: PipelineDatabaseDownloadInfo[];
   configSchema: {
     properties: Record<string, {
       type: string;
@@ -110,6 +111,35 @@ interface PipelineConfig {
     }>;
   };
   defaultConfig: Record<string, unknown>;
+}
+
+interface PipelineDatabaseDownloadInfo {
+  id: string;
+  label: string;
+  description?: string;
+  version?: string;
+  configKey: string;
+  status: "downloaded" | "missing";
+  path?: string;
+  expectedPath?: string;
+  configuredPath?: string;
+  sourceUrl?: string;
+  sizeBytes?: number;
+  lastUpdated?: string;
+  detail?: string;
+  job?: {
+    state: "running" | "success" | "error";
+    sourceUrl?: string;
+    targetPath?: string;
+    pid?: number;
+    bytesDownloaded?: number;
+    totalBytes?: number;
+    progressPercent?: number | null;
+    startedAt?: string;
+    finishedAt?: string;
+    error?: string;
+    logPath?: string;
+  } | null;
 }
 
 interface PipelineDownloadInfo {
@@ -203,7 +233,10 @@ export default function PipelineSettingsPage() {
     fetcher,
     {
       refreshInterval: (latestData) =>
-        latestData?.pipelines?.some((pipeline: PipelineConfig) => pipeline.download?.job?.state === "running")
+        latestData?.pipelines?.some((pipeline: PipelineConfig) =>
+          pipeline.download?.job?.state === "running" ||
+          pipeline.databaseDownloads?.some((database) => database.job?.state === "running")
+        )
           ? 3000
           : 0,
     }
@@ -235,6 +268,8 @@ export default function PipelineSettingsPage() {
   const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
   const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadingDatabase, setDownloadingDatabase] = useState<string | null>(null);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [togglingPipeline, setTogglingPipeline] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
@@ -257,6 +292,21 @@ export default function PipelineSettingsPage() {
     if (!value) return "Unknown";
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+      return "Unknown";
+    }
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unitIndex = -1;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
   // Install a pipeline from the store
@@ -333,6 +383,34 @@ export default function PipelineSettingsPage() {
     } finally {
       setDownloadingPipeline(null);
       setDownloadAction(null);
+    }
+  };
+
+  const handleDownloadPipelineDatabase = async (
+    pipelineId: string,
+    databaseId: string,
+    replace = false
+  ) => {
+    const key = `${pipelineId}:${databaseId}`;
+    setDownloadingDatabase(key);
+    setDatabaseError(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/download-db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipelineId, databaseId, replace }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDatabaseError(data.error || "Database download failed");
+        return;
+      }
+      mutate();
+    } catch (err) {
+      setDatabaseError("Database download failed. Check console for details.");
+      console.error("Database download error:", err);
+    } finally {
+      setDownloadingDatabase(null);
     }
   };
 
@@ -493,7 +571,7 @@ export default function PipelineSettingsPage() {
             <p className="text-xs text-muted-foreground">
               {storeError
                 ? "Store registry unavailable. Installed pipelines can still be managed."
-                : `${installedCount} installed • ${storeLoading ? "Checking store..." : `${availablePipelineCount} available`} • Download pipeline code to warm runtime cache.`}
+                : `${installedCount} installed • ${storeLoading ? "Checking store..." : `${availablePipelineCount} available`} • Download pipeline code and databases to warm runtime cache.`}
             </p>
             <div className="flex items-center gap-2">
               <Button asChild variant="outline" size="sm" className="bg-white">
@@ -559,6 +637,21 @@ export default function PipelineSettingsPage() {
                 size="sm"
                 className="ml-auto"
                 onClick={() => setDownloadError(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          {databaseError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+              <XCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">{databaseError}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setDatabaseError(null)}
               >
                 Dismiss
               </Button>
@@ -639,6 +732,19 @@ export default function PipelineSettingsPage() {
                       : codeUpdateAvailable
                         ? "Update pipeline"
                         : "Re-download pipeline";
+                    const databaseDownloads = pipeline.databaseDownloads || [];
+                    const databasesRunning = databaseDownloads.filter(
+                      (database) => database.job?.state === "running"
+                    );
+                    const databaseMissing = databaseDownloads.filter(
+                      (database) => database.status === "missing"
+                    );
+                    const databaseFailed = databaseDownloads.filter(
+                      (database) => database.job?.state === "error"
+                    );
+                    const databaseAvailable = databaseDownloads.filter(
+                      (database) => database.status === "downloaded"
+                    );
 
                     return (
                       <>
@@ -689,6 +795,26 @@ export default function PipelineSettingsPage() {
                                     External pipeline
                                   </Badge>
                                 )}
+                                {databaseDownloads.length > 0 && databaseAvailable.length > 0 && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    DB ready
+                                  </Badge>
+                                )}
+                                {databaseDownloads.length > 0 && databaseMissing.length > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    DB missing
+                                  </Badge>
+                                )}
+                                {databasesRunning.length > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Downloading DB...
+                                  </Badge>
+                                )}
+                                {databaseFailed.length > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    DB download failed
+                                  </Badge>
+                                )}
                                 <Badge variant="secondary" className="text-xs capitalize">
                                   {pipeline.category}
                                 </Badge>
@@ -724,6 +850,53 @@ export default function PipelineSettingsPage() {
                                       : "Pipeline cache: unknown"}
                                 {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
                               </p>
+                              {databaseDownloads.map((database) => {
+                                const databaseRunning = database.job?.state === "running";
+                                const databaseFailedState = database.job?.state === "error";
+                                const databaseProgress = database.job?.progressPercent;
+                                const databaseBytes = database.job?.bytesDownloaded;
+                                const databaseTotal = database.job?.totalBytes;
+                                return (
+                                  <div key={database.id} className="mt-1 space-y-1">
+                                    <p className="text-xs text-muted-foreground">
+                                      {database.label}:{" "}
+                                      {database.status === "downloaded"
+                                        ? `downloaded${database.version ? ` (v${database.version})` : ""}`
+                                        : "not downloaded"}
+                                    </p>
+                                    {database.path && (
+                                      <p className="text-xs text-muted-foreground break-all">
+                                        Path: {database.path}
+                                      </p>
+                                    )}
+                                    {databaseRunning && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Downloading: {databaseProgress != null ? `${databaseProgress}%` : "in progress"}
+                                        {typeof databaseBytes === "number"
+                                          ? ` (${formatBytes(databaseBytes)}`
+                                          : ""}
+                                        {typeof databaseBytes === "number" && typeof databaseTotal === "number"
+                                          ? ` / ${formatBytes(databaseTotal)})`
+                                          : typeof databaseBytes === "number"
+                                            ? ")"
+                                            : ""}
+                                      </p>
+                                    )}
+                                    {databaseFailedState && (
+                                      <p className="text-xs text-destructive">
+                                        {database.job?.error
+                                          ? `${database.label} download failed: ${database.job.error}`
+                                          : `${database.label} download failed`}
+                                      </p>
+                                    )}
+                                    {database.job?.state === "success" && database.job.finishedAt && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Last DB download {formatStoreDate(database.job.finishedAt)}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
                               {downloadInProgress && downloadJob?.startedAt && (
                                 <p className="text-xs text-muted-foreground mt-1">
                                   Download started {formatStoreDate(downloadJob.startedAt)}
@@ -765,6 +938,40 @@ export default function PipelineSettingsPage() {
                                   : codeActionLabel}
                               </Button>
                             )}
+                            {databaseDownloads.map((database) => {
+                              const key = `${pipeline.pipelineId}:${database.id}`;
+                              const databaseRunning = database.job?.state === "running";
+                              const databaseBusy = downloadingDatabase === key || databaseRunning;
+                              const databaseActionLabel =
+                                database.status === "downloaded" ? "Re-download DB" : "Download DB";
+                              return (
+                                <Button
+                                  key={key}
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleDownloadPipelineDatabase(
+                                      pipeline.pipelineId,
+                                      database.id,
+                                      database.status === "downloaded"
+                                    )
+                                  }
+                                  className="h-8"
+                                  disabled={databaseBusy}
+                                >
+                                  {databaseBusy ? (
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                  ) : (
+                                    <Download className="h-4 w-4 mr-1" />
+                                  )}
+                                  {databaseBusy
+                                    ? databaseRunning
+                                      ? "Downloading DB..."
+                                      : "Starting..."
+                                    : databaseActionLabel}
+                                </Button>
+                              );
+                            })}
                             {updateAvailable && (
                               <Button
                                 variant="outline"
