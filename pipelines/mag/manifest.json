@@ -73,9 +73,9 @@
       "skipProkka": "--skip_prokka",
       "skipBinQc": "--skip_binqc",
       "skipConcoct": "--skip_concoct",
-      "skipBusco": "--skip_busco",
-      "skipCheckm": "--skip_checkm",
-      "skipGunc": "--skip_gunc",
+      "skipBusco": "--skip_binqc",
+      "skipCheckm": "",
+      "skipGunc": "",
       "skipQuast": "--skip_quast",
       "skipGtdb": "--skip_gtdbtk",
       "skipGtdbtk": "--skip_gtdbtk",
@@ -85,9 +85,13 @@
       {
         "when": { "skipBinQc": true },
         "add": [
-          "--skip_busco",
-          "--skip_checkm",
-          "--skip_gunc",
+          "--skip_quast",
+          "--skip_gtdbtk"
+        ]
+      },
+      {
+        "when": { "skipBusco": true },
+        "add": [
           "--skip_quast",
           "--skip_gtdbtk"
         ]
