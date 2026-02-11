@@ -808,6 +808,7 @@ export default function AnalysisRunDetailPage({
       { timestamp: run.lastWeblogAt, source: "weblog" },
       { timestamp: run.lastTraceAt, source: "trace" },
       { timestamp: run.queueUpdatedAt, source: "queue" },
+      { timestamp: run.completedAt, source: run.statusSource || null },
       {
         timestamp: ["running", "queued", "pending"].includes(run.status)
           ? queueHeartbeatAt
@@ -1148,7 +1149,18 @@ export default function AnalysisRunDetailPage({
                   Human-readable timeline of workflow and process updates.
                 </p>
               </div>
-              <Badge variant="outline">{recentEvents.length} recent events</Badge>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <Link
+                    href={`/api/pipelines/runs/${run.id}/weblog`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Raw weblog API
+                  </Link>
+                </Button>
+                <Badge variant="outline">{recentEvents.length} recent events</Badge>
+              </div>
             </div>
 
             {recentEvents.length > 0 ? (

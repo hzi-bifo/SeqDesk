@@ -45,7 +45,9 @@
     "extensions": [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
     "scanDepth": 2,
     "allowSingleEnd": false,
-    "ignorePatterns": ["**/tmp/**", "**/undetermined/**"]
+    "ignorePatterns": ["**/tmp/**", "**/undetermined/**"],
+    "simulationMode": "auto",
+    "simulationTemplateDir": "_simulation_templates/mag"
   },
 
   "auth": {

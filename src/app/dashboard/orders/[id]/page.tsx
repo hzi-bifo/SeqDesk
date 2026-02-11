@@ -39,6 +39,8 @@ import {
   Info,
   HardDrive,
   Download,
+  Eye,
+  RefreshCw,
   FileCode,
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
@@ -133,6 +135,8 @@ interface Order {
       id: string;
       file1: string | null;
       file2: string | null;
+      readCount1: number | null;
+      readCount2: number | null;
     }>;
     study: {
       id: string;
@@ -149,6 +153,22 @@ interface Order {
   }>;
   _count: {
     samples: number;
+  };
+}
+
+interface FileInspectionResponse {
+  filePath: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt: string;
+  readCount: number | null;
+  readCountSource: "database" | "computed" | "unsupported" | "error";
+  readCountError: string | null;
+  preview: {
+    lines: string[];
+    truncated: boolean;
+    supported: boolean;
+    error: string | null;
   };
 }
 
@@ -201,6 +221,14 @@ export default function OrderDetailPage({
       file2Size: number | null;
     }>;
   } | null>(null);
+
+  // File inspection states
+  const [inspectDialogOpen, setInspectDialogOpen] = useState(false);
+  const [inspectingFilePath, setInspectingFilePath] = useState<string | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectError, setInspectError] = useState("");
+  const [inspectedFile, setInspectedFile] = useState<FileInspectionResponse | null>(null);
+  const [inspectionCache, setInspectionCache] = useState<Record<string, FileInspectionResponse>>({});
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -384,12 +412,94 @@ export default function OrderDetailPage({
     }
   };
 
+  const fetchFileInspection = async (
+    filePath: string,
+    options?: { force?: boolean }
+  ) => {
+    const cached = inspectionCache[filePath];
+    if (cached && !options?.force) {
+      setInspectedFile(cached);
+      setInspectError("");
+      return;
+    }
+
+    setInspectLoading(true);
+    setInspectError("");
+    if (!cached) {
+      setInspectedFile(null);
+    }
+
+    try {
+      const res = await fetch(
+        `/api/orders/${orderId}/files/inspect?path=${encodeURIComponent(filePath)}`
+      );
+      const data = (await res.json()) as
+        | FileInspectionResponse
+        | { error?: string };
+
+      if (!res.ok) {
+        const errorMessage =
+          "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Failed to inspect file";
+        setInspectError(errorMessage);
+        return;
+      }
+
+      const inspection = data as FileInspectionResponse;
+      setInspectedFile(inspection);
+      setInspectionCache((prev) => ({ ...prev, [filePath]: inspection }));
+    } catch {
+      setInspectError("Failed to inspect file");
+    } finally {
+      setInspectLoading(false);
+    }
+  };
+
+  const handleInspectFile = (filePath: string) => {
+    setInspectDialogOpen(true);
+    setInspectingFilePath(filePath);
+    void fetchFileInspection(filePath);
+  };
+
+  const handleRefreshInspection = () => {
+    if (!inspectingFilePath) return;
+    void fetchFileInspection(inspectingFilePath, { force: true });
+  };
+
+  const getReadCountForFile = (
+    filePath: string | null,
+    fallbackCount: number | null
+  ): number | null => {
+    if (!filePath) return null;
+    const cached = inspectionCache[filePath];
+    if (cached && cached.readCount !== null) {
+      return cached.readCount;
+    }
+    return fallbackCount;
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
       month: "long",
       day: "numeric",
     });
+  };
+
+  const formatDateTime = (dateString: string) => {
+    return new Date(dateString).toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatReadCount = (value: number | null) => {
+    if (value === null) return "Unknown";
+    return `${value.toLocaleString("en-US")} reads`;
   };
 
   if (loading) {
@@ -785,36 +895,60 @@ export default function OrderDetailPage({
                       {/* File details */}
                       {hasFiles && (
                         <div className="ml-10 mt-2 space-y-1">
-                          {sample.reads.filter(r => r.file1 || r.file2).map((read) => (
-                            <div key={read.id} className="space-y-1">
-                              {read.file1 && (
-                                <div className="flex items-center gap-2 text-sm">
-                                  <Badge variant="outline" className="border-blue-300 text-blue-700 text-xs">R1</Badge>
-                                  <span className="truncate text-muted-foreground text-xs">{read.file1.split("/").pop()}</span>
-                                  <a
-                                    href={`/api/files/download?path=${encodeURIComponent(read.file1)}`}
-                                    className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 text-xs"
-                                  >
-                                    <Download className="h-3 w-3" />
-                                    Download
-                                  </a>
-                                </div>
-                              )}
-                              {read.file2 && (
-                                <div className="flex items-center gap-2 text-sm">
-                                  <Badge variant="outline" className="border-purple-300 text-purple-700 text-xs">R2</Badge>
-                                  <span className="truncate text-muted-foreground text-xs">{read.file2.split("/").pop()}</span>
-                                  <a
-                                    href={`/api/files/download?path=${encodeURIComponent(read.file2)}`}
-                                    className="ml-auto text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 text-xs"
-                                  >
-                                    <Download className="h-3 w-3" />
-                                    Download
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                          {sample.reads.filter(r => r.file1 || r.file2).map((read) => {
+                            const read1Count = getReadCountForFile(read.file1, read.readCount1);
+                            const read2Count = getReadCountForFile(read.file2, read.readCount2);
+                            const read1Path = read.file1;
+                            const read2Path = read.file2;
+                            return (
+                              <div key={read.id} className="space-y-1">
+                                {read1Path && (
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <Badge variant="outline" className="border-blue-300 text-blue-700 text-xs">R1</Badge>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-muted-foreground text-xs">
+                                        {read1Path.split("/").pop()}
+                                      </p>
+                                      <p className="text-[11px] text-muted-foreground">
+                                        {formatReadCount(read1Count)}
+                                      </p>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-xs"
+                                      onClick={() => handleInspectFile(read1Path)}
+                                    >
+                                      <Eye className="h-3 w-3 mr-1" />
+                                      Inspect
+                                    </Button>
+                                  </div>
+                                )}
+                                {read2Path && (
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <Badge variant="outline" className="border-purple-300 text-purple-700 text-xs">R2</Badge>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-muted-foreground text-xs">
+                                        {read2Path.split("/").pop()}
+                                      </p>
+                                      <p className="text-[11px] text-muted-foreground">
+                                        {formatReadCount(read2Count)}
+                                      </p>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-xs"
+                                      onClick={() => handleInspectFile(read2Path)}
+                                    >
+                                      <Eye className="h-3 w-3 mr-1" />
+                                      Inspect
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -825,6 +959,117 @@ export default function OrderDetailPage({
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* File Inspect Dialog */}
+      <Dialog
+        open={inspectDialogOpen}
+        onOpenChange={(open) => {
+          setInspectDialogOpen(open);
+          if (!open) {
+            setInspectError("");
+            setInspectingFilePath(null);
+            setInspectedFile(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Inspect Read File
+            </DialogTitle>
+            <DialogDescription className="font-mono text-xs break-all">
+              {inspectingFilePath || "No file selected"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 space-y-4">
+            {inspectLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : inspectError ? (
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+                {inspectError}
+              </div>
+            ) : inspectedFile ? (
+              <>
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-md border p-3">
+                    <p className="text-muted-foreground text-xs">Size</p>
+                    <p className="font-medium mt-1">{formatFileSize(inspectedFile.sizeBytes)}</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-muted-foreground text-xs">Read Count</p>
+                    <p className="font-medium mt-1">{formatReadCount(inspectedFile.readCount)}</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-muted-foreground text-xs">Modified</p>
+                    <p className="font-medium mt-1">{formatDateTime(inspectedFile.modifiedAt)}</p>
+                  </div>
+                </div>
+
+                {inspectedFile.readCountError && (
+                  <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                    Read count could not be calculated: {inspectedFile.readCountError}
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-sm font-medium mb-2">Preview (first lines)</p>
+                  {inspectedFile.preview.supported ? (
+                    inspectedFile.preview.error ? (
+                      <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+                        {inspectedFile.preview.error}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="rounded-md border bg-muted max-h-[360px] overflow-auto">
+                          <pre className="p-3 text-xs whitespace-pre-wrap font-mono">
+                            {inspectedFile.preview.lines.length > 0
+                              ? inspectedFile.preview.lines.join("\n")
+                              : "No preview content available"}
+                          </pre>
+                        </div>
+                        {inspectedFile.preview.truncated && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Preview truncated. Showing the first lines only.
+                          </p>
+                        )}
+                      </>
+                    )
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Preview is not supported for this file type.
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No file selected.</p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              variant="outline"
+              onClick={handleRefreshInspection}
+              disabled={!inspectingFilePath || inspectLoading}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            {inspectingFilePath && (
+              <Button variant="outline" asChild>
+                <a href={`/api/files/download?path=${encodeURIComponent(inspectingFilePath)}`}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </a>
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

@@ -79,6 +79,10 @@ export interface SequencingFilesConfig {
   allowSingleEnd?: boolean;
   /** Patterns to ignore during scanning */
   ignorePatterns?: string[];
+  /** Read simulation mode: auto uses templates if available, otherwise synthetic */
+  simulationMode?: "auto" | "synthetic" | "template";
+  /** Template directory for realistic simulation FASTQ pairs */
+  simulationTemplateDir?: string;
 }
 
 export interface AuthConfig {

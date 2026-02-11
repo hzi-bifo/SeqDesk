@@ -105,6 +105,43 @@ interface MetadataValidation {
   };
 }
 
+interface PipelineReadinessCheck {
+  id: string;
+  label: string;
+  available: number;
+  total: number;
+  required: boolean;
+  ready: boolean;
+}
+
+interface PipelineReadinessSummary {
+  canRun: boolean;
+  checking: boolean;
+  requiredReady: number;
+  requiredTotal: number;
+  missingRequired: string[];
+  summary: string;
+  checkDetails: string[];
+}
+
+interface SubmgCoverageCheck {
+  id: string;
+  label: string;
+  available: number;
+  total: number;
+  missingSampleIds: string[];
+}
+
+interface SubmgCoverageSummary {
+  summary: string;
+  missingRequired: string[];
+  checks: SubmgCoverageCheck[];
+  binsSummary: string;
+  binsHint?: string;
+  blocking: boolean;
+  sampleMissingRequired: Record<string, string[]>;
+}
+
 interface Pipeline {
   pipelineId: string;
   name: string;
@@ -238,6 +275,410 @@ function formatRelativeTime(dateString: string) {
   return date.toLocaleDateString();
 }
 
+function fieldLabel(field: string): string {
+  switch (field) {
+    case "studyAccessionId":
+    case "studyAccession":
+      return "Study accession";
+    case "reads":
+      return "Paired reads";
+    case "checksums":
+      return "Read checksums";
+    case "taxId":
+      return "Sample taxId";
+    case "checklistData":
+    case "sampleMetadata":
+      return "Sample metadata";
+    case "assemblies":
+      return "Assemblies";
+    case "platform":
+      return "Platform metadata";
+    default:
+      return field;
+  }
+}
+
+function extractSampleToken(message: string): string | null {
+  const match = message.match(/^Sample\s+(.+?)(?::|\s+is\b|\s+has\b)/i);
+  if (!match?.[1]) return null;
+  return match[1].trim();
+}
+
+function countMissingSamples(issues: MetadataIssue[], totalSamples: number): number {
+  if (issues.length === 0) return 0;
+  const sampleTokens = new Set<string>();
+  for (const issue of issues) {
+    const token = extractSampleToken(issue.message);
+    if (token) sampleTokens.add(token);
+  }
+  if (sampleTokens.size > 0) {
+    return Math.min(sampleTokens.size, totalSamples);
+  }
+  return Math.min(issues.length, totalSamples);
+}
+
+function addUniqueField(map: Record<string, string[]>, sampleId: string, label: string) {
+  if (!map[sampleId]) {
+    map[sampleId] = [];
+  }
+  if (!map[sampleId].includes(label)) {
+    map[sampleId].push(label);
+  }
+}
+
+function formatSamplePreview(
+  sampleIds: string[],
+  sampleById: Map<string, Sample>,
+  limit = 3
+): string | null {
+  if (sampleIds.length === 0) return null;
+  const sampleCodes = sampleIds
+    .map((id) => sampleById.get(id)?.sampleId)
+    .filter((value): value is string => Boolean(value));
+  if (sampleCodes.length === 0) return null;
+  if (sampleCodes.length <= limit) return sampleCodes.join(", ");
+  return `${sampleCodes.slice(0, limit).join(", ")}, +${sampleCodes.length - limit} more`;
+}
+
+function buildSubmgCoverageSummary(params: {
+  validation: MetadataValidation;
+  samples: Sample[];
+  selectedSampleIds: Set<string>;
+  submitBins: boolean;
+}): SubmgCoverageSummary {
+  const { validation, samples, selectedSampleIds, submitBins } = params;
+  const sampleCodeToId = new Map(samples.map((sample) => [sample.sampleId, sample.id]));
+  const sampleById = new Map(samples.map((sample) => [sample.id, sample]));
+  const selectedIds = Array.from(selectedSampleIds);
+  const selectedSet = new Set(selectedIds);
+  const selectedCount = selectedIds.length;
+
+  const sampleErrorByField = new Map<string, Set<string>>();
+  const sampleWarningByField = new Map<string, Set<string>>();
+  const studyErrorFields = new Set<string>();
+  const unscopedSampleErrorFields = new Set<string>();
+  const sampleScopedFields = new Set([
+    "reads",
+    "checksums",
+    "taxId",
+    "checklistData",
+    "sampleMetadata",
+    "assemblies",
+    "bins",
+  ]);
+
+  for (const issue of validation.issues) {
+    const token = extractSampleToken(issue.message);
+    const resolvedSampleId = token ? sampleCodeToId.get(token) : undefined;
+    const target =
+      issue.severity === "error" ? sampleErrorByField : sampleWarningByField;
+
+    if (resolvedSampleId) {
+      const fieldSet = target.get(issue.field) || new Set<string>();
+      fieldSet.add(resolvedSampleId);
+      target.set(issue.field, fieldSet);
+      continue;
+    }
+
+    if (issue.severity === "error") {
+      if (sampleScopedFields.has(issue.field)) {
+        unscopedSampleErrorFields.add(issue.field);
+      } else {
+        studyErrorFields.add(issue.field);
+      }
+    }
+  }
+
+  const getMissingForFields = (
+    fields: string[],
+    severity: "error" | "warning"
+  ): Set<string> => {
+    const result = new Set<string>();
+    const source = severity === "error" ? sampleErrorByField : sampleWarningByField;
+
+    for (const field of fields) {
+      const sampleSet = source.get(field);
+      if (sampleSet) {
+        for (const sampleId of sampleSet) {
+          if (selectedSet.has(sampleId)) {
+            result.add(sampleId);
+          }
+        }
+      }
+      if (severity === "error" && unscopedSampleErrorFields.has(field)) {
+        for (const sampleId of selectedIds) {
+          result.add(sampleId);
+        }
+      }
+    }
+
+    return result;
+  };
+
+  const missingPairedReads = getMissingForFields(["reads"], "error");
+  for (const sampleId of selectedIds) {
+    const sample = sampleById.get(sampleId);
+    if (!sample) continue;
+    const hasPairedReads = sample.reads?.some((read) => read.file1 && read.file2);
+    if (!hasPairedReads) {
+      missingPairedReads.add(sampleId);
+    }
+  }
+
+  const missingChecksums = getMissingForFields(["checksums"], "error");
+  const missingTaxId = getMissingForFields(["taxId"], "error");
+  const missingMetadata = getMissingForFields(
+    ["checklistData", "sampleMetadata"],
+    "error"
+  );
+  const missingAssemblies = getMissingForFields(["assemblies"], "error");
+
+  const checks: SubmgCoverageCheck[] = [
+    {
+      id: "paired_reads",
+      label: "Paired reads",
+      available: Math.max(0, selectedCount - missingPairedReads.size),
+      total: selectedCount,
+      missingSampleIds: Array.from(missingPairedReads),
+    },
+    {
+      id: "checksums",
+      label: "Read checksums",
+      available: Math.max(0, selectedCount - missingChecksums.size),
+      total: selectedCount,
+      missingSampleIds: Array.from(missingChecksums),
+    },
+    {
+      id: "taxid",
+      label: "Sample taxId",
+      available: Math.max(0, selectedCount - missingTaxId.size),
+      total: selectedCount,
+      missingSampleIds: Array.from(missingTaxId),
+    },
+    {
+      id: "metadata",
+      label: "Sample metadata",
+      available: Math.max(0, selectedCount - missingMetadata.size),
+      total: selectedCount,
+      missingSampleIds: Array.from(missingMetadata),
+    },
+    {
+      id: "assemblies",
+      label: "Assemblies",
+      available: Math.max(0, selectedCount - missingAssemblies.size),
+      total: selectedCount,
+      missingSampleIds: Array.from(missingAssemblies),
+    },
+  ];
+
+  const studyAccessionMissing =
+    studyErrorFields.has("studyAccessionId") || studyErrorFields.has("studyAccession");
+  const requiredTotal = 1 + checks.length;
+  const requiredReady =
+    (studyAccessionMissing ? 0 : 1) +
+    checks.filter((check) => check.missingSampleIds.length === 0).length;
+
+  const missingRequired: string[] = [];
+  if (studyAccessionMissing) {
+    missingRequired.push("Study accession");
+  }
+  for (const check of checks) {
+    if (check.missingSampleIds.length > 0) {
+      missingRequired.push(check.label);
+    }
+  }
+
+  const sampleMissingRequired: Record<string, string[]> = {};
+  const requiredCheckMap: Array<{ label: string; sampleIds: string[] }> = [
+    { label: "Paired reads", sampleIds: Array.from(missingPairedReads) },
+    { label: "Read checksums", sampleIds: Array.from(missingChecksums) },
+    { label: "Sample taxId", sampleIds: Array.from(missingTaxId) },
+    { label: "Sample metadata", sampleIds: Array.from(missingMetadata) },
+    { label: "Assemblies", sampleIds: Array.from(missingAssemblies) },
+  ];
+  for (const entry of requiredCheckMap) {
+    for (const sampleId of entry.sampleIds) {
+      addUniqueField(sampleMissingRequired, sampleId, entry.label);
+    }
+  }
+
+  const missingBins = submitBins ? getMissingForFields(["bins"], "warning") : new Set<string>();
+  const binsIncluded = Math.max(0, selectedCount - missingBins.size);
+  const binsSummary = submitBins
+    ? selectedCount === 0
+      ? "Bins: waiting for sample selection"
+      : `Bins: ${binsIncluded}/${selectedCount} selected samples include bins`
+    : "Bins: excluded (Submit Bins is off)";
+
+  let binsHint: string | undefined;
+  if (submitBins && missingBins.size > 0) {
+    binsHint =
+      "Samples without bins will still be submitted. Generate bins first with the MAG pipeline if needed.";
+  } else if (!submitBins) {
+    binsHint =
+      "Enable \"Submit Bins\" if you want to include bins in this SubMG submission.";
+  }
+
+  const blocking =
+    selectedCount === 0 ||
+    studyAccessionMissing ||
+    checks.some((check) => check.missingSampleIds.length > 0);
+
+  return {
+    summary: `${requiredReady}/${requiredTotal} required inputs available for selected samples`,
+    missingRequired,
+    checks,
+    binsSummary,
+    binsHint,
+    blocking,
+    sampleMissingRequired,
+  };
+}
+
+function getPipelineReadiness(params: {
+  pipelineId: string;
+  validation?: MetadataValidation;
+  totalSamples: number;
+  samplesWithReads: number;
+}): PipelineReadinessSummary {
+  const { pipelineId, validation, totalSamples, samplesWithReads } = params;
+
+  if (pipelineId === "submg") {
+    if (!validation) {
+      return {
+        canRun: false,
+        checking: true,
+        requiredReady: 0,
+        requiredTotal: 6,
+        missingRequired: [],
+        summary: "Checking required inputs...",
+        checkDetails: [],
+      };
+    }
+
+    const errorIssues = validation.issues.filter((issue) => issue.severity === "error");
+    const byField = new Map<string, MetadataIssue[]>();
+    for (const issue of errorIssues) {
+      const current = byField.get(issue.field) || [];
+      current.push(issue);
+      byField.set(issue.field, current);
+    }
+
+    const checks: PipelineReadinessCheck[] = [];
+
+    const addStudyCheck = (id: string, label: string, fields: string[]) => {
+      const hasError = fields.some((field) => (byField.get(field) || []).length > 0);
+      checks.push({
+        id,
+        label,
+        available: hasError ? 0 : 1,
+        total: 1,
+        required: true,
+        ready: !hasError,
+      });
+    };
+
+    const addSampleCheck = (
+      id: string,
+      label: string,
+      fields: string[],
+      availableOverride?: number
+    ) => {
+      const issues = fields.flatMap((field) => byField.get(field) || []);
+      const missingCount = countMissingSamples(issues, totalSamples);
+      const availableCount =
+        typeof availableOverride === "number"
+          ? Math.max(0, Math.min(availableOverride, totalSamples))
+          : Math.max(0, totalSamples - missingCount);
+      checks.push({
+        id,
+        label,
+        available: availableCount,
+        total: totalSamples,
+        required: true,
+        ready: totalSamples > 0 && availableCount === totalSamples,
+      });
+    };
+
+    addStudyCheck("studyAccession", "Study accession", ["studyAccessionId", "studyAccession"]);
+    addSampleCheck("reads", "Paired reads", ["reads"], samplesWithReads);
+    addSampleCheck("checksums", "Read checksums", ["checksums"]);
+    addSampleCheck("taxId", "Sample taxId", ["taxId"]);
+    addSampleCheck("sampleMetadata", "Sample metadata", ["checklistData", "sampleMetadata"]);
+    addSampleCheck("assemblies", "Assemblies", ["assemblies"]);
+
+    const requiredChecks = checks.filter((check) => check.required);
+    const requiredReady = requiredChecks.filter((check) => check.ready).length;
+    const requiredTotal = requiredChecks.length;
+    const missingRequired = requiredChecks.filter((check) => !check.ready).map((check) => check.label);
+
+    const checkDetails = requiredChecks
+      .filter((check) => check.total > 1)
+      .map((check) => `${check.label}: ${check.available}/${check.total} samples`);
+
+    return {
+      canRun: requiredReady === requiredTotal,
+      checking: false,
+      requiredReady,
+      requiredTotal,
+      missingRequired,
+      summary: `${requiredReady}/${requiredTotal} required inputs available`,
+      checkDetails,
+    };
+  }
+
+  if (pipelineId === "mag") {
+    const pairedReadsReady = samplesWithReads > 0;
+    const hasMetadataErrors = Boolean(
+      validation?.issues.some((issue) => issue.severity === "error")
+    );
+    const metadataReady = validation ? !hasMetadataErrors : true;
+    const requiredTotal = validation ? 2 : 1;
+    const requiredReady =
+      (pairedReadsReady ? 1 : 0) + (validation ? (metadataReady ? 1 : 0) : 0);
+    const missingRequired = [
+      ...(pairedReadsReady ? [] : ["Paired reads"]),
+      ...(validation && !metadataReady ? ["Platform metadata"] : []),
+    ];
+
+    return {
+      canRun: pairedReadsReady && metadataReady,
+      checking: false,
+      requiredReady,
+      requiredTotal,
+      missingRequired,
+      summary: validation
+        ? `${requiredReady}/${requiredTotal} required inputs available`
+        : `${samplesWithReads}/${totalSamples} samples with paired reads`,
+      checkDetails:
+        totalSamples > 0
+          ? [`Paired reads: ${samplesWithReads}/${totalSamples} samples`]
+          : [],
+    };
+  }
+
+  const hasErrors = Boolean(
+    validation?.issues.some((issue) => issue.severity === "error")
+  );
+  const errorFields = Array.from(
+    new Set(
+      (validation?.issues || [])
+        .filter((issue) => issue.severity === "error")
+        .map((issue) => fieldLabel(issue.field))
+    )
+  );
+
+  return {
+    canRun: !hasErrors,
+    checking: false,
+    requiredReady: hasErrors ? 0 : 1,
+    requiredTotal: 1,
+    missingRequired: errorFields,
+    summary: hasErrors ? "Missing required metadata" : "Ready to run",
+    checkDetails: [],
+  };
+}
+
 export function StudyPipelinesSection({
   studyId,
   samples,
@@ -355,7 +796,34 @@ export function StudyPipelinesSection({
   const samplesWithReads = samples.filter((s) =>
     s.reads?.some((r) => r.file1 && r.file2)
   );
-  const canRunMag = samplesWithReads.length > 0;
+  const isSubmgDialog = selectedPipeline?.pipelineId === "submg";
+  const submitBinsEnabled = Boolean(
+    localConfig.submitBins ??
+      selectedPipeline?.defaultConfig?.submitBins ??
+      true
+  );
+
+  const submgCoverage = useMemo(() => {
+    if (!isSubmgDialog || !metadataValidation) return null;
+    return buildSubmgCoverageSummary({
+      validation: metadataValidation,
+      samples,
+      selectedSampleIds: selectedSamples,
+      submitBins: submitBinsEnabled,
+    });
+  }, [
+    isSubmgDialog,
+    metadataValidation,
+    samples,
+    selectedSamples,
+    submitBinsEnabled,
+  ]);
+
+  const hasBlockingMetadataErrors =
+    metadataValidation !== null &&
+    (isSubmgDialog
+      ? Boolean(submgCoverage?.blocking)
+      : metadataValidation.issues.some((i) => i.severity === "error"));
 
   const openRunDialog = async (pipeline: Pipeline) => {
     setSelectedPipeline(pipeline);
@@ -600,12 +1068,13 @@ export function StudyPipelinesSection({
           <div className="grid gap-4 sm:grid-cols-2 mb-6">
             {enabledPipelines.map((pipeline) => {
               const validation = metadataPrecheck[pipeline.pipelineId];
-              const hasMetadataErrors = validation
-                ? validation.issues.some((issue) => issue.severity === "error")
-                : pipeline.pipelineId === "submg";
-              const canRun =
-                (pipeline.pipelineId === "mag" ? canRunMag : true) &&
-                !hasMetadataErrors;
+              const readiness = getPipelineReadiness({
+                pipelineId: pipeline.pipelineId,
+                validation,
+                totalSamples: samples.length,
+                samplesWithReads: samplesWithReads.length,
+              });
+              const canRun = readiness.canRun;
               const category = pipeline.category || "metagenomics";
 
               return (
@@ -637,6 +1106,23 @@ export function StudyPipelinesSection({
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {pipeline.description}
                       </p>
+                      <p
+                        className={`text-xs mt-2 ${
+                          canRun ? "text-muted-foreground" : "text-amber-700"
+                        }`}
+                      >
+                        {readiness.summary}
+                      </p>
+                      {readiness.missingRequired.length > 0 && (
+                        <p className="text-xs text-destructive mt-1">
+                          Missing: {readiness.missingRequired.join(", ")}
+                        </p>
+                      )}
+                      {readiness.checkDetails.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {readiness.checkDetails.join(" • ")}
+                        </p>
+                      )}
                     </div>
                     {canRun && (
                       <Button size="sm" variant="ghost" className="h-8 flex-shrink-0">
@@ -961,6 +1447,65 @@ export function StudyPipelinesSection({
                 </div>
               )}
 
+              {isSubmgDialog && (
+                <div className="py-3 border-b">
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                    <p className="text-sm font-medium">SubMG Submission Scope</p>
+                    {loadingMetadata ? (
+                      <p className="text-xs text-muted-foreground">
+                        Evaluating selected samples...
+                      </p>
+                    ) : submgCoverage ? (
+                      <>
+                        <p
+                          className={`text-xs ${
+                            submgCoverage.blocking
+                              ? "text-amber-700"
+                              : "text-green-700"
+                          }`}
+                        >
+                          {submgCoverage.summary}
+                        </p>
+                        {submgCoverage.missingRequired.length > 0 && (
+                          <p className="text-xs text-destructive">
+                            Missing required: {submgCoverage.missingRequired.join(", ")}
+                          </p>
+                        )}
+                        <div className="space-y-1">
+                          {submgCoverage.checks.map((check) => {
+                            const preview = formatSamplePreview(
+                              check.missingSampleIds,
+                              new Map(samples.map((sample) => [sample.id, sample]))
+                            );
+                            return (
+                              <p key={check.id} className="text-xs text-muted-foreground">
+                                {check.label}: {check.available}/{check.total} selected
+                                {preview ? ` • missing ${preview}` : ""}
+                              </p>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {submgCoverage.binsSummary}
+                        </p>
+                        {submgCoverage.binsHint && (
+                          <p className="text-xs text-amber-700">
+                            {submgCoverage.binsHint}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Tip: Deselect samples with missing required inputs, or generate assemblies/bins first with the MAG pipeline.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Unable to evaluate SubMG coverage yet.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Data Flow - What goes in/out */}
               {pipelineDefinition && pipelineDefinition.inputs.length > 0 && (
                 <div className="py-3 border-b">
@@ -996,7 +1541,11 @@ export function StudyPipelinesSection({
               {/* Sample Selection */}
               <div className="py-4">
                 <div className="flex items-center justify-between mb-3">
-                  <Label>Samples ({selectedSamples.size} selected)</Label>
+                  <Label>
+                    {isSubmgDialog
+                      ? `Samples to Submit (${selectedSamples.size} selected)`
+                      : `Samples (${selectedSamples.size} selected)`}
+                  </Label>
                   <div className="flex gap-2 text-xs">
                     <button
                       className="text-primary hover:underline"
@@ -1014,6 +1563,13 @@ export function StudyPipelinesSection({
                   </div>
                 </div>
 
+                {isSubmgDialog && (
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Select which samples to include in this SubMG submission.
+                    Samples missing required inputs must be deselected or completed first.
+                  </p>
+                )}
+
                 <div className="max-h-48 overflow-y-auto border rounded-lg p-2 space-y-1">
                   {samplesWithReads.map((sample) => (
                     <div
@@ -1029,7 +1585,16 @@ export function StudyPipelinesSection({
                         htmlFor={`sample-${sample.id}`}
                         className="flex-1 cursor-pointer"
                       >
-                        {sample.sampleId}
+                        <div className="flex flex-col">
+                          <span>{sample.sampleId}</span>
+                          {isSubmgDialog &&
+                            submgCoverage?.sampleMissingRequired[sample.id] &&
+                            submgCoverage.sampleMissingRequired[sample.id].length > 0 && (
+                              <span className="text-[11px] text-destructive">
+                                Missing: {submgCoverage.sampleMissingRequired[sample.id].join(", ")}
+                              </span>
+                            )}
+                        </div>
                       </Label>
                       <span className="text-xs text-muted-foreground">
                         {(sample.reads ?? []).filter((r) => r.file1 && r.file2).length}{" "}
@@ -1143,10 +1708,7 @@ export function StudyPipelinesSection({
                     loadingPrereqs ||
                     loadingMetadata ||
                     (prerequisites !== null && !prerequisites.requiredPassed) ||
-                    (metadataValidation !== null &&
-                      metadataValidation.issues.some(
-                        (i) => i.severity === "error"
-                      ))
+                    hasBlockingMetadataErrors
                   }
                 >
                   {running ? (

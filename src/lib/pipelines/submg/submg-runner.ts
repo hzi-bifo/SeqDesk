@@ -114,6 +114,19 @@ function toAbsoluteDataPath(dataBasePath: string, maybeRelative: string): string
   return path.join(dataBasePath, maybeRelative);
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatSampleIssue(sampleId: string, detail: string): string {
+  return `Sample ${sampleId}: ${detail}`;
+}
+
 function mapSubmissionPlatform(platform: string | null | undefined): string {
   if (!platform) return "ILLUMINA";
   const normalized = platform.toLowerCase().replace(/[_\s-]+/g, "");
@@ -655,49 +668,185 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     const sample = selectedSamples[index];
     const sampleCode = sanitizeSampleCode(sample.sampleId);
     const sampleTitle = sample.sampleTitle || sample.sampleAlias || sample.sampleId;
+    const sampleErrors: string[] = [];
+    const sampleWarnings: string[] = [];
 
     if (!sample.taxId) {
-      errors.push(`Sample ${sample.sampleId} is missing taxId`);
-      continue;
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          "missing taxId. Set taxonomy metadata before starting SubMG."
+        )
+      );
     }
 
     const scientificName = sample.scientificName || "metagenome";
 
     const pairedReads = sample.reads.filter((read) => Boolean(read.file1 && read.file2));
     if (pairedReads.length === 0) {
-      errors.push(`Sample ${sample.sampleId} has no paired-end read files`);
-      continue;
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          "has no paired-end read files. SubMG requires FASTQ R1/R2 inputs."
+        )
+      );
     }
 
     const readsWithoutChecksums = pairedReads.filter((read) => !read.checksum1 || !read.checksum2);
     if (readsWithoutChecksums.length > 0) {
-      errors.push(`Sample ${sample.sampleId} has reads without MD5 checksums`);
-      continue;
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          `has reads without MD5 checksums (${readsWithoutChecksums.map((read) => read.id).join(", ")}). Calculate checksums before running SubMG.`
+        )
+      );
+    }
+
+    const resolvedReads = await Promise.all(
+      pairedReads.map(async (read) => {
+        const absFile1 = toAbsoluteDataPath(options.dataBasePath, read.file1 as string);
+        const absFile2 = toAbsoluteDataPath(options.dataBasePath, read.file2 as string);
+        const [file1Exists, file2Exists] = await Promise.all([
+          pathExists(absFile1),
+          pathExists(absFile2),
+        ]);
+
+        return {
+          id: read.id,
+          file1: absFile1,
+          file2: absFile2,
+          file1Exists,
+          file2Exists,
+          checksum1: read.checksum1,
+          checksum2: read.checksum2,
+          librarySource: sample.order.librarySource || DEFAULT_LIBRARY_SOURCE,
+          librarySelection: sample.order.librarySelection || DEFAULT_LIBRARY_SELECTION,
+          libraryStrategy: sample.order.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
+          instrumentModel: sample.order.instrumentModel || DEFAULT_INSTRUMENT,
+        };
+      })
+    );
+
+    for (const read of resolvedReads) {
+      if (!read.file1Exists) {
+        sampleErrors.push(
+          formatSampleIssue(
+            sample.sampleId,
+            `read ${read.id} is missing FASTQ R1 file at ${read.file1}. Reattach reads or regenerate input files.`
+          )
+        );
+      }
+      if (!read.file2Exists) {
+        sampleErrors.push(
+          formatSampleIssue(
+            sample.sampleId,
+            `read ${read.id} is missing FASTQ R2 file at ${read.file2}. Reattach reads or regenerate input files.`
+          )
+        );
+      }
     }
 
     const assembly = sample.assemblies.find((item) => Boolean(item.assemblyFile));
+    let absAssemblyPath: string | null = null;
     if (!assembly?.assemblyFile) {
-      errors.push(`Sample ${sample.sampleId} has no assembly file`);
-      continue;
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          "has no assembly file. SubMG requires an assembly FASTA; run the MAG pipeline first for this sample."
+        )
+      );
+    } else {
+      absAssemblyPath = toAbsoluteDataPath(options.dataBasePath, assembly.assemblyFile);
+      if (!(await pathExists(absAssemblyPath))) {
+        sampleErrors.push(
+          formatSampleIssue(
+            sample.sampleId,
+            `assembly file does not exist at ${absAssemblyPath}. Re-run MAG or fix the assembly path in the sample outputs.`
+          )
+        );
+      }
     }
-
-    const absAssemblyPath = toAbsoluteDataPath(options.dataBasePath, assembly.assemblyFile);
 
     const binsForSample = sample.bins.filter((bin) => Boolean(bin.binFile));
     if (submitBins && binsForSample.length === 0) {
-      warnings.push(`Sample ${sample.sampleId} has no bins; bins will be skipped for this sample`);
+      sampleWarnings.push(
+        formatSampleIssue(
+          sample.sampleId,
+          "has no bins. Bin submission is optional; this sample will be submitted without bins. Run MAG binning first to include bins."
+        )
+      );
     }
 
-    const binDescriptors = binsForSample.map((bin) => {
-      const absBinPath = toAbsoluteDataPath(options.dataBasePath, bin.binFile as string);
-      return {
-        id: bin.id,
-        name: normalizeFileStem(absBinPath),
-        path: absBinPath,
-        completeness: bin.completeness,
-        contamination: bin.contamination,
-      };
-    });
+    const binDescriptors: Array<{
+      id: string;
+      name: string;
+      path: string;
+      completeness: number | null;
+      contamination: number | null;
+    }> = [];
+    if (submitBins && binsForSample.length > 0) {
+      const resolvedBins = await Promise.all(
+        binsForSample.map(async (bin) => {
+          const absBinPath = toAbsoluteDataPath(options.dataBasePath, bin.binFile as string);
+          return {
+            id: bin.id,
+            path: absBinPath,
+            exists: await pathExists(absBinPath),
+            completeness: bin.completeness,
+            contamination: bin.contamination,
+          };
+        })
+      );
+
+      for (const bin of resolvedBins) {
+        if (!bin.exists) {
+          sampleWarnings.push(
+            formatSampleIssue(
+              sample.sampleId,
+              `bin file does not exist at ${bin.path}; this bin will be skipped. Re-run MAG binning to regenerate it.`
+            )
+          );
+          continue;
+        }
+
+        binDescriptors.push({
+          id: bin.id,
+          name: normalizeFileStem(bin.path),
+          path: bin.path,
+          completeness: bin.completeness,
+          contamination: bin.contamination,
+        });
+      }
+
+      if (binDescriptors.length === 0) {
+        sampleWarnings.push(
+          formatSampleIssue(
+            sample.sampleId,
+            "no usable bin files were found on disk. Bin submission will be skipped for this sample."
+          )
+        );
+      }
+    }
+
+    if (sampleErrors.length > 0) {
+      errors.push(...sampleErrors);
+      warnings.push(...sampleWarnings);
+      continue;
+    }
+
+    if (!sample.taxId || !assembly || !absAssemblyPath) {
+      errors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          "is missing required SubMG inputs after validation. Recheck reads/assembly metadata."
+        )
+      );
+      warnings.push(...sampleWarnings);
+      continue;
+    }
+
+    warnings.push(...sampleWarnings);
+    const taxId = sample.taxId;
 
     let taxonomyFilePath: string | null = null;
     let qualityFilePath: string | null = null;
@@ -708,7 +857,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
 
       await fs.writeFile(
         taxonomyFilePath,
-        buildTaxonomyFileContent(binDescriptors, scientificName, sample.taxId)
+        buildTaxonomyFileContent(binDescriptors, scientificName, taxId)
       );
       await fs.writeFile(
         qualityFilePath,
@@ -716,13 +865,13 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       );
     }
 
-    const readsBlock = pairedReads.map((read) => ({
-      file1: toAbsoluteDataPath(options.dataBasePath, read.file1 as string),
-      file2: toAbsoluteDataPath(options.dataBasePath, read.file2 as string),
-      librarySource: sample.order.librarySource || DEFAULT_LIBRARY_SOURCE,
-      librarySelection: sample.order.librarySelection || DEFAULT_LIBRARY_SELECTION,
-      libraryStrategy: sample.order.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
-      instrumentModel: sample.order.instrumentModel || DEFAULT_INSTRUMENT,
+    const readsBlock = resolvedReads.map((read) => ({
+      file1: read.file1,
+      file2: read.file2,
+      librarySource: read.librarySource,
+      librarySelection: read.librarySelection,
+      libraryStrategy: read.libraryStrategy,
+      instrumentModel: read.instrumentModel,
     }));
 
     const checklistFields = extractScalarChecklistFields(sample.checklistData);
@@ -733,14 +882,14 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       platform: mapSubmissionPlatform(sample.order.platform),
       sampleCode,
       sampleTitle,
-      taxId: sample.taxId,
+      taxId,
       scientificName,
       checklistFields,
       reads: readsBlock,
       assembly: {
         name: `${sampleCode}_assembly`,
         software: assemblySoftware,
-        file: absAssemblyPath,
+        file: absAssemblyPath as string,
       },
       bins:
         submitBins && taxonomyFilePath && qualityFilePath && binDescriptors.length > 0

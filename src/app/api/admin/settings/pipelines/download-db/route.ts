@@ -33,11 +33,25 @@ async function commandExists(command: string): Promise<boolean> {
   }
 }
 
+async function commandSupportsOption(command: string, option: string): Promise<boolean> {
+  try {
+    const { stdout, stderr } = await execAsync(`${command} --help all`, {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    const output = `${stdout}\n${stderr}`;
+    return output.includes(option);
+  } catch {
+    return false;
+  }
+}
+
 async function resolveDownloader(): Promise<{
   command: string;
   args: (sourceUrl: string, targetPath: string) => string[];
 }> {
   if (await commandExists('curl')) {
+    const supportsRetryAllErrors = await commandSupportsOption('curl', '--retry-all-errors');
     return {
       command: 'curl',
       args: (sourceUrl: string, targetPath: string) => [
@@ -46,9 +60,16 @@ async function resolveDownloader(): Promise<{
         '-',
         '--fail',
         '--retry',
-        '5',
+        '8',
         '--retry-delay',
         '5',
+        ...(supportsRetryAllErrors ? ['--retry-all-errors'] : []),
+        '--connect-timeout',
+        '30',
+        '--speed-time',
+        '60',
+        '--speed-limit',
+        '1024',
         '--output',
         targetPath,
         sourceUrl,
@@ -59,7 +80,15 @@ async function resolveDownloader(): Promise<{
   if (await commandExists('wget')) {
     return {
       command: 'wget',
-      args: (sourceUrl: string, targetPath: string) => ['-c', '-O', targetPath, sourceUrl],
+      args: (sourceUrl: string, targetPath: string) => [
+        '-c',
+        '--tries=8',
+        '--waitretry=5',
+        '--timeout=30',
+        '-O',
+        targetPath,
+        sourceUrl,
+      ],
     };
   }
 
@@ -327,10 +356,21 @@ export async function POST(req: NextRequest) {
               error: undefined,
             });
           } else {
+            const bytesDownloaded = await getFileSize(targetPath);
+            const progressPercent = calculateProgressPercent(bytesDownloaded, totalBytes);
+            const error =
+              code === 18
+                ? typeof totalBytes === 'number' && totalBytes > 0
+                  ? `Download exited with code 18 (partial transfer ${bytesDownloaded}/${totalBytes} bytes). Re-run to resume.`
+                  : 'Download exited with code 18 (partial transfer). Re-run to resume.'
+                : `Download exited with code ${code}`;
             await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
               state: 'error',
               finishedAt,
-              error: `Download exited with code ${code}`,
+              bytesDownloaded,
+              totalBytes,
+              progressPercent,
+              error,
             });
           }
         } catch (handlerError) {

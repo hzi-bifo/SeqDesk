@@ -76,6 +76,7 @@ function formatDate(value?: string | Date | null): string {
 export default function SettingsPage() {
   const [detectedVersions, setDetectedVersions] = useState<ToolVersions>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
+  const [versionsLoaded, setVersionsLoaded] = useState(false);
 
   const [configStatus, setConfigStatus] = useState<ConfigStatusResponse | null>(
     null
@@ -107,6 +108,7 @@ export default function SettingsPage() {
     updateInfo?.latest?.version || updateInfo?.currentVersion || "unknown";
 
   const toolsMissingCount = useMemo(() => {
+    if (!versionsLoaded) return null;
     const requiredTools: Array<keyof ToolVersions> = [
       "nextflow",
       "java",
@@ -114,7 +116,7 @@ export default function SettingsPage() {
       "conda",
     ];
     return requiredTools.filter((tool) => !detectedVersions[tool]).length;
-  }, [detectedVersions]);
+  }, [detectedVersions, versionsLoaded]);
 
   const stopUpdatePolling = useCallback(() => {
     if (!updatePollRef.current) return;
@@ -216,6 +218,7 @@ export default function SettingsPage() {
       }
       const data = (await res.json()) as { versions?: ToolVersions };
       setDetectedVersions(data.versions || {});
+      setVersionsLoaded(true);
     } catch (error) {
       console.error("Failed to detect tool versions:", error);
       if (showToast) {
@@ -224,6 +227,7 @@ export default function SettingsPage() {
         );
       }
     } finally {
+      setVersionsLoaded(true);
       setDetectingVersions(false);
     }
   }, []);
@@ -289,7 +293,7 @@ export default function SettingsPage() {
       await Promise.all([
         detectInstalledVersions(),
         fetchConfigStatus(),
-        checkForUpdates(),
+        checkForUpdates(true),
         fetchUpdateStatus(),
       ]);
       setLastRefreshedAt(new Date());
@@ -411,8 +415,10 @@ export default function SettingsPage() {
                 {updateInfo?.updateAvailable
                   ? `v${latestVersion} available`
                   : "Up to date"}{" "}
-                • {toolsMissingCount} tool
-                {toolsMissingCount === 1 ? "" : "s"} missing
+                •{" "}
+                {versionsLoaded && toolsMissingCount !== null
+                  ? `${toolsMissingCount} tool${toolsMissingCount === 1 ? "" : "s"} missing`
+                  : "Tool scan pending"}
               </>
             )}
           </p>
@@ -670,59 +676,68 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-4 space-y-4">
-            {toolsMissingCount > 0 ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                {toolsMissingCount} required tool
-                {toolsMissingCount === 1 ? "" : "s"} not detected.
+            {!versionsLoaded ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Detecting tool versions...
               </div>
             ) : (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-                All required runtime tools are detected.
-              </div>
-            )}
+              <>
+                {toolsMissingCount && toolsMissingCount > 0 ? (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    {toolsMissingCount} required tool
+                    {toolsMissingCount === 1 ? "" : "s"} not detected.
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    All required runtime tools are detected.
+                  </div>
+                )}
 
-            {detectedVersions.condaEnv && (
-              <p className="text-xs text-muted-foreground">
-                Active environment:{" "}
-                <span className="font-mono">{detectedVersions.condaEnv}</span>
-              </p>
-            )}
-
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-              {[
-                { key: "nextflow", label: "Nextflow", value: detectedVersions.nextflow },
-                {
-                  key: "java",
-                  label: "Java",
-                  value: detectedVersions.java
-                    ? `Java ${detectedVersions.java}`
-                    : undefined,
-                },
-                { key: "nfcore", label: "nf-core", value: detectedVersions.nfcore },
-                { key: "conda", label: "Conda", value: detectedVersions.conda },
-              ].map((tool) => (
-                <div
-                  key={tool.key}
-                  className={`rounded-lg border px-3 py-2 ${
-                    tool.value
-                      ? "border-emerald-200 bg-emerald-50"
-                      : "border-border bg-muted/20"
-                  }`}
-                >
-                  <p className="text-xs text-muted-foreground">{tool.label}</p>
-                  <p className="text-sm font-mono mt-1">
-                    {tool.value || "Not found"}
+                {detectedVersions.condaEnv && (
+                  <p className="text-xs text-muted-foreground">
+                    Active environment:{" "}
+                    <span className="font-mono">{detectedVersions.condaEnv}</span>
                   </p>
-                </div>
-              ))}
-            </div>
+                )}
 
-            <Button asChild variant="outline" size="sm" className="bg-white">
-              <Link href="/admin/pipeline-runtime">
-                Open Pipeline Runtime
-                <ArrowRight className="h-4 w-4 ml-1" />
-              </Link>
-            </Button>
+                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                  {[
+                    { key: "nextflow", label: "Nextflow", value: detectedVersions.nextflow },
+                    {
+                      key: "java",
+                      label: "Java",
+                      value: detectedVersions.java
+                        ? `Java ${detectedVersions.java}`
+                        : undefined,
+                    },
+                    { key: "nfcore", label: "nf-core", value: detectedVersions.nfcore },
+                    { key: "conda", label: "Conda", value: detectedVersions.conda },
+                  ].map((tool) => (
+                    <div
+                      key={tool.key}
+                      className={`rounded-lg border px-3 py-2 ${
+                        tool.value
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-border bg-muted/20"
+                      }`}
+                    >
+                      <p className="text-xs text-muted-foreground">{tool.label}</p>
+                      <p className="text-sm font-mono mt-1">
+                        {tool.value || "Not found"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <Button asChild variant="outline" size="sm" className="bg-white">
+                  <Link href="/admin/pipeline-runtime">
+                    Open Pipeline Runtime
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Link>
+                </Button>
+              </>
+            )}
           </div>
         </section>
 

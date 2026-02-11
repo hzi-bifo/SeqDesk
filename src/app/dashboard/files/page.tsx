@@ -38,6 +38,7 @@ import {
   ChevronDown,
   Trash2,
   XCircle,
+  Hash,
 } from "lucide-react";
 
 interface FileWithAssignment {
@@ -46,6 +47,7 @@ interface FileWithAssignment {
   size: number;
   modifiedAt: string;
   assigned: boolean;
+  existsOnDisk: boolean;
   readType: "R1" | "R2" | null;
   pairStatus: "paired" | "missing_r1" | "missing_r2" | "unknown" | null;
   checksum: string | null;
@@ -65,7 +67,18 @@ interface FilesResponse {
   total: number;
   assigned: number;
   unassigned: number;
+  presentOnDisk: number;
+  missingOnDisk: number;
   filtered: number;
+  autoChecksum?: {
+    requested: boolean;
+    attempted: number;
+    updated: number;
+    failed: number;
+    skippedMissingFiles: number;
+    remaining: number;
+    limit: number;
+  };
   dataBasePath: string | null;
   config: {
     allowedExtensions: string[];
@@ -129,10 +142,14 @@ export default function FileBrowserPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
+  const [scanNotice, setScanNotice] = useState<{
+    type: "success" | "warning";
+    message: string;
+  } | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "assigned" | "unassigned">("all");
+  const [filter, setFilter] = useState<"all" | "assigned" | "unassigned" | "present" | "missing">("all");
   const [extension, setExtension] = useState("all");
 
   // Bulk selection state
@@ -147,6 +164,12 @@ export default function FileBrowserPage() {
     deletedCount?: number;
     recordsRemoved?: number;
   } | null>(null);
+  const [checksumming, setChecksumming] = useState(false);
+  const [checksumResult, setChecksumResult] = useState<{
+    success: boolean;
+    message: string;
+    detail?: string;
+  } | null>(null);
 
   // Assignment dialog state
   const [selectedFile, setSelectedFile] = useState<FileWithAssignment | null>(null);
@@ -159,7 +182,9 @@ export default function FileBrowserPage() {
   const [assignSuccess, setAssignSuccess] = useState("");
 
   // Toggle file selection
-  const toggleFileSelection = (relativePath: string) => {
+  const toggleFileSelection = (file: FileWithAssignment) => {
+    if (!file.existsOnDisk) return;
+    const relativePath = file.relativePath;
     setSelectedFiles((prev) => {
       const next = new Set(prev);
       if (next.has(relativePath)) {
@@ -174,7 +199,9 @@ export default function FileBrowserPage() {
   // Select/deselect all visible files
   const toggleSelectAll = () => {
     if (!data) return;
-    const allPaths = data.files.map((f) => f.relativePath);
+    const allPaths = data.files
+      .filter((f) => f.existsOnDisk)
+      .map((f) => f.relativePath);
     const allSelected = allPaths.every((p) => selectedFiles.has(p));
     if (allSelected) {
       setSelectedFiles(new Set());
@@ -185,15 +212,17 @@ export default function FileBrowserPage() {
 
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
-  const fetchFiles = async (force: boolean = false) => {
+  const fetchFiles = async (force: boolean = false, autoChecksum: boolean = false) => {
     if (force) {
       setScanning(true);
+      setScanNotice(null);
     }
     setError("");
 
     try {
       const params = new URLSearchParams();
       if (force) params.set("force", "true");
+      if (force && autoChecksum) params.set("autoChecksum", "true");
       if (filter !== "all") params.set("filter", filter);
       if (search) params.set("search", search);
       if (extension !== "all") params.set("extension", extension);
@@ -209,6 +238,25 @@ export default function FileBrowserPage() {
       }
       const result = await res.json();
       setData(result);
+
+      const auto = (result as FilesResponse).autoChecksum;
+      if (force && auto?.requested) {
+        const details: string[] = [];
+        details.push(`updated ${auto.updated}`);
+        if (auto.failed > 0) details.push(`failed ${auto.failed}`);
+        if (auto.skippedMissingFiles > 0) {
+          details.push(`missing on disk ${auto.skippedMissingFiles}`);
+        }
+        if (auto.remaining > 0) {
+          details.push(`remaining ${auto.remaining}`);
+        }
+
+        setScanNotice({
+          type: auto.failed > 0 ? "warning" : "success",
+          message: `Auto-MD5 on scan: ${details.join(" · ")}.`,
+        });
+      }
+
       if (result.error) {
         setError(result.error);
       }
@@ -251,6 +299,8 @@ export default function FileBrowserPage() {
   }, [selectedFile]);
 
   const handleFileClick = (file: FileWithAssignment) => {
+    if (!file.existsOnDisk) return;
+
     setSelectedFile(file);
     setAssignDialogOpen(true);
     setAssignError("");
@@ -308,6 +358,68 @@ export default function FileBrowserPage() {
   const handleBulkDeleteClick = () => {
     setDeleteResult(null);
     setDeleteDialogOpen(true);
+  };
+
+  const handleBulkChecksum = async () => {
+    if (selectedFiles.size === 0) return;
+
+    setChecksumming(true);
+    setChecksumResult(null);
+    setError("");
+
+    try {
+      const res = await fetch("/api/files/checksum", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filePaths: Array.from(selectedFiles),
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        setChecksumResult({
+          success: false,
+          message: result.error || "Failed to calculate checksums",
+        });
+        return;
+      }
+
+      const summary = result.summary as {
+        total: number;
+        successful: number;
+        failed: number;
+        updatedReadRecords?: number;
+        notLinkedToRead?: number;
+      };
+
+      const updatedReadRecords = summary.updatedReadRecords ?? 0;
+      const notLinkedToRead = summary.notLinkedToRead ?? 0;
+      const detailParts: string[] = [];
+      detailParts.push(`${updatedReadRecords} stored in read records`);
+      if (notLinkedToRead > 0) {
+        detailParts.push(`${notLinkedToRead} not assigned to a read record`);
+      }
+      if (summary.failed > 0) {
+        detailParts.push(`${summary.failed} failed`);
+      }
+
+      setChecksumResult({
+        success: summary.failed === 0,
+        message: `Calculated MD5 for ${summary.successful}/${summary.total} selected files.`,
+        detail: detailParts.join(" · "),
+      });
+
+      await fetchFiles();
+    } catch {
+      setChecksumResult({
+        success: false,
+        message: "Failed to calculate checksums",
+      });
+    } finally {
+      setChecksumming(false);
+    }
   };
 
   const handleBulkDeleteConfirm = async () => {
@@ -379,6 +491,17 @@ export default function FileBrowserPage() {
     return () => clearTimeout(timer);
   }, [sampleSearch, assignDialogOpen, searchSamples]);
 
+  useEffect(() => {
+    if (!data) return;
+    const selectablePaths = new Set(
+      data.files.filter((file) => file.existsOnDisk).map((file) => file.relativePath)
+    );
+    setSelectedFiles((prev) => {
+      const next = new Set(Array.from(prev).filter((path) => selectablePaths.has(path)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data]);
+
   if (!isFacilityAdmin) {
     return (
       <PageContainer>
@@ -402,6 +525,12 @@ export default function FileBrowserPage() {
   }
 
   const detectedType = selectedFile ? detectReadType(selectedFile.filename) : null;
+  const selectableVisiblePaths = data?.files
+    .filter((file) => file.existsOnDisk)
+    .map((file) => file.relativePath) ?? [];
+  const allSelectableVisibleSelected =
+    selectableVisiblePaths.length > 0 &&
+    selectableVisiblePaths.every((filePath) => selectedFiles.has(filePath));
 
   return (
     <PageContainer>
@@ -410,14 +539,21 @@ export default function FileBrowserPage() {
           <h1 className="text-xl font-semibold">Sequencing Files</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {data
-              ? <>{data.total} file{data.total !== 1 ? "s" : ""}{data.assigned > 0 && <span className="text-green-600"> · {data.assigned} assigned</span>}{data.unassigned > 0 && <span className="text-amber-600"> · {data.unassigned} unassigned</span>}</>
+              ? <>
+                  {data.total} file{data.total !== 1 ? "s" : ""}
+                  {data.assigned > 0 && <span className="text-green-600"> · {data.assigned} assigned</span>}
+                  {data.unassigned > 0 && <span className="text-amber-600"> · {data.unassigned} unassigned</span>}
+                  {data.missingOnDisk > 0 && (
+                    <span className="text-slate-600"> · {data.missingOnDisk} removed from disk</span>
+                  )}
+                </>
               : "Loading..."}
           </p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchFiles(true)}
+          onClick={() => fetchFiles(true, true)}
           disabled={scanning}
         >
           {scanning ? (
@@ -436,6 +572,23 @@ export default function FileBrowserPage() {
         </div>
       )}
 
+      {scanNotice && (
+        <div
+          className={`mb-6 p-4 rounded-lg border flex items-center gap-2 ${
+            scanNotice.type === "success"
+              ? "bg-green-50 border-green-200 text-green-800"
+              : "bg-amber-50 border-amber-200 text-amber-800"
+          }`}
+        >
+          {scanNotice.type === "success" ? (
+            <CheckCircle2 className="h-5 w-5" />
+          ) : (
+            <AlertTriangle className="h-5 w-5" />
+          )}
+          <span className="text-sm">{scanNotice.message}</span>
+        </div>
+      )}
+
       {!data?.dataBasePath && (
         <div className="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 flex items-center gap-2">
           <AlertTriangle className="h-5 w-5" />
@@ -450,28 +603,61 @@ export default function FileBrowserPage() {
 
       {/* Bulk Selection Actions */}
       {selectedFiles.size > 0 && (
-        <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20 flex items-center justify-between">
-          <span className="text-sm font-medium">
-            {selectedFiles.size} file{selectedFiles.size !== 1 ? "s" : ""} selected
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={handleBulkDeleteClick}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Selected
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setSelectedFiles(new Set())}
-            >
-              Clear Selection
-            </Button>
+        <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">
+              {selectedFiles.size} file{selectedFiles.size !== 1 ? "s" : ""} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkChecksum}
+                disabled={checksumming}
+              >
+                {checksumming ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Hash className="h-4 w-4 mr-2" />
+                )}
+                Calculate MD5
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={handleBulkDeleteClick}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Selected
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSelectedFiles(new Set());
+                  setChecksumResult(null);
+                }}
+              >
+                Clear Selection
+              </Button>
+            </div>
           </div>
+
+          {checksumResult && (
+            <div
+              className={`mt-3 rounded-md border px-3 py-2 text-sm ${
+                checksumResult.success
+                  ? "bg-green-50 border-green-200 text-green-800"
+                  : "bg-amber-50 border-amber-200 text-amber-800"
+              }`}
+            >
+              <div className="font-medium">{checksumResult.message}</div>
+              {checksumResult.detail && (
+                <div className="text-xs mt-1 opacity-90">{checksumResult.detail}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -500,6 +686,8 @@ export default function FileBrowserPage() {
                 <option value="all">All Files</option>
                 <option value="assigned">Assigned</option>
                 <option value="unassigned">Unassigned</option>
+                <option value="present">On Disk</option>
+                <option value="missing">Removed from Disk</option>
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             </div>
@@ -527,8 +715,9 @@ export default function FileBrowserPage() {
               <TableRow className="bg-secondary/50">
                 <TableHead className="w-[40px]">
                   <Checkbox
-                    checked={data?.files.length ? data.files.every((f) => selectedFiles.has(f.relativePath)) : false}
+                    checked={allSelectableVisibleSelected}
                     onCheckedChange={toggleSelectAll}
+                    disabled={selectableVisiblePaths.length === 0}
                   />
                 </TableHead>
                 <TableHead>Filename</TableHead>
@@ -536,13 +725,14 @@ export default function FileBrowserPage() {
                 <TableHead className="w-[90px]">Pair</TableHead>
                 <TableHead className="w-[80px]">Size</TableHead>
                 <TableHead className="w-[100px]">Status</TableHead>
+                <TableHead className="w-[140px]">MD5</TableHead>
                 <TableHead>Study</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data?.files.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12">
+                  <TableCell colSpan={8} className="text-center py-12">
                     <FolderOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
                     <p className="text-muted-foreground">
                       {data.total === 0
@@ -555,21 +745,32 @@ export default function FileBrowserPage() {
                 data?.files.map((file) => (
                   <TableRow
                     key={file.relativePath}
-                    className={`cursor-pointer hover:bg-primary/5 transition-colors ${
+                    className={`transition-colors ${
+                      file.existsOnDisk
+                        ? "cursor-pointer hover:bg-primary/5"
+                        : "bg-muted/30 text-muted-foreground"
+                    } ${
                       selectedFiles.has(file.relativePath) ? "bg-primary/5" : ""
                     }`}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedFiles.has(file.relativePath)}
-                        onCheckedChange={() => toggleFileSelection(file.relativePath)}
+                        onCheckedChange={() => toggleFileSelection(file)}
+                        disabled={!file.existsOnDisk}
                       />
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         <span className="font-medium truncate max-w-[200px] block">{file.filename}</span>
-                        <LinkIcon className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
+                        {file.existsOnDisk ? (
+                          <LinkIcon className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] border-slate-300 text-slate-600">
+                            Removed from disk
+                          </Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>
@@ -601,10 +802,14 @@ export default function FileBrowserPage() {
                       )}
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)} className="text-muted-foreground text-sm">
-                      {formatFileSize(file.size)}
+                      {file.existsOnDisk ? formatFileSize(file.size) : "-"}
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>
-                      {file.assigned ? (
+                      {!file.existsOnDisk ? (
+                        <Badge variant="outline" className="border-slate-300 text-slate-600 text-xs">
+                          Removed
+                        </Badge>
+                      ) : file.assigned ? (
                         <Badge
                           variant="default"
                           className="bg-green-600 text-xs cursor-default"
@@ -616,6 +821,18 @@ export default function FileBrowserPage() {
                         <Badge variant="outline" className="border-amber-300 text-amber-700 text-xs">
                           Unassigned
                         </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell onClick={() => handleFileClick(file)}>
+                      {file.checksum ? (
+                        <code
+                          className="text-xs bg-muted px-2 py-1 rounded block max-w-[120px] truncate"
+                          title={file.checksum}
+                        >
+                          {file.checksum}
+                        </code>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">Missing</span>
                       )}
                     </TableCell>
                     <TableCell onClick={() => handleFileClick(file)}>

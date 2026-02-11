@@ -18,6 +18,15 @@ async function calculateMD5(filePath: string): Promise<string> {
   });
 }
 
+function isWithinBasePath(basePath: string, candidatePath: string): boolean {
+  const normalizedBasePath = path.resolve(basePath);
+  const normalizedCandidatePath = path.resolve(candidatePath);
+  return (
+    normalizedCandidatePath === normalizedBasePath ||
+    normalizedCandidatePath.startsWith(`${normalizedBasePath}${path.sep}`)
+  );
+}
+
 // POST - calculate MD5 checksum for one or more files
 export async function POST(request: NextRequest) {
   try {
@@ -68,12 +77,24 @@ export async function POST(request: NextRequest) {
     const results: Array<{
       filePath: string;
       checksum?: string;
+      updatedReadRecord?: boolean;
+      warning?: string;
       error?: string;
     }> = [];
 
+    const normalizedBasePath = path.resolve(settings.dataBasePath);
+
     for (const relativePath of filePaths) {
       try {
-        const absolutePath = path.join(settings.dataBasePath, relativePath);
+        const absolutePath = path.resolve(settings.dataBasePath, relativePath);
+
+        if (!isWithinBasePath(normalizedBasePath, absolutePath)) {
+          results.push({
+            filePath: relativePath,
+            error: "Path is outside configured data base path",
+          });
+          continue;
+        }
 
         // Verify file exists
         if (!fs.existsSync(absolutePath)) {
@@ -102,9 +123,15 @@ export async function POST(request: NextRequest) {
               [isFile1 ? "checksum1" : "checksum2"]: checksum,
             },
           });
+          results.push({ filePath: relativePath, checksum, updatedReadRecord: true });
+        } else {
+          results.push({
+            filePath: relativePath,
+            checksum,
+            updatedReadRecord: false,
+            warning: "No assigned read record found; checksum was not stored in database",
+          });
         }
-
-        results.push({ filePath: relativePath, checksum });
       } catch (err) {
         results.push({
           filePath: relativePath,
@@ -115,6 +142,10 @@ export async function POST(request: NextRequest) {
 
     const successful = results.filter((r) => r.checksum).length;
     const failed = results.filter((r) => r.error).length;
+    const updatedReadRecords = results.filter((r) => r.updatedReadRecord).length;
+    const notLinkedToRead = results.filter(
+      (r) => r.checksum && r.updatedReadRecord === false
+    ).length;
 
     return NextResponse.json({
       success: true,
@@ -123,6 +154,8 @@ export async function POST(request: NextRequest) {
         total: filePaths.length,
         successful,
         failed,
+        updatedReadRecords,
+        notLinkedToRead,
       },
     });
   } catch (error) {

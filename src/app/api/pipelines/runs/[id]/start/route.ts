@@ -380,12 +380,17 @@ export async function POST(
         });
 
     if (!prepResult.success) {
+      const prepWarnings =
+        'warnings' in prepResult && Array.isArray(prepResult.warnings)
+          ? prepResult.warnings
+          : [];
+      const prepDetails = [...prepResult.errors, ...prepWarnings];
       // Update run status to failed
       await db.pipelineRun.update({
         where: { id },
         data: {
           status: 'failed',
-          errorTail: prepResult.errors.join('\n'),
+          errorTail: prepDetails.join('\n'),
           completedAt: new Date(),
           statusSource: 'launcher',
           lastEventAt: new Date(),
@@ -393,7 +398,7 @@ export async function POST(
       });
 
       return NextResponse.json(
-        { error: 'Failed to prepare run', details: prepResult.errors },
+        { error: 'Failed to prepare run', details: prepDetails },
         { status: 400 }
       );
     }
