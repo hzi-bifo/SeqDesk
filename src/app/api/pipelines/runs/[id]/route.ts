@@ -16,6 +16,17 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function getFileSize(filePath: string | null | undefined): Promise<number | null> {
+  if (!filePath) return null;
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return null;
+    return stat.size;
+  } catch {
+    return null;
+  }
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -226,6 +237,7 @@ export async function GET(
       type: 'read_1' | 'read_2' | 'samplesheet';
       sampleId?: string;
       checksum?: string;
+      size?: number;
     }[] = [];
 
     // Add reads as input files
@@ -274,6 +286,7 @@ export async function GET(
       name: string;
       path: string;
       type: 'log';
+      size?: number;
     }[] = [];
 
     if (run.runFolder && run.queueJobId && /^\d+$/.test(run.queueJobId)) {
@@ -302,10 +315,68 @@ export async function GET(
       run.queueJobId
     );
 
+    const sizeProbePaths = new Set<string>();
+
+    for (const file of inputFiles) {
+      sizeProbePaths.add(file.path);
+    }
+    for (const file of detectedLogFiles) {
+      sizeProbePaths.add(file.path);
+    }
+    for (const artifact of run.artifacts) {
+      sizeProbePaths.add(artifact.path);
+    }
+    for (const assembly of run.assembliesCreated) {
+      if (assembly.assemblyFile) {
+        sizeProbePaths.add(assembly.assemblyFile);
+      }
+    }
+    for (const bin of run.binsCreated) {
+      if (bin.binFile) {
+        sizeProbePaths.add(bin.binFile);
+      }
+    }
+    if (run.outputPath) {
+      sizeProbePaths.add(run.outputPath);
+    }
+    if (run.errorPath) {
+      sizeProbePaths.add(run.errorPath);
+    }
+    if (run.runFolder) {
+      sizeProbePaths.add(path.join(run.runFolder, 'trace.txt'));
+      sizeProbePaths.add(path.join(run.runFolder, 'report.html'));
+      sizeProbePaths.add(path.join(run.runFolder, 'timeline.html'));
+      sizeProbePaths.add(path.join(run.runFolder, 'dag.dot'));
+    }
+
+    const sizePairs = await Promise.all(
+      Array.from(sizeProbePaths).map(async (filePath) => [
+        filePath,
+        await getFileSize(filePath),
+      ] as const)
+    );
+
+    const fileSizeByPath: Record<string, number> = {};
+    for (const [filePath, size] of sizePairs) {
+      if (size != null) {
+        fileSizeByPath[filePath] = size;
+      }
+    }
+
+    const inputFilesWithSize = inputFiles.map((file) => ({
+      ...file,
+      size: fileSizeByPath[file.path],
+    }));
+
+    const detectedLogFilesWithSize = detectedLogFiles.map((file) => ({
+      ...file,
+      size: fileSizeByPath[file.path],
+    }));
+
     // Convert BigInt fields to numbers so JSON.stringify doesn't throw
     const serializedArtifacts = run.artifacts.map((a) => ({
       ...a,
-      size: a.size != null ? Number(a.size) : null,
+      size: a.size != null ? Number(a.size) : fileSizeByPath[a.path] ?? null,
     }));
 
     const response = {
@@ -316,8 +387,11 @@ export async function GET(
       config: parseJson<Record<string, unknown>>(run.config),
       results: parseJson<Record<string, unknown>>(run.results),
       inputSampleIds: selectedSampleIds,
-      inputFiles,
-      detectedLogFiles,
+      inputFiles: inputFilesWithSize,
+      detectedLogFiles: detectedLogFilesWithSize,
+      fileSizeByPath,
+      outputPathSize: run.outputPath ? fileSizeByPath[run.outputPath] ?? null : null,
+      errorPathSize: run.errorPath ? fileSizeByPath[run.errorPath] ?? null : null,
       artifacts: serializedArtifacts,
       executionCommands,
     };

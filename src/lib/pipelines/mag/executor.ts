@@ -170,6 +170,18 @@ function buildRunConfig(
     ].join('\n')
   );
 
+  // CONCOCT can fail in newer Python environments due to missing pkg_resources.
+  // Force a compatible interpreter + setuptools for the CONCOCT subworkflow tasks.
+  sections.push(
+    [
+      `process {`,
+      `  withName: 'NFCORE_MAG:MAG:BINNING:FASTA_BINNING_CONCOCT:CONCOCT_.*' {`,
+      `    conda = 'bioconda::concoct=1.1.0 conda-forge::python=3.10 conda-forge::setuptools'`,
+      `  }`,
+      `}`,
+    ].join('\n')
+  );
+
   if (sections.length === 0) return null;
   return `${sections.join('\n\n')}\n`;
 }
