@@ -4,12 +4,15 @@ import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 // Import to trigger adapter registration
 import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 const MAX_EVENT_PAYLOAD = 12000;
+const execFileAsync = promisify(execFile);
 
 /**
  * Process a completed pipeline run - discover outputs and write to DB
@@ -83,6 +86,15 @@ async function processCompletedRun(runId: string, pipelineId: string): Promise<v
     artifacts: result.artifactsCreated,
     errors: result.errors.length,
   });
+}
+
+async function countMaterializedOutputs(runId: string): Promise<number> {
+  const [assemblies, bins, artifacts] = await Promise.all([
+    db.assembly.count({ where: { createdByPipelineRunId: runId } }),
+    db.bin.count({ where: { createdByPipelineRunId: runId } }),
+    db.pipelineArtifact.count({ where: { pipelineRunId: runId } }),
+  ]);
+  return assemblies + bins + artifacts;
 }
 
 function parseDate(value: unknown): Date | undefined {
@@ -199,6 +211,129 @@ function deriveStepStatus(event: string, trace: Record<string, unknown> | null):
   return null;
 }
 
+function normalizeQueueState(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized || null;
+}
+
+function isTerminalQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized) return false;
+  if (normalized === 'UNKNOWN') return false;
+
+  if (
+    normalized === 'COMPLETED' ||
+    normalized === 'EXITED' ||
+    normalized === 'REVOKED' ||
+    normalized === 'TIMEOUT' ||
+    normalized === 'OUT_OF_MEMORY' ||
+    normalized === 'NODE_FAIL' ||
+    normalized === 'BOOT_FAIL' ||
+    normalized === 'PREEMPTED' ||
+    normalized === 'DEADLINE'
+  ) {
+    return true;
+  }
+
+  return (
+    normalized.startsWith('CANCELLED') ||
+    normalized.startsWith('CANCELED') ||
+    normalized.startsWith('FAILED')
+  );
+}
+
+function isActiveQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized || normalized === 'UNKNOWN') return false;
+  return !isTerminalQueueState(normalized);
+}
+
+function firstNonEmptyLine(value: string): string {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)[0] || '';
+}
+
+async function readQueueState(jobId: string | null | undefined): Promise<{ state: string | null; reason: string | null }> {
+  const normalizedJobId = (jobId || '').trim();
+  if (!normalizedJobId) {
+    return { state: null, reason: null };
+  }
+
+  if (normalizedJobId.startsWith('local-')) {
+    const pid = Number(normalizedJobId.replace('local-', ''));
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { state: null, reason: null };
+    }
+    try {
+      await execFileAsync('ps', ['-p', String(pid), '-o', 'pid='], { timeout: 5000 });
+      return { state: 'RUNNING', reason: null };
+    } catch {
+      return { state: 'EXITED', reason: null };
+    }
+  }
+
+  if (!/^\d+$/.test(normalizedJobId)) {
+    return { state: null, reason: null };
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      'squeue',
+      ['-j', normalizedJobId, '-h', '-o', '%T|%R'],
+      { timeout: 5000 }
+    );
+    const line = firstNonEmptyLine(stdout);
+    if (line) {
+      const [state, reason] = line.split('|');
+      return {
+        state: state?.trim() || 'UNKNOWN',
+        reason: reason?.trim() || null,
+      };
+    }
+  } catch {
+    // Ignore and try sacct
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      'sacct',
+      ['-X', '-P', '-j', normalizedJobId, '--format=JobID,State,Reason', '--noheader'],
+      { timeout: 5000 }
+    );
+    const rows = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [rowJobId, rowState, rowReason] = line.split('|');
+        return {
+          jobId: rowJobId?.trim() || '',
+          state: rowState?.trim() || '',
+          reason: rowReason?.trim() || null,
+        };
+      });
+
+    const primary =
+      rows.find((row) => row.jobId === normalizedJobId) ||
+      rows.find((row) => row.jobId.startsWith(`${normalizedJobId}.`)) ||
+      rows[0];
+
+    if (primary) {
+      return {
+        state: primary.state || 'UNKNOWN',
+        reason: primary.reason,
+      };
+    }
+  } catch {
+    // Ignore and fall through
+  }
+
+  return { state: null, reason: null };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -224,6 +359,7 @@ export async function POST(request: NextRequest) {
         id: true,
         pipelineId: true,
         status: true,
+        queueJobId: true,
         startedAt: true,
         completedAt: true,
         lastEventAt: true,
@@ -334,15 +470,46 @@ export async function POST(request: NextRequest) {
     }
 
     if (event.includes('workflow_complete') || event.includes('workflow_finish')) {
-      runUpdates.status = 'completed';
-      runUpdates.currentStep = 'Completed';
-      runUpdates.completedAt = parsedEventTime || eventAt;
-      runUpdates.progress = 100;
+      const queueSnapshot = await readQueueState(run.queueJobId);
+      if (queueSnapshot.state) {
+        runUpdates.queueStatus = queueSnapshot.state;
+        runUpdates.queueReason = queueSnapshot.reason || undefined;
+        runUpdates.queueUpdatedAt = eventAt;
+      }
 
-      // Trigger output resolution asynchronously
-      processCompletedRun(runId, run.pipelineId).catch((err) => {
-        console.error('[Pipeline Weblog] Output resolution failed:', err);
-      });
+      if (isActiveQueueState(queueSnapshot.state)) {
+        runUpdates.status = 'running';
+        runUpdates.currentStep = 'Finalizing...';
+        const progressValue =
+          typeof runUpdates.progress === 'number' ? runUpdates.progress : 99;
+        runUpdates.progress = Math.min(99, progressValue);
+        delete runUpdates.completedAt;
+      } else {
+        let outputsReady = true;
+        try {
+          await processCompletedRun(runId, run.pipelineId);
+          if (run.pipelineId === 'mag') {
+            outputsReady = (await countMaterializedOutputs(runId)) > 0;
+          }
+        } catch (err) {
+          console.error('[Pipeline Weblog] Output resolution failed:', err);
+          outputsReady = false;
+        }
+
+        if (outputsReady) {
+          runUpdates.status = 'completed';
+          runUpdates.currentStep = 'Completed';
+          runUpdates.completedAt = parsedEventTime || eventAt;
+          runUpdates.progress = 100;
+        } else {
+          runUpdates.status = 'running';
+          runUpdates.currentStep = 'Finalizing outputs...';
+          const progressValue =
+            typeof runUpdates.progress === 'number' ? runUpdates.progress : 99;
+          runUpdates.progress = Math.min(99, progressValue);
+          delete runUpdates.completedAt;
+        }
+      }
     }
 
     if (event.includes('workflow_error') || event.includes('workflow_fail')) {

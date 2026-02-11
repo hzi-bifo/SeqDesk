@@ -147,7 +147,8 @@ function escapeNextflowString(value: string): string {
  */
 function buildRunConfig(
   weblogUrl: string | null,
-  settings: ExecutionSettings
+  settings: ExecutionSettings,
+  pipelineId?: string
 ): string | null {
   const sections: string[] = [];
 
@@ -191,6 +192,20 @@ function buildRunConfig(
       `}`,
     ].join('\n')
   );
+
+  // CONCOCT can fail in newer Python environments due to missing pkg_resources.
+  // Force a compatible interpreter + setuptools for the MAG CONCOCT tasks.
+  if (pipelineId === 'mag') {
+    sections.push(
+      [
+        `process {`,
+        `  withName: 'NFCORE_MAG:MAG:BINNING:FASTA_BINNING_CONCOCT:CONCOCT_.*' {`,
+        `    conda = 'bioconda::concoct=1.1.0 conda-forge::python=3.10 conda-forge::setuptools'`,
+        `  }`,
+        `}`,
+      ].join('\n')
+    );
+  }
 
   if (sections.length === 0) return null;
   return `${sections.join('\n\n')}\n`;
@@ -403,7 +418,8 @@ function buildPipelineFlags(
     }
   }
 
-  return flags;
+  // Preserve order while removing exact duplicates.
+  return [...new Set(flags)];
 }
 
 /**
@@ -631,7 +647,7 @@ export async function prepareGenericRun(
       runId,
       executionSettings.weblogSecret
     );
-    const runConfig = buildRunConfig(weblogUrl, executionSettings);
+    const runConfig = buildRunConfig(weblogUrl, executionSettings, pipelineId);
     const runConfigPath = runConfig ? path.join(runFolder, 'nextflow.config') : null;
     if (runConfig && runConfigPath) {
       await fs.writeFile(runConfigPath, runConfig);

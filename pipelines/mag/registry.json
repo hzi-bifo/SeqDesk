@@ -104,6 +104,30 @@
         "description": "Skip bin quality control",
         "default": false
       },
+      "skipConcoct": {
+        "type": "boolean",
+        "title": "Skip CONCOCT",
+        "description": "Skip CONCOCT binning branch (enabled by default as stability workaround)",
+        "default": true
+      },
+      "skipBusco": {
+        "type": "boolean",
+        "title": "Skip BUSCO",
+        "description": "Skip BUSCO quality assessment in bin QC",
+        "default": false
+      },
+      "skipCheckm": {
+        "type": "boolean",
+        "title": "Skip CheckM",
+        "description": "Skip CheckM quality assessment in bin QC",
+        "default": false
+      },
+      "skipGunc": {
+        "type": "boolean",
+        "title": "Skip GUNC",
+        "description": "Skip GUNC chimerism checks in bin QC",
+        "default": false
+      },
       "skipQuast": {
         "type": "boolean",
         "title": "Skip QUAST",
@@ -130,6 +154,10 @@
     "skipSpades": true,
     "skipProkka": true,
     "skipBinQc": false,
+    "skipConcoct": true,
+    "skipBusco": false,
+    "skipCheckm": false,
+    "skipGunc": false,
     "skipQuast": false,
     "skipGtdb": false,
     "gtdbDb": ""
