@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
 import { buildSimulatedFastq } from "@/lib/simulation/fastq";
+import {
+  resolveTemplateSource,
+  selectTemplatePair,
+} from "@/lib/simulation/template-source";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { gzipSync } from "zlib";
@@ -21,6 +25,13 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   if (rounded < min) return min;
   if (rounded > max) return max;
   return rounded;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 // POST - create dummy sequencing files in the configured base path
@@ -73,19 +84,44 @@ export async function POST(request: NextRequest) {
     let config: {
       allowedExtensions: string[];
       allowSingleEnd: boolean;
+      simulationMode: "auto" | "synthetic" | "template";
+      simulationTemplateDir: string;
     } = {
       allowedExtensions: [DEFAULT_EXTENSION],
       allowSingleEnd: true,
+      simulationMode: "auto",
+      simulationTemplateDir: "",
     };
 
     if (settings.extraSettings) {
       try {
-        const extra = JSON.parse(settings.extraSettings);
-        if (extra.sequencingFiles) {
+        const extra = asRecord(JSON.parse(settings.extraSettings) as unknown);
+        const sequencingFiles = asRecord(extra.sequencingFiles);
+        if (Object.keys(sequencingFiles).length > 0) {
+          const extensionList = Array.isArray(sequencingFiles.allowedExtensions)
+            ? sequencingFiles.allowedExtensions
+            : Array.isArray(sequencingFiles.extensions)
+              ? sequencingFiles.extensions
+              : [];
+          const simulationMode = sequencingFiles.simulationMode;
+          const simulationTemplateDir = sequencingFiles.simulationTemplateDir;
           config = {
-            allowedExtensions:
-              extra.sequencingFiles.allowedExtensions || config.allowedExtensions,
+            allowedExtensions: extensionList.length > 0
+              ? extensionList.filter(
+                  (value): value is string => typeof value === "string"
+                )
+              : config.allowedExtensions,
             allowSingleEnd: true,
+            simulationMode:
+              simulationMode === "template" ||
+              simulationMode === "synthetic" ||
+              simulationMode === "auto"
+                ? simulationMode
+                : config.simulationMode,
+            simulationTemplateDir:
+              typeof simulationTemplateDir === "string"
+                ? simulationTemplateDir
+                : config.simulationTemplateDir,
           };
         }
       } catch {
@@ -95,6 +131,11 @@ export async function POST(request: NextRequest) {
 
     const extension =
       config.allowedExtensions?.[0] || DEFAULT_EXTENSION;
+    const templateSource = await resolveTemplateSource({
+      dataBasePath: resolvedBase,
+      sequencingFilesConfig: config,
+      extension,
+    });
 
     const sampleCount =
       typeof count === "number" && count > 0
@@ -131,29 +172,43 @@ export async function POST(request: NextRequest) {
       const read1Name = `${sampleId}_R1${extension}`;
       const read2Name = `${sampleId}_R2${extension}`;
       const isSingleEnd = config.allowSingleEnd && i === sampleCount;
-      const simulatedReads = buildSimulatedFastq({
-        sampleId,
-        sampleIndex: i - 1,
-        readCount: normalizedReadCount,
-        readLength: normalizedReadLength,
-        pairedEnd: !isSingleEnd,
-      });
-      const buffer1 = extension.endsWith(".gz")
-        ? gzipSync(simulatedReads.read1)
-        : simulatedReads.read1;
-
-      await fs.writeFile(path.join(targetDir, read1Name), buffer1);
-      filesCreated += 1;
-
-      if (!isSingleEnd && simulatedReads.read2) {
-        const buffer2 = extension.endsWith(".gz")
-          ? gzipSync(simulatedReads.read2)
-          : simulatedReads.read2;
-        await fs.writeFile(path.join(targetDir, read2Name), buffer2);
+      if (templateSource.modeUsed === "template") {
+        const templatePair = selectTemplatePair(templateSource.templatePairs, i - 1);
+        await fs.copyFile(templatePair.read1Path, path.join(targetDir, read1Name));
         filesCreated += 1;
-        pairedCount += 1;
+
+        if (!isSingleEnd) {
+          await fs.copyFile(templatePair.read2Path, path.join(targetDir, read2Name));
+          filesCreated += 1;
+          pairedCount += 1;
+        } else {
+          singleEndCount += 1;
+        }
       } else {
-        singleEndCount += 1;
+        const simulatedReads = buildSimulatedFastq({
+          sampleId,
+          sampleIndex: i - 1,
+          readCount: normalizedReadCount,
+          readLength: normalizedReadLength,
+          pairedEnd: !isSingleEnd,
+        });
+        const buffer1 = extension.endsWith(".gz")
+          ? gzipSync(simulatedReads.read1)
+          : simulatedReads.read1;
+
+        await fs.writeFile(path.join(targetDir, read1Name), buffer1);
+        filesCreated += 1;
+
+        if (!isSingleEnd && simulatedReads.read2) {
+          const buffer2 = extension.endsWith(".gz")
+            ? gzipSync(simulatedReads.read2)
+            : simulatedReads.read2;
+          await fs.writeFile(path.join(targetDir, read2Name), buffer2);
+          filesCreated += 1;
+          pairedCount += 1;
+        } else {
+          singleEndCount += 1;
+        }
       }
     }
 
@@ -166,6 +221,9 @@ export async function POST(request: NextRequest) {
       singleEndCount,
       readCount: normalizedReadCount,
       readLength: normalizedReadLength,
+      simulationMode: templateSource.modeUsed,
+      templateDir: templateSource.templateDir,
+      templatePairsAvailable: templateSource.templatePairs.length,
       samples,
       extension,
     });

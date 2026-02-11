@@ -9,6 +9,8 @@ export interface SequencingFilesConfig {
   ignorePatterns: string[];
   allowSingleEnd: boolean;
   autoAssign: boolean;
+  simulationMode: "auto" | "synthetic" | "template";
+  simulationTemplateDir: string;
 }
 
 const DEFAULT_CONFIG: SequencingFilesConfig = {
@@ -17,6 +19,8 @@ const DEFAULT_CONFIG: SequencingFilesConfig = {
   ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
   allowSingleEnd: true,
   autoAssign: false,
+  simulationMode: "auto",
+  simulationTemplateDir: "",
 };
 
 // GET - retrieve sequencing files settings
@@ -89,8 +93,14 @@ export async function PUT(request: NextRequest) {
 
     // Update sequencing files config in extraSettings
     if (config !== undefined) {
+      const existingSequencingFiles =
+        typeof extraSettings.sequencingFiles === "object" &&
+        extraSettings.sequencingFiles !== null
+          ? (extraSettings.sequencingFiles as Record<string, unknown>)
+          : {};
       extraSettings.sequencingFiles = {
         ...DEFAULT_CONFIG,
+        ...existingSequencingFiles,
         ...config,
         allowSingleEnd: true,
       };

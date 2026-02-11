@@ -4,9 +4,13 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { scanDirectory, ScanOptions, FileInfo } from "@/lib/files";
+import * as fs from "fs";
+import * as crypto from "crypto";
+import * as path from "path";
 
 interface FileWithAssignment extends FileInfo {
   assigned: boolean;
+  existsOnDisk: boolean;
   readType: "R1" | "R2" | null;
   pairStatus: "paired" | "missing_r1" | "missing_r2" | "unknown" | null;
   checksum: string | null;
@@ -24,6 +28,29 @@ interface FileWithAssignment extends FileInfo {
     studyId: string | null;
     studyTitle: string | null;
   };
+}
+
+interface AutoChecksumSummary {
+  requested: boolean;
+  attempted: number;
+  updated: number;
+  failed: number;
+  skippedMissingFiles: number;
+  remaining: number;
+  limit: number;
+}
+
+const AUTO_CHECKSUM_LIMIT = 50;
+
+async function calculateMD5(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("md5");
+    const stream = fs.createReadStream(filePath);
+
+    stream.on("data", (data) => hash.update(data));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
 }
 
 // Detect R1/R2 from filename
@@ -71,7 +98,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const force = searchParams.get("force") === "true";
-    const filter = searchParams.get("filter") || "all"; // all, assigned, unassigned
+    const autoChecksumRequested =
+      force && searchParams.get("autoChecksum") === "true";
+    const filter = searchParams.get("filter") || "all"; // all, assigned, unassigned, present, missing
     const search = searchParams.get("search") || "";
     const extension = searchParams.get("extension") || "";
 
@@ -84,6 +113,8 @@ export async function GET(request: NextRequest) {
         total: 0,
         assigned: 0,
         unassigned: 0,
+        presentOnDisk: 0,
+        missingOnDisk: 0,
         error: "Data base path not configured",
       });
     }
@@ -104,6 +135,8 @@ export async function GET(request: NextRequest) {
         total: 0,
         assigned: 0,
         unassigned: 0,
+        presentOnDisk: 0,
+        missingOnDisk: 0,
         error: `Failed to scan directory: ${error instanceof Error ? error.message : "Unknown error"}`,
       });
     }
@@ -117,6 +150,7 @@ export async function GET(request: NextRequest) {
         ],
       },
       select: {
+        id: true,
         file1: true,
         file2: true,
         checksum1: true,
@@ -143,6 +177,98 @@ export async function GET(request: NextRequest) {
         },
       },
     });
+
+    let autoChecksumSummary: AutoChecksumSummary | undefined;
+    if (autoChecksumRequested) {
+      const filePathMap = new Map(files.map((file) => [file.relativePath, file.absolutePath]));
+      const candidatePairs: Array<{
+        readId: string;
+        field: "checksum1" | "checksum2";
+        relativePath: string;
+      }> = [];
+
+      for (const read of reads) {
+        if (read.file1 && !read.checksum1) {
+          candidatePairs.push({
+            readId: read.id,
+            field: "checksum1",
+            relativePath: read.file1,
+          });
+        }
+        if (read.file2 && !read.checksum2) {
+          candidatePairs.push({
+            readId: read.id,
+            field: "checksum2",
+            relativePath: read.file2,
+          });
+        }
+      }
+
+      const uniqueCandidatePaths = Array.from(
+        new Set(candidatePairs.map((candidate) => candidate.relativePath))
+      ).sort((a, b) => a.localeCompare(b));
+      const selectedPaths = uniqueCandidatePaths.slice(0, AUTO_CHECKSUM_LIMIT);
+      const selectedPathSet = new Set(selectedPaths);
+      const checksumByPath = new Map<string, string>();
+
+      let failed = 0;
+      let skippedMissingFiles = 0;
+
+      for (const relativePath of selectedPaths) {
+        const absolutePath = filePathMap.get(relativePath);
+        if (!absolutePath) {
+          skippedMissingFiles += 1;
+          continue;
+        }
+
+        try {
+          const checksum = await calculateMD5(absolutePath);
+          checksumByPath.set(relativePath, checksum);
+        } catch {
+          failed += 1;
+        }
+      }
+
+      let updated = 0;
+      const readById = new Map(reads.map((read) => [read.id, read]));
+      for (const candidate of candidatePairs) {
+        if (!selectedPathSet.has(candidate.relativePath)) continue;
+
+        const checksum = checksumByPath.get(candidate.relativePath);
+        if (!checksum) continue;
+
+        try {
+          await db.read.update({
+            where: { id: candidate.readId },
+            data: {
+              [candidate.field]: checksum,
+            },
+          });
+
+          const targetRead = readById.get(candidate.readId);
+          if (targetRead) {
+            if (candidate.field === "checksum1") {
+              targetRead.checksum1 = checksum;
+            } else {
+              targetRead.checksum2 = checksum;
+            }
+          }
+          updated += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      autoChecksumSummary = {
+        requested: true,
+        attempted: selectedPaths.length,
+        updated,
+        failed,
+        skippedMissingFiles,
+        remaining: Math.max(0, uniqueCandidatePaths.length - selectedPaths.length),
+        limit: AUTO_CHECKSUM_LIMIT,
+      };
+    }
 
     // Build assignment map, checksum map, and quality map
     const assignmentMap = new Map<string, FileWithAssignment["assignedTo"]>();
@@ -190,11 +316,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Build a set of all filenames for pair detection
-    const allFilenames = new Set(files.map(f => f.filename.toLowerCase()));
+    // Build sets for pair detection and on-disk presence checks
+    const allFilenames = new Set(files.map((f) => f.filename.toLowerCase()));
+    const scannedRelativePaths = new Set(files.map((f) => f.relativePath));
 
-    // Enrich files with assignment info, read type, pair status, checksum, and quality
-    let enrichedFiles: FileWithAssignment[] = files.map((file) => {
+    // Enrich scanned files with assignment info, read type, pair status, checksum, and quality
+    const scannedFiles: FileWithAssignment[] = files.map((file) => {
       const assignment = assignmentMap.get(file.relativePath);
       const readType = detectReadType(file.filename);
       const checksum = checksumMap.get(file.relativePath) || null;
@@ -219,6 +346,7 @@ export async function GET(request: NextRequest) {
       return {
         ...file,
         assigned: !!assignment,
+        existsOnDisk: true,
         readType,
         pairStatus,
         checksum,
@@ -227,11 +355,48 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    // Include assigned records that no longer exist on disk so admins can resolve stale assignments.
+    const missingAssignedFiles: FileWithAssignment[] = [];
+    for (const [relativePath, assignment] of assignmentMap.entries()) {
+      if (scannedRelativePaths.has(relativePath)) {
+        continue;
+      }
+
+      const filename = path.basename(relativePath);
+      missingAssignedFiles.push({
+        absolutePath: "",
+        relativePath,
+        filename,
+        size: 0,
+        modifiedAt: new Date(0),
+        assigned: true,
+        existsOnDisk: false,
+        readType: detectReadType(filename),
+        pairStatus: null,
+        checksum: checksumMap.get(relativePath) || null,
+        quality: qualityMap.get(relativePath),
+        assignedTo: assignment,
+      });
+    }
+
+    const allFiles: FileWithAssignment[] = [...scannedFiles, ...missingAssignedFiles].sort((a, b) => {
+      if (a.existsOnDisk !== b.existsOnDisk) {
+        return a.existsOnDisk ? -1 : 1;
+      }
+      return a.filename.localeCompare(b.filename);
+    });
+
+    let enrichedFiles: FileWithAssignment[] = [...allFiles];
+
     // Apply filters
     if (filter === "assigned") {
       enrichedFiles = enrichedFiles.filter((f) => f.assigned);
     } else if (filter === "unassigned") {
       enrichedFiles = enrichedFiles.filter((f) => !f.assigned);
+    } else if (filter === "present") {
+      enrichedFiles = enrichedFiles.filter((f) => f.existsOnDisk);
+    } else if (filter === "missing") {
+      enrichedFiles = enrichedFiles.filter((f) => !f.existsOnDisk);
     }
 
     if (search) {
@@ -253,19 +418,28 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate stats (before filtering for accurate counts)
-    const totalFiles = files.length;
-    const assignedCount = files.filter((f) => assignmentMap.has(f.relativePath)).length;
+    const totalFiles = allFiles.length;
+    const assignedCount = allFiles.filter((f) => f.assigned).length;
     const unassignedCount = totalFiles - assignedCount;
+    const missingOnDisk = allFiles.filter((f) => !f.existsOnDisk).length;
+    const presentOnDisk = totalFiles - missingOnDisk;
 
     // Remove absolutePath from response
-    const safeFiles = enrichedFiles.map(({ absolutePath, ...rest }) => rest);
+    const safeFiles = enrichedFiles.map((file) => {
+      const { absolutePath: _absolutePath, ...rest } = file;
+      void _absolutePath;
+      return rest;
+    });
 
     return NextResponse.json({
       files: safeFiles,
       total: totalFiles,
       assigned: assignedCount,
       unassigned: unassignedCount,
+      presentOnDisk,
+      missingOnDisk,
       filtered: safeFiles.length,
+      autoChecksum: autoChecksumSummary,
       dataBasePath,
       config: {
         allowedExtensions: config.allowedExtensions,

@@ -253,10 +253,19 @@ File discovery and management settings.
     "extensions": [".fastq.gz", ".fq.gz"],
     "scanDepth": 2,
     "allowSingleEnd": false,
-    "ignorePatterns": ["**/tmp/**"]
+    "ignorePatterns": ["**/tmp/**"],
+    "simulationMode": "auto",
+    "simulationTemplateDir": "_simulation_templates/mag"
   }
 }
 ```
+
+`simulationMode` controls read simulation behavior:
+- `auto` (default): use realistic template FASTQ pairs when present, otherwise synthetic reads
+- `template`: require template FASTQ pairs (returns an error if none are found)
+- `synthetic`: always generate synthetic reads
+
+`simulationTemplateDir` can be absolute or relative to `site.dataBasePath`. The default location is `dataBasePath/_simulation_templates/mag`.
 
 ### Authentication (`auth`)
 

@@ -227,6 +227,35 @@ function isSameConfigValue(a: unknown, b: unknown) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function getParentDir(targetPath: string): string {
+  const normalized = targetPath.trim();
+  if (!normalized) return ".";
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash <= 0) return ".";
+  return normalized.slice(0, lastSlash);
+}
+
+function getManualDbDownloadCommands(database: PipelineDatabaseDownloadInfo): string[] | null {
+  const targetPath =
+    database.expectedPath ||
+    database.job?.targetPath ||
+    database.path ||
+    database.configuredPath;
+  const sourceUrl = database.sourceUrl || database.job?.sourceUrl;
+
+  if (!targetPath || !sourceUrl) return null;
+
+  const targetDir = getParentDir(targetPath);
+  return [
+    `mkdir -p ${shellQuote(targetDir)}`,
+    `curl -L -C - --fail --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 30 --speed-time 60 --speed-limit 1024 --output ${shellQuote(targetPath)} ${shellQuote(sourceUrl)}`,
+  ];
+}
+
 export default function PipelineSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR(
     "/api/admin/settings/pipelines",
@@ -740,7 +769,7 @@ export default function PipelineSettingsPage() {
                       (database) => database.status === "missing"
                     );
                     const databaseFailed = databaseDownloads.filter(
-                      (database) => database.job?.state === "error"
+                      (database) => database.job?.state === "error" && database.status === "missing"
                     );
                     const databaseAvailable = databaseDownloads.filter(
                       (database) => database.status === "downloaded"
@@ -853,9 +882,11 @@ export default function PipelineSettingsPage() {
                               {databaseDownloads.map((database) => {
                                 const databaseRunning = database.job?.state === "running";
                                 const databaseFailedState = database.job?.state === "error";
+                                const databaseUnavailable = database.status === "missing";
                                 const databaseProgress = database.job?.progressPercent;
                                 const databaseBytes = database.job?.bytesDownloaded;
                                 const databaseTotal = database.job?.totalBytes;
+                                const manualCommands = getManualDbDownloadCommands(database);
                                 return (
                                   <div key={database.id} className="mt-1 space-y-1">
                                     <p className="text-xs text-muted-foreground">
@@ -867,6 +898,11 @@ export default function PipelineSettingsPage() {
                                     {database.path && (
                                       <p className="text-xs text-muted-foreground break-all">
                                         Path: {database.path}
+                                      </p>
+                                    )}
+                                    {database.detail && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {database.detail}
                                       </p>
                                     )}
                                     {databaseRunning && (
@@ -883,11 +919,23 @@ export default function PipelineSettingsPage() {
                                       </p>
                                     )}
                                     {databaseFailedState && (
-                                      <p className="text-xs text-destructive">
+                                      <p className={`text-xs ${databaseUnavailable ? "text-destructive" : "text-muted-foreground"}`}>
                                         {database.job?.error
-                                          ? `${database.label} download failed: ${database.job.error}`
-                                          : `${database.label} download failed`}
+                                          ? databaseUnavailable
+                                            ? `${database.label} download failed: ${database.job.error}`
+                                            : `Last ${database.label} re-download attempt failed: ${database.job.error}`
+                                          : databaseUnavailable
+                                            ? `${database.label} download failed`
+                                            : `Last ${database.label} re-download attempt failed`}
                                       </p>
+                                    )}
+                                    {(databaseUnavailable || databaseFailedState) && manualCommands && (
+                                      <div className="mt-1 rounded-md border border-border/60 bg-muted/40 p-2">
+                                        <p className="text-[11px] text-muted-foreground">
+                                          Manual terminal fallback (run on the SeqDesk server):
+                                        </p>
+                                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-[11px] text-foreground">{manualCommands.join("\n")}</pre>
+                                      </div>
                                     )}
                                     {database.job?.state === "success" && database.job.finishedAt && (
                                       <p className="text-xs text-muted-foreground">

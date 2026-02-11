@@ -690,7 +690,7 @@ export function Sidebar({ user, version }: SidebarProps) {
                   Data Upload
                 </Link>
                 <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
-                  Settings
+                  Info
                 </Link>
                 <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
                   Pipelines

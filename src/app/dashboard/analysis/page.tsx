@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -134,6 +134,7 @@ type RunData = {
   lastEventAt?: string | null;
   lastWeblogAt?: string | null;
   lastTraceAt?: string | null;
+  queueUpdatedAt?: string | null;
   updatedAt?: string;
   user: { firstName: string; lastName: string; email?: string };
   createdAt: string;
@@ -150,6 +151,8 @@ export default function AnalysisDashboardPage() {
   const [deleting, setDeleting] = useState(false);
   const [stopTarget, setStopTarget] = useState<RunData | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [syncDisabled, setSyncDisabled] = useState(false);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
 
   // Build query params
   const params = new URLSearchParams();
@@ -165,14 +168,32 @@ export default function AnalysisDashboardPage() {
     refreshInterval: 10000, // Refresh every 10 seconds for running jobs
   });
 
+  const syncRun = useCallback(async (runId: string) => {
+    try {
+      const res = await fetch(`/api/pipelines/runs/${runId}/sync`, { method: "POST" });
+      if (!res.ok) {
+        if (res.status === 403) {
+          setSyncDisabled(true);
+          setSyncWarning("Auto-sync unavailable for your role (HTTP 403). Last event may be stale.");
+          return;
+        }
+        setSyncWarning(`Auto-sync failed (HTTP ${res.status}).`);
+        return;
+      }
+      setSyncWarning(null);
+    } catch {
+      setSyncWarning("Auto-sync failed due to a network or server error.");
+    }
+  }, []);
+
   const handleRefresh = async () => {
-    if (data?.runs?.length) {
-      const runningRuns = data.runs.filter((run: { status: string }) => run.status === "running");
-      if (runningRuns.length > 0) {
+    if (!syncDisabled && data?.runs?.length) {
+      const activeRuns = data.runs.filter((run: { status: string }) =>
+        ["running", "queued", "pending"].includes(run.status)
+      );
+      if (activeRuns.length > 0) {
         await Promise.allSettled(
-          runningRuns.map((run: { id: string }) =>
-            fetch(`/api/pipelines/runs/${run.id}/sync`, { method: "POST" })
-          )
+          activeRuns.map((run: { id: string }) => syncRun(run.id))
         );
       }
     }
@@ -211,23 +232,21 @@ export default function AnalysisDashboardPage() {
     }
   };
 
-  // Derive a stable key from running run IDs so the effect only re-runs
-  // when the set of running runs actually changes, not on every SWR fetch.
-  const runningIds = (data?.runs ?? [])
-    .filter((run: { status: string }) => run.status === "running")
+  // Derive a stable key from active run IDs so the effect only re-runs
+  // when the set of active runs actually changes, not on every SWR fetch.
+  const activeIds = (data?.runs ?? [])
+    .filter((run: { status: string }) => ["running", "queued", "pending"].includes(run.status))
     .map((run: { id: string }) => run.id) as string[];
-  const runningKey = runningIds.join(",");
+  const activeKey = activeIds.join(",");
 
   useEffect(() => {
-    if (!runningKey) return;
-    const ids = runningKey.split(",");
+    if (syncDisabled || !activeKey) return;
+    const ids = activeKey.split(",");
     let active = true;
 
     const tick = async () => {
       await Promise.allSettled(
-        ids.map((runId) =>
-          fetch(`/api/pipelines/runs/${runId}/sync`, { method: "POST" })
-        )
+        ids.map((runId) => syncRun(runId))
       );
       if (active) {
         mutate();
@@ -239,7 +258,7 @@ export default function AnalysisDashboardPage() {
       active = false;
       clearInterval(interval);
     };
-  }, [runningKey, mutate]);
+  }, [activeKey, mutate, syncDisabled, syncRun]);
 
   return (
     <PageContainer>
@@ -249,6 +268,9 @@ export default function AnalysisDashboardPage() {
           <p className="text-muted-foreground">
             Monitor and manage pipeline executions
           </p>
+          {syncWarning && (
+            <p className="text-xs text-amber-700 mt-1">{syncWarning}</p>
+          )}
         </div>
         <Button variant="outline" onClick={handleRefresh}>
           <RefreshCw className="h-4 w-4 mr-2" />
@@ -356,7 +378,17 @@ export default function AnalysisDashboardPage() {
                     <div className="flex flex-col gap-1">
                       {getStatusBadge(run.status)}
                       <span className="text-xs text-muted-foreground">
-                        Last event: {formatRelativeTime(getLatestTimestamp(run.lastEventAt, run.lastWeblogAt, run.lastTraceAt, run.startedAt, run.queuedAt, run.updatedAt, run.createdAt))}
+                        Last event: {formatRelativeTime(getLatestTimestamp(
+                          run.lastEventAt,
+                          run.lastWeblogAt,
+                          run.lastTraceAt,
+                          run.queueUpdatedAt,
+                          run.completedAt,
+                          run.startedAt,
+                          run.queuedAt,
+                          run.updatedAt,
+                          run.createdAt
+                        ))}
                       </span>
                       {run.queueStatus && (
                         <Badge

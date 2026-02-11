@@ -6,6 +6,8 @@ export interface SequencingFilesConfig {
   ignorePatterns: string[];
   allowSingleEnd: boolean;
   autoAssign: boolean;
+  simulationMode: "auto" | "synthetic" | "template";
+  simulationTemplateDir: string;
 }
 
 const DEFAULT_CONFIG: SequencingFilesConfig = {
@@ -14,6 +16,8 @@ const DEFAULT_CONFIG: SequencingFilesConfig = {
   ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
   allowSingleEnd: true,
   autoAssign: false,
+  simulationMode: "auto",
+  simulationTemplateDir: "",
 };
 
 export async function getSequencingFilesConfig(): Promise<{

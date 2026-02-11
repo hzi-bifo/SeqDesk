@@ -132,13 +132,13 @@ async function writeDownloadStatusIndex(
   await fs.promises.writeFile(statusPath, JSON.stringify(index, null, 2));
 }
 
-async function pathExists(targetPath?: string): Promise<boolean> {
-  if (!targetPath) return false;
+async function getPathSize(targetPath?: string): Promise<number | undefined> {
+  if (!targetPath) return undefined;
   try {
-    await fs.promises.access(targetPath);
-    return true;
+    const stats = await fs.promises.stat(targetPath);
+    return stats.size;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -157,6 +157,31 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
     result.push(value);
   }
   return result;
+}
+
+function parseExpectedSize(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
+}
+
+function getExpectedSizeForCandidate(
+  candidate: string,
+  record: PipelineDatabaseDownloadRecord | undefined,
+  job: PipelineDatabaseDownloadJobStatus | null
+): number | undefined {
+  const expectations: Array<number | undefined> = [];
+
+  if (record?.path === candidate) {
+    expectations.push(parseExpectedSize(record.sizeBytes));
+  }
+
+  if (job?.targetPath === candidate) {
+    expectations.push(parseExpectedSize(job.totalBytes));
+  }
+
+  return expectations.find((value) => typeof value === 'number');
 }
 
 export function getPipelineDatabaseDefinitions(pipelineId: string): PipelineDatabaseDefinition[] {
@@ -288,11 +313,21 @@ export async function getPipelineDatabaseStatuses(
       const candidates = uniqueStrings([configuredPath, record?.path, expectedPath]);
 
       let detectedPath: string | undefined;
+      let detectedSizeBytes: number | undefined;
+      let partialDetail: string | undefined;
       for (const candidate of candidates) {
-        if (await pathExists(candidate)) {
-          detectedPath = candidate;
-          break;
+        const sizeBytes = await getPathSize(candidate);
+        if (typeof sizeBytes !== 'number') continue;
+
+        const expectedSize = getExpectedSizeForCandidate(candidate, record, job);
+        if (typeof expectedSize === 'number' && sizeBytes < expectedSize) {
+          partialDetail = `Partial download detected (${sizeBytes}/${expectedSize} bytes). Re-run download to resume.`;
+          continue;
         }
+
+        detectedPath = candidate;
+        detectedSizeBytes = sizeBytes;
+        break;
       }
 
       const status: PipelineDatabaseStatus = {
@@ -306,12 +341,13 @@ export async function getPipelineDatabaseStatuses(
         expectedPath,
         configuredPath,
         sourceUrl: record?.sourceUrl || definition.downloadUrl,
-        sizeBytes: record?.sizeBytes,
+        sizeBytes: detectedSizeBytes ?? record?.sizeBytes,
         lastUpdated: record?.updatedAt,
         detail: !detectedPath
-          ? configuredPath
-            ? 'Configured database path does not exist'
-            : 'Database not downloaded'
+          ? partialDetail ||
+            (configuredPath
+              ? 'Configured database path does not exist'
+              : 'Database not downloaded')
           : undefined,
         job,
       };

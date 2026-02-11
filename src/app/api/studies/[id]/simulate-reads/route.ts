@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
 import { buildSimulatedFastq } from "@/lib/simulation/fastq";
+import {
+  resolveTemplateSource,
+  selectTemplatePair,
+} from "@/lib/simulation/template-source";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { gzipSync } from "zlib";
@@ -20,6 +24,13 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   if (rounded < min) return min;
   if (rounded > max) return max;
   return rounded;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 // POST - create dummy sequencing files for a study's samples
@@ -119,16 +130,34 @@ export async function POST(
 
     // Get extension from config
     let extension = DEFAULT_EXTENSION;
+    let sequencingFilesConfig: Record<string, unknown> = {};
     if (settings.extraSettings) {
       try {
-        const extra = JSON.parse(settings.extraSettings);
-        if (extra.sequencingFiles?.allowedExtensions?.[0]) {
-          extension = extra.sequencingFiles.allowedExtensions[0];
+        const extra = asRecord(JSON.parse(settings.extraSettings) as unknown);
+        sequencingFilesConfig = asRecord(extra.sequencingFiles);
+        const extensionList = Array.isArray(sequencingFilesConfig.allowedExtensions)
+          ? sequencingFilesConfig.allowedExtensions
+          : Array.isArray(sequencingFilesConfig.extensions)
+            ? sequencingFilesConfig.extensions
+            : [];
+        if (extensionList.length > 0) {
+          const firstExtension = extensionList.find(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0
+          );
+          if (firstExtension) {
+            extension = firstExtension;
+          }
         }
       } catch {
         // ignore
       }
     }
+    const templateSource = await resolveTemplateSource({
+      dataBasePath: resolvedBase,
+      sequencingFilesConfig,
+      extension,
+    });
 
     // Use a stable folder name (no timestamp) so re-runs overwrite in place
     const sanitizedTitle = study.title
@@ -153,34 +182,49 @@ export async function POST(
       const file1AbsPath = path.join(targetDir, file1Name);
       // Relative path for database storage (relative to dataBasePath)
       const file1RelPath = path.join(folderName, file1Name);
-      const simulatedReads = buildSimulatedFastq({
-        sampleId: sample.sampleId,
-        sampleIndex: si,
-        readCount: normalizedReadCount,
-        readLength: normalizedReadLength,
-        pairedEnd,
-      });
-
-      const buffer1 = extension.endsWith(".gz")
-        ? gzipSync(simulatedReads.read1)
-        : simulatedReads.read1;
-
-      await fs.writeFile(file1AbsPath, buffer1);
-      filesCreated += 1;
-
       let file2AbsPath: string | null = null;
       let file2RelPath: string | null = null;
-      if (pairedEnd) {
-        const file2Name = `${sample.sampleId}_R2${extension}`;
-        file2AbsPath = path.join(targetDir, file2Name);
-        file2RelPath = path.join(folderName, file2Name);
 
-        if (simulatedReads.read2) {
-          const buffer2 = extension.endsWith(".gz")
-            ? gzipSync(simulatedReads.read2)
-            : simulatedReads.read2;
-          await fs.writeFile(file2AbsPath, buffer2);
+      if (templateSource.modeUsed === "template") {
+        const templatePair = selectTemplatePair(templateSource.templatePairs, si);
+        await fs.copyFile(templatePair.read1Path, file1AbsPath);
+        filesCreated += 1;
+
+        if (pairedEnd) {
+          const file2Name = `${sample.sampleId}_R2${extension}`;
+          file2AbsPath = path.join(targetDir, file2Name);
+          file2RelPath = path.join(folderName, file2Name);
+          await fs.copyFile(templatePair.read2Path, file2AbsPath);
           filesCreated += 1;
+        }
+      } else {
+        const simulatedReads = buildSimulatedFastq({
+          sampleId: sample.sampleId,
+          sampleIndex: si,
+          readCount: normalizedReadCount,
+          readLength: normalizedReadLength,
+          pairedEnd,
+        });
+
+        const buffer1 = extension.endsWith(".gz")
+          ? gzipSync(simulatedReads.read1)
+          : simulatedReads.read1;
+
+        await fs.writeFile(file1AbsPath, buffer1);
+        filesCreated += 1;
+
+        if (pairedEnd) {
+          const file2Name = `${sample.sampleId}_R2${extension}`;
+          file2AbsPath = path.join(targetDir, file2Name);
+          file2RelPath = path.join(folderName, file2Name);
+
+          if (simulatedReads.read2) {
+            const buffer2 = extension.endsWith(".gz")
+              ? gzipSync(simulatedReads.read2)
+              : simulatedReads.read2;
+            await fs.writeFile(file2AbsPath, buffer2);
+            filesCreated += 1;
+          }
         }
       }
 
@@ -212,6 +256,9 @@ export async function POST(
       recordsCreated: createRecords,
       readCount: normalizedReadCount,
       readLength: normalizedReadLength,
+      simulationMode: templateSource.modeUsed,
+      templateDir: templateSource.templateDir,
+      templatePairsAvailable: templateSource.templatePairs.length,
       files: createdFiles,
     });
   } catch (error) {
