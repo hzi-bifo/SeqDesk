@@ -64,13 +64,18 @@
     "profiles": ["conda"],
     "defaultParams": {
       "skipSpades": true,
-      "skipProkka": true
+      "skipProkka": true,
+      "skipConcoct": true
     },
     "paramMap": {
       "skipMegahit": "--skip_megahit",
       "skipSpades": "--skip_spades",
       "skipProkka": "--skip_prokka",
       "skipBinQc": "--skip_binqc",
+      "skipConcoct": "--skip_concoct",
+      "skipBusco": "--skip_busco",
+      "skipCheckm": "--skip_checkm",
+      "skipGunc": "--skip_gunc",
       "skipQuast": "--skip_quast",
       "skipGtdb": "--skip_gtdbtk",
       "skipGtdbtk": "--skip_gtdbtk",
@@ -80,12 +85,11 @@
       {
         "when": { "skipBinQc": true },
         "add": [
+          "--skip_busco",
+          "--skip_checkm",
+          "--skip_gunc",
           "--skip_quast",
-          "--skip_gtdbtk",
-          "--run_busco false",
-          "--run_checkm false",
-          "--run_checkm2 false",
-          "--run_gunc false"
+          "--skip_gtdbtk"
         ]
       }
     ]

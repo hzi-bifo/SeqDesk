@@ -14,8 +14,8 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
@@ -35,11 +35,23 @@ export async function GET(
         status: true,
         progress: true,
         currentStep: true,
+        study: {
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
     if (!run) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+    }
+
+    if (
+      session.user.role !== 'FACILITY_ADMIN' &&
+      run.study?.userId !== session.user.id
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     let content = '';

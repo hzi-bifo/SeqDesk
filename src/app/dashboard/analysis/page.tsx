@@ -119,6 +119,36 @@ function getLatestTimestamp(...values: Array<string | null | undefined>): string
   return sorted[0] || null;
 }
 
+function isQueueStateLikelyActive(state?: string | null): boolean {
+  if (!state) return false;
+  const normalized = state.trim().toUpperCase();
+  if (!normalized || normalized === "UNKNOWN") return false;
+  if (
+    normalized === "COMPLETED" ||
+    normalized === "EXITED" ||
+    normalized === "REVOKED" ||
+    normalized === "TIMEOUT" ||
+    normalized === "OUT_OF_MEMORY" ||
+    normalized === "NODE_FAIL" ||
+    normalized === "BOOT_FAIL" ||
+    normalized === "PREEMPTED" ||
+    normalized === "DEADLINE"
+  ) {
+    return false;
+  }
+  return !normalized.startsWith("CANCELLED")
+    && !normalized.startsWith("CANCELED")
+    && !normalized.startsWith("FAILED");
+}
+
+function queueStateToDisplayStatus(state?: string | null): "queued" | "running" {
+  const normalized = state?.trim().toUpperCase() || "";
+  if (normalized === "PENDING" || normalized === "CONFIGURING") {
+    return "queued";
+  }
+  return "running";
+}
+
 type RunData = {
   id: string;
   runNumber: string;
@@ -188,8 +218,8 @@ export default function AnalysisDashboardPage() {
 
   const handleRefresh = async () => {
     if (!syncDisabled && data?.runs?.length) {
-      const activeRuns = data.runs.filter((run: { status: string }) =>
-        ["running", "queued", "pending"].includes(run.status)
+      const activeRuns = data.runs.filter((run: { status: string; queueStatus?: string | null }) =>
+        ["running", "queued", "pending"].includes(run.status) || isQueueStateLikelyActive(run.queueStatus)
       );
       if (activeRuns.length > 0) {
         await Promise.allSettled(
@@ -235,7 +265,9 @@ export default function AnalysisDashboardPage() {
   // Derive a stable key from active run IDs so the effect only re-runs
   // when the set of active runs actually changes, not on every SWR fetch.
   const activeIds = (data?.runs ?? [])
-    .filter((run: { status: string }) => ["running", "queued", "pending"].includes(run.status))
+    .filter((run: { status: string; queueStatus?: string | null }) =>
+      ["running", "queued", "pending"].includes(run.status) || isQueueStateLikelyActive(run.queueStatus)
+    )
     .map((run: { id: string }) => run.id) as string[];
   const activeKey = activeIds.join(",");
 
@@ -344,9 +376,16 @@ export default function AnalysisDashboardPage() {
             </TableHeader>
             <TableBody>
               {data?.runs?.map((run: RunData) => (
+                (() => {
+                  const effectiveStatus =
+                    ["completed", "failed", "cancelled"].includes(run.status) &&
+                    isQueueStateLikelyActive(run.queueStatus)
+                      ? queueStateToDisplayStatus(run.queueStatus)
+                      : run.status;
+                  return (
                 <TableRow
                   key={run.id}
-                  className={run.status === "running" ? "bg-blue-50/60 dark:bg-blue-950/30" : undefined}
+                  className={effectiveStatus === "running" ? "bg-blue-50/60 dark:bg-blue-950/30" : undefined}
                 >
                   <TableCell>
                     <Link
@@ -376,7 +415,7 @@ export default function AnalysisDashboardPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      {getStatusBadge(run.status)}
+                      {getStatusBadge(effectiveStatus)}
                       <span className="text-xs text-muted-foreground">
                         Last event: {formatRelativeTime(getLatestTimestamp(
                           run.lastEventAt,
@@ -403,7 +442,7 @@ export default function AnalysisDashboardPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    {run.status === "running" ? (
+                    {effectiveStatus === "running" ? (
                       <div className="flex flex-col">
                         <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
                           <div
@@ -417,7 +456,7 @@ export default function AnalysisDashboardPage() {
                           </span>
                         )}
                       </div>
-                    ) : run.status === "completed" ? (
+                    ) : effectiveStatus === "completed" ? (
                       <span className="text-sm text-muted-foreground">
                         {run._count.assembliesCreated} assemblies, {run._count.binsCreated} bins
                       </span>
@@ -436,7 +475,7 @@ export default function AnalysisDashboardPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      {run.status === "running" && (
+                      {effectiveStatus === "running" && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -454,7 +493,7 @@ export default function AnalysisDashboardPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            disabled={run.status === "running"}
+                            disabled={effectiveStatus === "running"}
                             className="text-destructive focus:text-destructive"
                             onSelect={() => setDeleteTarget(run)}
                           >
@@ -465,6 +504,8 @@ export default function AnalysisDashboardPage() {
                     </div>
                   </TableCell>
                 </TableRow>
+                  );
+                })()
               ))}
             </TableBody>
           </Table>

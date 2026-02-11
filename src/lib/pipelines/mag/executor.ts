@@ -15,6 +15,7 @@ interface MagConfig {
   skipSpades?: boolean;
   skipProkka?: boolean;
   skipBinQc?: boolean;
+  skipConcoct?: boolean;
   skipGtdb?: boolean;
   skipGtdbtk?: boolean;
   skipQuast?: boolean;
@@ -193,16 +194,13 @@ function buildMagFlags(config: MagConfig): string[] {
   if (config.skipMegahit) flags.push('--skip_megahit');
   if (config.skipSpades) flags.push('--skip_spades');
   if (config.skipProkka) flags.push('--skip_prokka');
+  if (config.skipConcoct) flags.push('--skip_concoct');
 
   if (config.skipBinQc) {
     flags.push(
       '--skip_binqc',
       '--skip_quast',
-      '--skip_gtdbtk',
-      '--run_busco false',
-      '--run_checkm false',
-      '--run_checkm2 false',
-      '--run_gunc false'
+      '--skip_gtdbtk'
     );
   }
 

@@ -29,17 +29,11 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  GitBranch,
-  List,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LiveLogViewer } from "@/components/pipelines/LiveLogViewer";
 import {
-  PipelineProgressViewer,
-  type DagNode,
-  type DagEdge,
-  type StepStatus,
   type PipelineInputFile,
   type PipelineOutputFile,
 } from "@/components/pipelines/PipelineProgressViewer";
@@ -89,6 +83,12 @@ function getStepIcon(status: string) {
   }
 }
 
+function normalizeStepStatus(status: string, completedAt?: string | null): string {
+  if (!completedAt) return status;
+  if (status === "running" || status === "pending") return "completed";
+  return status;
+}
+
 function getPipelineIcon(icon: string) {
   switch (icon) {
     case "Dna":
@@ -129,6 +129,36 @@ function formatStatusSource(source?: string | null): string {
     default:
       return source.replace(/_/g, " ");
   }
+}
+
+function isQueueStateLikelyActive(state?: string | null): boolean {
+  if (!state) return false;
+  const normalized = state.trim().toUpperCase();
+  if (!normalized || normalized === "UNKNOWN") return false;
+  if (
+    normalized === "COMPLETED" ||
+    normalized === "EXITED" ||
+    normalized === "REVOKED" ||
+    normalized === "TIMEOUT" ||
+    normalized === "OUT_OF_MEMORY" ||
+    normalized === "NODE_FAIL" ||
+    normalized === "BOOT_FAIL" ||
+    normalized === "PREEMPTED" ||
+    normalized === "DEADLINE"
+  ) {
+    return false;
+  }
+  return !normalized.startsWith("CANCELLED")
+    && !normalized.startsWith("CANCELED")
+    && !normalized.startsWith("FAILED");
+}
+
+function queueStateToDisplayStatus(state?: string | null): "queued" | "running" {
+  const normalized = state?.trim().toUpperCase() || "";
+  if (normalized === "PENDING" || normalized === "CONFIGURING") {
+    return "queued";
+  }
+  return "running";
 }
 
 function formatEventType(value?: string | null): string {
@@ -280,6 +310,16 @@ interface QueueStatus {
   pid?: number;
   source?: "squeue" | "sacct";
   message?: string;
+  jobs?: {
+    jobId: string;
+    partition: string;
+    name: string;
+    user: string;
+    state: string;
+    elapsed: string;
+    nodes: string;
+    nodeList: string;
+  }[];
 }
 
 export default function AnalysisRunDetailPage({
@@ -288,7 +328,6 @@ export default function AnalysisRunDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const [viewMode, setViewMode] = useState<"dag" | "list">("dag");
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
@@ -317,9 +356,24 @@ export default function AnalysisRunDetailPage({
   );
 
   const run: Run | undefined = data?.run;
-  const runIsActive = ["running", "queued", "pending"].includes(run?.status || "");
   const assemblies = run?.assembliesCreated || [];
   const bins = run?.binsCreated || [];
+  const materializedOutputCount =
+    assemblies.length + bins.length + (run?.artifacts?.length || 0);
+  const queueStateForUi = queueStatus?.status || run?.queueStatus || null;
+  const completionPendingOutputs =
+    run?.pipelineId === "mag" &&
+    run?.status === "completed" &&
+    materializedOutputCount === 0;
+  const effectiveRunStatus =
+    completionPendingOutputs
+      ? "running"
+      : run &&
+        ["completed", "failed", "cancelled"].includes(run.status) &&
+        isQueueStateLikelyActive(queueStateForUi)
+          ? queueStateToDisplayStatus(queueStateForUi)
+          : run?.status || "pending";
+  const runIsActive = ["running", "queued", "pending"].includes(effectiveRunStatus);
   const resultErrors = Array.isArray(run?.results?.errors)
     ? run?.results?.errors
     : run?.results?.errors
@@ -332,16 +386,19 @@ export default function AnalysisRunDetailPage({
   // Tick every 30s so relative timestamps ("5s ago") stay fresh
   const [, setTick] = useState(0);
   useEffect(() => {
-    const active = run?.status === "running" || run?.status === "queued" || run?.status === "pending";
-    if (!active) return;
+    if (!runIsActive) return;
     const timer = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(timer);
-  }, [run?.status]);
+  }, [runIsActive]);
 
-  // Load pipeline definition for DAG view
+  // Load pipeline definition for ordered step labels in the progress list
   const { data: defData } = useSWR<{
-    nodes: DagNode[];
-    edges: DagEdge[];
+    nodes: Array<{
+      id: string;
+      name: string;
+      order?: number;
+      nodeType?: "step" | "input" | "output";
+    }>;
     definition: { id: string; name: string };
   }>(
     run?.pipelineId ? `/api/pipelines/definitions/${run.pipelineId}` : null,
@@ -474,76 +531,47 @@ export default function AnalysisRunDetailPage({
     return outputs;
   })();
 
-  const outputFilesByStep = new Map<string, string[]>();
-  for (const file of outputFiles) {
-    if (!file.producedByStepId) continue;
-    if (!outputFilesByStep.has(file.producedByStepId)) {
-      outputFilesByStep.set(file.producedByStepId, []);
-    }
-    outputFilesByStep.get(file.producedByStepId)!.push(file.path);
-  }
-
   const stepStatusMap = new Map<string, Run["steps"][number]>();
   run?.steps?.forEach((step) => stepStatusMap.set(step.stepId, step));
-  const orderedNodes = defData?.nodes
-    ? [...defData.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  const orderedSteps = defData?.nodes
+    ? [...defData.nodes]
+        .filter((node) => (node.nodeType ?? "step") === "step")
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     : [];
-  const orderedNodeIds = new Set(orderedNodes.map((n) => n.id));
-
-  // Convert run steps to step statuses for the DAG viewer (include pending)
-  const stepStatuses: StepStatus[] | undefined = run
-    ? orderedNodes.map((node) => {
-        const step = stepStatusMap.get(node.id);
-        return {
-          stepId: node.id,
-          status: (step?.status as StepStatus["status"]) || "pending",
-          startedAt: step?.startedAt || undefined,
-          completedAt: step?.completedAt || undefined,
-          outputFiles: outputFilesByStep.get(node.id),
-        };
-      })
-    : undefined;
+  const orderedNodeIds = new Set(orderedSteps.map((n) => n.id));
 
   const extraSteps = run?.steps?.filter((step) => !orderedNodeIds.has(step.stepId)) || [];
 
   const stepRows = [
-    ...orderedNodes.map((node) => {
+    ...orderedSteps.map((node) => {
       const step = stepStatusMap.get(node.id);
+      const normalizedStatus = normalizeStepStatus(step?.status || "pending", step?.completedAt);
       return {
         id: node.id,
         name: node.name,
-        status: (step?.status as StepStatus["status"]) || "pending",
+        status: normalizedStatus,
         startedAt: step?.startedAt || null,
         completedAt: step?.completedAt || null,
       };
     }),
-    ...extraSteps.map((step) => ({
-      id: step.stepId,
-      name: step.stepName || step.stepId,
-      status: step.status as StepStatus["status"],
-      startedAt: step.startedAt,
-      completedAt: step.completedAt,
-    })),
+    ...extraSteps.map((step) => {
+      const normalizedStatus = normalizeStepStatus(step.status, step.completedAt);
+      return {
+        id: step.stepId,
+        name: step.stepName || step.stepId,
+        status: normalizedStatus,
+        startedAt: step.startedAt,
+        completedAt: step.completedAt,
+      };
+    }),
   ];
 
-  const normalizedCurrent = run?.currentStep?.toLowerCase();
   const currentStepLabel = run?.currentStep
     ? run.currentStep.replace(/^failed at\s+/i, "")
     : null;
-  const runningStepId = stepStatuses?.find((s) => s.status === "running")?.stepId;
-  const currentStepId =
-    runningStepId ||
-    (normalizedCurrent
-      ? orderedNodes.find((node) => {
-          const name = node.name?.toLowerCase() || "";
-          const idLabel = node.id.replace(/_/g, " ");
-          return (
-            normalizedCurrent.includes(name) ||
-            name.includes(normalizedCurrent) ||
-            normalizedCurrent.includes(idLabel)
-          );
-        })?.id
-      : undefined);
+  const effectiveCurrentStep = completionPendingOutputs
+    ? "Finalizing outputs..."
+    : run?.currentStep || currentStepLabel || "-";
 
   const handleCancel = async () => {
     if (!confirm("Are you sure you want to cancel this run?")) return;
@@ -734,6 +762,7 @@ export default function AnalysisRunDetailPage({
       setQueueHeartbeatAt(new Date().toISOString());
       const data = (await res.json()) as QueueStatus;
       setQueueStatus(data);
+      void mutate();
     } catch {
       setQueueStatus({
         available: false,
@@ -742,20 +771,16 @@ export default function AnalysisRunDetailPage({
     } finally {
       setCheckingQueue(false);
     }
-  }, [run?.id, run?.queueJobId]);
+  }, [mutate, run?.id, run?.queueJobId]);
 
   useEffect(() => {
     if (!run?.queueJobId) return;
 
-    if (!["running", "queued", "pending"].includes(run.status)) {
-      void fetchQueueStatus();
-      return;
-    }
-
     void fetchQueueStatus();
+    if (!runIsActive) return;
     const interval = setInterval(fetchQueueStatus, 20000);
     return () => clearInterval(interval);
-  }, [run?.queueJobId, run?.status, fetchQueueStatus]);
+  }, [run?.queueJobId, fetchQueueStatus, runIsActive]);
 
   useEffect(() => {
     setShowPipelineProgress(run?.status !== "failed");
@@ -810,7 +835,9 @@ export default function AnalysisRunDetailPage({
       { timestamp: run.queueUpdatedAt, source: "queue" },
       { timestamp: run.completedAt, source: run.statusSource || null },
       {
-        timestamp: ["running", "queued", "pending"].includes(run.status)
+        timestamp:
+          (["running", "queued", "pending"].includes(effectiveRunStatus) ||
+            isQueueStateLikelyActive(queueStateForUi))
           ? queueHeartbeatAt
           : null,
         source: "queue",
@@ -852,8 +879,8 @@ export default function AnalysisRunDetailPage({
   const lastUpdateAgeMs = lastEventAt
     ? Date.now() - new Date(lastEventAt).getTime()
     : null;
-  const isLive = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs <= 60_000;
-  const isStale = run?.status === "running" && lastUpdateAgeMs !== null && lastUpdateAgeMs > 300_000;
+  const isLive = runIsActive && lastUpdateAgeMs !== null && lastUpdateAgeMs <= 60_000;
+  const isStale = runIsActive && lastUpdateAgeMs !== null && lastUpdateAgeMs > 300_000;
   const persistedQueueBadge =
     run?.queueStatus
       ? {
@@ -884,6 +911,10 @@ export default function AnalysisRunDetailPage({
     : run?.queueStatus
       ? "text-muted-foreground"
       : "text-muted-foreground";
+  const liveSlurmJobs =
+    queueStatus?.available && queueStatus.type === "slurm" && Array.isArray(queueStatus.jobs)
+      ? queueStatus.jobs
+      : [];
   const detectedSlurmLogs = (run.detectedLogFiles || []).filter((file) =>
     file.name.startsWith("slurm-")
   );
@@ -957,7 +988,7 @@ export default function AnalysisRunDetailPage({
             <div className="flex items-center gap-3">
               {getPipelineIcon(run.pipelineIcon)}
               <h1 className="text-2xl font-bold font-mono">{run.runNumber}</h1>
-              {getStatusBadge(run.status)}
+              {getStatusBadge(effectiveRunStatus)}
               {isLive && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
                   <span className="relative flex h-2 w-2">
@@ -1016,7 +1047,7 @@ export default function AnalysisRunDetailPage({
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
-          {["pending", "queued", "running"].includes(run.status) && (
+          {["pending", "queued", "running"].includes(effectiveRunStatus) && (
             <Button variant="destructive" onClick={handleCancel}>
               <StopCircle className="h-4 w-4 mr-2" />
               Cancel
@@ -1085,11 +1116,11 @@ export default function AnalysisRunDetailPage({
             <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
               <div className="rounded-md border bg-background/70 p-3">
                 <dt className="text-muted-foreground">Run Status</dt>
-                <dd className="font-medium mt-1 capitalize">{run.status}</dd>
+                <dd className="font-medium mt-1 capitalize">{effectiveRunStatus}</dd>
               </div>
               <div className="rounded-md border bg-background/70 p-3">
                 <dt className="text-muted-foreground">Current Step</dt>
-                <dd className="font-medium mt-1">{run.currentStep || currentStepLabel || "-"}</dd>
+                <dd className="font-medium mt-1">{effectiveCurrentStep}</dd>
               </div>
               <div className="rounded-md border bg-background/70 p-3">
                 <dt className="text-muted-foreground">Steps</dt>
@@ -1111,7 +1142,50 @@ export default function AnalysisRunDetailPage({
               </div>
             </dl>
 
-            {run.status === "running" && run.progress != null && (
+            {liveSlurmJobs.length > 0 && (
+              <div className="mt-4 rounded-md border bg-background/70 p-3">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="text-sm font-semibold">Live SLURM Jobs</h3>
+                  <Badge variant="outline" className="text-xs">
+                    {liveSlurmJobs.length} row{liveSlurmJobs.length === 1 ? "" : "s"}
+                  </Badge>
+                </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Job ID</TableHead>
+                        <TableHead>Partition</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>User</TableHead>
+                        <TableHead>State</TableHead>
+                        <TableHead>Time</TableHead>
+                        <TableHead>Nodes</TableHead>
+                        <TableHead>Node/Reason</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {liveSlurmJobs.map((job) => (
+                        <TableRow key={`${job.jobId}-${job.name}-${job.state}`}>
+                          <TableCell className="font-mono text-xs">{job.jobId || "-"}</TableCell>
+                          <TableCell>{job.partition || "-"}</TableCell>
+                          <TableCell>{job.name || "-"}</TableCell>
+                          <TableCell>{job.user || "-"}</TableCell>
+                          <TableCell>{job.state || "-"}</TableCell>
+                          <TableCell>{job.elapsed || "-"}</TableCell>
+                          <TableCell>{job.nodes || "-"}</TableCell>
+                          <TableCell className="max-w-[220px] truncate" title={job.nodeList || "-"}>
+                            {job.nodeList || "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            {effectiveRunStatus === "running" && run.progress != null && (
               <div className="mt-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span>Overall Progress</span>
@@ -1216,92 +1290,51 @@ export default function AnalysisRunDetailPage({
             <GlassCard>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold">Pipeline Progress</h2>
-                <div className="flex items-center gap-2">
-                  {run.status === "failed" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowPipelineProgress(false)}
-                    >
-                      Hide for now
-                    </Button>
-                  )}
-                  <div className="flex items-center gap-1 bg-muted rounded-md p-1">
-                    <Button
-                      variant={viewMode === "dag" ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-7 px-2"
-                      onClick={() => setViewMode("dag")}
-                    >
-                      <GitBranch className="h-4 w-4 mr-1" />
-                      DAG
-                    </Button>
-                    <Button
-                      variant={viewMode === "list" ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-7 px-2"
-                      onClick={() => setViewMode("list")}
-                    >
-                      <List className="h-4 w-4 mr-1" />
-                      List
-                    </Button>
-                  </div>
-                </div>
+                {run.status === "failed" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowPipelineProgress(false)}
+                  >
+                    Hide for now
+                  </Button>
+                )}
               </div>
 
-              {viewMode === "dag" && defData?.nodes && defData?.edges ? (
-                <PipelineProgressViewer
-                  nodes={defData.nodes}
-                  edges={defData.edges}
-                  stepStatuses={stepStatuses}
-                  inputFiles={inputFiles}
-                  outputFiles={outputFiles}
-                  showFiles={true}
-                  runStatus={run.status}
-                  currentStepId={currentStepId}
-                  currentStepLabel={currentStepLabel}
-                  className="min-h-[500px]"
-                />
-              ) : viewMode === "dag" && !defData ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <div className="relative">
-                  {stepRows.map((step, index) => (
-                    <div key={step.id} className="flex items-start gap-4 mb-4 last:mb-0">
-                      <div className="flex flex-col items-center">
-                        {getStepIcon(step.status)}
-                        {index < stepRows.length - 1 && (
-                          <div className="w-0.5 h-8 bg-border mt-2" />
-                        )}
-                      </div>
-                      <div className="flex-1 pb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{step.name}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {step.status}
-                          </Badge>
-                        </div>
-                        {step.startedAt && (
-                          <p className="text-sm text-muted-foreground">
-                            Started: {new Date(step.startedAt).toLocaleString()}
-                            {step.completedAt && (
-                              <> - Completed: {new Date(step.completedAt).toLocaleString()}</>
-                            )}
-                          </p>
-                        )}
-                      </div>
+              <div className="relative">
+                {stepRows.map((step, index) => (
+                  <div key={step.id} className="flex items-start gap-4 mb-4 last:mb-0">
+                    <div className="flex flex-col items-center">
+                      {getStepIcon(step.status)}
+                      {index < stepRows.length - 1 && (
+                        <div className="w-0.5 h-8 bg-border mt-2" />
+                      )}
                     </div>
-                  ))}
+                    <div className="flex-1 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{step.name}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {step.status}
+                        </Badge>
+                      </div>
+                      {step.startedAt && (
+                        <p className="text-sm text-muted-foreground">
+                          Started: {new Date(step.startedAt).toLocaleString()}
+                          {step.completedAt && (
+                            <> - Completed: {new Date(step.completedAt).toLocaleString()}</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
 
-                  {stepRows.length === 0 && (
-                    <p className="text-muted-foreground text-center py-4">
-                      No steps recorded yet
-                    </p>
-                  )}
-                </div>
-              )}
+                {stepRows.length === 0 && (
+                  <p className="text-muted-foreground text-center py-4">
+                    No steps recorded yet
+                  </p>
+                )}
+              </div>
             </GlassCard>
           ) : (
             <GlassCard>
@@ -1326,7 +1359,7 @@ export default function AnalysisRunDetailPage({
           <GlassCard id="logs-section">
             <h2 className="text-lg font-semibold mb-4">
               Logs
-              {run.status === "running" && (
+              {effectiveRunStatus === "running" && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
                   (live)
                 </span>
@@ -1334,13 +1367,13 @@ export default function AnalysisRunDetailPage({
             </h2>
             <LiveLogViewer
               runId={run.id}
-              isRunning={run.status === "running"}
+              isRunning={effectiveRunStatus === "running"}
               initialOutputTail={run.outputTail}
               initialErrorTail={run.errorTail}
             />
           </GlassCard>
 
-          {run.status === "completed" && (
+          {effectiveRunStatus === "completed" && (
             <>
               {assemblies.length > 0 && (
                 <GlassCard>
@@ -1437,7 +1470,7 @@ export default function AnalysisRunDetailPage({
               outputFiles={outputFiles}
               runId={run.id}
               runFolder={run.runFolder}
-              runStatus={run.status}
+              runStatus={effectiveRunStatus}
             />
           </GlassCard>
         </TabsContent>
