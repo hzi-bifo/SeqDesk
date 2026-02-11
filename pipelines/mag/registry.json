@@ -113,19 +113,19 @@
       "skipBusco": {
         "type": "boolean",
         "title": "Skip BUSCO",
-        "description": "Skip BUSCO quality assessment in bin QC",
+        "description": "Compatibility mode for nf-core/mag v3.0.0: disables bin QC to avoid BUSCO summary failures",
         "default": false
       },
       "skipCheckm": {
         "type": "boolean",
         "title": "Skip CheckM",
-        "description": "Skip CheckM quality assessment in bin QC",
+        "description": "No-op for current defaults (CheckM is not used unless bin QC mode is changed)",
         "default": false
       },
       "skipGunc": {
         "type": "boolean",
         "title": "Skip GUNC",
-        "description": "Skip GUNC chimerism checks in bin QC",
+        "description": "No-op for current defaults (GUNC is off by default in nf-core/mag v3.0.0)",
         "default": false
       },
       "skipQuast": {
