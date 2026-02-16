@@ -9,8 +9,8 @@ import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
 
-// Get current version from package.json
-function getVersion(): string {
+// Read current version from package.json
+function readVersionFromPackageJson(): string {
   try {
     const pkgPath = path.join(process.cwd(), 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
@@ -19,8 +19,6 @@ function getVersion(): string {
     return '0.0.0';
   }
 }
-
-const CURRENT_VERSION = getVersion();
 
 // Update server URL
 const UPDATE_SERVER = process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
@@ -34,17 +32,24 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
  * Check for updates
  */
 export async function checkForUpdates(force = false): Promise<UpdateCheckResult> {
+  const currentVersion = getCurrentVersion();
+
   // Return cached result if still valid
-  if (!force && cachedResult && Date.now() - cacheTime < CACHE_TTL) {
+  if (
+    !force &&
+    cachedResult &&
+    cachedResult.currentVersion === currentVersion &&
+    Date.now() - cacheTime < CACHE_TTL
+  ) {
     return cachedResult;
   }
 
   try {
     const response = await fetch(
-      `${UPDATE_SERVER}/api/version?current=${CURRENT_VERSION}&channel=stable`,
+      `${UPDATE_SERVER}/api/version?current=${currentVersion}&channel=stable`,
       {
         headers: {
-          'User-Agent': `SeqDesk/${CURRENT_VERSION}`,
+          'User-Agent': `SeqDesk/${currentVersion}`,
         },
         // Timeout after 10 seconds
         signal: AbortSignal.timeout(10000),
@@ -59,7 +64,7 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
 
     const result: UpdateCheckResult = {
       updateAvailable: data.updateAvailable || false,
-      currentVersion: CURRENT_VERSION,
+      currentVersion: currentVersion,
       latest: data.latest as ReleaseInfo,
     };
 
@@ -73,7 +78,7 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
 
     return {
       updateAvailable: false,
-      currentVersion: CURRENT_VERSION,
+      currentVersion: currentVersion,
       latest: null,
       error: `Failed to check for updates: ${errorMessage}`,
     };
@@ -84,7 +89,7 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
  * Get current version
  */
 export function getCurrentVersion(): string {
-  return CURRENT_VERSION;
+  return readVersionFromPackageJson();
 }
 
 /**
@@ -94,9 +99,9 @@ export async function getInstalledVersion(): Promise<string> {
   try {
     const pkgPath = path.join(process.cwd(), 'package.json');
     const pkg = JSON.parse(await fsPromises.readFile(pkgPath, 'utf-8'));
-    return pkg.version || CURRENT_VERSION;
+    return pkg.version || getCurrentVersion();
   } catch {
-    return CURRENT_VERSION;
+    return getCurrentVersion();
   }
 }
 
