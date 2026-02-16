@@ -3,6 +3,89 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
+async function getStudyWithResolvedOrders(id: string) {
+  const study = await db.study.findUnique({
+    where: { id },
+    include: {
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+      samples: {
+        select: {
+          id: true,
+          sampleId: true,
+          sampleAlias: true,
+          sampleTitle: true,
+          sampleAccessionNumber: true,
+          taxId: true,
+          scientificName: true,
+          checklistData: true,
+          customFields: true,
+          preferredAssemblyId: true,
+          orderId: true,
+          reads: true,
+          assemblies: {
+            include: {
+              createdByPipelineRun: {
+                select: {
+                  id: true,
+                  runNumber: true,
+                  status: true,
+                  createdAt: true,
+                  completedAt: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!study) {
+    return null;
+  }
+
+  const orderIds = Array.from(
+    new Set(
+      study.samples
+        .map((sample) => sample.orderId)
+        .filter((orderId): orderId is string => typeof orderId === "string" && orderId.length > 0)
+    )
+  );
+
+  const orders = orderIds.length
+    ? await db.order.findMany({
+        where: {
+          id: {
+            in: orderIds,
+          },
+        },
+        select: {
+          id: true,
+          orderNumber: true,
+          name: true,
+          status: true,
+        },
+      })
+    : [];
+
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+
+  return {
+    ...study,
+    samples: study.samples.map((sample) => ({
+      ...sample,
+      order: orderById.get(sample.orderId) ?? null,
+    })),
+  };
+}
+
 // GET single study with samples
 export async function GET(
   request: NextRequest,
@@ -17,45 +100,7 @@ export async function GET(
     const { id } = await params;
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
-    const study = await db.study.findUnique({
-      where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        samples: {
-          include: {
-            order: {
-              select: {
-                id: true,
-                orderNumber: true,
-                name: true,
-                status: true,
-              },
-            },
-            reads: true,
-            assemblies: {
-              include: {
-                createdByPipelineRun: {
-                  select: {
-                    id: true,
-                    runNumber: true,
-                    status: true,
-                    createdAt: true,
-                    completedAt: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const study = await getStudyWithResolvedOrders(id);
 
     if (!study) {
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
@@ -127,38 +172,15 @@ export async function PUT(
       }
     }
 
-    const study = await db.study.update({
+    await db.study.update({
       where: { id },
       data: updateData,
-      include: {
-        samples: {
-          include: {
-            order: {
-              select: {
-                id: true,
-                orderNumber: true,
-                name: true,
-                status: true,
-              },
-            },
-            reads: true,
-            assemblies: {
-              include: {
-                createdByPipelineRun: {
-                  select: {
-                    id: true,
-                    runNumber: true,
-                    status: true,
-                    createdAt: true,
-                    completedAt: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
     });
+
+    const study = await getStudyWithResolvedOrders(id);
+    if (!study) {
+      return NextResponse.json({ error: "Study not found" }, { status: 404 });
+    }
 
     return NextResponse.json(study);
   } catch (error) {
