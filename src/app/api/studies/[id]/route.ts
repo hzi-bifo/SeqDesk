@@ -3,10 +3,32 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
+function isMissingColumnError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as { code?: string; message?: string };
+  if (maybe.code === "P2022") return true;
+  const message = String(maybe.message ?? "");
+  return /no such column|unknown column/i.test(message);
+}
+
 async function getStudyWithResolvedOrders(id: string) {
   const study = await db.study.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      title: true,
+      alias: true,
+      description: true,
+      checklistType: true,
+      studyMetadata: true,
+      readyForSubmission: true,
+      readyAt: true,
+      submitted: true,
+      submittedAt: true,
+      testRegisteredAt: true,
+      createdAt: true,
+      updatedAt: true,
+      userId: true,
       user: {
         select: {
           id: true,
@@ -26,29 +48,134 @@ async function getStudyWithResolvedOrders(id: string) {
           scientificName: true,
           checklistData: true,
           customFields: true,
-          preferredAssemblyId: true,
           orderId: true,
           reads: true,
-          assemblies: {
-            include: {
-              createdByPipelineRun: {
-                select: {
-                  id: true,
-                  runNumber: true,
-                  status: true,
-                  createdAt: true,
-                  completedAt: true,
-                },
-              },
-            },
-          },
         },
+        orderBy: { createdAt: "asc" },
       },
     },
   });
 
   if (!study) {
     return null;
+  }
+
+  const sampleIds = study.samples.map((sample) => sample.id);
+
+  const preferredAssemblyBySample = new Map<string, string | null>();
+  if (sampleIds.length > 0) {
+    try {
+      const samplePreferenceRows = await db.sample.findMany({
+        where: { id: { in: sampleIds } },
+        select: {
+          id: true,
+          preferredAssemblyId: true,
+        },
+      });
+      for (const row of samplePreferenceRows) {
+        preferredAssemblyBySample.set(row.id, row.preferredAssemblyId ?? null);
+      }
+    } catch (error) {
+      if (!isMissingColumnError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  const assembliesBySample = new Map<
+    string,
+    Array<{
+      id: string;
+      assemblyName: string | null;
+      assemblyFile: string | null;
+      createdByPipelineRunId: string | null;
+      createdByPipelineRun: {
+        id: string;
+        runNumber: string;
+        status: string;
+        createdAt: Date;
+        completedAt: Date | null;
+      } | null;
+    }>
+  >();
+
+  for (const sampleId of sampleIds) {
+    assembliesBySample.set(sampleId, []);
+  }
+
+  if (sampleIds.length > 0) {
+    try {
+      const assemblies = await db.assembly.findMany({
+        where: { sampleId: { in: sampleIds } },
+        select: {
+          id: true,
+          sampleId: true,
+          assemblyName: true,
+          assemblyFile: true,
+          createdByPipelineRunId: true,
+          createdByPipelineRun: {
+            select: {
+              id: true,
+              runNumber: true,
+              status: true,
+              createdAt: true,
+              completedAt: true,
+            },
+          },
+        },
+      });
+
+      for (const assembly of assemblies) {
+        const list = assembliesBySample.get(assembly.sampleId) ?? [];
+        list.push({
+          id: assembly.id,
+          assemblyName: assembly.assemblyName ?? null,
+          assemblyFile: assembly.assemblyFile ?? null,
+          createdByPipelineRunId: assembly.createdByPipelineRunId ?? null,
+          createdByPipelineRun: assembly.createdByPipelineRun
+            ? {
+                id: assembly.createdByPipelineRun.id,
+                runNumber: assembly.createdByPipelineRun.runNumber,
+                status: assembly.createdByPipelineRun.status,
+                createdAt: assembly.createdByPipelineRun.createdAt,
+                completedAt: assembly.createdByPipelineRun.completedAt,
+              }
+            : null,
+        });
+        assembliesBySample.set(assembly.sampleId, list);
+      }
+    } catch (error) {
+      if (!isMissingColumnError(error)) {
+        throw error;
+      }
+
+      try {
+        const assemblies = await db.assembly.findMany({
+          where: { sampleId: { in: sampleIds } },
+          select: {
+            id: true,
+            sampleId: true,
+            assemblyName: true,
+            assemblyFile: true,
+          },
+        });
+        for (const assembly of assemblies) {
+          const list = assembliesBySample.get(assembly.sampleId) ?? [];
+          list.push({
+            id: assembly.id,
+            assemblyName: assembly.assemblyName ?? null,
+            assemblyFile: assembly.assemblyFile ?? null,
+            createdByPipelineRunId: null,
+            createdByPipelineRun: null,
+          });
+          assembliesBySample.set(assembly.sampleId, list);
+        }
+      } catch (fallbackError) {
+        if (!isMissingColumnError(fallbackError)) {
+          throw fallbackError;
+        }
+      }
+    }
   }
 
   const orderIds = Array.from(
@@ -79,8 +206,18 @@ async function getStudyWithResolvedOrders(id: string) {
 
   return {
     ...study,
+    user:
+      study.user ??
+      ({
+        id: study.userId,
+        firstName: null,
+        lastName: null,
+        email: "",
+      } as const),
     samples: study.samples.map((sample) => ({
       ...sample,
+      preferredAssemblyId: preferredAssemblyBySample.get(sample.id) ?? null,
+      assemblies: assembliesBySample.get(sample.id) ?? [],
       order: orderById.get(sample.orderId) ?? null,
     })),
   };
