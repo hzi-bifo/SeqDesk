@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, use } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useReactTable,
   getCoreRowModel,
@@ -183,6 +184,7 @@ const CHECKLIST_MAP: Record<string, string> = {
 
 export default function StudyMetadataPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const [study, setStudy] = useState<Study | null>(null);
@@ -200,6 +202,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
   // MIxS fields
   const [checklistFields, setChecklistFields] = useState<MixsField[]>([]);
   const [selectedField, setSelectedField] = useState<MixsField | null>(null);
+  const apiStudyId = study?.id ?? id;
 
   useEffect(() => {
     fetchStudy();
@@ -223,6 +226,9 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
       if (!res.ok) throw new Error("Failed to fetch study");
       const data = await res.json();
       setStudy(data);
+      if (typeof data?.id === "string" && data.id !== id) {
+        router.replace(`/dashboard/studies/${data.id}`);
+      }
       setSamples(data.samples || []);
 
       // Parse study metadata
@@ -273,7 +279,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
 
     try {
       // Save study-level metadata
-      await fetch(`/api/studies/${id}`, {
+      await fetch(`/api/studies/${apiStudyId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
