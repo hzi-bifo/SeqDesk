@@ -203,6 +203,7 @@ export default function StudyDetailPage({
   // Check if current user is the owner of this study
   const isOwner = session?.user?.id === study?.user?.id;
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const apiStudyId = study?.id ?? id;
 
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;
@@ -237,13 +238,16 @@ export default function StudyDetailPage({
       }
 
       setStudy(data);
+      if (typeof data?.id === "string" && data.id !== id) {
+        router.replace(`/dashboard/studies/${data.id}`);
+      }
     } catch (err) {
       setStudy(null);
       setError(err instanceof Error ? err.message : "Failed to load study");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     void fetchStudy();
@@ -259,7 +263,7 @@ export default function StudyDetailPage({
     setDeleting(true);
     setDeleteDialogOpen(false);
     try {
-      const res = await fetch(`/api/studies/${id}`, {
+      const res = await fetch(`/api/studies/${apiStudyId}`, {
         method: "DELETE",
       });
 
@@ -284,7 +288,7 @@ export default function StudyDetailPage({
     setMarkReadyDialogOpen(false);
     setError("");
     try {
-      const res = await fetch(`/api/studies/${id}`, {
+      const res = await fetch(`/api/studies/${apiStudyId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ readyForSubmission: true }),
@@ -313,7 +317,7 @@ export default function StudyDetailPage({
     setUnmarkReadyDialogOpen(false);
     setError("");
     try {
-      const res = await fetch(`/api/studies/${id}`, {
+      const res = await fetch(`/api/studies/${apiStudyId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ readyForSubmission: false }),

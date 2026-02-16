@@ -11,9 +11,62 @@ function isMissingColumnError(error: unknown): boolean {
   return /no such column|unknown column/i.test(message);
 }
 
-async function getStudyWithResolvedOrders(id: string) {
+async function resolveStudyId(idOrAliasOrOrderId: string): Promise<string | null> {
+  const byId = await db.study.findUnique({
+    where: { id: idOrAliasOrOrderId },
+    select: { id: true },
+  });
+  if (byId) {
+    return byId.id;
+  }
+
+  try {
+    const byAlias = await db.study.findFirst({
+      where: { alias: idOrAliasOrOrderId },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (byAlias) {
+      return byAlias.id;
+    }
+  } catch (error) {
+    if (!isMissingColumnError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const byOrderRelation = await db.study.findFirst({
+      where: {
+        samples: {
+          some: {
+            orderId: idOrAliasOrOrderId,
+          },
+        },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (byOrderRelation) {
+      return byOrderRelation.id;
+    }
+  } catch (error) {
+    if (!isMissingColumnError(error)) {
+      throw error;
+    }
+  }
+
+  return null;
+}
+
+async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
+  const resolvedStudyId = await resolveStudyId(idOrAliasOrOrderId);
+  if (!resolvedStudyId) {
+    return null;
+  }
+
   const study = await db.study.findUnique({
-    where: { id },
+    where: { id: resolvedStudyId },
     select: {
       id: true,
       title: true,
@@ -270,12 +323,17 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const resolvedStudyId = await resolveStudyId(id);
+    if (!resolvedStudyId) {
+      return NextResponse.json({ error: "Study not found" }, { status: 404 });
+    }
+
     const body = await request.json();
     const { title, description, alias, checklistType, studyMetadata, readyForSubmission } = body;
 
     // Check study exists and ownership
     const existing = await db.study.findUnique({
-      where: { id },
+      where: { id: resolvedStudyId },
       select: { userId: true },
     });
 
@@ -310,11 +368,11 @@ export async function PUT(
     }
 
     await db.study.update({
-      where: { id },
+      where: { id: resolvedStudyId },
       data: updateData,
     });
 
-    const study = await getStudyWithResolvedOrders(id);
+    const study = await getStudyWithResolvedOrders(resolvedStudyId);
     if (!study) {
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
@@ -341,10 +399,14 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const resolvedStudyId = await resolveStudyId(id);
+    if (!resolvedStudyId) {
+      return NextResponse.json({ error: "Study not found" }, { status: 404 });
+    }
 
     // Check study exists and ownership
     const existing = await db.study.findUnique({
-      where: { id },
+      where: { id: resolvedStudyId },
       select: { userId: true, submitted: true },
     });
 
@@ -367,12 +429,12 @@ export async function DELETE(
 
     // Unassign all samples from this study (set studyId to null)
     await db.sample.updateMany({
-      where: { studyId: id },
+      where: { studyId: resolvedStudyId },
       data: { studyId: null },
     });
 
     // Delete the study
-    await db.study.delete({ where: { id } });
+    await db.study.delete({ where: { id: resolvedStudyId } });
 
     return NextResponse.json({ success: true });
   } catch (error) {

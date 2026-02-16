@@ -619,6 +619,8 @@ interface ExistingStudy {
 export default function EditStudyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const [resolvedStudyId, setResolvedStudyId] = useState(id);
+  const activeStudyId = resolvedStudyId;
   const { setFocusedField } = useFieldHelp();
   const [currentStep, setCurrentStep] = useState(0);
   const [title, setTitle] = useState("");
@@ -724,13 +726,21 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  useEffect(() => {
+    setResolvedStudyId(id);
+  }, [id]);
+
   // Fetch existing study data
   useEffect(() => {
     const fetchStudy = async () => {
       try {
-        const res = await fetch(`/api/studies/${id}`);
+        const res = await fetch(`/api/studies/${activeStudyId}`);
         if (!res.ok) throw new Error("Failed to fetch study");
         const study: ExistingStudy = await res.json();
+        if (study.id && study.id !== activeStudyId) {
+          setResolvedStudyId(study.id);
+          router.replace(`/dashboard/studies/${study.id}/edit`);
+        }
 
         setTitle(study.title);
         setDescription(study.description || "");
@@ -774,7 +784,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
       }
     };
     fetchStudy();
-  }, [id]);
+  }, [activeStudyId, router]);
 
   // Track scroll position
   useEffect(() => {
@@ -871,7 +881,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     if (availableSamples.length === 0) return;
 
     const selectedSamples = availableSamples.filter(s =>
-      selectedSampleIds.includes(s.id) || s.studyId === id
+      selectedSampleIds.includes(s.id) || s.studyId === activeStudyId
     );
 
     setSampleMetadata(prev => {
@@ -1192,7 +1202,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     try {
       const studyMetadata = buildStudyMetadataPayload();
       // Update the study
-      const res = await fetch(`/api/studies/${id}`, {
+      const res = await fetch(`/api/studies/${activeStudyId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1229,7 +1239,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           }
         }
 
-        const assignRes = await fetch(`/api/studies/${id}/samples`, {
+        const assignRes = await fetch(`/api/studies/${activeStudyId}/samples`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1243,7 +1253,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         }
       }
 
-      router.push(`/dashboard/studies/${id}`);
+      router.push(`/dashboard/studies/${activeStudyId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update study");
     } finally {
@@ -1258,7 +1268,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   };
 
   // Filter samples - show unassigned + already in this study
-  const eligibleSamples = availableSamples.filter(s => s.studyId === null || s.studyId === id);
+  const eligibleSamples = availableSamples.filter(s => s.studyId === null || s.studyId === activeStudyId);
   const selectedSamples = availableSamples.filter(s => selectedSampleIds.includes(s.id));
 
   const ValidationIndicator = ({ isValid, touched: isTouched }: { isValid: boolean; touched: boolean }) => {
@@ -1800,7 +1810,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
                 {eligibleSamples.map((sample) => {
                   const isSelected = selectedSampleIds.includes(sample.id);
-                  const isCurrentStudy = sample.studyId === id;
+                  const isCurrentStudy = sample.studyId === activeStudyId;
                   return (
                     <button
                       key={sample.id} type="button"
@@ -1949,7 +1959,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           </div>
         </div>
         <Button variant="ghost" size="icon" asChild>
-          <Link href={`/dashboard/studies/${id}`}><X className="h-5 w-5" /></Link>
+          <Link href={`/dashboard/studies/${activeStudyId}`}><X className="h-5 w-5" /></Link>
         </Button>
       </div>
 
