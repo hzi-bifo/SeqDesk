@@ -6,6 +6,159 @@ import { db } from "@/lib/db";
 // Order status progression
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
 
+type OrderDetailResponse = {
+  id: string;
+  name: string | null;
+  status: string;
+  statusUpdatedAt: Date;
+  createdAt: Date;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  billingAddress: string | null;
+  platform: string | null;
+  instrumentModel: string | null;
+  librarySelection: string | null;
+  libraryStrategy: string | null;
+  librarySource: string | null;
+  customFields: string | null;
+  userId: string;
+  user: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    department: { name: string } | null;
+  };
+  samples: Array<{
+    id: string;
+    sampleId: string;
+    sampleTitle: string | null;
+    reads: Array<{
+      id: string;
+      file1: string | null;
+      file2: string | null;
+      readCount1: number | null;
+      readCount2: number | null;
+    }>;
+    study: {
+      id: string;
+      title: string;
+      submitted: boolean;
+    } | null;
+  }>;
+  statusNotes: Array<{
+    id: string;
+    noteType: string;
+    content: string;
+    createdAt: Date;
+    user: { firstName: string; lastName: string } | null;
+  }>;
+  _count: {
+    samples: number;
+  };
+};
+
+async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailResponse | null> {
+  const order = await db.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      statusUpdatedAt: true,
+      createdAt: true,
+      contactName: true,
+      contactEmail: true,
+      contactPhone: true,
+      billingAddress: true,
+      platform: true,
+      instrumentModel: true,
+      librarySelection: true,
+      libraryStrategy: true,
+      librarySource: true,
+      customFields: true,
+      userId: true,
+      _count: {
+        select: { samples: true },
+      },
+    },
+  });
+
+  if (!order) return null;
+
+  const [user, samples, statusNotes] = await Promise.all([
+    db.user.findUnique({
+      where: { id: order.userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        department: {
+          select: { name: true },
+        },
+      },
+    }),
+    db.sample.findMany({
+      where: { orderId: id },
+      select: {
+        id: true,
+        sampleId: true,
+        sampleTitle: true,
+        reads: {
+          select: {
+            id: true,
+            file1: true,
+            file2: true,
+            readCount1: true,
+            readCount2: true,
+          },
+        },
+        study: {
+          select: {
+            id: true,
+            title: true,
+            submitted: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    db.statusNote.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        noteType: true,
+        content: true,
+        createdAt: true,
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  return {
+    ...order,
+    user:
+      user ??
+      ({
+        id: order.userId,
+        firstName: "Unknown",
+        lastName: "User",
+        email: "",
+        department: null,
+      } as const),
+    samples,
+    statusNotes,
+  };
+}
+
 // GET single order
 export async function GET(
   request: NextRequest,
@@ -21,46 +174,7 @@ export async function GET(
     const { id } = await params;
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
-    const order = await db.order.findUnique({
-      where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            department: {
-              select: { name: true },
-            },
-          },
-        },
-        samples: {
-          include: {
-            reads: true,
-            study: {
-              select: {
-                id: true,
-                title: true,
-                submitted: true,
-              },
-            },
-          },
-        },
-        sampleset: true,
-        statusNotes: {
-          orderBy: { createdAt: "desc" },
-          include: {
-            user: {
-              select: { firstName: true, lastName: true },
-            },
-          },
-        },
-        _count: {
-          select: { samples: true },
-        },
-      },
-    });
+    const order = await getOrderWithResolvedRelations(id);
 
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
