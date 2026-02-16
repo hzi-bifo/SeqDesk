@@ -4,6 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
 import fs from "fs/promises";
+import { createReadStream } from "fs";
+import path from "path";
+import { Readable } from "stream";
 
 const MAX_PREVIEW_BYTES = 200 * 1024; // 200 KB
 const TEXT_EXTENSIONS = new Set([
@@ -82,15 +85,11 @@ export async function GET(
 
     const { searchParams } = new URL(request.url);
     const targetPath = searchParams.get("path");
+    const downloadRequested =
+      searchParams.get("download") === "1" ||
+      searchParams.get("mode") === "download";
     if (!targetPath) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
-    }
-
-    if (!isTextLikeFile(targetPath)) {
-      return NextResponse.json(
-        { error: "Preview supported for text files only" },
-        { status: 400 }
-      );
     }
 
     let absolutePath: string;
@@ -106,6 +105,26 @@ export async function GET(
     const stat = await fs.stat(absolutePath);
     if (!stat.isFile()) {
       return NextResponse.json({ error: "Not a file" }, { status: 400 });
+    }
+
+    if (downloadRequested) {
+      const fileName = path.basename(absolutePath);
+      const stream = createReadStream(absolutePath);
+      const webStream = Readable.toWeb(stream) as ReadableStream;
+      return new Response(webStream, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+          "Content-Length": String(stat.size),
+        },
+      });
+    }
+
+    if (!isTextLikeFile(targetPath)) {
+      return NextResponse.json(
+        { error: "Preview supported for text files only" },
+        { status: 400 }
+      );
     }
 
     let content = "";

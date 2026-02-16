@@ -30,6 +30,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dna,
   FlaskConical,
   Upload,
@@ -46,10 +53,16 @@ import {
   Package,
   ArrowRight,
   Layers,
+  Trash2,
 } from "lucide-react";
 import { PipelineDataFlowSummary } from "@/components/pipelines/PipelineDataFlow";
+import {
+  getAvailableAssemblies,
+  resolveAssemblySelection,
+} from "@/lib/pipelines/assembly-selection";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const AUTO_ASSEMBLY_SELECTION = "__auto__";
 
 interface PipelineInput {
   id: string;
@@ -138,6 +151,7 @@ interface SubmgCoverageSummary {
   checks: SubmgCoverageCheck[];
   binsSummary: string;
   binsHint?: string;
+  studyAccessionMissing: boolean;
   blocking: boolean;
   sampleMissingRequired: Record<string, string[]>;
 }
@@ -169,6 +183,20 @@ interface Sample {
   id: string;
   sampleId: string;
   reads: { id: string; file1: string | null; file2: string | null }[];
+  preferredAssemblyId: string | null;
+  assemblies: {
+    id: string;
+    assemblyName: string | null;
+    assemblyFile: string | null;
+    createdByPipelineRunId: string | null;
+    createdByPipelineRun: {
+      id: string;
+      runNumber: string;
+      status: string;
+      createdAt: string;
+      completedAt: string | null;
+    } | null;
+  }[];
 }
 
 interface PipelineRun {
@@ -260,8 +288,8 @@ function getStatusBadge(status: string) {
   }
 }
 
-function formatRelativeTime(dateString: string) {
-  const date = new Date(dateString);
+function formatRelativeTime(dateInput: string | Date) {
+  const date = new Date(dateInput);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -273,6 +301,13 @@ function formatRelativeTime(dateString: string) {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
   return date.toLocaleDateString();
+}
+
+function getFileName(filePath: string | null | undefined): string {
+  if (!filePath) return "assembly";
+  const normalized = filePath.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || filePath;
 }
 
 function fieldLabel(field: string): string {
@@ -431,7 +466,17 @@ function buildSubmgCoverageSummary(params: {
     ["checklistData", "sampleMetadata"],
     "error"
   );
-  const missingAssemblies = getMissingForFields(["assemblies"], "error");
+  const missingAssemblies = new Set<string>();
+  for (const sampleId of selectedIds) {
+    const sample = sampleById.get(sampleId);
+    if (!sample) continue;
+    const resolvedAssembly = resolveAssemblySelection(sample, {
+      strictPreferred: true,
+    }).assembly;
+    if (!resolvedAssembly?.assemblyFile) {
+      missingAssemblies.add(sampleId);
+    }
+  }
 
   const checks: SubmgCoverageCheck[] = [
     {
@@ -530,6 +575,7 @@ function buildSubmgCoverageSummary(params: {
     checks,
     binsSummary,
     binsHint,
+    studyAccessionMissing,
     blocking,
     sampleMissingRequired,
   };
@@ -723,6 +769,25 @@ export function StudyPipelinesSection({
   const [metadataPrecheck, setMetadataPrecheck] = useState<
     Record<string, MetadataValidation>
   >({});
+  const initialPreferredAssemblyMap = useMemo(() => {
+    const map: Record<string, string | null> = {};
+    for (const sample of samples) {
+      map[sample.id] = sample.preferredAssemblyId ?? null;
+    }
+    return map;
+  }, [samples]);
+  const [preferredAssemblyBySample, setPreferredAssemblyBySample] = useState<
+    Record<string, string | null>
+  >(initialPreferredAssemblyMap);
+  const [assemblySelectionSaving, setAssemblySelectionSaving] = useState<
+    Record<string, boolean>
+  >({});
+  const [assemblySelectionError, setAssemblySelectionError] = useState<
+    string | null
+  >(null);
+  const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
+  const [deletingRun, setDeletingRun] = useState(false);
+  const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
 
   // Pipeline definition for data flow display
   const [pipelineDefinition, setPipelineDefinition] = useState<{
@@ -760,11 +825,31 @@ export function StudyPipelinesSection({
     checkSystem();
   }, []);
 
+  useEffect(() => {
+    setPreferredAssemblyBySample(initialPreferredAssemblyMap);
+  }, [initialPreferredAssemblyMap]);
+
   const enabledPipelines: Pipeline[] = useMemo(
     () => pipelinesData?.pipelines || [],
     [pipelinesData]
   );
   const pipelineRuns: PipelineRun[] = runsData?.runs || [];
+  const samplesWithAssemblySelection = useMemo(
+    () =>
+      samples.map((sample) => ({
+        ...sample,
+        preferredAssemblyId:
+          preferredAssemblyBySample[sample.id] ?? sample.preferredAssemblyId ?? null,
+      })),
+    [preferredAssemblyBySample, samples]
+  );
+  const samplesWithAssemblies = useMemo(
+    () =>
+      samplesWithAssemblySelection.filter(
+        (sample) => getAvailableAssemblies(sample).length > 0
+      ),
+    [samplesWithAssemblySelection]
+  );
 
   // Pre-check metadata for enabled pipelines so cards reflect runability
   useEffect(() => {
@@ -793,7 +878,7 @@ export function StudyPipelinesSection({
   }, [enabledPipelines, studyId]);
 
   // Check which pipelines can run based on data availability
-  const samplesWithReads = samples.filter((s) =>
+  const samplesWithReads = samplesWithAssemblySelection.filter((s) =>
     s.reads?.some((r) => r.file1 && r.file2)
   );
   const isSubmgDialog = selectedPipeline?.pipelineId === "submg";
@@ -807,14 +892,14 @@ export function StudyPipelinesSection({
     if (!isSubmgDialog || !metadataValidation) return null;
     return buildSubmgCoverageSummary({
       validation: metadataValidation,
-      samples,
+      samples: samplesWithAssemblySelection,
       selectedSampleIds: selectedSamples,
       submitBins: submitBinsEnabled,
     });
   }, [
     isSubmgDialog,
     metadataValidation,
-    samples,
+    samplesWithAssemblySelection,
     selectedSamples,
     submitBinsEnabled,
   ]);
@@ -896,6 +981,91 @@ export function StudyPipelinesSection({
 
   const deselectAllSamples = () => {
     setSelectedSamples(new Set());
+  };
+
+  const handlePreferredAssemblyChange = async (
+    sampleId: string,
+    value: string
+  ) => {
+    const nextAssemblyId = value === AUTO_ASSEMBLY_SELECTION ? null : value;
+    const sample = samplesWithAssemblySelection.find((item) => item.id === sampleId);
+    if (!sample) return;
+
+    if (nextAssemblyId) {
+      const selectedAssembly = sample.assemblies.find(
+        (assembly) => assembly.id === nextAssemblyId
+      );
+      if (!selectedAssembly?.assemblyFile) {
+        setAssemblySelectionError(
+          `Sample ${sample.sampleId}: selected assembly has no file path.`
+        );
+        return;
+      }
+    }
+
+    const previousAssemblyId =
+      preferredAssemblyBySample[sampleId] ?? sample.preferredAssemblyId ?? null;
+
+    setAssemblySelectionError(null);
+    setPreferredAssemblyBySample((prev) => ({
+      ...prev,
+      [sampleId]: nextAssemblyId,
+    }));
+    setAssemblySelectionSaving((prev) => ({
+      ...prev,
+      [sampleId]: true,
+    }));
+
+    try {
+      const updateRes = await fetch(`/api/samples/${sampleId}/preferred-assembly`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studyId,
+          assemblyId: nextAssemblyId,
+        }),
+      });
+
+      if (!updateRes.ok) {
+        let message = "Failed to update preferred assembly";
+        try {
+          const payload = await updateRes.json();
+          if (typeof payload.error === "string") {
+            message = payload.error;
+          }
+        } catch {
+          // Ignore parse failures and keep fallback message.
+        }
+        throw new Error(message);
+      }
+
+      const validationRes = await fetch("/api/pipelines/validate-metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studyId, pipelineId: "submg" }),
+      });
+
+      if (validationRes.ok) {
+        const validation = (await validationRes.json()) as MetadataValidation;
+        setMetadataPrecheck((prev) => ({ ...prev, submg: validation }));
+        if (isSubmgDialog) {
+          setMetadataValidation(validation);
+        }
+      }
+    } catch (error) {
+      setPreferredAssemblyBySample((prev) => ({
+        ...prev,
+        [sampleId]: previousAssemblyId,
+      }));
+      setAssemblySelectionError(
+        error instanceof Error ? error.message : "Failed to update preferred assembly"
+      );
+    } finally {
+      setAssemblySelectionSaving((prev) => ({
+        ...prev,
+        [sampleId]: false,
+      }));
+    }
   };
 
   const handleStartRun = async () => {
@@ -1000,6 +1170,40 @@ export function StudyPipelinesSection({
       });
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleDeleteRun = async () => {
+    if (!deleteTarget) return;
+
+    setDeletingRun(true);
+    setDeleteRunError(null);
+
+    try {
+      const res = await fetch(`/api/pipelines/runs/${deleteTarget.id}/delete`, {
+        method: "POST",
+      });
+
+      let payload: { error?: string } = {};
+      try {
+        payload = await res.json();
+      } catch {
+        // Ignore non-JSON error payloads.
+      }
+
+      if (!res.ok) {
+        setDeleteRunError(payload.error || "Failed to delete run");
+        return;
+      }
+
+      setDeleteTarget(null);
+      await mutateRuns();
+    } catch (error) {
+      setDeleteRunError(
+        error instanceof Error ? error.message : "Failed to delete run"
+      );
+    } finally {
+      setDeletingRun(false);
     }
   };
 
@@ -1118,6 +1322,13 @@ export function StudyPipelinesSection({
                           Missing: {readiness.missingRequired.join(", ")}
                         </p>
                       )}
+                      {pipeline.pipelineId === "submg" &&
+                        readiness.missingRequired.includes("Study accession") && (
+                          <p className="text-xs text-amber-700 mt-1">
+                            Register this study in the ENA tab first to populate the
+                            accession used by SubMG.
+                          </p>
+                        )}
                       {readiness.checkDetails.length > 0 && (
                         <p className="text-xs text-muted-foreground mt-1">
                           {readiness.checkDetails.join(" • ")}
@@ -1164,6 +1375,7 @@ export function StudyPipelinesSection({
                 <TableHead className="w-[100px]">Started</TableHead>
                 <TableHead className="w-[120px]">Results</TableHead>
                 <TableHead className="w-[110px]">Status</TableHead>
+                <TableHead className="w-[110px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1205,12 +1417,220 @@ export function StudyPipelinesSection({
                   <TableCell>
                     {getStatusBadge(run.status)}
                   </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-destructive hover:text-destructive"
+                      title={
+                        run.status === "running"
+                          ? "Stop the run before deleting"
+                          : "Delete run and associated data"
+                      }
+                      disabled={run.status === "running" || deletingRun}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDeleteRunError(null);
+                        setDeleteTarget(run);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Delete
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+
+      {samplesWithAssemblySelection.length > 0 && (
+        <div className="bg-card rounded-lg border overflow-hidden mt-4">
+          <div className="px-5 py-4 border-b bg-secondary/30">
+            <h3 className="text-sm font-semibold">Assembly Source for SubMG</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Choose which assembly to use per sample when running SubMG. Leaving
+              a sample on automatic mode uses the newest available assembly.
+            </p>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-secondary/50">
+                <TableHead>Sample</TableHead>
+                <TableHead className="w-[320px]">Assembly Source</TableHead>
+                <TableHead>Current Selection</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {samplesWithAssemblySelection.map((sample) => {
+                const availableAssemblies = getAvailableAssemblies(sample);
+                const activeSelection = resolveAssemblySelection(sample, {
+                  strictPreferred: true,
+                });
+                const selectedAssembly = activeSelection.assembly;
+                const hasExplicitSelection =
+                  Boolean(sample.preferredAssemblyId) &&
+                  availableAssemblies.some(
+                    (assembly) => assembly.id === sample.preferredAssemblyId
+                  );
+                const stalePreferredValue =
+                  sample.preferredAssemblyId && !hasExplicitSelection
+                    ? `__missing__:${sample.preferredAssemblyId}`
+                    : null;
+                const currentSelectValue =
+                  stalePreferredValue ||
+                  (hasExplicitSelection
+                    ? (sample.preferredAssemblyId as string)
+                    : AUTO_ASSEMBLY_SELECTION);
+
+                return (
+                  <TableRow key={sample.id}>
+                    <TableCell>
+                      <div className="font-medium text-sm">{sample.sampleId}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {availableAssemblies.length} assembly
+                        {availableAssemblies.length === 1 ? "" : "ies"}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={currentSelectValue}
+                        onValueChange={(value) => {
+                          if (value.startsWith("__missing__:")) return;
+                          void handlePreferredAssemblyChange(sample.id, value);
+                        }}
+                        disabled={
+                          (availableAssemblies.length === 0 &&
+                            !stalePreferredValue) ||
+                          Boolean(assemblySelectionSaving[sample.id])
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select assembly source" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
+                            Automatic (latest available assembly)
+                          </SelectItem>
+                          {stalePreferredValue && (
+                            <SelectItem value={stalePreferredValue}>
+                              Unavailable preferred assembly (choose another)
+                            </SelectItem>
+                          )}
+                          {availableAssemblies.map((assembly) => {
+                            const runNumber =
+                              assembly.createdByPipelineRun?.runNumber || "manual";
+                            const fileName = getFileName(assembly.assemblyFile);
+                            return (
+                              <SelectItem key={assembly.id} value={assembly.id}>
+                                {runNumber} • {fileName}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      {activeSelection.preferredMissing && (
+                        <p className="text-xs text-destructive mt-1">
+                          Previously selected assembly is no longer available.
+                          Pick a new source.
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {selectedAssembly ? (
+                        <div className="space-y-1">
+                          <p className="font-medium text-foreground">
+                            {activeSelection.source === "preferred"
+                              ? "Selected explicitly"
+                              : "Automatic selection"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Run{" "}
+                            {selectedAssembly.createdByPipelineRun?.runNumber ||
+                              "manual"}
+                            {selectedAssembly.createdByPipelineRun?.createdAt
+                              ? ` • ${formatRelativeTime(
+                                  selectedAssembly.createdByPipelineRun.createdAt
+                                )}`
+                              : ""}
+                          </p>
+                          <p className="text-muted-foreground truncate max-w-[360px]">
+                            {selectedAssembly.assemblyFile}
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-destructive">
+                          No usable assembly selected
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+          {assemblySelectionError && (
+            <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">
+              {assemblySelectionError}
+            </div>
+          )}
+          {samplesWithAssemblies.length === 0 && (
+            <div className="px-5 py-3 border-t text-sm text-muted-foreground">
+              No assemblies found yet. Run MAG first to generate assemblies.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Delete Run Dialog */}
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteRunError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Run {deleteTarget?.runNumber}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the run entry, its folder, and related
+              records (steps, events, artifacts, assemblies, and bins). This action
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteRunError && (
+            <p className="text-sm text-destructive">{deleteRunError}</p>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteRunError(null);
+              }}
+              disabled={deletingRun}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteRun}
+              disabled={deletingRun}
+            >
+              {deletingRun ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : null}
+              Delete Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Run Pipeline Dialog */}
       <Dialog open={runDialogOpen} onOpenChange={setRunDialogOpen}>
@@ -1471,11 +1891,22 @@ export function StudyPipelinesSection({
                             Missing required: {submgCoverage.missingRequired.join(", ")}
                           </p>
                         )}
+                        {submgCoverage.studyAccessionMissing && (
+                          <p className="text-xs text-amber-700">
+                            Study accession comes from ENA Registration in this
+                            study&apos;s ENA tab (Test Server or Production).
+                          </p>
+                        )}
                         <div className="space-y-1">
                           {submgCoverage.checks.map((check) => {
                             const preview = formatSamplePreview(
                               check.missingSampleIds,
-                              new Map(samples.map((sample) => [sample.id, sample]))
+                              new Map(
+                                samplesWithAssemblySelection.map((sample) => [
+                                  sample.id,
+                                  sample,
+                                ])
+                              )
                             );
                             return (
                               <p key={check.id} className="text-xs text-muted-foreground">

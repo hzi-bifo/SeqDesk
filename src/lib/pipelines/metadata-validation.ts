@@ -2,6 +2,7 @@
 // Checks if required metadata is present before running pipelines
 
 import { db } from '@/lib/db';
+import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
 
 export interface MetadataIssue {
   field: string;
@@ -114,7 +115,18 @@ export async function validatePipelineMetadata(
             },
           },
           assemblies: {
-            select: { id: true, assemblyFile: true },
+            select: {
+              id: true,
+              assemblyFile: true,
+              createdByPipelineRunId: true,
+              createdByPipelineRun: {
+                select: {
+                  id: true,
+                  runNumber: true,
+                  createdAt: true,
+                },
+              },
+            },
           },
           bins: {
             select: { id: true },
@@ -198,10 +210,15 @@ export async function validatePipelineMetadata(
         });
       }
 
-      if (sample.assemblies.length === 0 || sample.assemblies.every((assembly) => !assembly.assemblyFile)) {
+      const selectedAssembly = resolveAssemblySelection(sample, {
+        strictPreferred: true,
+      }).assembly;
+      if (!selectedAssembly?.assemblyFile) {
         issues.push({
           field: 'assemblies',
-          message: `Sample ${sample.sampleId} has no assembly file`,
+          message: sample.preferredAssemblyId
+            ? `Sample ${sample.sampleId} has an invalid preferred assembly selection (update it in Study Pipelines)`
+            : `Sample ${sample.sampleId} has no assembly file`,
           severity: 'error',
         });
       }

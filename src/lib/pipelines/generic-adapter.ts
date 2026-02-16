@@ -13,6 +13,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { db } from '@/lib/db';
+import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
 
 /**
  * Simple glob implementation for finding files matching a pattern
@@ -415,11 +416,15 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
 
         if (input.scope === 'sample' && input.source === 'sample.assemblies') {
           for (const sample of samples) {
-            const hasAssemblyFile = sample.assemblies.some((assembly) =>
-              hasNonEmptyString(assembly.assemblyFile)
-            );
-            if (!hasAssemblyFile) {
-              issues.push(`Sample ${sample.sampleId}: Assembly file is required`);
+            const selectedAssembly = resolveAssemblySelection(sample, {
+              strictPreferred: true,
+            }).assembly;
+            if (!selectedAssembly?.assemblyFile) {
+              issues.push(
+                sample.preferredAssemblyId
+                  ? `Sample ${sample.sampleId}: Preferred assembly selection is invalid (update it in Study Pipelines)`
+                  : `Sample ${sample.sampleId}: Assembly file is required`
+              );
             }
           }
         }

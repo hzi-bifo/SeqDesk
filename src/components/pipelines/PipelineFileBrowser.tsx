@@ -272,6 +272,16 @@ function FilePreviewDialog({
 
           {/* Actions */}
           <div className="flex gap-2 pt-2">
+            {runId && (
+              <Button variant="outline" className="flex-1" asChild>
+                <a
+                  href={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&download=1`}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download File
+                </a>
+              </Button>
+            )}
             <Button variant="outline" className="flex-1" onClick={copyPath}>
               <Copy className="h-4 w-4 mr-2" />
               Copy Path
