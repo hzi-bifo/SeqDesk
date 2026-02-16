@@ -51,7 +51,7 @@ interface Sample {
     orderNumber: string;
     name: string | null;
     status: string;
-  };
+  } | null;
   reads: { id: string; file1: string | null; file2: string | null }[];
   preferredAssemblyId: string | null;
   assemblies: {
@@ -168,6 +168,7 @@ export default function StudyDetailPage({
   const [study, setStudy] = useState<Study | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [markingReady, setMarkingReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -214,13 +215,31 @@ export default function StudyDetailPage({
   };
 
   const fetchStudy = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    setNotFound(false);
     try {
       const res = await fetch(`/api/studies/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch study");
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          setNotFound(true);
+          setStudy(null);
+          return;
+        }
+        if (res.status === 403) {
+          setError(typeof data.error === "string" ? data.error : "You don't have permission to view this study");
+          setStudy(null);
+          return;
+        }
+        throw new Error(typeof data.error === "string" ? data.error : "Failed to fetch study");
+      }
+
       setStudy(data);
-    } catch {
-      setError("Failed to load study");
+    } catch (err) {
+      setStudy(null);
+      setError(err instanceof Error ? err.message : "Failed to load study");
     } finally {
       setLoading(false);
     }
@@ -446,11 +465,17 @@ export default function StudyDetailPage({
   }
 
   if (!study) {
+    const title = notFound ? "Study Not Found" : "Error";
+    const message = notFound
+      ? "The requested study could not be found."
+      : (error || "Failed to load study");
+
     return (
       <PageContainer>
         <div className="text-center py-12">
           <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-          <h2 className="text-xl font-semibold mb-2">Study Not Found</h2>
+          <h2 className="text-xl font-semibold mb-2">{title}</h2>
+          <p className="text-sm text-muted-foreground mb-4">{message}</p>
           <Button asChild variant="outline">
             <Link href="/dashboard/studies">
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -819,14 +844,20 @@ export default function StudyDetailPage({
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            <Link
-                              href={`/dashboard/orders/${sample.order.id}`}
-                              className="hover:text-primary"
-                            >
-                              {sample.order.orderNumber}
-                            </Link>
-                            {sample.order.name && (
-                              <span> - {sample.order.name}</span>
+                            {sample.order ? (
+                              <>
+                                <Link
+                                  href={`/dashboard/orders/${sample.order.id}`}
+                                  className="hover:text-primary"
+                                >
+                                  {sample.order.orderNumber}
+                                </Link>
+                                {sample.order.name && (
+                                  <span> - {sample.order.name}</span>
+                                )}
+                              </>
+                            ) : (
+                              <span>Order unavailable</span>
                             )}
                           </div>
                         </div>
@@ -880,14 +911,20 @@ export default function StudyDetailPage({
                               )}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              <Link
-                                href={`/dashboard/orders/${sample.order.id}`}
-                                className="hover:text-primary"
-                              >
-                                {sample.order.orderNumber}
-                              </Link>
-                              {sample.order.name && (
-                                <span> - {sample.order.name}</span>
+                              {sample.order ? (
+                                <>
+                                  <Link
+                                    href={`/dashboard/orders/${sample.order.id}`}
+                                    className="hover:text-primary"
+                                  >
+                                    {sample.order.orderNumber}
+                                  </Link>
+                                  {sample.order.name && (
+                                    <span> - {sample.order.name}</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span>Order unavailable</span>
                               )}
                             </div>
                           </div>
