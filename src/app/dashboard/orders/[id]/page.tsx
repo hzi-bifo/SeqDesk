@@ -244,6 +244,17 @@ export default function OrderDetailPage({
       const res = await fetch(`/api/orders/${orderId}`);
       if (!res.ok) {
         if (res.status === 404) {
+          // Handle stale/mismatched links: if this ID belongs to a study,
+          // route the user to the matching study page instead of hard-failing.
+          try {
+            const studyRes = await fetch(`/api/studies/${orderId}`);
+            if (studyRes.ok) {
+              router.replace(`/dashboard/studies/${orderId}`);
+              return;
+            }
+          } catch {
+            // Ignore fallback lookup errors and show default order error.
+          }
           setError("Order not found");
         } else if (res.status === 403) {
           setError("You don't have permission to view this order");
