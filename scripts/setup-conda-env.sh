@@ -16,6 +16,7 @@ RUN_PIPELINE_TEST=0
 TEST_OUTDIR=""
 EXECUTION_MODE=""
 PIPELINES_ENABLED=""
+USE_OVERRIDE_CHANNELS=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_PATH="${REPO_ROOT}/seqdesk.config.json"
@@ -267,15 +268,23 @@ fi
 
 if [[ "$REMOVE_DEFAULTS" -eq 1 ]]; then
   run "$CONDA_BIN" config --remove channels defaults >/dev/null 2>&1 || true
+  USE_OVERRIDE_CHANNELS=1
 fi
 
 run "$CONDA_BIN" config --remove channels conda-forge >/dev/null 2>&1 || true
 run "$CONDA_BIN" config --remove channels bioconda >/dev/null 2>&1 || true
-run "$CONDA_BIN" config --add channels conda-forge
 run "$CONDA_BIN" config --add channels bioconda
+run "$CONDA_BIN" config --add channels conda-forge
 
 if [[ "$STRICT_PRIORITY" -eq 1 ]]; then
   run "$CONDA_BIN" config --set channel_priority strict
+fi
+
+CHANNEL_ARGS=(-c conda-forge -c bioconda)
+if [[ "$USE_OVERRIDE_CHANNELS" -eq 1 ]]; then
+  # Ignore inherited/global defaults channels to avoid Conda ToS gating.
+  CHANNEL_ARGS=(--override-channels "${CHANNEL_ARGS[@]}")
+  log "Using --override-channels for environment package operations."
 fi
 
 log "Configured channels:"
@@ -291,7 +300,7 @@ if "$CONDA_BIN" env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
   else
     log "Env ${ENV_NAME} already exists. Updating packages."
     run "$CONDA_BIN" install -y -n "${ENV_NAME}" \
-      -c conda-forge -c bioconda \
+      "${CHANNEL_ARGS[@]}" \
       "python=${PYTHON_VERSION}" \
       "openjdk=17" \
       nextflow \
@@ -302,7 +311,7 @@ fi
 if [[ "$ENV_EXISTS" -eq 0 ]]; then
   log "Creating env ${ENV_NAME}..."
   run "$CONDA_BIN" create -y -n "${ENV_NAME}" \
-    -c conda-forge -c bioconda \
+    "${CHANNEL_ARGS[@]}" \
     "python=${PYTHON_VERSION}" \
     "openjdk=17" \
     nextflow \
