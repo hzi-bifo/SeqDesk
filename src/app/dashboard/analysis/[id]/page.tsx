@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Check,
   Copy,
+  Download,
   Loader2,
   RefreshCw,
   StopCircle,
@@ -336,6 +337,8 @@ export default function AnalysisRunDetailPage({
   const [debugBundleCopied, setDebugBundleCopied] = useState(false);
   const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
   const [copiedCommandKey, setCopiedCommandKey] = useState<string | null>(null);
+  const [copiedOutputKey, setCopiedOutputKey] = useState<string | null>(null);
+  const [outputCopyError, setOutputCopyError] = useState<string | null>(null);
   const [commandCopyError, setCommandCopyError] = useState<string | null>(null);
   const [showPipelineProgress, setShowPipelineProgress] = useState(true);
   const [activeTab, setActiveTab] = useState<"activity" | "files" | "details" | "health">("activity");
@@ -608,7 +611,7 @@ export default function AnalysisRunDetailPage({
   }, [id]);
 
   const handleRefresh = async () => {
-    if (runIsActive && !syncForbidden) {
+    if (!syncForbidden && run?.runFolder) {
       await syncRun();
     }
     mutate();
@@ -729,6 +732,19 @@ export default function AnalysisRunDetailPage({
       }, 3000);
     } catch {
       setCommandCopyError("Failed to copy command");
+    }
+  };
+
+  const handleCopyOutputPath = async (filePath: string, key: string) => {
+    setOutputCopyError(null);
+    try {
+      await navigator.clipboard.writeText(filePath);
+      setCopiedOutputKey(key);
+      setTimeout(() => {
+        setCopiedOutputKey((current) => (current === key ? null : current));
+      }, 3000);
+    } catch {
+      setOutputCopyError("Failed to copy file path");
     }
   };
 
@@ -1373,18 +1389,30 @@ export default function AnalysisRunDetailPage({
             />
           </GlassCard>
 
-          {effectiveRunStatus === "completed" && (
-            <>
+          {(assemblies.length > 0 || bins.length > 0) && (
+            <GlassCard>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Detected Outputs</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Paths and quick actions for assemblies and bins created by this run.
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setActiveTab("files")}>
+                  Open full file browser
+                </Button>
+              </div>
+
               {assemblies.length > 0 && (
-                <GlassCard>
-                  <h2 className="text-lg font-semibold mb-4">
-                    Assemblies ({assemblies.length})
-                  </h2>
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold mb-2">Assemblies ({assemblies.length})</h3>
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Sample</TableHead>
                         <TableHead>Assembly</TableHead>
+                        <TableHead>Path</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1394,18 +1422,54 @@ export default function AnalysisRunDetailPage({
                           <TableCell className="font-mono text-sm">
                             {assembly.assemblyName}
                           </TableCell>
+                          <TableCell className="font-mono text-xs max-w-[480px] truncate" title={assembly.assemblyFile || "-"}>
+                            {assembly.assemblyFile || "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              {assembly.assemblyFile && (
+                                <>
+                                  <Button variant="outline" size="sm" asChild>
+                                    <a
+                                      href={`/api/pipelines/runs/${run.id}/file?path=${encodeURIComponent(
+                                        assembly.assemblyFile
+                                      )}&download=1`}
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download
+                                    </a>
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      void handleCopyOutputPath(
+                                        assembly.assemblyFile!,
+                                        `assembly:${assembly.id}`
+                                      )
+                                    }
+                                  >
+                                    {copiedOutputKey === `assembly:${assembly.id}` ? (
+                                      <Check className="h-4 w-4 mr-2 text-green-600" />
+                                    ) : (
+                                      <Copy className="h-4 w-4 mr-2" />
+                                    )}
+                                    {copiedOutputKey === `assembly:${assembly.id}` ? "Copied" : "Copy path"}
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </GlassCard>
+                </div>
               )}
 
               {bins.length > 0 && (
-                <GlassCard>
-                  <h2 className="text-lg font-semibold mb-4">
-                    Bins ({bins.length})
-                  </h2>
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Bins ({bins.length})</h3>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1413,6 +1477,8 @@ export default function AnalysisRunDetailPage({
                         <TableHead>Bin</TableHead>
                         <TableHead>Completeness</TableHead>
                         <TableHead>Contamination</TableHead>
+                        <TableHead>Path</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1432,13 +1498,55 @@ export default function AnalysisRunDetailPage({
                               ? `${bin.contamination.toFixed(1)}%`
                               : "-"}
                           </TableCell>
+                          <TableCell className="font-mono text-xs max-w-[420px] truncate" title={bin.binFile || "-"}>
+                            {bin.binFile || "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              {bin.binFile && (
+                                <>
+                                  <Button variant="outline" size="sm" asChild>
+                                    <a
+                                      href={`/api/pipelines/runs/${run.id}/file?path=${encodeURIComponent(
+                                        bin.binFile
+                                      )}&download=1`}
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download
+                                    </a>
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      void handleCopyOutputPath(
+                                        bin.binFile!,
+                                        `bin:${bin.id}`
+                                      )
+                                    }
+                                  >
+                                    {copiedOutputKey === `bin:${bin.id}` ? (
+                                      <Check className="h-4 w-4 mr-2 text-green-600" />
+                                    ) : (
+                                      <Copy className="h-4 w-4 mr-2" />
+                                    )}
+                                    {copiedOutputKey === `bin:${bin.id}` ? "Copied" : "Copy path"}
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </GlassCard>
+                </div>
               )}
-            </>
+
+              {outputCopyError && (
+                <p className="mt-3 text-sm text-destructive">{outputCopyError}</p>
+              )}
+            </GlassCard>
           )}
 
           {resultErrors.length > 0 && (

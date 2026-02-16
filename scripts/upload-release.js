@@ -18,6 +18,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execSync } = require("child_process");
 
 function loadEnv() {
   const envPath = path.join(process.cwd(), ".env");
@@ -64,6 +65,37 @@ function parseArgs() {
   }
 
   return options;
+}
+
+function getTarballPackageVersion(tarballPath, expectedVersion) {
+  const packageJsonPath = `seqdesk-${expectedVersion}/package.json`;
+  const command = `tar -xOzf ${JSON.stringify(tarballPath)} ${JSON.stringify(packageJsonPath)}`;
+
+  let packageJson;
+  try {
+    packageJson = execSync(command, { encoding: "utf8" });
+  } catch (error) {
+    throw new Error(
+      `Could not read package.json from tarball: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+
+  try {
+    const parsed = JSON.parse(packageJson);
+    const packageVersion = typeof parsed.version === "string" ? parsed.version : "";
+    if (!packageVersion) {
+      throw new Error("package.json is missing a version field");
+    }
+    return packageVersion;
+  } catch (error) {
+    throw new Error(
+      `Invalid package.json in tarball: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
 }
 
 async function uploadToBlob(filePath, blobPath, token) {
@@ -161,6 +193,13 @@ async function main() {
   const fileBuffer = fs.readFileSync(tarballPath);
   const checksum = crypto.createHash("sha256").update(fileBuffer).digest("hex");
   const size = fs.statSync(tarballPath).size;
+  const tarballVersion = getTarballPackageVersion(tarballPath, options.version);
+
+  if (tarballVersion !== options.version) {
+    throw new Error(
+      `Tarball version mismatch: expected ${options.version}, found ${tarballVersion}. Rebuild the tarball before publishing.`
+    );
+  }
 
   console.log(`Uploading SeqDesk v${options.version}`);
   console.log(`  File: ${tarballPath}`);

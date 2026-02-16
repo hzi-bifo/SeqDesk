@@ -39,6 +39,19 @@ export async function GET(
               },
             },
             reads: true,
+            assemblies: {
+              include: {
+                createdByPipelineRun: {
+                  select: {
+                    id: true,
+                    runNumber: true,
+                    status: true,
+                    createdAt: true,
+                    completedAt: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -129,6 +142,19 @@ export async function PUT(
               },
             },
             reads: true,
+            assemblies: {
+              include: {
+                createdByPipelineRun: {
+                  select: {
+                    id: true,
+                    runNumber: true,
+                    status: true,
+                    createdAt: true,
+                    completedAt: true,
+                  },
+                },
+              },
+            },
           },
         },
       },

@@ -116,7 +116,9 @@ model Sample {
   updatedAt             DateTime   @updatedAt
   orderId               String
   studyId               String?
-  assemblies            Assembly[]
+  assemblies            Assembly[] @relation("SampleAssemblies")
+  preferredAssemblyId   String?    @unique
+  preferredAssembly     Assembly?  @relation("PreferredAssembly", fields: [preferredAssemblyId], references: [id], onDelete: SetNull)
   bins                  Bin[]
   reads                 Read[]
   study                 Study?     @relation(fields: [studyId], references: [id])
@@ -165,29 +167,30 @@ model SequencingRun {
 }
 
 model Assembly {
-  id                         String       @id @default(cuid())
-  assemblyName               String?
-  assemblyFile               String?
-  assemblyAccession          String?
-  sampleId                   String
-  sample                     Sample       @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  id                     String       @id @default(cuid())
+  assemblyName           String?
+  assemblyFile           String?
+  assemblyAccession      String?
+  sampleId               String
+  sample                 Sample       @relation("SampleAssemblies", fields: [sampleId], references: [id], onDelete: Cascade)
+  preferredBySample      Sample?      @relation("PreferredAssembly")
   // Track which pipeline created this assembly
-  createdByPipelineRunId     String?
-  createdByPipelineRun       PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
+  createdByPipelineRunId String?
+  createdByPipelineRun   PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
 }
 
 model Bin {
-  id                         String       @id @default(cuid())
-  binName                    String?
-  binAccession               String?
-  binFile                    String?
-  completeness               Float?
-  contamination              Float?
-  sampleId                   String
-  sample                     Sample       @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  id                     String       @id @default(cuid())
+  binName                String?
+  binAccession           String?
+  binFile                String?
+  completeness           Float?
+  contamination          Float?
+  sampleId               String
+  sample                 Sample       @relation(fields: [sampleId], references: [id], onDelete: Cascade)
   // Track which pipeline created this bin
-  createdByPipelineRunId     String?
-  createdByPipelineRun       PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
+  createdByPipelineRunId String?
+  createdByPipelineRun   PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
 }
 
 // ============================================================================
@@ -206,13 +209,13 @@ model PipelineConfig {
 
 // Individual pipeline execution record
 model PipelineRun {
-  id         String    @id @default(cuid())
-  runNumber  String    @unique // MAG-20240126-001
+  id         String @id @default(cuid())
+  runNumber  String @unique // MAG-20240126-001
   pipelineId String // 'mag', 'submg', 'fastqc'
-  status     String    @default("pending") // pending, queued, running, completed, failed, cancelled
+  status     String @default("pending") // pending, queued, running, completed, failed, cancelled
 
   // Configuration snapshot at run time
-  config String? // JSON
+  config         String? // JSON
   inputSampleIds String? // JSON array of sample IDs selected for this run
 
   // Input - which study this run is for
@@ -226,10 +229,10 @@ model PipelineRun {
   currentStep String? // "Running MEGAHIT..."
 
   // Timing
-  queuedAt    DateTime?
-  startedAt   DateTime?
-  completedAt DateTime?
-  lastEventAt DateTime?
+  queuedAt     DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  lastEventAt  DateTime?
   lastWeblogAt DateTime?
   lastTraceAt  DateTime?
   statusSource String? // weblog, trace, process, launcher
@@ -294,7 +297,7 @@ model PipelineRunEvent {
   message       String?
   payload       String? // JSON (trimmed)
   source        String? // weblog, trace, queue, process
-  occurredAt    DateTime   @default(now())
+  occurredAt    DateTime    @default(now())
 
   @@index([pipelineRunId, occurredAt])
 }

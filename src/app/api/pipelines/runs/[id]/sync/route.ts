@@ -59,6 +59,30 @@ function isActiveQueueState(value: string | null | undefined): boolean {
   return !isTerminalQueueState(normalized);
 }
 
+function isCancelledQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized) return false;
+  return (
+    normalized.startsWith('CANCELLED') ||
+    normalized.startsWith('CANCELED') ||
+    normalized === 'REVOKED'
+  );
+}
+
+function isFailedQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized) return false;
+  return (
+    normalized.startsWith('FAILED') ||
+    normalized === 'TIMEOUT' ||
+    normalized === 'OUT_OF_MEMORY' ||
+    normalized === 'NODE_FAIL' ||
+    normalized === 'BOOT_FAIL' ||
+    normalized === 'PREEMPTED' ||
+    normalized === 'DEADLINE'
+  );
+}
+
 function firstNonEmptyLine(value: string): string {
   return value
     .split('\n')
@@ -229,22 +253,8 @@ export async function POST(
       const isRunningQueueState = normalizedQueueState === 'RUNNING';
       const isCompletedQueueState = normalizedQueueState === 'COMPLETED';
       const isExitedLocalState = normalizedQueueState === 'EXITED';
-      const isCancelledQueueState =
-        normalizedQueueState?.startsWith('CANCELLED') ||
-        normalizedQueueState?.startsWith('CANCELED') ||
-        normalizedQueueState === 'REVOKED';
-      const isFailedQueueState = Boolean(
-        normalizedQueueState &&
-          (
-            normalizedQueueState.startsWith('FAILED') ||
-            normalizedQueueState === 'TIMEOUT' ||
-            normalizedQueueState === 'OUT_OF_MEMORY' ||
-            normalizedQueueState === 'NODE_FAIL' ||
-            normalizedQueueState === 'BOOT_FAIL' ||
-            normalizedQueueState === 'PREEMPTED' ||
-            normalizedQueueState === 'DEADLINE'
-          )
-      );
+      const queueCancelled = isCancelledQueueState(normalizedQueueState);
+      const queueFailed = isFailedQueueState(normalizedQueueState);
 
       if (isRunningQueueState && run.status === 'queued') {
         updateData.status = 'running';
@@ -254,7 +264,7 @@ export async function POST(
       }
 
       const inTerminalCandidateState = ['pending', 'queued', 'running'].includes(run.status);
-      const shouldFinalize = inTerminalCandidateState && (isCompletedQueueState || isExitedLocalState || isCancelledQueueState || isFailedQueueState);
+      const shouldFinalize = inTerminalCandidateState && (isCompletedQueueState || isExitedLocalState || queueCancelled || queueFailed);
       let resolvedOutputsInThisSync = false;
 
       if (shouldFinalize) {
@@ -294,7 +304,7 @@ export async function POST(
           updateData.lastEventAt = now;
           updateData.queueStatus = queueState || 'COMPLETED';
           }
-        } else if (isCancelledQueueState) {
+        } else if (queueCancelled) {
           updateData.status = 'cancelled';
           updateData.currentStep = 'Cancelled';
           updateData.completedAt = now;
@@ -346,6 +356,9 @@ export async function POST(
     }>();
 
     const normalizeStatus = (value?: string) => (value ? value.toLowerCase() : '');
+    const hasNonZeroExit = (exitCode: unknown): boolean =>
+      typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0;
+
     for (const task of traceResult.tasks) {
       const stepDef = findStepByProcess(run.pipelineId, task.process);
       const stepId = stepDef?.id || task.process;
@@ -363,7 +376,7 @@ export async function POST(
       const entry = stepSignals.get(stepId)!;
       const status = normalizeStatus(task.status);
 
-      if (status.includes('fail') || task.exit !== undefined && task.exit !== 0) {
+      if (status.includes('fail') || hasNonZeroExit(task.exit)) {
         entry.hasFailure = true;
       } else if (status.includes('run') || status.includes('start') || status.includes('submit')) {
         entry.hasRunning = true;
@@ -421,7 +434,7 @@ export async function POST(
         status.includes('fail') ||
         status.includes('error') ||
         status.includes('aborted') ||
-        (task.exit !== undefined && task.exit !== 0)
+        hasNonZeroExit(task.exit)
       );
     });
     const hasRunning = traceResult.tasks.some((task) => {
@@ -476,12 +489,51 @@ export async function POST(
 
     let nextStatus = run.status;
     let resolvedOutputsInThisSync = false;
-    if (traceResult.overallProgress === 100 && hasTasks) {
+    if (hasRunning) {
+      nextStatus = 'running';
+    } else if (traceResult.overallProgress === 100 && hasTasks) {
       nextStatus = 'completed';
     } else if (hasFailures) {
       nextStatus = 'failed';
-    } else if (hasRunning) {
+    }
+
+    const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId);
+    const normalizedQueueState = normalizeQueueState(traceQueueSnapshot.state);
+    const queueCompleted = normalizedQueueState === 'COMPLETED';
+    const queueExitedLocal = normalizedQueueState === 'EXITED';
+    const queueCancelled = isCancelledQueueState(normalizedQueueState);
+    const queueFailed = isFailedQueueState(normalizedQueueState);
+    const inferredExitCode = await inferPipelineExitCode(run.runFolder);
+
+    let statusDeterminedByQueue = false;
+
+    // Some nf-core pipelines intentionally ignore specific task failures.
+    // If workflow exit was successful (or SLURM reports COMPLETED), treat the run as completed.
+    if (nextStatus === 'failed' && !hasRunning) {
+      const workflowExitSucceeded =
+        queueCompleted ||
+        (queueExitedLocal && inferredExitCode === 0) ||
+        inferredExitCode === 0;
+      if (workflowExitSucceeded) {
+        nextStatus = 'completed';
+        statusDeterminedByQueue = true;
+      }
+    }
+
+    if (!hasRunning && queueCancelled) {
+      nextStatus = 'cancelled';
+      statusDeterminedByQueue = true;
+    } else if (!hasRunning && queueFailed) {
+      nextStatus = 'failed';
+      statusDeterminedByQueue = true;
+    }
+
+    const forceRunningFromQueue =
+      (nextStatus === 'completed' || nextStatus === 'failed') &&
+      isActiveQueueState(traceQueueSnapshot.state);
+    if (forceRunningFromQueue) {
       nextStatus = 'running';
+      statusDeterminedByQueue = true;
     }
 
     if (nextStatus === 'completed' && run.pipelineId === 'mag') {
@@ -498,12 +550,6 @@ export async function POST(
       }
     }
 
-    const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId);
-    const forceRunningFromQueue = nextStatus === 'completed' && isActiveQueueState(traceQueueSnapshot.state);
-    if (forceRunningFromQueue) {
-      nextStatus = 'running';
-    }
-
     const updateData: Record<string, unknown> = {
       progress: nextStatus === 'completed' ? 100 : progress,
       currentStep:
@@ -515,8 +561,10 @@ export async function POST(
             ? 'Completed'
           : nextStatus === 'failed'
             ? 'Failed'
+          : nextStatus === 'cancelled'
+            ? 'Cancelled'
             : currentStep,
-      statusSource: forceRunningFromQueue ? 'queue' : 'trace',
+      statusSource: statusDeterminedByQueue || forceRunningFromQueue ? 'queue' : 'trace',
     };
 
     if (traceQueueSnapshot.state) {
@@ -555,6 +603,10 @@ export async function POST(
     }
 
     if (nextStatus === 'failed' && !run.completedAt) {
+      updateData.completedAt = latestEventAt || new Date();
+    }
+
+    if (nextStatus === 'cancelled' && !run.completedAt) {
       updateData.completedAt = latestEventAt || new Date();
     }
 

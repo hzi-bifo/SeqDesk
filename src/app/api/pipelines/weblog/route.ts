@@ -12,6 +12,9 @@ import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver'
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 const MAX_EVENT_PAYLOAD = 12000;
+const MAX_EVENT_FUTURE_SKEW_MS = 6 * 60 * 60 * 1000;
+const MAX_EVENT_PAST_SKEW_MS = 30 * 24 * 60 * 60 * 1000;
+const DUPLICATE_EVENT_WINDOW_MS = 2000;
 const execFileAsync = promisify(execFile);
 
 /**
@@ -106,6 +109,14 @@ function parseDate(value: unknown): Date | undefined {
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   return undefined;
+}
+
+function resolveEventAt(parsedEventTime: Date | undefined, receivedAt: Date): Date {
+  if (!parsedEventTime) return receivedAt;
+  const deltaMs = parsedEventTime.getTime() - receivedAt.getTime();
+  if (deltaMs > MAX_EVENT_FUTURE_SKEW_MS) return receivedAt;
+  if (deltaMs < -MAX_EVENT_PAST_SKEW_MS) return receivedAt;
+  return parsedEventTime;
 }
 
 function normalizeEvent(value: unknown): string {
@@ -374,10 +385,11 @@ export async function POST(request: NextRequest) {
     const parsedEventTime =
       parseDate(payload.utcTime) ||
       parseDate(payload.timestamp) ||
+      parseDate(trace?.complete) ||
       parseDate(trace?.start) ||
-      parseDate(trace?.submit) ||
-      parseDate(trace?.complete);
-    const eventAt = new Date();
+      parseDate(trace?.submit);
+    const receivedAt = new Date();
+    const eventAt = resolveEventAt(parsedEventTime, receivedAt);
 
     const processName = getProcessName(trace, payload);
     const stepDefinition = processName
@@ -464,9 +476,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (stepStatus === 'failed' && stepName) {
-      runUpdates.status = 'failed';
-      runUpdates.currentStep = `Failed at ${stepName}`;
-      runUpdates.completedAt = parsedEventTime || eventAt;
+      // A failed process event can still be non-fatal (e.g. errorStrategy 'ignore').
+      // Keep the run active and wait for workflow-level completion/error events.
+      runUpdates.currentStep = `Process failed: ${stepName}`;
+      if (run.status === 'pending' || run.status === 'queued') {
+        runUpdates.status = 'running';
+      }
+      delete runUpdates.completedAt;
     }
 
     if (event.includes('workflow_complete') || event.includes('workflow_finish')) {
@@ -534,20 +550,46 @@ export async function POST(request: NextRequest) {
 
     const statusRaw = trace?.status ?? trace?.state ?? payload.status ?? payload.state;
     const statusValue = stepStatus || (typeof statusRaw === 'string' ? statusRaw : undefined);
+    const eventType = event || 'weblog';
+    const eventMessage = extractMessage(payload, trace);
+    const eventPayload = stringifyPayload(payload);
     const eventRecord = {
       pipelineRunId: runId,
-      eventType: event || 'weblog',
+      eventType,
       processName: processName || undefined,
       stepId,
       status: statusValue,
-      message: extractMessage(payload, trace) || undefined,
-      payload: stringifyPayload(payload) || undefined,
+      message: eventMessage || undefined,
+      payload: eventPayload || undefined,
       source: 'weblog',
       occurredAt: eventAt,
     };
 
     await db.$transaction(async (tx) => {
-      await tx.pipelineRunEvent.create({ data: eventRecord });
+      const duplicateWindowStart = new Date(eventAt.getTime() - DUPLICATE_EVENT_WINDOW_MS);
+      const duplicateWindowEnd = new Date(eventAt.getTime() + DUPLICATE_EVENT_WINDOW_MS);
+      const duplicate = await tx.pipelineRunEvent.findFirst({
+        where: {
+          pipelineRunId: runId,
+          eventType,
+          processName: processName ?? null,
+          stepId: stepId ?? null,
+          status: statusValue ?? null,
+          message: eventMessage ?? null,
+          payload: eventPayload ?? null,
+          source: 'weblog',
+          occurredAt: {
+            gte: duplicateWindowStart,
+            lte: duplicateWindowEnd,
+          },
+        },
+        select: { id: true },
+      });
+
+      if (!duplicate) {
+        await tx.pipelineRunEvent.create({ data: eventRecord });
+      }
+
       if (Object.keys(runUpdates).length > 0) {
         await tx.pipelineRun.update({
           where: { id: runId },

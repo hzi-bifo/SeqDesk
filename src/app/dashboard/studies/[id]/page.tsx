@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -53,6 +53,20 @@ interface Sample {
     status: string;
   };
   reads: { id: string; file1: string | null; file2: string | null }[];
+  preferredAssemblyId: string | null;
+  assemblies: {
+    id: string;
+    assemblyName: string | null;
+    assemblyFile: string | null;
+    createdByPipelineRunId: string | null;
+    createdByPipelineRun: {
+      id: string;
+      runNumber: string;
+      status: string;
+      createdAt: string;
+      completedAt: string | null;
+    } | null;
+  }[];
 }
 
 interface Study {
@@ -199,11 +213,7 @@ export default function StudyDetailPage({
     }
   };
 
-  useEffect(() => {
-    fetchStudy();
-  }, [id]);
-
-  const fetchStudy = async () => {
+  const fetchStudy = useCallback(async () => {
     try {
       const res = await fetch(`/api/studies/${id}`);
       if (!res.ok) throw new Error("Failed to fetch study");
@@ -214,7 +224,11 @@ export default function StudyDetailPage({
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    void fetchStudy();
+  }, [fetchStudy]);
 
   const handleDeleteStudy = async () => {
     if (!study) return;

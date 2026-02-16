@@ -3,6 +3,7 @@ import path from "path";
 
 import { db } from "@/lib/db";
 import type { ExecutionSettings } from "@/lib/pipelines/generic-executor";
+import { resolveAssemblySelection } from "@/lib/pipelines/assembly-selection";
 
 interface PrepareSubmgRunOptions {
   runId: string;
@@ -606,7 +607,21 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       samples: {
         include: {
           reads: true,
-          assemblies: true,
+          assemblies: {
+            select: {
+              id: true,
+              assemblyName: true,
+              assemblyFile: true,
+              createdByPipelineRunId: true,
+              createdByPipelineRun: {
+                select: {
+                  id: true,
+                  runNumber: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
           bins: true,
           order: {
             select: {
@@ -746,13 +761,22 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       }
     }
 
-    const assembly = sample.assemblies.find((item) => Boolean(item.assemblyFile));
+    const assemblySelection = resolveAssemblySelection(sample, {
+      strictPreferred: true,
+    });
+    const assembly = assemblySelection.assembly;
     let absAssemblyPath: string | null = null;
     if (!assembly?.assemblyFile) {
+      const fallback = assemblySelection.fallbackAssembly;
+      const fallbackHint = fallback
+        ? ` Another assembly is available (${fallback.createdByPipelineRun?.runNumber || "manual"}); switch to Automatic or pick that run explicitly.`
+        : "";
       sampleErrors.push(
         formatSampleIssue(
           sample.sampleId,
-          "has no assembly file. SubMG requires an assembly FASTA; run the MAG pipeline first for this sample."
+          sample.preferredAssemblyId
+            ? `preferred assembly selection is unavailable. Update it in the Study Pipelines panel before running SubMG.${fallbackHint}`
+            : "has no assembly file. SubMG requires an assembly FASTA; run the MAG pipeline first for this sample."
         )
       );
     } else {
