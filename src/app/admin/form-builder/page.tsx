@@ -203,6 +203,7 @@ export default function FormBuilderPage() {
   const [instructionsSaved, setInstructionsSaved] = useState(false);
   const [instructionsSaving, setInstructionsSaving] = useState(false);
   const [allowDeleteSubmittedOrders, setAllowDeleteSubmittedOrders] = useState(false);
+  const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
 
   // Fetch form configuration
   useEffect(() => {
@@ -290,6 +291,7 @@ export default function FormBuilderPage() {
           const data = await res.json();
           setPostSubmissionInstructions(data.postSubmissionInstructions ?? DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
           setAllowDeleteSubmittedOrders(data.allowDeleteSubmittedOrders ?? false);
+          setAllowUserAssemblyDownload(data.allowUserAssemblyDownload ?? false);
         }
       } catch {
         // Use defaults
@@ -334,6 +336,21 @@ export default function FormBuilderPage() {
     } catch (error) {
       console.error("Failed to save setting:", error);
       setAllowDeleteSubmittedOrders(!enabled);
+    }
+  };
+
+  const handleAllowUserAssemblyDownloadChange = async (enabled: boolean) => {
+    setAllowUserAssemblyDownload(enabled);
+
+    try {
+      await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowUserAssemblyDownload: enabled }),
+      });
+    } catch (error) {
+      console.error("Failed to save setting:", error);
+      setAllowUserAssemblyDownload(!enabled);
     }
   };
 
@@ -2343,6 +2360,22 @@ export default function FormBuilderPage() {
                       id="allow-delete-submitted"
                       checked={allowDeleteSubmittedOrders}
                       onCheckedChange={handleAllowDeleteSubmittedChange}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-6 pt-6 border-t">
+                    <div className="space-y-1">
+                      <Label htmlFor="allow-user-assembly-download" className="text-sm font-medium">
+                        Allow User Assembly Downloads
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        When enabled, users can download final assemblies from the
+                        Assemblies view and study pages.
+                      </p>
+                    </div>
+                    <Switch
+                      id="allow-user-assembly-download"
+                      checked={allowUserAssemblyDownload}
+                      onCheckedChange={handleAllowUserAssemblyDownloadChange}
                     />
                   </div>
                 </div>

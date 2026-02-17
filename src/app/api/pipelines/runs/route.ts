@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
+import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 
 // GET - List pipeline runs
 export async function GET(request: NextRequest) {
@@ -100,6 +101,17 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { pipelineId, studyId, sampleIds, config } = body;
+    let requestedSampleIds: string[] | undefined;
+
+    if (sampleIds !== undefined) {
+      if (!Array.isArray(sampleIds) || sampleIds.some((id: unknown) => typeof id !== 'string')) {
+        return NextResponse.json(
+          { error: 'sampleIds must be an array of strings' },
+          { status: 400 }
+        );
+      }
+      requestedSampleIds = sampleIds;
+    }
 
     // Validate pipeline
     const definition = PIPELINE_REGISTRY[pipelineId];
@@ -126,15 +138,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate samples if specific ones requested
-    if (sampleIds && sampleIds.length > 0) {
+    if (requestedSampleIds && requestedSampleIds.length > 0) {
       const validSampleIds = new Set(study.samples.map(s => s.id));
-      const invalidIds = sampleIds.filter((id: string) => !validSampleIds.has(id));
+      const invalidIds = requestedSampleIds.filter((id) => !validSampleIds.has(id));
       if (invalidIds.length > 0) {
         return NextResponse.json(
           { error: `Invalid sample IDs: ${invalidIds.join(', ')}` },
           { status: 400 }
         );
       }
+    }
+
+    // Validate runtime metadata server-side so runs cannot bypass UI checks
+    const metadataValidation = await validatePipelineMetadata(
+      studyId,
+      pipelineId,
+      requestedSampleIds
+    );
+    const metadataErrors = metadataValidation.issues
+      .filter((issue) => issue.severity === 'error')
+      .map((issue) => issue.message);
+    if (metadataErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Pipeline metadata validation failed',
+          details: metadataErrors,
+        },
+        { status: 400 }
+      );
     }
 
     // Validate pipeline-specific input prerequisites before creating the run
@@ -148,7 +179,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (adapter) {
-      const validation = await adapter.validateInputs(studyId, sampleIds);
+      const validation = await adapter.validateInputs(studyId, requestedSampleIds);
       if (!validation.valid) {
         return NextResponse.json(
           {
@@ -164,8 +195,8 @@ export async function POST(request: NextRequest) {
     const tempRunNumber = `${pipelineId.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
     const inputSampleIds =
-      Array.isArray(sampleIds) && sampleIds.length > 0
-        ? JSON.stringify(sampleIds)
+      requestedSampleIds && requestedSampleIds.length > 0
+        ? JSON.stringify(requestedSampleIds)
         : null;
 
     // Create the run record (pending status)

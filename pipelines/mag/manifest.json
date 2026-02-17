@@ -79,7 +79,9 @@
       "skipQuast": "--skip_quast",
       "skipGtdb": "--skip_gtdbtk",
       "skipGtdbtk": "--skip_gtdbtk",
-      "gtdbDb": "--gtdb_db"
+      "gtdbDb": "--gtdb_db",
+      "runAt": "",
+      "allowedSequencingTechnologies": ""
     },
     "paramRules": [
       {

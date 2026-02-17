@@ -7,9 +7,11 @@ import { db } from "@/lib/db";
 export async function GET() {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
   try {
     const settings = await db.siteSettings.findUnique({
@@ -26,15 +28,29 @@ export async function GET() {
       }
     }
 
+    if (!isFacilityAdmin) {
+      return NextResponse.json({
+        allowUserAssemblyDownload: extra.allowUserAssemblyDownload ?? false,
+      });
+    }
+
     return NextResponse.json({
       departmentSharing: extra.departmentSharing ?? false,
       allowDeleteSubmittedOrders: extra.allowDeleteSubmittedOrders ?? false,
+      allowUserAssemblyDownload: extra.allowUserAssemblyDownload ?? false,
       postSubmissionInstructions: settings?.postSubmissionInstructions ?? null,
     });
   } catch {
+    if (!isFacilityAdmin) {
+      return NextResponse.json({
+        allowUserAssemblyDownload: false,
+      });
+    }
+
     return NextResponse.json({
       departmentSharing: false,
       allowDeleteSubmittedOrders: false,
+      allowUserAssemblyDownload: false,
       postSubmissionInstructions: null,
     });
   }
@@ -50,7 +66,12 @@ export async function PUT(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { departmentSharing, allowDeleteSubmittedOrders, postSubmissionInstructions } = body;
+    const {
+      departmentSharing,
+      allowDeleteSubmittedOrders,
+      allowUserAssemblyDownload,
+      postSubmissionInstructions,
+    } = body;
 
     // Get current settings
     const settings = await db.siteSettings.findUnique({
@@ -72,6 +93,9 @@ export async function PUT(request: NextRequest) {
     }
     if (allowDeleteSubmittedOrders !== undefined) {
       extraSettings.allowDeleteSubmittedOrders = allowDeleteSubmittedOrders;
+    }
+    if (allowUserAssemblyDownload !== undefined) {
+      extraSettings.allowUserAssemblyDownload = allowUserAssemblyDownload;
     }
 
     // Build update object

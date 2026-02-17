@@ -13,6 +13,7 @@ import {
 } from '@/lib/pipelines/runtime-platform';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
+import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -221,6 +222,24 @@ export async function POST(
       } catch {
         // No body provided, ignore
       }
+    }
+
+    const metadataValidation = await validatePipelineMetadata(
+      run.studyId!,
+      run.pipelineId,
+      selectedSampleIds
+    );
+    const metadataErrors = metadataValidation.issues
+      .filter((issue) => issue.severity === 'error')
+      .map((issue) => issue.message);
+    if (metadataErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Pipeline metadata validation failed',
+          details: metadataErrors,
+        },
+        { status: 400 }
+      );
     }
 
     // Get execution settings

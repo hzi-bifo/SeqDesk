@@ -1448,18 +1448,18 @@ export function StudyPipelinesSection({
       {samplesWithAssemblySelection.length > 0 && (
         <div className="bg-card rounded-lg border overflow-hidden mt-4">
           <div className="px-5 py-4 border-b bg-secondary/30">
-            <h3 className="text-sm font-semibold">Assembly Source for SubMG</h3>
+            <h3 className="text-sm font-semibold">Selected Assembly Per Sample</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Choose which assembly to use per sample when running SubMG. Leaving
-              a sample on automatic mode uses the newest available assembly.
+              Choose the assembly marked as final for each sample. Automatic mode
+              always uses the newest available assembly.
             </p>
           </div>
           <Table>
             <TableHeader>
               <TableRow className="bg-secondary/50">
                 <TableHead>Sample</TableHead>
-                <TableHead className="w-[320px]">Assembly Source</TableHead>
-                <TableHead>Current Selection</TableHead>
+                <TableHead className="w-[320px]">Final Assembly</TableHead>
+                <TableHead>Current Final Selection</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1507,7 +1507,7 @@ export function StudyPipelinesSection({
                         }
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select assembly source" />
+                          <SelectValue placeholder="Select final assembly" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
@@ -1533,7 +1533,7 @@ export function StudyPipelinesSection({
                       {activeSelection.preferredMissing && (
                         <p className="text-xs text-destructive mt-1">
                           Previously selected assembly is no longer available.
-                          Pick a new source.
+                          Pick a new final assembly.
                         </p>
                       )}
                     </TableCell>
@@ -1542,7 +1542,7 @@ export function StudyPipelinesSection({
                         <div className="space-y-1">
                           <p className="font-medium text-foreground">
                             {activeSelection.source === "preferred"
-                              ? "Selected explicitly"
+                              ? "Marked as final"
                               : "Automatic selection"}
                           </p>
                           <p className="text-muted-foreground">

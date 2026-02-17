@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { studyId, pipelineId } = body;
+    const { studyId, pipelineId, sampleIds } = body;
 
     if (!studyId || !pipelineId) {
       return NextResponse.json(
@@ -22,7 +22,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await validatePipelineMetadata(studyId, pipelineId);
+    let validatedSampleIds: string[] | undefined;
+    if (sampleIds !== undefined) {
+      if (!Array.isArray(sampleIds)) {
+        return NextResponse.json(
+          { error: 'sampleIds must be an array of strings' },
+          { status: 400 }
+        );
+      }
+      if (!sampleIds.every((id) => typeof id === 'string')) {
+        return NextResponse.json(
+          { error: 'sampleIds must be an array of strings' },
+          { status: 400 }
+        );
+      }
+      validatedSampleIds = sampleIds;
+    }
+
+    const result = await validatePipelineMetadata(
+      studyId,
+      pipelineId,
+      validatedSampleIds
+    );
 
     return NextResponse.json(result);
   } catch (error) {

@@ -3,6 +3,10 @@
 
 import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
+import {
+  resolveOrderPlatform,
+  resolveOrderSequencingTechnologyId,
+} from '@/lib/pipelines/order-platform';
 
 export interface MetadataIssue {
   field: string;
@@ -86,6 +90,44 @@ const MAG_LONG_READ_PLATFORM_MATCHES = [
   'revio',
 ];
 
+type MagRunAtMode = 'all' | 'selected-technologies';
+
+interface MagRuntimeConfig {
+  runAt: MagRunAtMode;
+  allowedSequencingTechnologies: string[];
+}
+
+const DEFAULT_MAG_RUNTIME_CONFIG: MagRuntimeConfig = {
+  runAt: 'all',
+  allowedSequencingTechnologies: [],
+};
+
+function parseMagRuntimeConfig(rawConfig: string | null | undefined): MagRuntimeConfig {
+  if (!rawConfig) return { ...DEFAULT_MAG_RUNTIME_CONFIG };
+
+  try {
+    const parsed = JSON.parse(rawConfig) as {
+      runAt?: unknown;
+      allowedSequencingTechnologies?: unknown;
+    };
+    const runAt =
+      parsed.runAt === 'selected-technologies' ? 'selected-technologies' : 'all';
+    const allowedSequencingTechnologies = Array.isArray(parsed.allowedSequencingTechnologies)
+      ? parsed.allowedSequencingTechnologies
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [];
+
+    return {
+      runAt,
+      allowedSequencingTechnologies,
+    };
+  } catch {
+    return { ...DEFAULT_MAG_RUNTIME_CONFIG };
+  }
+}
+
 function isLongReadPlatform(value: string): boolean {
   return MAG_LONG_READ_PLATFORM_MATCHES.some((entry) => value.includes(entry));
 }
@@ -95,16 +137,34 @@ function isLongReadPlatform(value: string): boolean {
  */
 export async function validatePipelineMetadata(
   studyId: string,
-  pipelineId: string
+  pipelineId: string,
+  sampleIds?: string[]
 ): Promise<MetadataValidationResult> {
   const issues: MetadataIssue[] = [];
   const metadata: MetadataValidationResult['metadata'] = {};
+  const sampleFilter =
+    Array.isArray(sampleIds) && sampleIds.length > 0
+      ? { id: { in: sampleIds } }
+      : undefined;
+
+  const magRuntimeConfig =
+    pipelineId === 'mag'
+      ? parseMagRuntimeConfig(
+          (
+            await db.pipelineConfig.findUnique({
+              where: { pipelineId: 'mag' },
+              select: { config: true },
+            })
+          )?.config ?? null
+        )
+      : DEFAULT_MAG_RUNTIME_CONFIG;
 
   // Get study with samples and their orders
   const study = await db.study.findUnique({
     where: { id: studyId },
     include: {
       samples: {
+        ...(sampleFilter ? { where: sampleFilter } : {}),
         include: {
           reads: {
             select: {
@@ -135,6 +195,7 @@ export async function validatePipelineMetadata(
             select: {
               id: true,
               platform: true,
+              customFields: true,
               instrumentModel: true,
               libraryStrategy: true,
               librarySelection: true,
@@ -239,62 +300,180 @@ export async function validatePipelineMetadata(
     };
   }
 
-  // Collect metadata from all orders
-  const orders = new Map<string, typeof study.samples[0]['order']>();
+  // Collect metadata from all orders (with sample IDs for better error messages)
+  const orders = new Map<
+    string,
+    {
+      order: NonNullable<(typeof study.samples)[number]['order']>;
+      sampleIds: string[];
+    }
+  >();
+  const samplesWithoutOrder = new Set<string>();
   for (const sample of study.samples) {
     if (sample.order) {
-      orders.set(sample.order.id, sample.order);
+      const existing = orders.get(sample.order.id);
+      if (existing) {
+        existing.sampleIds.push(sample.sampleId);
+      } else {
+        orders.set(sample.order.id, {
+          order: sample.order,
+          sampleIds: [sample.sampleId],
+        });
+      }
+    } else {
+      samplesWithoutOrder.add(sample.sampleId);
     }
   }
 
-  // Check if any order has platform info
-  let hasValidPlatform = false;
-  let platformValue: string | undefined;
-  let hasLongReadPlatform = false;
+  if (
+    pipelineId === 'mag' &&
+    magRuntimeConfig.runAt === 'selected-technologies' &&
+    magRuntimeConfig.allowedSequencingTechnologies.length > 0
+  ) {
+    const allowedTechnologyIds = new Set(magRuntimeConfig.allowedSequencingTechnologies);
+    const disallowedTechnologyIds = new Set<string>();
+    let hasMissingTechnologySelection = false;
 
-  for (const order of orders.values()) {
-    if (order.platform) {
-      platformValue = order.platform;
-      metadata.platform = order.platform;
+    for (const { order } of orders.values()) {
+      const technologyId = resolveOrderSequencingTechnologyId(order);
+      if (!technologyId) {
+        hasMissingTechnologySelection = true;
+        continue;
+      }
+      if (!allowedTechnologyIds.has(technologyId)) {
+        disallowedTechnologyIds.add(technologyId);
+      }
+    }
+
+    if (hasMissingTechnologySelection) {
+      issues.push({
+        field: 'platform',
+        message:
+          'MAG is restricted to selected sequencing technologies in pipeline settings. Some orders are missing a Sequencing Technologies selection.',
+        severity: 'error',
+      });
+    }
+
+    if (disallowedTechnologyIds.size > 0) {
+      const used = Array.from(disallowedTechnologyIds).join(', ');
+      const allowed = Array.from(allowedTechnologyIds).join(', ');
+      issues.push({
+        field: 'platform',
+        message: `MAG is restricted to selected sequencing technologies. Found disallowed technology IDs: ${used}. Allowed: ${allowed}.`,
+        severity: 'error',
+      });
+    }
+  }
+
+  let hasAnyResolvedPlatform = false;
+  let hasAnyMappedPlatform = false;
+  const missingPlatformSamples = new Set<string>();
+  const longReadPlatforms = new Set<string>();
+  const unsupportedPlatforms = new Set<string>();
+  const firstOrderId = Array.from(orders.keys())[0];
+
+  for (const { order, sampleIds: sampleLabels } of orders.values()) {
+    const resolvedPlatform = resolveOrderPlatform(order);
+    if (!resolvedPlatform) {
+      for (const sampleId of sampleLabels) {
+        missingPlatformSamples.add(sampleId);
+      }
+      continue;
+    }
+
+    hasAnyResolvedPlatform = true;
+    if (!metadata.platform) {
+      metadata.platform = resolvedPlatform;
       metadata.instrumentModel = order.instrumentModel || undefined;
       metadata.libraryStrategy = order.libraryStrategy || undefined;
+    }
 
-      const mappedPlatform = mapPlatformForPipeline(order.platform, pipelineId);
-      if (mappedPlatform) {
-        hasValidPlatform = true;
-        break;
-      }
+    const mappedPlatform = mapPlatformForPipeline(resolvedPlatform, pipelineId);
+    if (mappedPlatform) {
+      hasAnyMappedPlatform = true;
+      continue;
+    }
 
-      const normalizedPlatform = order.platform.toLowerCase().trim().replace(/[_\s-]+/g, '_');
-      if (isLongReadPlatform(normalizedPlatform)) {
-        hasLongReadPlatform = true;
-      }
+    const normalizedPlatform = resolvedPlatform.toLowerCase().trim().replace(/[_\s-]+/g, '_');
+    if (isLongReadPlatform(normalizedPlatform)) {
+      longReadPlatforms.add(resolvedPlatform);
+    } else {
+      unsupportedPlatforms.add(resolvedPlatform);
     }
   }
 
   // Check required fields
   if (requirements.required.includes('platform')) {
-    if (!platformValue) {
+    if (!hasAnyResolvedPlatform) {
       issues.push({
         field: 'platform',
-        message: 'Sequencing platform is required for this pipeline',
+        message:
+          'Sequencing platform is required for this pipeline (set the system "Sequencing Platform" field or select a technology in "Sequencing Technologies").',
         severity: 'error',
-        fixUrl: orders.size > 0
-          ? `/dashboard/orders/${Array.from(orders.keys())[0]}/edit`
+        fixUrl: firstOrderId
+          ? `/dashboard/orders/${firstOrderId}/edit`
           : undefined,
       });
-    } else if (!hasValidPlatform) {
-      issues.push({
-        field: 'platform',
-        message: hasLongReadPlatform
-          ? `Platform "${platformValue}" indicates long-read data. MAG currently expects short reads with one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`
-          : `Platform "${platformValue}" not recognized. Expected one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`,
-        severity: 'error',
-        fixUrl: orders.size > 0
-          ? `/dashboard/orders/${Array.from(orders.keys())[0]}/edit`
-          : undefined,
-      });
+    } else {
+      const missingSamples = new Set([
+        ...Array.from(samplesWithoutOrder),
+        ...Array.from(missingPlatformSamples),
+      ]);
+      if (missingSamples.size > 0) {
+        const samples = Array.from(missingSamples).slice(0, 5).join(', ');
+        const moreCount = missingSamples.size - Math.min(missingSamples.size, 5);
+        issues.push({
+          field: 'platform',
+          message:
+            moreCount > 0
+              ? `Some selected samples are missing sequencing platform metadata (${samples}, +${moreCount} more).`
+              : `Some selected samples are missing sequencing platform metadata (${samples}).`,
+          severity: 'error',
+          fixUrl: firstOrderId
+            ? `/dashboard/orders/${firstOrderId}/edit`
+            : undefined,
+        });
+      }
+
+      if (!hasAnyMappedPlatform || longReadPlatforms.size > 0 || unsupportedPlatforms.size > 0) {
+        const longReadList = Array.from(longReadPlatforms);
+        const unsupportedList = Array.from(unsupportedPlatforms);
+        let message = '';
+
+        if (longReadList.length > 0) {
+          message = `Platform(s) ${longReadList.map((value) => `"${value}"`).join(', ')} indicate long-read data. MAG currently expects short reads with one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`;
+          if (unsupportedList.length > 0) {
+            message += ` Also found unsupported platform(s): ${unsupportedList.map((value) => `"${value}"`).join(', ')}.`;
+          }
+        } else if (unsupportedList.length > 0) {
+          message = `Platform(s) ${unsupportedList.map((value) => `"${value}"`).join(', ')} not recognized. Expected one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`;
+        } else {
+          message = `Sequencing platform is not recognized. Expected one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`;
+        }
+
+        issues.push({
+          field: 'platform',
+          message,
+          severity: 'error',
+          fixUrl: firstOrderId
+            ? `/dashboard/orders/${firstOrderId}/edit`
+            : undefined,
+        });
+      }
     }
+  }
+
+  if (
+    pipelineId === 'mag' &&
+    magRuntimeConfig.runAt === 'selected-technologies' &&
+    magRuntimeConfig.allowedSequencingTechnologies.length === 0
+  ) {
+    issues.push({
+      field: 'platform',
+      message:
+        'MAG is configured to run only on selected sequencing technologies, but none are selected in pipeline settings.',
+      severity: 'warning',
+    });
   }
 
   return {

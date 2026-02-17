@@ -58,6 +58,8 @@ export function Sidebar({ user, version }: SidebarProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [assembliesEnabledForUsers, setAssembliesEnabledForUsers] =
+    useState(isFacilityAdmin);
   const [counts, setCounts] = useState<{
     orders: number;
     studies: number;
@@ -136,6 +138,38 @@ export function Sidebar({ user, version }: SidebarProps) {
     const interval = setInterval(fetchCounts, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch assembly download visibility for researchers
+  useEffect(() => {
+    if (isFacilityAdmin) {
+      setAssembliesEnabledForUsers(true);
+      return;
+    }
+
+    let mounted = true;
+
+    const fetchAssemblySetting = async () => {
+      try {
+        const res = await fetch("/api/admin/settings/access");
+        if (!res.ok) {
+          if (mounted) setAssembliesEnabledForUsers(false);
+          return;
+        }
+        const data = (await res.json()) as { allowUserAssemblyDownload?: boolean };
+        if (mounted) {
+          setAssembliesEnabledForUsers(data.allowUserAssemblyDownload === true);
+        }
+      } catch {
+        if (mounted) setAssembliesEnabledForUsers(false);
+      }
+    };
+
+    void fetchAssemblySetting();
+
+    return () => {
+      mounted = false;
+    };
+  }, [isFacilityAdmin]);
 
   // Fetch infrastructure readiness for sidebar guidance
   useEffect(() => {
@@ -305,6 +339,16 @@ export function Sidebar({ user, version }: SidebarProps) {
             </span>
           )}
         </Link>
+        {(isFacilityAdmin || assembliesEnabledForUsers) && (
+          <Link
+            href="/dashboard/assemblies"
+            className={navItemClass("/dashboard/assemblies")}
+            title="Assemblies"
+          >
+            <HardDrive className="h-4 w-4 shrink-0" />
+            {!collapsed && "Assemblies"}
+          </Link>
+        )}
 
         {/* Sequencing Files - Admin only */}
         {isFacilityAdmin && (
@@ -573,7 +617,7 @@ export function Sidebar({ user, version }: SidebarProps) {
                 )}
               >
                 <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-                  Order Flow
+                  Order Form
                 </Link>
                 <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
                   Study Forms
