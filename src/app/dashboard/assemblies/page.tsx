@@ -216,8 +216,12 @@ export default function AssembliesPage() {
             </Table>
           </div>
         ) : (
-          <div className="rounded-lg border p-12 text-center text-muted-foreground">
-            No assemblies available yet.
+          <div className="rounded-lg border p-12 text-center text-muted-foreground space-y-1">
+            <p className="font-medium text-foreground">No assemblies available yet.</p>
+            <p className="text-sm">
+              Assemblies for your studies will appear here after the sequencing center
+              finishes analysis.
+            </p>
           </div>
         )}
       </div>

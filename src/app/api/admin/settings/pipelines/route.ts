@@ -7,6 +7,7 @@ import { getPipelineDatabaseStatuses } from '@/lib/pipelines/database-downloads'
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { getPackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
+import type { PipelineConfigSchema } from '@/lib/pipelines/types';
 
 function parsePipelineConfig(rawConfig: string | null | undefined): Record<string, unknown> {
   if (!rawConfig) return {};
@@ -19,6 +20,43 @@ function parsePipelineConfig(rawConfig: string | null | undefined): Record<strin
     // Ignore invalid JSON and fall back to defaults.
   }
   return {};
+}
+
+const ALLOWED_SEQUENCING_TECHNOLOGIES_SCHEMA: PipelineConfigSchema['properties'][string] = {
+  type: 'array',
+  title: 'Allow For Sequencing Technologies',
+  description:
+    'Optional. If selected, this pipeline can only run for orders using one of these sequencing technologies.',
+  default: [],
+};
+
+function extendConfigSchemaWithTechnologyAllowlist(
+  schema: PipelineConfigSchema
+): PipelineConfigSchema {
+  if (schema.properties.allowedSequencingTechnologies) {
+    return schema;
+  }
+
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      allowedSequencingTechnologies: ALLOWED_SEQUENCING_TECHNOLOGIES_SCHEMA,
+    },
+  };
+}
+
+function extendDefaultConfigWithTechnologyAllowlist(
+  defaultConfig: Record<string, unknown>
+): Record<string, unknown> {
+  if (Object.prototype.hasOwnProperty.call(defaultConfig, 'allowedSequencingTechnologies')) {
+    return defaultConfig;
+  }
+
+  return {
+    ...defaultConfig,
+    allowedSequencingTechnologies: [],
+  };
 }
 
 // GET - List all pipeline configurations
@@ -45,8 +83,14 @@ export async function GET(request: NextRequest) {
     const pipelines = await Promise.all(allPipelineIds.map(async pipelineId => {
       const definition = PIPELINE_REGISTRY[pipelineId];
       const dbConfig = configMap.get(pipelineId);
+      const extendedDefaultConfig = extendDefaultConfigWithTechnologyAllowlist(
+        definition.defaultConfig
+      );
+      const extendedConfigSchema = extendConfigSchemaWithTechnologyAllowlist(
+        definition.configSchema
+      );
       const resolvedConfig = {
-        ...definition.defaultConfig,
+        ...extendedDefaultConfig,
         ...parsePipelineConfig(dbConfig?.config),
       };
       const manifest = getPackageManifest(pipelineId);
@@ -75,8 +119,8 @@ export async function GET(request: NextRequest) {
         icon: definition.icon,
         enabled: dbConfig ? dbConfig.enabled : true,
         config: resolvedConfig,
-        configSchema: definition.configSchema,
-        defaultConfig: definition.defaultConfig,
+        configSchema: extendedConfigSchema,
+        defaultConfig: extendedDefaultConfig,
         visibility: definition.visibility,
         requires: definition.requires,
         outputs: definition.outputs,

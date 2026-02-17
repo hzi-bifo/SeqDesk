@@ -254,7 +254,7 @@ function getPipelineMetadataHints(pipelineId: string): MetadataHint[] {
         id: "mag-short-read",
         label: "Short-read compatibility",
         description:
-          "MAG currently validates short-read platforms. ONT/PacBio selections (for example MinION, PromethION, Revio, Sequel) are treated as long-read and will block MAG start.",
+          "By default MAG validates short-read platforms. If you set an explicit 'Allow For Sequencing Technologies' list, those technology IDs are allowed to run even when platform mapping is long-read.",
       },
     ];
   }
@@ -652,7 +652,7 @@ export default function PipelineSettingsPage() {
         .map((value) => value.trim())
         .filter(Boolean).length
     : 0;
-  const hasMagRunTargetSelectionError =
+  const hasMagRunTargetSelectionWarning =
     selectedPipeline?.pipelineId === "mag" &&
     localConfig.runAt === "selected-technologies" &&
     magSelectedTechnologyCount === 0;
@@ -1307,7 +1307,11 @@ export default function PipelineSettingsPage() {
                           .map((value) => value.trim())
                           .filter(Boolean)
                       : [];
+                    const isMagRunAtSelector =
+                      selectedPipeline?.pipelineId === "mag" &&
+                      Object.prototype.hasOwnProperty.call(localConfig, "runAt");
                     const runAtIsSelectedTechnologies =
+                      !isMagRunAtSelector ||
                       localConfig.runAt === "selected-technologies";
 
                     return (
@@ -1432,8 +1436,8 @@ export default function PipelineSettingsPage() {
                               </p>
                             )}
                             {runAtIsSelectedTechnologies && selectedTechnologyIds.length === 0 && (
-                              <p className="text-xs text-amber-700">
-                                Select at least one sequencing technology to activate this run target mode.
+                              <p className="text-xs text-muted-foreground">
+                                If none are selected, this pipeline remains allowed for all technologies.
                               </p>
                             )}
                           </div>
@@ -1488,7 +1492,7 @@ export default function PipelineSettingsPage() {
               {configError && (
                 <p className="text-sm text-destructive mt-4">{configError}</p>
               )}
-              {hasMagRunTargetSelectionError && (
+              {hasMagRunTargetSelectionWarning && (
                 <p className="text-sm text-amber-700 mt-4">
                   MAG is set to <span className="font-mono">selected-technologies</span> but no sequencing technology is selected.
                 </p>
@@ -1520,7 +1524,7 @@ export default function PipelineSettingsPage() {
             </Button>
             <Button
               onClick={handleSaveConfig}
-              disabled={saving || !hasConfigChanges || hasMagRunTargetSelectionError}
+              disabled={saving || !hasConfigChanges}
             >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save changes

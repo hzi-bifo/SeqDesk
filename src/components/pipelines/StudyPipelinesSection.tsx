@@ -328,6 +328,8 @@ function fieldLabel(field: string): string {
       return "Assemblies";
     case "platform":
       return "Platform metadata";
+    case "allowedSequencingTechnologies":
+      return "Allowed technologies";
     default:
       return field;
   }
@@ -675,17 +677,31 @@ function getPipelineReadiness(params: {
 
   if (pipelineId === "mag") {
     const pairedReadsReady = samplesWithReads > 0;
-    const hasMetadataErrors = Boolean(
-      validation?.issues.some((issue) => issue.severity === "error")
+    const metadataErrors = (validation?.issues || []).filter(
+      (issue) => issue.severity === "error"
     );
+    const hasMetadataErrors = metadataErrors.length > 0;
     const metadataReady = validation ? !hasMetadataErrors : true;
     const requiredTotal = validation ? 2 : 1;
     const requiredReady =
       (pairedReadsReady ? 1 : 0) + (validation ? (metadataReady ? 1 : 0) : 0);
+    const hasLongReadPlatformError = metadataErrors.some((issue) =>
+      /long-read/i.test(issue.message)
+    );
+    const metadataLabel = hasLongReadPlatformError
+      ? "Short-read platform"
+      : "Platform metadata";
     const missingRequired = [
       ...(pairedReadsReady ? [] : ["Paired reads"]),
-      ...(validation && !metadataReady ? ["Platform metadata"] : []),
+      ...(validation && !metadataReady ? [metadataLabel] : []),
     ];
+    const checkDetails: string[] = [];
+    if (totalSamples > 0) {
+      checkDetails.push(`Paired reads: ${samplesWithReads}/${totalSamples} samples`);
+    }
+    if (validation && !metadataReady && metadataErrors.length > 0) {
+      checkDetails.push(metadataErrors[0].message);
+    }
 
     return {
       canRun: pairedReadsReady && metadataReady,
@@ -696,10 +712,7 @@ function getPipelineReadiness(params: {
       summary: validation
         ? `${requiredReady}/${requiredTotal} required inputs available`
         : `${samplesWithReads}/${totalSamples} samples with paired reads`,
-      checkDetails:
-        totalSamples > 0
-          ? [`Paired reads: ${samplesWithReads}/${totalSamples} samples`]
-          : [],
+      checkDetails,
     };
   }
 
