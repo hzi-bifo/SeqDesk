@@ -12,7 +12,7 @@
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
-#   SEQDESK_PORT=3000              - App port (default: 3000)
+#   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
@@ -178,7 +178,7 @@ run_wizard() {
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
-    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-3000}" \
+    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-8000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \
     SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}" \
@@ -548,11 +548,11 @@ if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
 elif [ $wizard_status -ne 0 ]; then
-    prompt_value SEQDESK_PORT "App port" "3000"
+    prompt_value SEQDESK_PORT "App port" "8000"
 fi
 
 if [ -z "$SEQDESK_PORT" ]; then
-    SEQDESK_PORT="3000"
+    SEQDESK_PORT="8000"
 fi
 if [ -z "$SEQDESK_NEXTAUTH_URL" ]; then
     SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
@@ -566,7 +566,7 @@ if [ ! -f .env ]; then
 NEXTAUTH_SECRET=""
 NEXTAUTH_URL=""
 DATABASE_URL=""
-PORT=3000
+PORT=8000
 EOF
     fi
     RANDOM_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
@@ -693,7 +693,7 @@ echo ""
 echo -e "  ${BLUE}cd $SEQDESK_DIR${NC}"
 echo -e "  ${BLUE}npm run dev${NC}"
 echo ""
-echo "Then open http://localhost:${SEQDESK_PORT:-3000} in your browser."
+echo "Then open http://localhost:${SEQDESK_PORT:-8000} in your browser."
 echo ""
 echo "Default login credentials:"
 echo "  Admin:      admin@example.com / admin"

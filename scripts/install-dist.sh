@@ -14,7 +14,7 @@
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
-#   SEQDESK_PORT=3000              - App port (default: 3000)
+#   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
@@ -304,8 +304,8 @@ print_config_summary() {
     else
         print_kv "Run directory" "not used"
     fi
-    print_kv "Port" "${SEQDESK_PORT:-3000}"
-    print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-3000}}"
+    print_kv "Port" "${SEQDESK_PORT:-8000}"
+    print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
     print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-default sqlite}"
     print_kv ".env" "$env_status"
     print_kv "seqdesk.config.json" "$config_status"
@@ -397,7 +397,7 @@ run_wizard() {
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
-    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-3000}" \
+    SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-8000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \
     SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}" \
@@ -802,11 +802,11 @@ if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
 elif [ $wizard_status -ne 0 ]; then
-    prompt_value SEQDESK_PORT "App port" "3000"
+    prompt_value SEQDESK_PORT "App port" "8000"
 fi
 
 if [ -z "$SEQDESK_PORT" ]; then
-    SEQDESK_PORT="3000"
+    SEQDESK_PORT="8000"
 fi
 if [ -z "$SEQDESK_NEXTAUTH_URL" ]; then
     SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
@@ -823,7 +823,7 @@ if [ ! -f ".env" ]; then
 NEXTAUTH_SECRET=""
 NEXTAUTH_URL=""
 DATABASE_URL=""
-PORT=3000
+PORT=8000
 EOF
     fi
     SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
@@ -1019,7 +1019,7 @@ else
     echo "For auto-restart, re-run the installer and choose PM2, or set up systemd."
 fi
 echo ""
-echo "Open http://localhost:${SEQDESK_PORT:-3000}"
+echo "Open http://localhost:${SEQDESK_PORT:-8000}"
 echo ""
 echo "Default login:"
 echo "  Email:    admin@example.com"
