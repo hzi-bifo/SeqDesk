@@ -23,7 +23,7 @@ if (!outPath) {
 }
 
 const pipelinesEnabled = isTruthy(process.env.SEQDESK_WIZARD_PIPELINES_ENABLED);
-const defaultPort = process.env.SEQDESK_WIZARD_DEFAULT_PORT || "3000";
+const defaultPort = process.env.SEQDESK_WIZARD_DEFAULT_PORT || "8000";
 
 const defaults = {
   dataPath: process.env.SEQDESK_DATA_PATH || "",
