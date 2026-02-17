@@ -42,6 +42,16 @@ samplesheet:
           nextseq: ILLUMINA
           ont: OXFORD
           nanopore: OXFORD
+          oxford_nanopore: OXFORD
+          minion: OXFORD
+          gridion: OXFORD
+          promethion: OXFORD
+          "ont-minion": OXFORD
+          "ont-gridion": OXFORD
+          "ont-promethion": OXFORD
+          pacbio: PACBIO
+          sequel: PACBIO
+          revio: PACBIO
       required: true
 
     - name: long_reads

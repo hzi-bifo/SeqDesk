@@ -90,20 +90,22 @@ const MAG_LONG_READ_PLATFORM_MATCHES = [
   'revio',
 ];
 
-type MagRunAtMode = 'all' | 'selected-technologies';
+type RunAtMode = 'all' | 'selected-technologies';
 
-interface MagRuntimeConfig {
-  runAt: MagRunAtMode;
+interface PipelineRuntimeConfig {
+  runAt: RunAtMode;
   allowedSequencingTechnologies: string[];
 }
 
-const DEFAULT_MAG_RUNTIME_CONFIG: MagRuntimeConfig = {
+const DEFAULT_PIPELINE_RUNTIME_CONFIG: PipelineRuntimeConfig = {
   runAt: 'all',
   allowedSequencingTechnologies: [],
 };
 
-function parseMagRuntimeConfig(rawConfig: string | null | undefined): MagRuntimeConfig {
-  if (!rawConfig) return { ...DEFAULT_MAG_RUNTIME_CONFIG };
+function parsePipelineRuntimeConfig(
+  rawConfig: string | null | undefined
+): PipelineRuntimeConfig {
+  if (!rawConfig) return { ...DEFAULT_PIPELINE_RUNTIME_CONFIG };
 
   try {
     const parsed = JSON.parse(rawConfig) as {
@@ -124,7 +126,7 @@ function parseMagRuntimeConfig(rawConfig: string | null | undefined): MagRuntime
       allowedSequencingTechnologies,
     };
   } catch {
-    return { ...DEFAULT_MAG_RUNTIME_CONFIG };
+    return { ...DEFAULT_PIPELINE_RUNTIME_CONFIG };
   }
 }
 
@@ -147,17 +149,14 @@ export async function validatePipelineMetadata(
       ? { id: { in: sampleIds } }
       : undefined;
 
-  const magRuntimeConfig =
-    pipelineId === 'mag'
-      ? parseMagRuntimeConfig(
-          (
-            await db.pipelineConfig.findUnique({
-              where: { pipelineId: 'mag' },
-              select: { config: true },
-            })
-          )?.config ?? null
-        )
-      : DEFAULT_MAG_RUNTIME_CONFIG;
+  const runtimeConfig = parsePipelineRuntimeConfig(
+    (
+      await db.pipelineConfig.findUnique({
+        where: { pipelineId },
+        select: { config: true },
+      })
+    )?.config ?? null
+  );
 
   // Get study with samples and their orders
   const study = await db.study.findUnique({
@@ -223,12 +222,73 @@ export async function validatePipelineMetadata(
     };
   }
 
-  // Get pipeline requirements
-  const requirements = PIPELINE_REQUIREMENTS[pipelineId];
-  if (!requirements) {
-    // No specific requirements defined, assume valid
-    return { valid: true, issues: [], metadata };
+  // Collect metadata from all orders (with sample IDs for better error messages)
+  const orders = new Map<
+    string,
+    {
+      order: NonNullable<(typeof study.samples)[number]['order']>;
+      sampleIds: string[];
+    }
+  >();
+  const samplesWithoutOrder = new Set<string>();
+  for (const sample of study.samples) {
+    if (sample.order) {
+      const existing = orders.get(sample.order.id);
+      if (existing) {
+        existing.sampleIds.push(sample.sampleId);
+      } else {
+        orders.set(sample.order.id, {
+          order: sample.order,
+          sampleIds: [sample.sampleId],
+        });
+      }
+    } else {
+      samplesWithoutOrder.add(sample.sampleId);
+    }
   }
+
+  const restrictedTechnologyIds = new Set(runtimeConfig.allowedSequencingTechnologies);
+  const technologyRestrictionActive = restrictedTechnologyIds.size > 0;
+
+  if (technologyRestrictionActive) {
+    const disallowedTechnologyIds = new Set<string>();
+    let hasMissingTechnologySelection = samplesWithoutOrder.size > 0;
+
+    for (const { order } of orders.values()) {
+      const technologyId = resolveOrderSequencingTechnologyId(order);
+      if (!technologyId) {
+        hasMissingTechnologySelection = true;
+        continue;
+      }
+      if (!restrictedTechnologyIds.has(technologyId)) {
+        disallowedTechnologyIds.add(technologyId);
+      }
+    }
+
+    if (hasMissingTechnologySelection) {
+      issues.push({
+        field: 'allowedSequencingTechnologies',
+        message: `${pipelineId.toUpperCase()} is restricted to selected sequencing technologies in pipeline settings. Some selected samples are missing order/technology selection metadata.`,
+        severity: 'error',
+      });
+    }
+
+    if (disallowedTechnologyIds.size > 0) {
+      const used = Array.from(disallowedTechnologyIds).join(', ');
+      const allowed = Array.from(restrictedTechnologyIds).join(', ');
+      issues.push({
+        field: 'allowedSequencingTechnologies',
+        message: `${pipelineId.toUpperCase()} is restricted to selected sequencing technologies. Found disallowed technology IDs: ${used}. Allowed: ${allowed}.`,
+        severity: 'error',
+      });
+    }
+  }
+
+  // Get pipeline requirements
+  const requirements = PIPELINE_REQUIREMENTS[pipelineId] ?? {
+    required: [],
+    optional: [],
+  };
 
   if (pipelineId === 'submg') {
     if (!study.studyAccessionId) {
@@ -298,71 +358,6 @@ export async function validatePipelineMetadata(
       issues,
       metadata,
     };
-  }
-
-  // Collect metadata from all orders (with sample IDs for better error messages)
-  const orders = new Map<
-    string,
-    {
-      order: NonNullable<(typeof study.samples)[number]['order']>;
-      sampleIds: string[];
-    }
-  >();
-  const samplesWithoutOrder = new Set<string>();
-  for (const sample of study.samples) {
-    if (sample.order) {
-      const existing = orders.get(sample.order.id);
-      if (existing) {
-        existing.sampleIds.push(sample.sampleId);
-      } else {
-        orders.set(sample.order.id, {
-          order: sample.order,
-          sampleIds: [sample.sampleId],
-        });
-      }
-    } else {
-      samplesWithoutOrder.add(sample.sampleId);
-    }
-  }
-
-  if (
-    pipelineId === 'mag' &&
-    magRuntimeConfig.runAt === 'selected-technologies' &&
-    magRuntimeConfig.allowedSequencingTechnologies.length > 0
-  ) {
-    const allowedTechnologyIds = new Set(magRuntimeConfig.allowedSequencingTechnologies);
-    const disallowedTechnologyIds = new Set<string>();
-    let hasMissingTechnologySelection = false;
-
-    for (const { order } of orders.values()) {
-      const technologyId = resolveOrderSequencingTechnologyId(order);
-      if (!technologyId) {
-        hasMissingTechnologySelection = true;
-        continue;
-      }
-      if (!allowedTechnologyIds.has(technologyId)) {
-        disallowedTechnologyIds.add(technologyId);
-      }
-    }
-
-    if (hasMissingTechnologySelection) {
-      issues.push({
-        field: 'platform',
-        message:
-          'MAG is restricted to selected sequencing technologies in pipeline settings. Some orders are missing a Sequencing Technologies selection.',
-        severity: 'error',
-      });
-    }
-
-    if (disallowedTechnologyIds.size > 0) {
-      const used = Array.from(disallowedTechnologyIds).join(', ');
-      const allowed = Array.from(allowedTechnologyIds).join(', ');
-      issues.push({
-        field: 'platform',
-        message: `MAG is restricted to selected sequencing technologies. Found disallowed technology IDs: ${used}. Allowed: ${allowed}.`,
-        severity: 'error',
-      });
-    }
   }
 
   let hasAnyResolvedPlatform = false;
@@ -435,7 +430,10 @@ export async function validatePipelineMetadata(
         });
       }
 
-      if (!hasAnyMappedPlatform || longReadPlatforms.size > 0 || unsupportedPlatforms.size > 0) {
+      if (
+        !technologyRestrictionActive &&
+        (!hasAnyMappedPlatform || longReadPlatforms.size > 0 || unsupportedPlatforms.size > 0)
+      ) {
         const longReadList = Array.from(longReadPlatforms);
         const unsupportedList = Array.from(unsupportedPlatforms);
         let message = '';
@@ -465,11 +463,11 @@ export async function validatePipelineMetadata(
 
   if (
     pipelineId === 'mag' &&
-    magRuntimeConfig.runAt === 'selected-technologies' &&
-    magRuntimeConfig.allowedSequencingTechnologies.length === 0
+    runtimeConfig.runAt === 'selected-technologies' &&
+    runtimeConfig.allowedSequencingTechnologies.length === 0
   ) {
     issues.push({
-      field: 'platform',
+      field: 'allowedSequencingTechnologies',
       message:
         'MAG is configured to run only on selected sequencing technologies, but none are selected in pipeline settings.',
       severity: 'warning',

@@ -21,12 +21,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,7 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, Dna, FlaskConical, Upload, MoreHorizontal, Square } from "lucide-react";
+import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square } from "lucide-react";
 import Link from "next/link";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -177,8 +171,6 @@ type RunData = {
 export default function AnalysisDashboardPage() {
   const [pipelineFilter, setPipelineFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [deleteTarget, setDeleteTarget] = useState<RunData | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [stopTarget, setStopTarget] = useState<RunData | null>(null);
   const [stopping, setStopping] = useState(false);
   const [syncDisabled, setSyncDisabled] = useState(false);
@@ -228,22 +220,6 @@ export default function AnalysisDashboardPage() {
       }
     }
     mutate();
-  };
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/pipelines/runs/${deleteTarget.id}/delete`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        setDeleteTarget(null);
-        mutate();
-      }
-    } finally {
-      setDeleting(false);
-    }
   };
 
   const handleStop = async () => {
@@ -485,22 +461,6 @@ export default function AnalysisDashboardPage() {
                           <Square className="h-4 w-4" />
                         </Button>
                       )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            disabled={effectiveStatus === "running"}
-                            className="text-destructive focus:text-destructive"
-                            onSelect={() => setDeleteTarget(run)}
-                          >
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -542,28 +502,6 @@ export default function AnalysisDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation dialog */}
-      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Run {deleteTarget?.runNumber}?</DialogTitle>
-            <DialogDescription>
-              This will permanently delete the run folder and all related database
-              records (steps, artifacts, assemblies, and bins created by this run).
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-              {deleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </PageContainer>
   );
 }

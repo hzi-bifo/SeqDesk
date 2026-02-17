@@ -46,6 +46,7 @@ export function TechnologySelector({
   const [kits, setKits] = useState<SequencingKit[]>([]);
   const [software, setSoftware] = useState<SequencingSoftware[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const selection = useMemo<SequencingTechSelection | undefined>(() => {
@@ -59,17 +60,24 @@ export function TechnologySelector({
   useEffect(() => {
     const fetchTechnologies = async () => {
       try {
-        const res = await fetch("/api/sequencing-tech");
-        if (res.ok) {
-          const data = (await res.json()) as TechResponse;
-          setTechnologies(data.technologies || []);
-          setDevices(data.devices || []);
-          setFlowCells(data.flowCells || []);
-          setKits(data.kits || []);
-          setSoftware(data.software || []);
+        const res = await fetch("/api/sequencing-tech", {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          setLoadError("Failed to load sequencing technologies");
+          return;
         }
+
+        const data = (await res.json()) as TechResponse;
+        setTechnologies(data.technologies || []);
+        setDevices(data.devices || []);
+        setFlowCells(data.flowCells || []);
+        setKits(data.kits || []);
+        setSoftware(data.software || []);
       } catch {
         console.error("Failed to load technologies");
+        setLoadError("Failed to load sequencing technologies");
       } finally {
         setLoading(false);
       }
@@ -250,7 +258,7 @@ export function TechnologySelector({
   if (technologies.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
-        No sequencing technologies configured
+        {loadError || "No sequencing technologies configured"}
       </div>
     );
   }

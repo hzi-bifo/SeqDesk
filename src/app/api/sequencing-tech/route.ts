@@ -1,32 +1,29 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { parseTechConfig } from "@/lib/sequencing-tech/config";
 
 // Storage key in SiteSettings.extraSettings
 const SETTINGS_KEY = "sequencingTechConfig";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // GET available sequencing technologies (public endpoint for order form)
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
 
     // Get settings from the extra field
     const rawSettings = settings?.extraSettings as string | null | undefined;
-    let extraSettings: Record<string, string> = {};
+    let extraSettings: Record<string, unknown> = {};
 
     if (rawSettings) {
       try {
-        extraSettings = JSON.parse(rawSettings);
+        const parsed = JSON.parse(rawSettings);
+        if (parsed && typeof parsed === "object") {
+          extraSettings = parsed as Record<string, unknown>;
+        }
       } catch {
         // ignore
       }
@@ -52,13 +49,20 @@ export async function GET() {
       .filter((tool) => tool.available)
       .sort((a, b) => a.order - b.order);
 
-    return NextResponse.json({
-      technologies: availableTechnologies,
-      devices: availableDevices,
-      flowCells: availableFlowCells,
-      kits: availableKits,
-      software: availableSoftware,
-    });
+    return NextResponse.json(
+      {
+        technologies: availableTechnologies,
+        devices: availableDevices,
+        flowCells: availableFlowCells,
+        kits: availableKits,
+        software: availableSoftware,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
   } catch (error) {
     console.error("Error fetching sequencing technologies:", error);
     return NextResponse.json(

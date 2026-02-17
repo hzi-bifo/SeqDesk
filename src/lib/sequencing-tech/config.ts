@@ -132,15 +132,24 @@ export function loadDefaultTechConfig(): SequencingTechConfig {
 }
 
 export function parseTechConfig(
-  configJson: string | null | undefined
+  configJson: unknown
 ): SequencingTechConfig {
   const defaults = loadDefaultTechConfig();
   if (!configJson) {
     return defaults;
   }
   try {
-    const parsed = JSON.parse(configJson) as SequencingTechConfig;
-    return normalizeTechConfig(parsed, defaults);
+    if (typeof configJson === "string") {
+      const parsed = JSON.parse(configJson) as SequencingTechConfig;
+      return normalizeTechConfig(parsed, defaults);
+    }
+
+    if (typeof configJson === "object" && configJson !== null) {
+      const parsed = configJson as SequencingTechConfig;
+      return normalizeTechConfig(parsed, defaults);
+    }
+
+    return defaults;
   } catch {
     return defaults;
   }
