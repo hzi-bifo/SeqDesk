@@ -8,6 +8,12 @@ import {
   type ExecutionSettings,
 } from '@/lib/pipelines/execution-settings';
 
+function normalizeString(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
 // GET - Get execution settings
 export async function GET() {
   try {
@@ -41,7 +47,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Validate pipelineRunDir - must be a proper directory path, not just "/"
-    let pipelineRunDir = body.pipelineRunDir || DEFAULT_EXECUTION_SETTINGS.pipelineRunDir;
+    let pipelineRunDir = normalizeString(
+      body.pipelineRunDir,
+      DEFAULT_EXECUTION_SETTINGS.pipelineRunDir
+    );
     if (pipelineRunDir === '/' || pipelineRunDir === '') {
       pipelineRunDir = DEFAULT_EXECUTION_SETTINGS.pipelineRunDir;
     }
@@ -49,18 +58,24 @@ export async function POST(request: NextRequest) {
     // Validate and merge with defaults
     const newSettings: ExecutionSettings = {
       useSlurm: body.useSlurm ?? DEFAULT_EXECUTION_SETTINGS.useSlurm,
-      slurmQueue: body.slurmQueue || DEFAULT_EXECUTION_SETTINGS.slurmQueue,
+      slurmQueue: normalizeString(body.slurmQueue, DEFAULT_EXECUTION_SETTINGS.slurmQueue),
       slurmCores: body.slurmCores ?? DEFAULT_EXECUTION_SETTINGS.slurmCores,
-      slurmMemory: body.slurmMemory || DEFAULT_EXECUTION_SETTINGS.slurmMemory,
+      slurmMemory: normalizeString(body.slurmMemory, DEFAULT_EXECUTION_SETTINGS.slurmMemory),
       slurmTimeLimit: body.slurmTimeLimit ?? DEFAULT_EXECUTION_SETTINGS.slurmTimeLimit,
-      slurmOptions: body.slurmOptions ?? DEFAULT_EXECUTION_SETTINGS.slurmOptions,
+      slurmOptions: normalizeString(body.slurmOptions, DEFAULT_EXECUTION_SETTINGS.slurmOptions),
       runtimeMode: 'conda',
-      condaPath: body.condaPath ?? DEFAULT_EXECUTION_SETTINGS.condaPath,
-      condaEnv: body.condaEnv ?? DEFAULT_EXECUTION_SETTINGS.condaEnv,
-      nextflowProfile: body.nextflowProfile ?? DEFAULT_EXECUTION_SETTINGS.nextflowProfile,
+      condaPath: normalizeString(body.condaPath, DEFAULT_EXECUTION_SETTINGS.condaPath),
+      condaEnv: normalizeString(body.condaEnv, DEFAULT_EXECUTION_SETTINGS.condaEnv),
+      nextflowProfile: normalizeString(
+        body.nextflowProfile,
+        DEFAULT_EXECUTION_SETTINGS.nextflowProfile
+      ),
       pipelineRunDir,
-      weblogUrl: body.weblogUrl ?? DEFAULT_EXECUTION_SETTINGS.weblogUrl,
-      weblogSecret: body.weblogSecret ?? DEFAULT_EXECUTION_SETTINGS.weblogSecret,
+      weblogUrl: normalizeString(body.weblogUrl, DEFAULT_EXECUTION_SETTINGS.weblogUrl),
+      weblogSecret: normalizeString(
+        body.weblogSecret,
+        DEFAULT_EXECUTION_SETTINGS.weblogSecret
+      ),
     };
 
     await saveExecutionSettings(newSettings);

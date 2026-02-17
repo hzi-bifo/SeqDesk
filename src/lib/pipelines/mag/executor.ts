@@ -213,16 +213,17 @@ function buildMagFlags(config: MagConfig): string[] {
 }
 
 function buildRuntimeBootstrap(settings: ExecutionSettings): string {
-  const condaEnv = settings.condaEnv || 'seqdesk-pipelines';
+  const condaEnv = settings.condaEnv?.trim() || 'seqdesk-pipelines';
+  const condaBase = settings.condaPath?.trim();
   const lines: string[] = [];
 
   lines.push(`CONDA_ENV="${condaEnv}"`);
   lines.push('NEXTFLOW_RUNNER=(nextflow)');
   lines.push('');
 
-  if (settings.condaPath) {
+  if (condaBase) {
     lines.push('# Initialize and activate conda environment');
-    lines.push(`CONDA_BASE="${settings.condaPath}"`);
+    lines.push(`CONDA_BASE="${condaBase}"`);
     lines.push('CONDA_SH="$CONDA_BASE/etc/profile.d/conda.sh"');
     lines.push('export PATH="$CONDA_BASE/bin:$PATH"');
     lines.push('if [ ! -f "$CONDA_SH" ]; then');
@@ -230,13 +231,9 @@ function buildRuntimeBootstrap(settings: ExecutionSettings): string {
     lines.push('  exit 1');
     lines.push('fi');
     lines.push('source "$CONDA_SH"');
-    lines.push('if ! conda env list | awk \'{print $1}\' | grep -qx "$CONDA_ENV"; then');
-    lines.push('  echo "ERROR: conda env $CONDA_ENV not found" >> "$STDERR_LOG"');
-    lines.push('  conda env list >> "$STDERR_LOG" 2>&1 || true');
-    lines.push('  exit 1');
-    lines.push('fi');
     lines.push('if ! conda activate "$CONDA_ENV" >> "$STDOUT_LOG" 2>> "$STDERR_LOG"; then');
     lines.push('  echo "ERROR: failed to activate conda env $CONDA_ENV" >> "$STDERR_LOG"');
+    lines.push('  conda env list >> "$STDERR_LOG" 2>&1 || true');
     lines.push('  exit 1');
     lines.push('fi');
     lines.push('');
