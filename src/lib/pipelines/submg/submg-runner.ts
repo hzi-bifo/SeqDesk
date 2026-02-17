@@ -4,6 +4,7 @@ import path from "path";
 import { db } from "@/lib/db";
 import type { ExecutionSettings } from "@/lib/pipelines/generic-executor";
 import { resolveAssemblySelection } from "@/lib/pipelines/assembly-selection";
+import { resolveOrderPlatform } from "@/lib/pipelines/order-platform";
 
 interface PrepareSubmgRunOptions {
   runId: string;
@@ -626,6 +627,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
           order: {
             select: {
               platform: true,
+              customFields: true,
               instrumentModel: true,
               librarySource: true,
               librarySelection: true,
@@ -903,7 +905,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     const yaml = buildSubmgYaml({
       studyAccession: study.studyAccessionId,
       studyTitle: study.title,
-      platform: mapSubmissionPlatform(sample.order.platform),
+      platform: mapSubmissionPlatform(resolveOrderPlatform(sample.order)),
       sampleCode,
       sampleTitle,
       taxId,

@@ -121,7 +121,7 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "account-validation": false,
   "funding-info": false,
   "billing-info": false,
-  "sequencing-tech": false,
+  "sequencing-tech": true,
   "ena-sample-fields": true, // Enabled by default - essential for ENA submission
   "notifications": false,
 };

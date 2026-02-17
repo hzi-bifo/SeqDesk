@@ -12,6 +12,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { db } from '@/lib/db';
 import { mapPlatformForPipeline } from '../metadata-validation';
+import { resolveOrderPlatform } from '../order-platform';
 import { generateSamplesheetFromConfig } from '../samplesheet-generator';
 import {
   PipelineAdapter,
@@ -297,6 +298,7 @@ export const magAdapter: PipelineAdapter = {
           select: {
             id: true,
             platform: true,
+            customFields: true,
           },
         },
       },
@@ -331,7 +333,7 @@ export const magAdapter: PipelineAdapter = {
       const r2Path = path.join(dataBasePath, pairedRead.file2!);
       const group = studyId;
 
-      const platform = mapPlatformForPipeline(sample.order?.platform, 'mag');
+      const platform = mapPlatformForPipeline(resolveOrderPlatform(sample.order), 'mag');
       if (!platform) {
         errors.push(`Sample ${sample.sampleId}: Unsupported sequencing platform for short reads`);
         continue;

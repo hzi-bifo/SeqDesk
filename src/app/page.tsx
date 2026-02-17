@@ -128,7 +128,7 @@ export default function HomePage() {
                 {[
                   "Create sequencing orders with sample metadata",
                   "Track order status from submission to delivery",
-                  "Download results and ENA accession numbers",
+                  "Download sequencing files, final assemblies, and ENA accession numbers",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
@@ -148,7 +148,7 @@ export default function HomePage() {
                 {[
                   "Receive and manage incoming orders",
                   "Update order status throughout the workflow",
-                  "Submit metadata to ENA and run pipelines",
+                  "Run pipelines, publish final assemblies, and submit to ENA",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
@@ -161,7 +161,7 @@ export default function HomePage() {
               {[
                 { title: "MIxS Standards", subtitle: "17 environmental checklists" },
                 { title: "ENA Submission", subtitle: "Direct archive upload" },
-                { title: "Spreadsheet Entry", subtitle: "Excel-like bulk editing" },
+                { title: "Assemblies", subtitle: "Final assembly downloads" },
                 { title: "Order Tracking", subtitle: "Real-time status updates" },
               ].map((feature, i) => (
                 <div key={i}>

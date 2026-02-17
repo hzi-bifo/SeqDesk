@@ -72,6 +72,7 @@ export default function AdminAccountsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [departmentSharing, setDepartmentSharing] = useState(false);
+  const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
   const [savingAccess, setSavingAccess] = useState(false);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -125,8 +126,12 @@ export default function AdminAccountsPage() {
       }
 
       if (accessRes.ok) {
-        const accessData = (await accessRes.json()) as { departmentSharing?: boolean };
+        const accessData = (await accessRes.json()) as {
+          departmentSharing?: boolean;
+          allowUserAssemblyDownload?: boolean;
+        };
         setDepartmentSharing(accessData.departmentSharing ?? false);
+        setAllowUserAssemblyDownload(accessData.allowUserAssemblyDownload ?? false);
       } else {
         hasPartialError = true;
       }
@@ -288,6 +293,29 @@ export default function AdminAccountsPage() {
     }
   };
 
+  const handleAllowUserAssemblyDownloadChange = async (enabled: boolean) => {
+    setSavingAccess(true);
+    setAllowUserAssemblyDownload(enabled);
+
+    try {
+      const res = await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowUserAssemblyDownload: enabled }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save setting");
+      }
+    } catch (error) {
+      console.error("Failed to save setting:", error);
+      setAllowUserAssemblyDownload(!enabled);
+      toast.error("Failed to save setting");
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -372,6 +400,27 @@ export default function AdminAccountsPage() {
                   id="department-sharing"
                   checked={departmentSharing}
                   onCheckedChange={handleDepartmentSharingChange}
+                  disabled={savingAccess}
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mt-6 pt-6 border-t">
+              <div className="space-y-1">
+                <Label htmlFor="assembly-download-sharing" className="text-sm font-medium">
+                  User Assembly Downloads
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  Allow users to download final assemblies generated for their studies.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {savingAccess && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+                <Switch
+                  id="assembly-download-sharing"
+                  checked={allowUserAssemblyDownload}
+                  onCheckedChange={handleAllowUserAssemblyDownloadChange}
                   disabled={savingAccess}
                 />
               </div>

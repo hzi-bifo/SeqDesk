@@ -9,8 +9,6 @@ import {
   Database,
   FileInput,
   FileOutput,
-  HardDrive,
-  Layers,
   Table,
 } from "lucide-react";
 
@@ -130,7 +128,8 @@ function getSourceDescription(source: string | null): {
     "order.platform": {
       table: "Order",
       field: "platform",
-      description: "Sequencing platform (ILLUMINA, etc.)",
+      description:
+        "Sequencing platform (or derived from Sequencing Technologies selection, if configured)",
     },
     "order.libraryStrategy": {
       table: "Order",
@@ -261,7 +260,7 @@ export function PipelineIntegrationDetails({
                           <Badge variant="outline" className="text-xs">Required</Badge>
                         ) : col.default !== undefined ? (
                           <span className="text-xs text-muted-foreground">
-                            Default: "{col.default}"
+                            Default: &quot;{col.default}&quot;
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground">Optional</span>

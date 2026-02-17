@@ -357,16 +357,23 @@ function buildPipelineFlags(
 
     for (const [uiKey, nfFlag] of Object.entries(execution.paramMap)) {
       const value = merged[uiKey];
+      const trimmedFlag = nfFlag.trim();
+
+      // Empty mappings mark SeqDesk-only settings that must not be passed to Nextflow.
+      if (!trimmedFlag) {
+        delete merged[uiKey];
+        continue;
+      }
 
       if (value === true) {
         // Boolean true -> add flag
-        flags.push(nfFlag);
+        flags.push(trimmedFlag);
       } else if (value === false || value === null || value === undefined || isBlankString(value)) {
         // Boolean false/null/undefined -> skip
         continue;
       } else {
         // Other values -> add flag with value
-        flags.push(`${nfFlag} ${value}`);
+        flags.push(`${trimmedFlag} ${value}`);
       }
 
       // Remove from merged so we don't process it again

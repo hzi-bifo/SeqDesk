@@ -110,6 +110,7 @@ import {
   getAllPackages,
   type PackageOutput,
 } from './package-loader';
+import { resolveOrderPlatform } from './order-platform';
 import { generateSamplesheetFromConfig } from './samplesheet-generator';
 import { runAllParsers, type ParsedData, type ParsedRow } from './parser-runtime';
 import {
@@ -347,7 +348,10 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
             assemblies: true,
             bins: true,
             order: {
-              select: { platform: true },
+              select: {
+                platform: true,
+                customFields: true,
+              },
             },
           },
         }),
@@ -406,9 +410,9 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
 
         if (input.scope === 'order' && input.source === 'order.platform') {
           for (const sample of samples) {
-            if (!sample.order?.platform) {
+            if (!resolveOrderPlatform(sample.order)) {
               issues.push(
-                `Sample ${sample.sampleId}: Order platform is required`
+                `Sample ${sample.sampleId}: Sequencing platform is required (set Order platform or Sequencing Technologies selection)`
               );
             }
           }

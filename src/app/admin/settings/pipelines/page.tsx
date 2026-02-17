@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
+  AlertTriangle,
   Loader2,
   Dna,
   FlaskConical,
@@ -91,6 +92,16 @@ interface PipelineDefinitionData {
   samplesheet?: SamplesheetConfig;
 }
 
+interface SequencingTechnologyOption {
+  id: string;
+  name: string;
+  manufacturer?: string;
+}
+
+interface SequencingTechResponse {
+  technologies: SequencingTechnologyOption[];
+}
+
 interface PipelineConfig {
   pipelineId: string;
   name: string;
@@ -108,6 +119,7 @@ interface PipelineConfig {
       title: string;
       description?: string;
       default?: unknown;
+      enum?: string[];
     }>;
   };
   defaultConfig: Record<string, unknown>;
@@ -221,6 +233,43 @@ function getCategoryColor(category: string): string {
   }
 }
 
+interface MetadataHint {
+  id: string;
+  label: string;
+  required?: boolean;
+  description: string;
+}
+
+function getPipelineMetadataHints(pipelineId: string): MetadataHint[] {
+  if (pipelineId === "mag") {
+    return [
+      {
+        id: "mag-platform",
+        label: "Sequencing platform",
+        required: true,
+        description:
+          'Required for MAG pre-check. Value comes from the system "Sequencing Platform" field or is derived from a "Sequencing Technologies" selection.',
+      },
+      {
+        id: "mag-short-read",
+        label: "Short-read compatibility",
+        description:
+          "MAG currently validates short-read platforms. ONT/PacBio selections (for example MinION, PromethION, Revio, Sequel) are treated as long-read and will block MAG start.",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function getEnumOptionLabel(key: string, value: string): string {
+  if (key === "runAt") {
+    if (value === "all") return "All Inputs (Default)";
+    if (value === "selected-technologies") return "Selected Sequencing Technologies";
+  }
+  return value;
+}
+
 function isSameConfigValue(a: unknown, b: unknown) {
   if (a === b) return true;
   if (a === undefined && b === undefined) return true;
@@ -277,6 +326,11 @@ export default function PipelineSettingsPage() {
     isLoading: storeLoading,
     mutate: mutateStore,
   } = useSWR("/api/admin/settings/pipelines/store", fetcher);
+
+  const { data: sequencingTechData } = useSWR<SequencingTechResponse>(
+    "/api/sequencing-tech",
+    fetcher
+  );
 
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -576,6 +630,14 @@ export default function PipelineSettingsPage() {
   const configEntries = selectedPipeline
     ? Object.entries(selectedPipeline.configSchema.properties)
     : [];
+  const metadataHints = selectedPipeline
+    ? getPipelineMetadataHints(selectedPipeline.pipelineId)
+    : [];
+  const availableSequencingTechnologies =
+    sequencingTechData?.technologies?.map((tech) => ({
+      id: tech.id,
+      label: tech.manufacturer ? `${tech.name} (${tech.manufacturer})` : tech.name,
+    })) || [];
   const changedConfigCount = selectedPipeline
     ? configEntries.reduce((count, [key]) => {
         return isSameConfigValue(localConfig[key], selectedPipeline.config[key])
@@ -584,6 +646,16 @@ export default function PipelineSettingsPage() {
       }, 0)
     : 0;
   const hasConfigChanges = changedConfigCount > 0;
+  const magSelectedTechnologyCount = Array.isArray(localConfig.allowedSequencingTechnologies)
+    ? localConfig.allowedSequencingTechnologies
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean).length
+    : 0;
+  const hasMagRunTargetSelectionError =
+    selectedPipeline?.pipelineId === "mag" &&
+    localConfig.runAt === "selected-technologies" &&
+    magSelectedTechnologyCount === 0;
 
   return (
     <PageContainer>
@@ -1179,6 +1251,35 @@ export default function PipelineSettingsPage() {
                 </div>
               </div>
 
+              {metadataHints.length > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 mb-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-700 mt-0.5" />
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                        Runtime Metadata Checks
+                      </p>
+                      {metadataHints.map((hint) => (
+                        <div key={hint.id}>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-amber-900">{hint.label}</p>
+                            {hint.required && (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] border-amber-500/40 text-amber-800 bg-amber-100"
+                              >
+                                Required
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-amber-800/90">{hint.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {configEntries.length === 0 ? (
                 <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center">
                   <Settings2 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
@@ -1198,6 +1299,16 @@ export default function PipelineSettingsPage() {
                       localConfig[key],
                       selectedPipeline.config[key]
                     );
+                    const isSequencingTechSelector =
+                      key === "allowedSequencingTechnologies" && schema.type === "array";
+                    const selectedTechnologyIds = Array.isArray(localConfig[key])
+                      ? localConfig[key]
+                          .filter((value): value is string => typeof value === "string")
+                          .map((value) => value.trim())
+                          .filter(Boolean)
+                      : [];
+                    const runAtIsSelectedTechnologies =
+                      localConfig.runAt === "selected-technologies";
 
                     return (
                       <div
@@ -1244,6 +1355,87 @@ export default function PipelineSettingsPage() {
                             <Label htmlFor={key} className="text-sm">
                               Enabled
                             </Label>
+                          </div>
+                        ) : schema.enum && schema.enum.length > 0 ? (
+                          <Select
+                            value={
+                              typeof localConfig[key] === "string"
+                                ? localConfig[key]
+                                : typeof defaultValue === "string"
+                                  ? defaultValue
+                                  : ""
+                            }
+                            onValueChange={(value) =>
+                              setLocalConfig((prev) => ({
+                                ...prev,
+                                [key]: value,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="bg-white">
+                              <SelectValue placeholder="Select value" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {schema.enum.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {getEnumOptionLabel(key, option)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : isSequencingTechSelector ? (
+                          <div className="space-y-3">
+                            {availableSequencingTechnologies.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">
+                                No sequencing technologies available.
+                              </p>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {availableSequencingTechnologies.map((tech) => {
+                                  const checked = selectedTechnologyIds.includes(tech.id);
+                                  return (
+                                    <div key={tech.id} className="flex items-center gap-2 rounded border border-border p-2 bg-white">
+                                      <Checkbox
+                                        id={`${key}-${tech.id}`}
+                                        checked={checked}
+                                        disabled={!runAtIsSelectedTechnologies}
+                                        onCheckedChange={(state) => {
+                                          setLocalConfig((prev) => {
+                                            const current = Array.isArray(prev[key])
+                                              ? prev[key]
+                                                  .filter((value): value is string => typeof value === "string")
+                                                  .map((value) => value.trim())
+                                                  .filter(Boolean)
+                                              : [];
+                                            const next = state === true
+                                              ? Array.from(new Set([...current, tech.id]))
+                                              : current.filter((value) => value !== tech.id);
+                                            return {
+                                              ...prev,
+                                              [key]: next,
+                                            };
+                                          });
+                                        }}
+                                      />
+                                      <Label htmlFor={`${key}-${tech.id}`} className="text-xs cursor-pointer">
+                                        {tech.label}
+                                      </Label>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {!runAtIsSelectedTechnologies && (
+                              <p className="text-xs text-muted-foreground">
+                                Set <span className="font-mono">runAt</span> to{" "}
+                                <span className="font-mono">selected-technologies</span> to activate this selector.
+                              </p>
+                            )}
+                            {runAtIsSelectedTechnologies && selectedTechnologyIds.length === 0 && (
+                              <p className="text-xs text-amber-700">
+                                Select at least one sequencing technology to activate this run target mode.
+                              </p>
+                            )}
                           </div>
                         ) : (
                           <Input
@@ -1296,6 +1488,11 @@ export default function PipelineSettingsPage() {
               {configError && (
                 <p className="text-sm text-destructive mt-4">{configError}</p>
               )}
+              {hasMagRunTargetSelectionError && (
+                <p className="text-sm text-amber-700 mt-4">
+                  MAG is set to <span className="font-mono">selected-technologies</span> but no sequencing technology is selected.
+                </p>
+              )}
             </div>
           )}
 
@@ -1321,7 +1518,10 @@ export default function PipelineSettingsPage() {
             >
               Cancel
             </Button>
-            <Button onClick={handleSaveConfig} disabled={saving || !hasConfigChanges}>
+            <Button
+              onClick={handleSaveConfig}
+              disabled={saving || !hasConfigChanges || hasMagRunTargetSelectionError}
+            >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save changes
             </Button>

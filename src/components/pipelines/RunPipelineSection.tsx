@@ -154,6 +154,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
     () => pipelinesData?.pipelines || [],
     [pipelinesData]
   );
+  const selectedPipelineId = selectedPipeline?.pipelineId;
 
   // Pre-check metadata for enabled pipelines
   useEffect(() => {
@@ -199,17 +200,9 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
 
     // Check prerequisites and metadata in parallel
     setLoadingPrereqs(true);
-    setLoadingMetadata(true);
 
     try {
-      const [prereqRes, metadataRes] = await Promise.all([
-        fetch("/api/admin/settings/pipelines/check-prerequisites"),
-        fetch("/api/pipelines/validate-metadata", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ studyId, pipelineId: pipeline.pipelineId }),
-        }),
-      ]);
+      const prereqRes = await fetch("/api/admin/settings/pipelines/check-prerequisites");
 
       if (prereqRes.ok) {
         const data = await prereqRes.json();
@@ -219,18 +212,59 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
           setPrereqsExpanded(true);
         }
       }
-
-      if (metadataRes.ok) {
-        const data = await metadataRes.json();
-        setMetadataValidation(data);
-      }
     } catch (err) {
       console.error("Failed to check prerequisites:", err);
     } finally {
       setLoadingPrereqs(false);
-      setLoadingMetadata(false);
     }
   };
+
+  useEffect(() => {
+    if (!runDialogOpen || !selectedPipelineId) return;
+
+    const sampleIds = Array.from(selectedSamples);
+    if (sampleIds.length === 0) {
+      setMetadataValidation(null);
+      setLoadingMetadata(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingMetadata(true);
+
+    const checkMetadata = async () => {
+      try {
+        const metadataRes = await fetch("/api/pipelines/validate-metadata", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            studyId,
+            pipelineId: selectedPipelineId,
+            sampleIds,
+          }),
+        });
+
+        if (!cancelled && metadataRes.ok) {
+          const data = await metadataRes.json();
+          setMetadataValidation(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setMetadataValidation(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingMetadata(false);
+        }
+      }
+    };
+
+    void checkMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runDialogOpen, selectedPipelineId, selectedSamples, studyId]);
 
   const toggleSample = (sampleId: string) => {
     const newSet = new Set(selectedSamples);

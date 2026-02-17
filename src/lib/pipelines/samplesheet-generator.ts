@@ -14,6 +14,7 @@
 
 import { db } from '@/lib/db';
 import { getPackageSamplesheet, type SamplesheetConfig as PackageSamplesheetConfig } from './package-loader';
+import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
@@ -60,7 +61,7 @@ function resolveSource(
       reads: Array<{ file1: string | null; file2: string | null }>;
     };
     study: { id: string; title?: string };
-    order: { platform?: string | null } | null;
+    order: { platform?: string | null; customFields?: string | null } | null;
     dataBasePath: string;
   }
 ): string | null {
@@ -83,7 +84,7 @@ function resolveSource(
   }
 
   if (source === 'order.platform') {
-    return order?.platform || null;
+    return resolveOrderPlatform(order);
   }
 
   // Handle reads with filters like "read.file1" + filters
@@ -195,6 +196,7 @@ export class SamplesheetGenerator {
           select: {
             id: true,
             platform: true,
+            customFields: true,
           },
         },
       },

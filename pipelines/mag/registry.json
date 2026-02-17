@@ -140,6 +140,19 @@
         "description": "Skip GTDB-Tk classification and database download",
         "default": false
       },
+      "runAt": {
+        "type": "string",
+        "title": "Run At",
+        "description": "Choose where MAG is allowed to run: all inputs (default) or only selected sequencing technologies.",
+        "default": "all",
+        "enum": ["all", "selected-technologies"]
+      },
+      "allowedSequencingTechnologies": {
+        "type": "array",
+        "title": "Allowed Sequencing Technologies",
+        "description": "Used when Run At is set to selected-technologies. Select technology IDs that are allowed to run MAG.",
+        "default": []
+      },
       "gtdbDb": {
         "type": "string",
         "title": "GTDB-Tk Database Path",
@@ -160,6 +173,8 @@
     "skipGunc": false,
     "skipQuast": false,
     "skipGtdb": false,
+    "runAt": "all",
+    "allowedSequencingTechnologies": [],
     "gtdbDb": ""
   },
   "icon": "Dna"
