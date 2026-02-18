@@ -70,6 +70,7 @@ const DEFAULT_LIBRARY_SOURCE = "METAGENOMIC";
 const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
+const DEFAULT_INSERT_SIZE = 300;
 interface RequiredChecklistField {
   label: string;
   aliases: string[];
@@ -105,6 +106,19 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
 function toString(value: unknown, fallback: string): string {
   if (typeof value === "string" && value.trim().length > 0) {
     return value.trim();
+  }
+  return fallback;
+}
+
+function toPositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
   }
   return fallback;
 }
@@ -324,6 +338,7 @@ function buildSubmgYaml(params: {
     librarySelection: string;
     libraryStrategy: string;
     instrumentModel: string;
+    insertSize: number;
   }>;
   assembly: {
     name: string;
@@ -366,7 +381,7 @@ function buildSubmgYaml(params: {
     lines.push(`  LIBRARY_SOURCE: "${escapeYaml(read.librarySource)}"`);
     lines.push(`  LIBRARY_SELECTION: "${escapeYaml(read.librarySelection)}"`);
     lines.push(`  LIBRARY_STRATEGY: "${escapeYaml(read.libraryStrategy)}"`);
-    lines.push("  INSERT_SIZE: \"0\"");
+    lines.push(`  INSERT_SIZE: "${read.insertSize}"`);
     lines.push(`  FASTQ1_FILE: "${escapeYaml(read.file1)}"`);
     lines.push(`  FASTQ2_FILE: "${escapeYaml(read.file2)}"`);
     lines.push(`  RELATED_SAMPLE_TITLE: "${escapeYaml(params.sampleTitle)}"`);
@@ -779,12 +794,13 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     };
   }
 
-  const skipChecks = toBoolean(options.config.skipChecks, true);
+  const skipChecks = toBoolean(options.config.skipChecks, false);
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
   const completenessSoftware = toString(options.config.completenessSoftware, "CheckM");
   const binningSoftware = toString(options.config.binningSoftware, "MetaBAT2");
+  const insertSize = toPositiveInteger(options.config.insertSize, DEFAULT_INSERT_SIZE);
 
   const runNumber = await generateRunNumber("submg");
   const runFolder = await prepareRunDirectory(runNumber, options.executionSettings.pipelineRunDir);
@@ -850,6 +866,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
           librarySelection: sample.order.librarySelection || DEFAULT_LIBRARY_SELECTION,
           libraryStrategy: sample.order.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
           instrumentModel: sample.order.instrumentModel || DEFAULT_INSTRUMENT,
+          insertSize,
         };
       })
     );
@@ -1038,6 +1055,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       librarySelection: read.librarySelection,
       libraryStrategy: read.libraryStrategy,
       instrumentModel: read.instrumentModel,
+      insertSize: read.insertSize,
     }));
 
     const yaml = buildSubmgYaml({
