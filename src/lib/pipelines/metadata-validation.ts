@@ -143,8 +143,37 @@ function normalizeChecklistFieldKey(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/&/g, ' and ')
     .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ');
+}
+
+function hasChecklistValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasChecklistValue(entry));
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = ['value', 'label', 'name', 'text'];
+    for (const key of preferredKeys) {
+      if (hasChecklistValue(record[key])) return true;
+    }
+    return Object.values(record).some((entry) => hasChecklistValue(entry));
+  }
+
+  return false;
 }
 
 function extractChecklistFieldSet(rawChecklistData: string | null): Set<string> {
@@ -154,13 +183,7 @@ function extractChecklistFieldSet(rawChecklistData: string | null): Set<string> 
   try {
     const parsed = JSON.parse(rawChecklistData) as Record<string, unknown>;
     for (const [key, value] of Object.entries(parsed)) {
-      if (value === null || value === undefined) continue;
-      if (typeof value === 'string' && value.trim().length === 0) continue;
-      if (
-        typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean'
-      ) {
+      if (hasChecklistValue(value)) {
         fields.add(normalizeChecklistFieldKey(key));
       }
     }
@@ -338,23 +361,22 @@ export async function validatePipelineMetadata(
 
     for (const sample of study.samples) {
       const checklistFieldSet = extractChecklistFieldSet(sample.checklistData);
+      const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS.filter(
+        (field) => !checklistFieldSet.has(normalizeChecklistFieldKey(field))
+      );
+
       if (!sample.checklistData) {
         issues.push({
-          field: 'checklistData',
-          message: `Sample ${sample.sampleId} is missing metadata (checklist data)`,
+          field: 'sampleMetadata',
+          message: `Sample ${sample.sampleId} is missing required metadata fields for SubMG: ${missingChecklistFields.join(', ')}`,
           severity: 'error',
         });
-      } else {
-        const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS.filter(
-          (field) => !checklistFieldSet.has(normalizeChecklistFieldKey(field))
-        );
-        if (missingChecklistFields.length > 0) {
-          issues.push({
-            field: 'sampleMetadata',
-            message: `Sample ${sample.sampleId} is missing required metadata fields for SubMG: ${missingChecklistFields.join(', ')}`,
-            severity: 'error',
-          });
-        }
+      } else if (missingChecklistFields.length > 0) {
+        issues.push({
+          field: 'sampleMetadata',
+          message: `Sample ${sample.sampleId} is missing required metadata fields for SubMG: ${missingChecklistFields.join(', ')}`,
+          severity: 'error',
+        });
       }
 
       if (!sample.taxId) {
