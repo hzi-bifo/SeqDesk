@@ -212,7 +212,8 @@ function normalizeChecklistFieldKey(value: string): string {
     .replace(/[_-]+/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/^mixs\s+/, "");
 }
 
 function findChecklistFieldValue(
