@@ -110,6 +110,8 @@ const SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS: SubmgRequiredSampleField[] = [
   },
 ];
 
+const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 type RunAtMode = 'all' | 'selected-technologies';
 
 interface PipelineRuntimeConfig {
@@ -377,12 +379,40 @@ export async function validatePipelineMetadata(
   };
 
   if (pipelineId === 'submg') {
+    const enaTestMode =
+      (
+        await db.siteSettings.findUnique({
+          where: { id: 'singleton' },
+          select: { enaTestMode: true },
+        })
+      )?.enaTestMode !== false;
+
     if (!study.studyAccessionId) {
       issues.push({
         field: 'studyAccessionId',
         message: 'Study must have an ENA accession (PRJ*) before SubMG submission',
         severity: 'error',
       });
+    }
+
+    if (enaTestMode) {
+      if (!study.testRegisteredAt) {
+        issues.push({
+          field: 'studyAccessionId',
+          message:
+            'ENA target is Test server, but this study was not registered on ENA Test. Register the study on Test first (or switch ENA target to Production).',
+          severity: 'error',
+        });
+      } else {
+        const registrationAgeMs = Date.now() - new Date(study.testRegisteredAt).getTime();
+        if (registrationAgeMs > TEST_STUDY_ACCESSION_MAX_AGE_MS) {
+          issues.push({
+            field: 'studyAccessionId',
+            message: `ENA Test registration is older than 24 hours (${study.testRegisteredAt.toISOString()}) and may be expired. Re-register the study on ENA Test before SubMG submission.`,
+            severity: 'error',
+          });
+        }
+      }
     }
 
     for (const sample of study.samples) {
