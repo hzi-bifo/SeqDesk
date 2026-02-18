@@ -73,6 +73,14 @@ const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
 const DEFAULT_INSERT_SIZE = 300;
 const DEFAULT_ASSEMBLY_COVERAGE = 1;
 const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const ASSEMBLY_COVERAGE_FIELD_CANDIDATES = [
+  "assembly_coverage_value",
+  "coverage_value",
+  "coverage_depth",
+  "target_coverage_depth",
+  "target_coverage",
+  "coverage",
+];
 interface RequiredChecklistField {
   label: string;
   aliases: string[];
@@ -136,6 +144,48 @@ function toPositiveNumber(value: unknown, fallback: number): number {
     }
   }
   return fallback;
+}
+
+function parseJsonRecord(raw: unknown): Record<string, unknown> | null {
+  if (!raw) return null;
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function resolveCoverageFromMetadata(
+  values: Array<Record<string, unknown> | null>,
+  fallback: number
+): { value: number; source: string | null } {
+  for (const fields of values) {
+    if (!fields) continue;
+
+    for (const key of ASSEMBLY_COVERAGE_FIELD_CANDIDATES) {
+      const candidate = fields[key];
+      if (candidate === undefined || candidate === null) continue;
+      const parsed = toPositiveNumber(candidate, Number.NaN);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return { value: parsed, source: key };
+      }
+    }
+  }
+
+  return { value: fallback, source: null };
 }
 
 function shellEscape(value: string): string {
@@ -966,7 +1016,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
-  const assemblyCoverageValue = toPositiveNumber(
+  const configAssemblyCoverageValue = toPositiveNumber(
     options.config.assemblyCoverageValue ?? options.config.coverageValue,
     DEFAULT_ASSEMBLY_COVERAGE
   );
@@ -985,6 +1035,21 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     const sampleTitle = sample.sampleTitle || sample.sampleAlias || sample.sampleId;
     const sampleErrors: string[] = [];
     const sampleWarnings: string[] = [];
+    const sampleCustomFields = parseJsonRecord(sample.customFields);
+    const orderCustomFields = parseJsonRecord(sample.order?.customFields);
+    const resolvedCoverage = resolveCoverageFromMetadata(
+      [sampleCustomFields, orderCustomFields],
+      configAssemblyCoverageValue
+    );
+
+    if (resolvedCoverage.source === null && configAssemblyCoverageValue === DEFAULT_ASSEMBLY_COVERAGE) {
+      sampleWarnings.push(
+        formatSampleIssue(
+          sample.sampleId,
+          `assembly coverage value not provided; using default ${DEFAULT_ASSEMBLY_COVERAGE}. Set coverage_depth (or assemblyCoverageValue pipeline config) to override.`
+        )
+      );
+    }
 
     if (!sample.taxId) {
       sampleErrors.push(
@@ -1265,7 +1330,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       assembly: {
         name: `${sampleCode}_assembly`,
         software: assemblySoftware,
-        coverageValue: assemblyCoverageValue,
+        coverageValue: resolvedCoverage.value,
         file: absAssemblyPath as string,
       },
       bins:
