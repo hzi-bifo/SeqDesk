@@ -890,7 +890,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     };
   }
 
-  const skipChecks = false;
+  const skipChecks = toBoolean(options.config.skipChecks, true);
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
