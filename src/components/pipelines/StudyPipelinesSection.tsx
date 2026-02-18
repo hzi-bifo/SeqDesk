@@ -690,6 +690,29 @@ function getPipelineReadiness(params: {
       byField.set(issue.field, current);
     }
 
+    const metadataFieldMissingSampleIds = new Map<string, Set<string>>();
+    const sampleMetadataIssues = [
+      ...(byField.get("sampleMetadata") || []),
+      ...(byField.get("checklistData") || []),
+    ];
+    for (const issue of sampleMetadataIssues) {
+      const sampleToken = extractSampleToken(issue.message) || issue.message;
+      const missingFields = extractSubmgMissingMetadataFields(issue.message);
+      for (const fieldName of missingFields) {
+        const sampleSet = metadataFieldMissingSampleIds.get(fieldName) || new Set<string>();
+        sampleSet.add(sampleToken);
+        metadataFieldMissingSampleIds.set(fieldName, sampleSet);
+      }
+    }
+
+    let sampleMetadataMissingSummary: string | undefined;
+    if (metadataFieldMissingSampleIds.size > 0 && totalSamples > 0) {
+      sampleMetadataMissingSummary = Array.from(metadataFieldMissingSampleIds.entries())
+        .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+        .map(([fieldName, sampleIds]) => `${fieldName} (${sampleIds.size}/${totalSamples})`)
+        .join(", ");
+    }
+
     const checks: PipelineReadinessCheck[] = [];
 
     const addStudyCheck = (id: string, label: string, fields: string[]) => {
@@ -736,11 +759,20 @@ function getPipelineReadiness(params: {
     const requiredChecks = checks.filter((check) => check.required);
     const requiredReady = requiredChecks.filter((check) => check.ready).length;
     const requiredTotal = requiredChecks.length;
-    const missingRequired = requiredChecks.filter((check) => !check.ready).map((check) => check.label);
+    const missingRequired = formatSampleMissingRequiredLabels(
+      requiredChecks.filter((check) => !check.ready).map((check) => check.label),
+      sampleMetadataMissingSummary ? [sampleMetadataMissingSummary] : []
+    );
 
     const checkDetails = requiredChecks
       .filter((check) => check.total > 1)
-      .map((check) => `${check.label}: ${check.available}/${check.total} samples`);
+      .map((check) => {
+        const base = `${check.label}: ${check.available}/${check.total} samples`;
+        if (check.label === "Sample metadata" && sampleMetadataMissingSummary) {
+          return `${base} • fields: ${sampleMetadataMissingSummary}`;
+        }
+        return base;
+      });
 
     return {
       canRun: requiredReady === requiredTotal,
