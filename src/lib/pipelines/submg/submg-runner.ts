@@ -70,8 +70,24 @@ const DEFAULT_LIBRARY_SOURCE = "METAGENOMIC";
 const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
-const REQUIRED_COLLECTION_DATE_FIELD = "collection date";
-const REQUIRED_GEO_LOCATION_FIELD = "geographic location (country and/or sea)";
+interface RequiredChecklistField {
+  label: string;
+  aliases: string[];
+}
+
+const REQUIRED_COLLECTION_DATE_FIELD: RequiredChecklistField = {
+  label: "collection date",
+  aliases: ["collection date", "collection_date"],
+};
+
+const REQUIRED_GEO_LOCATION_FIELD: RequiredChecklistField = {
+  label: "geographic location (country and/or sea)",
+  aliases: [
+    "geographic location (country and/or sea)",
+    "geographic_location",
+    "geographic location",
+  ],
+};
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
@@ -227,6 +243,17 @@ function findChecklistFieldValue(
     if (trimmed.length > 0) {
       return trimmed;
     }
+  }
+  return null;
+}
+
+function findChecklistFieldValueByAliases(
+  fields: Array<{ key: string; value: string }>,
+  aliases: string[]
+): string | null {
+  for (const alias of aliases) {
+    const value = findChecklistFieldValue(fields, alias);
+    if (value) return value;
   }
   return null;
 }
@@ -938,13 +965,19 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     }
 
     const checklistFields = extractScalarChecklistFields(sample.checklistData);
-    const collectionDate = findChecklistFieldValue(checklistFields, REQUIRED_COLLECTION_DATE_FIELD);
-    const geographicLocation = findChecklistFieldValue(checklistFields, REQUIRED_GEO_LOCATION_FIELD);
+    const collectionDate = findChecklistFieldValueByAliases(
+      checklistFields,
+      REQUIRED_COLLECTION_DATE_FIELD.aliases
+    );
+    const geographicLocation = findChecklistFieldValueByAliases(
+      checklistFields,
+      REQUIRED_GEO_LOCATION_FIELD.aliases
+    );
     if (!collectionDate) {
       sampleErrors.push(
         formatSampleIssue(
           sample.sampleId,
-          `is missing "${REQUIRED_COLLECTION_DATE_FIELD}" in checklist metadata. Add it before running SubMG.`
+          `is missing "${REQUIRED_COLLECTION_DATE_FIELD.label}" in checklist metadata. Add it before running SubMG.`
         )
       );
     }
@@ -952,13 +985,13 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       sampleErrors.push(
         formatSampleIssue(
           sample.sampleId,
-          `is missing "${REQUIRED_GEO_LOCATION_FIELD}" in checklist metadata. Add it before running SubMG.`
+          `is missing "${REQUIRED_GEO_LOCATION_FIELD.label}" in checklist metadata. Add it before running SubMG.`
         )
       );
     }
     const additionalChecklistFields = filterChecklistFields(checklistFields, [
-      REQUIRED_COLLECTION_DATE_FIELD,
-      REQUIRED_GEO_LOCATION_FIELD,
+      ...REQUIRED_COLLECTION_DATE_FIELD.aliases,
+      ...REQUIRED_GEO_LOCATION_FIELD.aliases,
     ]);
 
     if (sampleErrors.length > 0) {

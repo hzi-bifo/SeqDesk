@@ -196,6 +196,23 @@ function getPerSampleFieldValue(row: SampleMetadataRow, field: PerSampleField): 
   return undefined;
 }
 
+function normalizeLegacySubmgFieldName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+const LEGACY_SUBMG_PER_SAMPLE_FIELDS = new Set([
+  "collection date",
+  "geographic location",
+]);
+
+function isLegacySubmgPerSampleFieldName(value: string): boolean {
+  return LEGACY_SUBMG_PER_SAMPLE_FIELDS.has(normalizeLegacySubmgFieldName(value));
+}
+
 // Editable cell component
 const EditableCell = React.memo(function EditableCell({
   getValue, row, column, table,
@@ -944,7 +961,12 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   }, [selectedSampleIds, availableSamples, id]);
 
   const hasPerSampleFields = useMemo(() => {
-    const hasCustomFields = (formConfig?.perSampleFields?.length || 0) > 0;
+    const mixsFieldsActive = Boolean(formConfig?.modules.mixs && mixsTemplate);
+    const hasCustomFields = (formConfig?.perSampleFields || []).some((field) => {
+      if (field.visible === false) return false;
+      if (mixsFieldsActive && isLegacySubmgPerSampleFieldName(field.name)) return false;
+      return true;
+    });
     const hasMixsFields = formConfig?.modules.mixs && mixsTemplate && mixsTemplate.fields.length > 0;
     return hasCustomFields || hasMixsFields;
   }, [formConfig, mixsTemplate]);
@@ -953,12 +975,16 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     const customFields: PerSampleField[] = [];
     const requiredMixsFields: PerSampleField[] = [];
     const optionalMixsFields: PerSampleField[] = [];
+    const mixsFieldsActive = Boolean(formConfig?.modules.mixs && mixsTemplate);
 
     if (formConfig?.perSampleFields) {
       const sortedPerSampleFields = [...formConfig.perSampleFields].sort((a, b) => a.order - b.order);
       for (let i = 0; i < sortedPerSampleFields.length; i++) {
         const field = sortedPerSampleFields[i];
-        if (field.visible !== false) {
+        if (
+          field.visible !== false &&
+          !(mixsFieldsActive && isLegacySubmgPerSampleFieldName(field.name))
+        ) {
           customFields.push({
             id: field.id || field.name, name: field.name, label: field.label, type: field.type,
             required: field.required, visible: true, order: field.order ?? i,
