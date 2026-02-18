@@ -58,6 +58,23 @@ const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
 const STUDY_INFO_VISITED_KEY = "studyFormBuilderInfoVisited";
 const STUDY_INFO_COLLAPSED_KEY = "studyFormBuilderInfoCollapsed";
 
+const LEGACY_SUBMG_PER_SAMPLE_FIELDS = new Set([
+  "collection date",
+  "geographic location",
+]);
+
+function normalizeLegacySubmgFieldName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function isLegacySubmgPerSampleFieldName(value: string): boolean {
+  return LEGACY_SUBMG_PER_SAMPLE_FIELDS.has(normalizeLegacySubmgFieldName(value));
+}
+
 export default function StudyFormBuilderPage() {
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
@@ -612,6 +629,25 @@ export default function StudyFormBuilderPage() {
     .filter((f) => f.perSample)
     .sort((a, b) => a.order - b.order);
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
+  const hasMixsField = visibleFields.some((f) => f.type === "mixs");
+  const duplicateLegacyPerSampleFields = orderedPerSampleFields.filter((field) =>
+    isLegacySubmgPerSampleFieldName(field.name)
+  );
+
+  const removeLegacySubmgPerSampleFields = () => {
+    setFields((currentFields) => {
+      const filtered = currentFields.filter(
+        (field) => !(field.perSample && isLegacySubmgPerSampleFieldName(field.name))
+      );
+      const orderedPerSample = filtered
+        .filter((field) => field.perSample)
+        .sort((a, b) => a.order - b.order);
+      const nextOrderById = new Map(orderedPerSample.map((field, index) => [field.id, index]));
+      return filtered.map((field) =>
+        field.perSample ? { ...field, order: nextOrderById.get(field.id) ?? field.order } : field
+      );
+    });
+  };
 
   const autoSaveMessage = (() => {
     if (autoSaveStatus === "saving") return "Saving changes...";
@@ -1118,6 +1154,22 @@ export default function StudyFormBuilderPage() {
         <p className="text-sm text-muted-foreground mb-4">
           Fields filled <strong>for each sample</strong> in a table view. Use for sample-specific metadata like collection date, geographic location, or treatment conditions.
         </p>
+        {hasMixsField && duplicateLegacyPerSampleFields.length > 0 && (
+          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-100/70 p-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-amber-800">
+              MIxS is active and already provides collection date/location fields. Remove legacy duplicate fields to avoid showing both.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-amber-400 text-amber-800 hover:bg-amber-200"
+              onClick={removeLegacySubmgPerSampleFields}
+            >
+              Remove duplicates
+            </Button>
+          </div>
+        )}
 
         <div className="space-y-3">
           {orderedPerSampleFields.map((field, index) => {
@@ -1153,6 +1205,11 @@ export default function StudyFormBuilderPage() {
                         Required
                       </span>
                     )}
+                    {hasMixsField && isLegacySubmgPerSampleFieldName(field.name) && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                        Duplicated by MIxS
+                      </span>
+                    )}
                   </div>
                   {field.helpText && (
                     <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
@@ -1176,7 +1233,7 @@ export default function StudyFormBuilderPage() {
           })}
 
           {/* MIxS Per-Sample Fields Indicator - shown when MIxS is added to study fields */}
-          {visibleFields.some((f) => f.type === "mixs") && (
+          {hasMixsField && (
             <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-100/50 border border-emerald-200">
               <div className="h-8 w-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
                 <Leaf className="h-4 w-4 text-emerald-600" />
@@ -1198,7 +1255,7 @@ export default function StudyFormBuilderPage() {
             </div>
           )}
 
-          {orderedPerSampleFields.length === 0 && !visibleFields.some((f) => f.type === "mixs") && (
+          {orderedPerSampleFields.length === 0 && !hasMixsField && (
             <div className="text-center py-6 text-amber-600/70 border border-dashed border-amber-300 rounded-lg bg-amber-50">
               No per-sample fields defined. Add fields here for data that varies between samples.
             </div>
@@ -1216,6 +1273,7 @@ export default function StudyFormBuilderPage() {
           </h3>
           <p className="text-sm text-muted-foreground">
             Common fields for sample-level metadata. Click to add.
+            {hasMixsField && " Collection Date and Geographic Location are managed by MIxS while the module is active."}
           </p>
         </div>
 
@@ -1232,19 +1290,26 @@ export default function StudyFormBuilderPage() {
               helpText: "Date when the sample was collected",
             };
             const alreadyAdded = fields.some((f) => f.name === dateField.name);
+            const blockedByMixs = hasMixsField;
+            const disabled = alreadyAdded || blockedByMixs;
             return (
               <button
                 type="button"
-                onClick={() => !alreadyAdded && addSuggestedField(dateField)}
-                disabled={alreadyAdded}
+                onClick={() => !disabled && addSuggestedField(dateField)}
+                disabled={disabled}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
-                  alreadyAdded
+                  disabled
                     ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
                     : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
                 }`}
               >
-                <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
+                <Plus className={`h-3 w-3 ${disabled ? "opacity-30" : ""}`} />
                 <span>Collection Date</span>
+                {blockedByMixs && (
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                    MIxS
+                  </span>
+                )}
                 {alreadyAdded && <Check className="h-3 w-3 text-green-500" />}
               </button>
             );
@@ -1263,19 +1328,26 @@ export default function StudyFormBuilderPage() {
               placeholder: "e.g., Germany:Lower Saxony:Braunschweig",
             };
             const alreadyAdded = fields.some((f) => f.name === locationField.name);
+            const blockedByMixs = hasMixsField;
+            const disabled = alreadyAdded || blockedByMixs;
             return (
               <button
                 type="button"
-                onClick={() => !alreadyAdded && addSuggestedField(locationField)}
-                disabled={alreadyAdded}
+                onClick={() => !disabled && addSuggestedField(locationField)}
+                disabled={disabled}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
-                  alreadyAdded
+                  disabled
                     ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
                     : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
                 }`}
               >
-                <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
+                <Plus className={`h-3 w-3 ${disabled ? "opacity-30" : ""}`} />
                 <span>Geographic Location</span>
+                {blockedByMixs && (
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                    MIxS
+                  </span>
+                )}
                 {alreadyAdded && <Check className="h-3 w-3 text-green-500" />}
               </button>
             );

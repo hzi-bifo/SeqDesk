@@ -90,10 +90,25 @@ const MAG_LONG_READ_PLATFORM_MATCHES = [
   'revio',
 ];
 
-const SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS = [
-  'collection date',
-  'geographic location (country and/or sea)',
-] as const;
+interface SubmgRequiredSampleField {
+  label: string;
+  aliases: string[];
+}
+
+const SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS: SubmgRequiredSampleField[] = [
+  {
+    label: 'collection date',
+    aliases: ['collection date', 'collection_date'],
+  },
+  {
+    label: 'geographic location (country and/or sea)',
+    aliases: [
+      'geographic location (country and/or sea)',
+      'geographic_location',
+      'geographic location',
+    ],
+  },
+];
 
 type RunAtMode = 'all' | 'selected-technologies';
 
@@ -194,6 +209,15 @@ function extractChecklistFieldSet(rawChecklistData: string | null): Set<string> 
   }
 
   return fields;
+}
+
+function hasRequiredChecklistField(
+  checklistFieldSet: Set<string>,
+  requiredField: SubmgRequiredSampleField
+): boolean {
+  return requiredField.aliases.some((alias) =>
+    checklistFieldSet.has(normalizeChecklistFieldKey(alias))
+  );
 }
 
 /**
@@ -363,9 +387,9 @@ export async function validatePipelineMetadata(
 
     for (const sample of study.samples) {
       const checklistFieldSet = extractChecklistFieldSet(sample.checklistData);
-      const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS.filter(
-        (field) => !checklistFieldSet.has(normalizeChecklistFieldKey(field))
-      );
+      const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS
+        .filter((field) => !hasRequiredChecklistField(checklistFieldSet, field))
+        .map((field) => field.label);
 
       if (!sample.checklistData) {
         issues.push({
