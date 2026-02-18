@@ -582,6 +582,32 @@ function buildSubmgScript(params: {
   lines.push("fi");
   lines.push('SUBMG_BIN="$(command -v submg)"');
   lines.push("");
+  lines.push("extract_yaml_fastq_value() {");
+  lines.push('  local key="$1"');
+  lines.push('  local yaml_file="$2"');
+  lines.push(
+    "  awk -F'\"' -v key=\"$key\" '$0 ~ \"^[[:space:]]*\" key \":[[:space:]]*\\\\\\\"\" { print $2; exit }' \"$yaml_file\""
+  );
+  lines.push("}");
+  lines.push("");
+  lines.push("escape_sed_replacement() {");
+  lines.push('  printf "%s" "$1" | sed -e \'s/[\\\\/&]/\\\\\\\\&/g\'');
+  lines.push("}");
+  lines.push("");
+  lines.push("materialize_fastq_path() {");
+  lines.push('  local source_path="$1"');
+  lines.push('  local target_dir="$2"');
+  lines.push('  if [[ "$source_path" == *.gz ]]; then');
+  lines.push('    local target_path="$target_dir/$(basename "${source_path%.gz}")"');
+  lines.push('    if [ ! -f "$target_path" ]; then');
+  lines.push('      gzip -dc "$source_path" > "$target_path"');
+  lines.push("    fi");
+  lines.push('    printf "%s" "$target_path"');
+  lines.push("    return 0");
+  lines.push("  fi");
+  lines.push('  printf "%s" "$source_path"');
+  lines.push("}");
+  lines.push("");
 
   for (const entry of entries) {
     lines.push(`echo "Submitting sample ${entry.sampleCode} (${entry.index + 1}/${entries.length})" >> "$STDOUT_LOG"`);
@@ -589,13 +615,37 @@ function buildSubmgScript(params: {
     lines.push('LOGGING_DIR="$RUN_FOLDER/logging"');
     lines.push('OUTPUT_FILE="$RUN_FOLDER/output"');
     lines.push('ERROR_FILE="$RUN_FOLDER/error"');
+    lines.push(`YAML_SOURCE=${shellEscape(entry.yamlPath)}`);
+    lines.push(`YAML_RUNTIME="$RUN_FOLDER/submg_runtime_${entry.index}.yaml"`);
+    lines.push(`READS_PREP_DIR="$RUN_FOLDER/reads_prepared_${entry.index}"`);
     lines.push('mkdir -p "$STAGING_DIR" "$LOGGING_DIR"');
+    lines.push('rm -rf "$READS_PREP_DIR"');
+    lines.push('mkdir -p "$READS_PREP_DIR"');
     lines.push('rm -f "$OUTPUT_FILE" "$ERROR_FILE"');
+    lines.push('FASTQ1_SOURCE="$(extract_yaml_fastq_value FASTQ1_FILE "$YAML_SOURCE")"');
+    lines.push('FASTQ2_SOURCE="$(extract_yaml_fastq_value FASTQ2_FILE "$YAML_SOURCE")"');
+    lines.push('if [ -z "$FASTQ1_SOURCE" ] || [ -z "$FASTQ2_SOURCE" ]; then');
+    lines.push('  echo "Failed to parse FASTQ paths from $YAML_SOURCE" >> "$STDERR_LOG"');
+    lines.push("  exit 1");
+    lines.push("fi");
+    lines.push('FASTQ1_RUNTIME="$(materialize_fastq_path "$FASTQ1_SOURCE" "$READS_PREP_DIR")"');
+    lines.push('FASTQ2_RUNTIME="$(materialize_fastq_path "$FASTQ2_SOURCE" "$READS_PREP_DIR")"');
+    lines.push('cp "$YAML_SOURCE" "$YAML_RUNTIME"');
+    lines.push('FASTQ1_RUNTIME_ESCAPED="$(escape_sed_replacement "$FASTQ1_RUNTIME")"');
+    lines.push('FASTQ2_RUNTIME_ESCAPED="$(escape_sed_replacement "$FASTQ2_RUNTIME")"');
+    lines.push("sed -i \\");
+    lines.push(
+      '  -e "s|^\\([[:space:]]*FASTQ1_FILE:[[:space:]]*\\"\\).*\\(\\"[[:space:]]*$\\)|\\1${FASTQ1_RUNTIME_ESCAPED}\\2|" \\'
+    );
+    lines.push(
+      '  -e "s|^\\([[:space:]]*FASTQ2_FILE:[[:space:]]*\\"\\).*\\(\\"[[:space:]]*$\\)|\\1${FASTQ2_RUNTIME_ESCAPED}\\2|" \\'
+    );
+    lines.push('  "$YAML_RUNTIME"');
 
     const commandParts = [
       '"$SUBMG_BIN"',
       "submit",
-      `--config ${shellEscape(entry.yamlPath)}`,
+      '--config "$YAML_RUNTIME"',
       '--staging_dir "$STAGING_DIR"',
       '--logging_dir "$LOGGING_DIR"',
       "--submit_samples",
@@ -619,6 +669,8 @@ function buildSubmgScript(params: {
     lines.push(`if [ -d "$LOGGING_DIR" ]; then mv "$LOGGING_DIR" "$RUN_FOLDER/logging_${entry.index}"; fi`);
     lines.push(`if [ -f "$OUTPUT_FILE" ]; then mv "$OUTPUT_FILE" "$RUN_FOLDER/output_${entry.index}"; fi`);
     lines.push(`if [ -f "$ERROR_FILE" ]; then mv "$ERROR_FILE" "$RUN_FOLDER/error_${entry.index}"; fi`);
+    lines.push('if [ -f "$YAML_RUNTIME" ]; then rm -f "$YAML_RUNTIME"; fi');
+    lines.push('if [ -d "$READS_PREP_DIR" ]; then rm -rf "$READS_PREP_DIR"; fi');
     lines.push("");
   }
 
@@ -890,7 +942,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     };
   }
 
-  const skipChecks = toBoolean(options.config.skipChecks, true);
+  const skipChecks = toBoolean(options.config.skipChecks, false);
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
