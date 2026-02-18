@@ -178,6 +178,24 @@ function validateFieldValue(field: FormFieldDefinition | undefined, value: unkno
   return null;
 }
 
+function getStoredChecklistKey(field: PerSampleField): string {
+  if (field.source === "mixs" && field.name.startsWith("_mixs_")) {
+    return field.name.replace(/^_mixs_/, "");
+  }
+  return field.name;
+}
+
+function getPerSampleFieldValue(row: SampleMetadataRow, field: PerSampleField): unknown {
+  const direct = row[field.name];
+  if (direct !== undefined) return direct;
+
+  if (field.source === "mixs" && field.name.startsWith("_mixs_")) {
+    return row[field.name.replace(/^_mixs_/, "")];
+  }
+
+  return undefined;
+}
+
 // Editable cell component
 const EditableCell = React.memo(function EditableCell({
   getValue, row, column, table,
@@ -845,11 +863,23 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           const data = await res.json();
           setMixsTemplate(data);
           // Select required fields + any fields that have data in sampleMetadata
+          const mixsFieldNames = new Set<string>(
+            data.fields.map((field: MixsField) => field.name)
+          );
           const fieldsWithData = new Set<string>();
           sampleMetadata.forEach(row => {
             Object.keys(row).forEach(key => {
-              if (key.startsWith('_mixs_') && row[key]) {
-                fieldsWithData.add(key.replace('_mixs_', ''));
+              const candidate = key.startsWith("_mixs_")
+                ? key.replace("_mixs_", "")
+                : key;
+              const value = row[key];
+              const hasValue =
+                value !== undefined &&
+                value !== null &&
+                value !== "" &&
+                (!Array.isArray(value) || value.length > 0);
+              if (mixsFieldNames.has(candidate) && hasValue) {
+                fieldsWithData.add(candidate);
               }
             });
           });
@@ -1133,7 +1163,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
       cols.push({
         id: field.name,
-        accessorFn: (row) => row[field.name] ?? "",
+        accessorFn: (row) => getPerSampleFieldValue(row, field) ?? "",
         header: () => (
           <span className={cn("flex items-center gap-1", isMixsField && "text-emerald-800")}>
             {field.label}
@@ -1202,7 +1232,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     if (formConfig?.modules.sampleAssociation && hasPerSampleFields) {
       for (const row of sampleMetadata) {
         for (const field of allPerSampleFields) {
-          const value = row[field.name];
+          const value = getPerSampleFieldValue(row, field);
           const validationError = validateFieldValue(field as FormFieldDefinition, value);
           if (validationError) {
             warnings.push(`${row.sampleId}: ${field.label} ${validationError}`);
@@ -1272,14 +1302,14 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         for (const row of sampleMetadata) {
           const data: Record<string, unknown> = {};
           for (const field of allPerSampleFields) {
-            const value = row[field.name];
+            const value = getPerSampleFieldValue(row, field);
             const isEmptyValue =
               value === undefined ||
               value === null ||
               value === "" ||
               (Array.isArray(value) && value.length === 0);
             if (!isEmptyValue) {
-              data[field.name] = value;
+              data[getStoredChecklistKey(field)] = value;
             }
           }
           if (Object.keys(data).length > 0) {
