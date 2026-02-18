@@ -71,6 +71,7 @@ const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
 const DEFAULT_INSERT_SIZE = 300;
+const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 interface RequiredChecklistField {
   label: string;
   aliases: string[];
@@ -781,6 +782,30 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     };
   }
 
+  const enaTestMode = siteSettings.enaTestMode !== false;
+  if (enaTestMode) {
+    if (!study.testRegisteredAt) {
+      return {
+        success: false,
+        errors: [
+          `ENA target is Test server, but study ${study.studyAccessionId} has no ENA Test registration timestamp. Register the study on ENA Test first (or switch ENA target to Production).`,
+        ],
+        warnings,
+      };
+    }
+
+    const registrationAgeMs = Date.now() - new Date(study.testRegisteredAt).getTime();
+    if (registrationAgeMs > TEST_STUDY_ACCESSION_MAX_AGE_MS) {
+      return {
+        success: false,
+        errors: [
+          `ENA Test registration for study ${study.studyAccessionId} is older than 24 hours (${study.testRegisteredAt.toISOString()}) and may be expired. Re-register the study on ENA Test before SubMG submission.`,
+        ],
+        warnings,
+      };
+    }
+  }
+
   const requestedSampleIds = parseSampleSelection(run.inputSampleIds, options.sampleIds);
   const selectedSamples = requestedSampleIds
     ? study.samples.filter((sample) => requestedSampleIds.includes(sample.id))
@@ -794,7 +819,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     };
   }
 
-  const skipChecks = toBoolean(options.config.skipChecks, false);
+  const skipChecks = false;
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
