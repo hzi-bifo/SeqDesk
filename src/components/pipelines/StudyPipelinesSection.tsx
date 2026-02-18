@@ -144,6 +144,7 @@ interface SubmgCoverageCheck {
   available: number;
   total: number;
   missingSampleIds: string[];
+  missingDetail?: string;
 }
 
 interface SubmgCoverageSummary {
@@ -155,6 +156,8 @@ interface SubmgCoverageSummary {
   studyAccessionMissing: boolean;
   blocking: boolean;
   sampleMissingRequired: Record<string, string[]>;
+  sampleMissingMetadataFields: Record<string, string[]>;
+  sampleMetadataMissingSummary?: string;
 }
 
 interface Pipeline {
@@ -352,6 +355,30 @@ function extractSampleToken(message: string): string | null {
   return match[1].trim();
 }
 
+const SUBMG_REQUIRED_METADATA_FALLBACK_FIELDS = [
+  "collection date",
+  "geographic location (country and/or sea)",
+] as const;
+
+function extractSubmgMissingMetadataFields(message: string): string[] {
+  const marker = "is missing required metadata fields for SubMG:";
+  const markerIndex = message.toLowerCase().indexOf(marker.toLowerCase());
+  if (markerIndex < 0) {
+    if (/missing metadata \(checklist data\)/i.test(message)) {
+      return [...SUBMG_REQUIRED_METADATA_FALLBACK_FIELDS];
+    }
+    return [];
+  }
+
+  const raw = message.slice(markerIndex + marker.length).trim();
+  if (!raw) return [];
+
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function countMissingSamples(issues: MetadataIssue[], totalSamples: number): number {
   if (issues.length === 0) return 0;
   const sampleTokens = new Set<string>();
@@ -372,6 +399,18 @@ function addUniqueField(map: Record<string, string[]>, sampleId: string, label: 
   if (!map[sampleId].includes(label)) {
     map[sampleId].push(label);
   }
+}
+
+function formatSampleMissingRequiredLabels(
+  labels: string[],
+  missingMetadataFields: string[]
+): string[] {
+  return labels.map((label) => {
+    if (label !== "Sample metadata" || missingMetadataFields.length === 0) {
+      return label;
+    }
+    return `Sample metadata (${missingMetadataFields.join(", ")})`;
+  });
 }
 
 function formatSamplePreview(
@@ -405,6 +444,8 @@ function buildSubmgCoverageSummary(params: {
   const sampleWarningByField = new Map<string, Set<string>>();
   const studyErrorFields = new Set<string>();
   const unscopedSampleErrorFields = new Set<string>();
+  const sampleMissingMetadataFields: Record<string, string[]> = {};
+  const metadataFieldMissingSampleIds = new Map<string, Set<string>>();
   const sampleScopedFields = new Set([
     "reads",
     "checksums",
@@ -425,6 +466,21 @@ function buildSubmgCoverageSummary(params: {
       const fieldSet = target.get(issue.field) || new Set<string>();
       fieldSet.add(resolvedSampleId);
       target.set(issue.field, fieldSet);
+
+      if (
+        issue.severity === "error" &&
+        (issue.field === "sampleMetadata" || issue.field === "checklistData")
+      ) {
+        const missingFields = extractSubmgMissingMetadataFields(issue.message);
+        if (missingFields.length > 0) {
+          sampleMissingMetadataFields[resolvedSampleId] = missingFields;
+          for (const missingField of missingFields) {
+            const sampleIds = metadataFieldMissingSampleIds.get(missingField) || new Set<string>();
+            sampleIds.add(resolvedSampleId);
+            metadataFieldMissingSampleIds.set(missingField, sampleIds);
+          }
+        }
+      }
       continue;
     }
 
@@ -491,6 +547,14 @@ function buildSubmgCoverageSummary(params: {
     }
   }
 
+  let sampleMetadataMissingSummary: string | undefined;
+  if (metadataFieldMissingSampleIds.size > 0 && selectedCount > 0) {
+    sampleMetadataMissingSummary = Array.from(metadataFieldMissingSampleIds.entries())
+      .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+      .map(([fieldName, sampleIds]) => `${fieldName} (${sampleIds.size}/${selectedCount})`)
+      .join(", ");
+  }
+
   const checks: SubmgCoverageCheck[] = [
     {
       id: "paired_reads",
@@ -519,6 +583,7 @@ function buildSubmgCoverageSummary(params: {
       available: Math.max(0, selectedCount - missingMetadata.size),
       total: selectedCount,
       missingSampleIds: Array.from(missingMetadata),
+      missingDetail: sampleMetadataMissingSummary,
     },
     {
       id: "assemblies",
@@ -591,6 +656,8 @@ function buildSubmgCoverageSummary(params: {
     studyAccessionMissing,
     blocking,
     sampleMissingRequired,
+    sampleMissingMetadataFields,
+    sampleMetadataMissingSummary,
   };
 }
 
@@ -995,6 +1062,15 @@ export function StudyPipelinesSection({
     selectedSamples,
     submitBinsEnabled,
   ]);
+  const submgMissingRequiredLabels = useMemo(() => {
+    if (!submgCoverage) return [];
+    return formatSampleMissingRequiredLabels(
+      submgCoverage.missingRequired,
+      submgCoverage.sampleMetadataMissingSummary
+        ? [submgCoverage.sampleMetadataMissingSummary]
+        : []
+    );
+  }, [submgCoverage]);
 
   const hasBlockingMetadataErrors =
     metadataValidation !== null &&
@@ -2179,7 +2255,7 @@ export function StudyPipelinesSection({
                         </p>
                         {submgCoverage.missingRequired.length > 0 && (
                           <p className="text-xs text-destructive">
-                            Missing required: {submgCoverage.missingRequired.join(", ")}
+                            Missing required: {submgMissingRequiredLabels.join(", ")}
                           </p>
                         )}
                         {submgCoverage.studyAccessionMissing && (
@@ -2203,6 +2279,7 @@ export function StudyPipelinesSection({
                               <p key={check.id} className="text-xs text-muted-foreground">
                                 {check.label}: {check.available}/{check.total} selected
                                 {preview ? ` • missing ${preview}` : ""}
+                                {check.missingDetail ? ` • fields: ${check.missingDetail}` : ""}
                               </p>
                             );
                           })}
@@ -2313,7 +2390,11 @@ export function StudyPipelinesSection({
                             submgCoverage?.sampleMissingRequired[sample.id] &&
                             submgCoverage.sampleMissingRequired[sample.id].length > 0 && (
                               <span className="text-[11px] text-destructive">
-                                Missing: {submgCoverage.sampleMissingRequired[sample.id].join(", ")}
+                                Missing:{" "}
+                                {formatSampleMissingRequiredLabels(
+                                  submgCoverage.sampleMissingRequired[sample.id],
+                                  submgCoverage.sampleMissingMetadataFields[sample.id] || []
+                                ).join(", ")}
                               </span>
                             )}
                         </div>

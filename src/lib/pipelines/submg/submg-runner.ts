@@ -148,6 +148,42 @@ function mapSubmissionPlatform(platform: string | null | undefined): string {
   return platform.toUpperCase().replace(/\s+/g, "_");
 }
 
+function extractChecklistScalarValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const extracted = extractChecklistScalarValue(entry);
+      if (extracted) return extracted;
+    }
+    return null;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = ["value", "label", "name", "text"];
+    for (const key of preferredKeys) {
+      const extracted = extractChecklistScalarValue(record[key]);
+      if (extracted) return extracted;
+    }
+    for (const entry of Object.values(record)) {
+      const extracted = extractChecklistScalarValue(entry);
+      if (extracted) return extracted;
+    }
+  }
+
+  return null;
+}
+
 function extractScalarChecklistFields(rawChecklistData: string | null): Array<{ key: string; value: string }> {
   if (!rawChecklistData) return [];
 
@@ -156,9 +192,9 @@ function extractScalarChecklistFields(rawChecklistData: string | null): Array<{ 
     const output: Array<{ key: string; value: string }> = [];
 
     for (const [key, value] of Object.entries(parsed)) {
-      if (value === null || value === undefined) continue;
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-        output.push({ key, value: String(value) });
+      const extracted = extractChecklistScalarValue(value);
+      if (extracted) {
+        output.push({ key, value: extracted });
       }
     }
 
@@ -172,7 +208,9 @@ function normalizeChecklistFieldKey(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/&/g, " and ")
     .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ");
 }
 
