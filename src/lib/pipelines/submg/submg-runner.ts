@@ -71,6 +71,7 @@ const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
 const DEFAULT_INSERT_SIZE = 300;
+const DEFAULT_ASSEMBLY_COVERAGE = 1;
 const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 interface RequiredChecklistField {
   label: string;
@@ -117,6 +118,19 @@ function toPositiveInteger(value: unknown, fallback: number): number {
   }
   if (typeof value === "string") {
     const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+function toPositiveNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.trim());
     if (Number.isFinite(parsed) && parsed > 0) {
       return parsed;
     }
@@ -415,6 +429,7 @@ function buildSubmgYaml(params: {
   assembly: {
     name: string;
     software: string;
+    coverageValue: number;
     file: string;
   };
   bins?: {
@@ -463,6 +478,7 @@ function buildSubmgYaml(params: {
   lines.push("ASSEMBLY:");
   lines.push(`  ASSEMBLY_NAME: "${escapeYaml(params.assembly.name)}"`);
   lines.push(`  ASSEMBLY_SOFTWARE: "${escapeYaml(params.assembly.software)}"`);
+  lines.push(`  COVERAGE_VALUE: "${params.assembly.coverageValue}"`);
   lines.push("  ISOLATION_SOURCE: \"UNKNOWN\"");
   lines.push(`  FASTA_FILE: "${escapeYaml(params.assembly.file)}"`);
   lines.push(`  collection date: "${escapeYaml(params.collectionDate)}"`);
@@ -950,6 +966,10 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
+  const assemblyCoverageValue = toPositiveNumber(
+    options.config.assemblyCoverageValue ?? options.config.coverageValue,
+    DEFAULT_ASSEMBLY_COVERAGE
+  );
   const completenessSoftware = toString(options.config.completenessSoftware, "CheckM");
   const binningSoftware = toString(options.config.binningSoftware, "MetaBAT2");
   const insertSize = toPositiveInteger(options.config.insertSize, DEFAULT_INSERT_SIZE);
@@ -1245,6 +1265,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       assembly: {
         name: `${sampleCode}_assembly`,
         software: assemblySoftware,
+        coverageValue: assemblyCoverageValue,
         file: absAssemblyPath as string,
       },
       bins:
