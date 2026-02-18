@@ -158,6 +158,73 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function buildFastqPathFallbacks(filePath: string): string[] {
+  const lowerPath = filePath.toLowerCase();
+  const candidates: string[] = [];
+
+  if (lowerPath.endsWith(".fastq.gz")) {
+    candidates.push(filePath.slice(0, -3));
+    candidates.push(filePath.replace(/\.fastq\.gz$/i, ".fq.gz"));
+    candidates.push(filePath.replace(/\.fastq\.gz$/i, ".fq"));
+    return candidates;
+  }
+
+  if (lowerPath.endsWith(".fq.gz")) {
+    candidates.push(filePath.slice(0, -3));
+    candidates.push(filePath.replace(/\.fq\.gz$/i, ".fastq.gz"));
+    candidates.push(filePath.replace(/\.fq\.gz$/i, ".fastq"));
+    return candidates;
+  }
+
+  if (lowerPath.endsWith(".fastq")) {
+    candidates.push(`${filePath}.gz`);
+    candidates.push(filePath.replace(/\.fastq$/i, ".fq"));
+    candidates.push(filePath.replace(/\.fastq$/i, ".fq.gz"));
+    return candidates;
+  }
+
+  if (lowerPath.endsWith(".fq")) {
+    candidates.push(`${filePath}.gz`);
+    candidates.push(filePath.replace(/\.fq$/i, ".fastq"));
+    candidates.push(filePath.replace(/\.fq$/i, ".fastq.gz"));
+    return candidates;
+  }
+
+  candidates.push(`${filePath}.gz`);
+  return candidates;
+}
+
+async function resolveExistingFastqPath(filePath: string): Promise<{
+  resolvedPath: string;
+  exists: boolean;
+  usedFallback: boolean;
+}> {
+  if (await pathExists(filePath)) {
+    return {
+      resolvedPath: filePath,
+      exists: true,
+      usedFallback: false,
+    };
+  }
+
+  const fallbackCandidates = Array.from(new Set(buildFastqPathFallbacks(filePath)));
+  for (const candidate of fallbackCandidates) {
+    if (await pathExists(candidate)) {
+      return {
+        resolvedPath: candidate,
+        exists: true,
+        usedFallback: true,
+      };
+    }
+  }
+
+  return {
+    resolvedPath: filePath,
+    exists: false,
+    usedFallback: false,
+  };
+}
+
 function formatSampleIssue(sampleId: string, detail: string): string {
   return `Sample ${sampleId}: ${detail}`;
 }
@@ -169,7 +236,11 @@ function mapSubmissionPlatform(platform: string | null | undefined): string {
   if (["illumina", "hiseq", "miseq", "novaseq", "nextseq", "bgiseq", "dnbseq"].some((token) => normalized.includes(token))) {
     return "ILLUMINA";
   }
-  if (["nanopore", "ont", "oxford"].some((token) => normalized.includes(token))) {
+  if (
+    ["nanopore", "ont", "oxford", "minion", "gridion", "promethion", "flongle", "mk1c"].some(
+      (token) => normalized.includes(token)
+    )
+  ) {
     return "OXFORD_NANOPORE";
   }
   if (["pacbio", "smrt", "sequel", "revio"].some((token) => normalized.includes(token))) {
@@ -874,17 +945,21 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       pairedReads.map(async (read) => {
         const absFile1 = toAbsoluteDataPath(options.dataBasePath, read.file1 as string);
         const absFile2 = toAbsoluteDataPath(options.dataBasePath, read.file2 as string);
-        const [file1Exists, file2Exists] = await Promise.all([
-          pathExists(absFile1),
-          pathExists(absFile2),
+        const [resolvedFile1, resolvedFile2] = await Promise.all([
+          resolveExistingFastqPath(absFile1),
+          resolveExistingFastqPath(absFile2),
         ]);
 
         return {
           id: read.id,
-          file1: absFile1,
-          file2: absFile2,
-          file1Exists,
-          file2Exists,
+          file1: resolvedFile1.resolvedPath,
+          file2: resolvedFile2.resolvedPath,
+          file1Requested: absFile1,
+          file2Requested: absFile2,
+          file1Exists: resolvedFile1.exists,
+          file2Exists: resolvedFile2.exists,
+          file1UsedFallback: resolvedFile1.usedFallback,
+          file2UsedFallback: resolvedFile2.usedFallback,
           checksum1: read.checksum1,
           checksum2: read.checksum2,
           librarySource: sample.order.librarySource || DEFAULT_LIBRARY_SOURCE,
@@ -897,11 +972,27 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     );
 
     for (const read of resolvedReads) {
+      if (read.file1UsedFallback) {
+        sampleWarnings.push(
+          formatSampleIssue(
+            sample.sampleId,
+            `read ${read.id} FASTQ R1 path ${read.file1Requested} was not found; using ${read.file1} instead.`
+          )
+        );
+      }
+      if (read.file2UsedFallback) {
+        sampleWarnings.push(
+          formatSampleIssue(
+            sample.sampleId,
+            `read ${read.id} FASTQ R2 path ${read.file2Requested} was not found; using ${read.file2} instead.`
+          )
+        );
+      }
       if (!read.file1Exists) {
         sampleErrors.push(
           formatSampleIssue(
             sample.sampleId,
-            `read ${read.id} is missing FASTQ R1 file at ${read.file1}. Reattach reads or regenerate input files.`
+            `read ${read.id} is missing FASTQ R1 file at ${read.file1Requested}. Reattach reads or regenerate input files.`
           )
         );
       }
@@ -909,7 +1000,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
         sampleErrors.push(
           formatSampleIssue(
             sample.sampleId,
-            `read ${read.id} is missing FASTQ R2 file at ${read.file2}. Reattach reads or regenerate input files.`
+            `read ${read.id} is missing FASTQ R2 file at ${read.file2Requested}. Reattach reads or regenerate input files.`
           )
         );
       }
