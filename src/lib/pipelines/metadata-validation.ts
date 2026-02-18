@@ -146,7 +146,8 @@ function normalizeChecklistFieldKey(value: string): string {
     .replace(/&/g, ' and ')
     .replace(/[_-]+/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ');
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function hasChecklistValue(value: unknown): boolean {
