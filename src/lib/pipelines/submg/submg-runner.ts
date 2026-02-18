@@ -585,9 +585,13 @@ function buildSubmgScript(params: {
   lines.push("extract_yaml_fastq_value() {");
   lines.push('  local key="$1"');
   lines.push('  local yaml_file="$2"');
-  lines.push(
-    "  awk -F'\"' -v key=\"$key\" '$0 ~ \"^[[:space:]]*\" key \":[[:space:]]*\\\\\\\"\" { print $2; exit }' \"$yaml_file\""
-  );
+  lines.push('  local line');
+  lines.push('  line="$(grep -m1 -E \"^[[:space:]]*$key:[[:space:]]*\\\\\\\"\" \"$yaml_file\" || true)"');
+  lines.push('  if [ -z "$line" ]; then');
+  lines.push('    printf ""');
+  lines.push("    return 0");
+  lines.push("  fi");
+  lines.push('  printf "%s" "$line" | sed -E \'s/^[^\"]*\"([^\"]*)\".*$/\\1/\'');
   lines.push("}");
   lines.push("");
   lines.push("escape_sed_replacement() {");
