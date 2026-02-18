@@ -90,6 +90,11 @@ const MAG_LONG_READ_PLATFORM_MATCHES = [
   'revio',
 ];
 
+const SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS = [
+  'collection date',
+  'geographic location (country and/or sea)',
+] as const;
+
 type RunAtMode = 'all' | 'selected-technologies';
 
 interface PipelineRuntimeConfig {
@@ -132,6 +137,38 @@ function parsePipelineRuntimeConfig(
 
 function isLongReadPlatform(value: string): boolean {
   return MAG_LONG_READ_PLATFORM_MATCHES.some((entry) => value.includes(entry));
+}
+
+function normalizeChecklistFieldKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function extractChecklistFieldSet(rawChecklistData: string | null): Set<string> {
+  const fields = new Set<string>();
+  if (!rawChecklistData) return fields;
+
+  try {
+    const parsed = JSON.parse(rawChecklistData) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'string' && value.trim().length === 0) continue;
+      if (
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
+        fields.add(normalizeChecklistFieldKey(key));
+      }
+    }
+  } catch {
+    // Ignore malformed checklist JSON here; existing "checklistData missing" checks cover this path.
+  }
+
+  return fields;
 }
 
 /**
@@ -300,12 +337,24 @@ export async function validatePipelineMetadata(
     }
 
     for (const sample of study.samples) {
+      const checklistFieldSet = extractChecklistFieldSet(sample.checklistData);
       if (!sample.checklistData) {
         issues.push({
           field: 'checklistData',
           message: `Sample ${sample.sampleId} is missing metadata (checklist data)`,
           severity: 'error',
         });
+      } else {
+        const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS.filter(
+          (field) => !checklistFieldSet.has(normalizeChecklistFieldKey(field))
+        );
+        if (missingChecklistFields.length > 0) {
+          issues.push({
+            field: 'sampleMetadata',
+            message: `Sample ${sample.sampleId} is missing required metadata fields for SubMG: ${missingChecklistFields.join(', ')}`,
+            severity: 'error',
+          });
+        }
       }
 
       if (!sample.taxId) {

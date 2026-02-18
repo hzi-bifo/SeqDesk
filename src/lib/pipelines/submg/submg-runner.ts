@@ -70,6 +70,8 @@ const DEFAULT_LIBRARY_SOURCE = "METAGENOMIC";
 const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
+const REQUIRED_COLLECTION_DATE_FIELD = "collection date";
+const REQUIRED_GEO_LOCATION_FIELD = "geographic location (country and/or sea)";
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
@@ -166,6 +168,37 @@ function extractScalarChecklistFields(rawChecklistData: string | null): Array<{ 
   }
 }
 
+function normalizeChecklistFieldKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function findChecklistFieldValue(
+  fields: Array<{ key: string; value: string }>,
+  wantedKey: string
+): string | null {
+  const normalizedWanted = normalizeChecklistFieldKey(wantedKey);
+  for (const field of fields) {
+    if (normalizeChecklistFieldKey(field.key) !== normalizedWanted) continue;
+    const trimmed = field.value.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+function filterChecklistFields(
+  fields: Array<{ key: string; value: string }>,
+  excludedKeys: string[]
+): Array<{ key: string; value: string }> {
+  const excluded = new Set(excludedKeys.map((key) => normalizeChecklistFieldKey(key)));
+  return fields.filter((field) => !excluded.has(normalizeChecklistFieldKey(field.key)));
+}
+
 function parseSampleSelection(inputSampleIds: string | null, fallback: string[] | undefined): string[] | null {
   if (Array.isArray(fallback) && fallback.length > 0) {
     return fallback;
@@ -214,6 +247,8 @@ function buildSubmgYaml(params: {
   sampleTitle: string;
   taxId: string;
   scientificName: string;
+  collectionDate: string;
+  geographicLocation: string;
   checklistFields: Array<{ key: string; value: string }>;
   reads: Array<{
     file1: string;
@@ -246,6 +281,10 @@ function buildSubmgYaml(params: {
 
   lines.push("NEW_SAMPLES:");
   lines.push(`- TITLE: "${escapeYaml(params.sampleTitle)}"`);
+  lines.push(`  collection date: "${escapeYaml(params.collectionDate)}"`);
+  lines.push(
+    `  geographic location (country and/or sea): "${escapeYaml(params.geographicLocation)}"`
+  );
   lines.push("  ADDITIONAL_SAMPLESHEET_FIELDS:");
   for (const field of params.checklistFields) {
     lines.push(`    "${escapeYaml(field.key)}": "${escapeYaml(field.value)}"`);
@@ -272,6 +311,10 @@ function buildSubmgYaml(params: {
   lines.push(`  ASSEMBLY_SOFTWARE: "${escapeYaml(params.assembly.software)}"`);
   lines.push("  ISOLATION_SOURCE: \"UNKNOWN\"");
   lines.push(`  FASTA_FILE: "${escapeYaml(params.assembly.file)}"`);
+  lines.push(`  collection date: "${escapeYaml(params.collectionDate)}"`);
+  lines.push(
+    `  geographic location (country and/or sea): "${escapeYaml(params.geographicLocation)}"`
+  );
   lines.push("  ADDITIONAL_MANIFEST_FIELDS:");
 
   if (params.bins) {
@@ -854,6 +897,30 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       }
     }
 
+    const checklistFields = extractScalarChecklistFields(sample.checklistData);
+    const collectionDate = findChecklistFieldValue(checklistFields, REQUIRED_COLLECTION_DATE_FIELD);
+    const geographicLocation = findChecklistFieldValue(checklistFields, REQUIRED_GEO_LOCATION_FIELD);
+    if (!collectionDate) {
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          `is missing "${REQUIRED_COLLECTION_DATE_FIELD}" in checklist metadata. Add it before running SubMG.`
+        )
+      );
+    }
+    if (!geographicLocation) {
+      sampleErrors.push(
+        formatSampleIssue(
+          sample.sampleId,
+          `is missing "${REQUIRED_GEO_LOCATION_FIELD}" in checklist metadata. Add it before running SubMG.`
+        )
+      );
+    }
+    const additionalChecklistFields = filterChecklistFields(checklistFields, [
+      REQUIRED_COLLECTION_DATE_FIELD,
+      REQUIRED_GEO_LOCATION_FIELD,
+    ]);
+
     if (sampleErrors.length > 0) {
       errors.push(...sampleErrors);
       warnings.push(...sampleWarnings);
@@ -900,8 +967,6 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       instrumentModel: read.instrumentModel,
     }));
 
-    const checklistFields = extractScalarChecklistFields(sample.checklistData);
-
     const yaml = buildSubmgYaml({
       studyAccession: study.studyAccessionId,
       studyTitle: study.title,
@@ -910,7 +975,9 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
       sampleTitle,
       taxId,
       scientificName,
-      checklistFields,
+      collectionDate: collectionDate as string,
+      geographicLocation: geographicLocation as string,
+      checklistFields: additionalChecklistFields,
       reads: readsBlock,
       assembly: {
         name: `${sampleCode}_assembly`,

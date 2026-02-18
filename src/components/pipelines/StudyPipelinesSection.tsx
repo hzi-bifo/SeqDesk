@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -182,7 +183,13 @@ interface Pipeline {
 interface Sample {
   id: string;
   sampleId: string;
-  reads: { id: string; file1: string | null; file2: string | null }[];
+  reads: {
+    id: string;
+    file1: string | null;
+    file2: string | null;
+    checksum1?: string | null;
+    checksum2?: string | null;
+  }[];
   preferredAssemblyId: string | null;
   assemblies: {
     id: string;
@@ -220,6 +227,10 @@ interface PipelineRun {
 interface StudyPipelinesSectionProps {
   studyId: string;
   samples: Sample[];
+}
+
+interface EnaSettingsResponse {
+  enaTestMode?: boolean;
 }
 
 function getPipelineIcon(icon: string) {
@@ -738,13 +749,46 @@ function getPipelineReadiness(params: {
   };
 }
 
+function getMissingReadChecksumPaths(params: {
+  samples: Sample[];
+  sampleIds?: Set<string>;
+  ignorePaths?: Record<string, true>;
+}): string[] {
+  const { samples, sampleIds, ignorePaths = {} } = params;
+  const paths = new Set<string>();
+
+  for (const sample of samples) {
+    if (sampleIds && !sampleIds.has(sample.id)) {
+      continue;
+    }
+
+    for (const read of sample.reads ?? []) {
+      if (read.file1 && !read.checksum1 && !ignorePaths[read.file1]) {
+        paths.add(read.file1);
+      }
+      if (read.file2 && !read.checksum2 && !ignorePaths[read.file2]) {
+        paths.add(read.file2);
+      }
+    }
+  }
+
+  return Array.from(paths);
+}
+
 export function StudyPipelinesSection({
   studyId,
   samples,
 }: StudyPipelinesSectionProps) {
+  const { data: session } = useSession();
+  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+
   // Fetch enabled pipelines
   const { data: pipelinesData } = useSWR(
     "/api/admin/settings/pipelines?enabled=true",
+    fetcher
+  );
+  const { data: enaSettingsData } = useSWR<EnaSettingsResponse>(
+    isFacilityAdmin ? "/api/admin/settings/ena" : null,
     fetcher
   );
 
@@ -801,6 +845,15 @@ export function StudyPipelinesSection({
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
   const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
+  const [calculatingChecksums, setCalculatingChecksums] = useState(false);
+  const [checksumResult, setChecksumResult] = useState<{
+    success: boolean;
+    message: string;
+    detail?: string;
+  } | null>(null);
+  const [localChecksumOverrides, setLocalChecksumOverrides] = useState<
+    Record<string, true>
+  >({});
 
   // Pipeline definition for data flow display
   const [pipelineDefinition, setPipelineDefinition] = useState<{
@@ -842,11 +895,29 @@ export function StudyPipelinesSection({
     setPreferredAssemblyBySample(initialPreferredAssemblyMap);
   }, [initialPreferredAssemblyMap]);
 
+  useEffect(() => {
+    setLocalChecksumOverrides({});
+    setChecksumResult(null);
+    setCalculatingChecksums(false);
+  }, [studyId]);
+
   const enabledPipelines: Pipeline[] = useMemo(
     () => pipelinesData?.pipelines || [],
     [pipelinesData]
   );
   const pipelineRuns: PipelineRun[] = runsData?.runs || [];
+  const enaSubmissionServer = useMemo(() => {
+    if (typeof enaSettingsData?.enaTestMode !== "boolean") {
+      return null;
+    }
+
+    const isTestMode = enaSettingsData.enaTestMode;
+    return {
+      isTestMode,
+      label: isTestMode ? "Test server" : "Production server",
+      host: isTestMode ? "wwwdev.ebi.ac.uk" : "www.ebi.ac.uk",
+    };
+  }, [enaSettingsData]);
   const samplesWithAssemblySelection = useMemo(
     () =>
       samples.map((sample) => ({
@@ -894,6 +965,14 @@ export function StudyPipelinesSection({
   const samplesWithReads = samplesWithAssemblySelection.filter((s) =>
     s.reads?.some((r) => r.file1 && r.file2)
   );
+  const missingChecksumFilePaths = useMemo(
+    () =>
+      getMissingReadChecksumPaths({
+        samples: samplesWithAssemblySelection,
+        ignorePaths: localChecksumOverrides,
+      }),
+    [localChecksumOverrides, samplesWithAssemblySelection]
+  );
   const isSubmgDialog = selectedPipeline?.pipelineId === "submg";
   const submitBinsEnabled = Boolean(
     localConfig.submitBins ??
@@ -922,6 +1001,132 @@ export function StudyPipelinesSection({
     (isSubmgDialog
       ? Boolean(submgCoverage?.blocking)
       : metadataValidation.issues.some((i) => i.severity === "error"));
+
+  const refreshSubmgValidation = async () => {
+    const validationRes = await fetch("/api/pipelines/validate-metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studyId, pipelineId: "submg" }),
+    });
+
+    if (!validationRes.ok) {
+      let message = "Failed to refresh SubMG metadata validation";
+      try {
+        const payload = await validationRes.json();
+        if (typeof payload.error === "string") {
+          message = payload.error;
+        }
+      } catch {
+        // Keep fallback error message.
+      }
+      throw new Error(message);
+    }
+
+    const validation = (await validationRes.json()) as MetadataValidation;
+    setMetadataPrecheck((prev) => ({ ...prev, submg: validation }));
+
+    if (isSubmgDialog) {
+      setMetadataValidation(validation);
+    }
+  };
+
+  const handleComputeReadChecksums = async () => {
+    if (calculatingChecksums) return;
+
+    if (missingChecksumFilePaths.length === 0) {
+      setChecksumResult({
+        success: true,
+        message: "All read files already have checksums.",
+      });
+      return;
+    }
+
+    setCalculatingChecksums(true);
+    setChecksumResult(null);
+
+    try {
+      const aggregate = {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        updatedReadRecords: 0,
+        notLinkedToRead: 0,
+      };
+      const computedPaths: Record<string, true> = {};
+
+      for (let index = 0; index < missingChecksumFilePaths.length; index += 50) {
+        const batch = missingChecksumFilePaths.slice(index, index + 50);
+        const res = await fetch("/api/files/checksum", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filePaths: batch }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            typeof payload.error === "string"
+              ? payload.error
+              : "Failed to calculate read checksums"
+          );
+        }
+
+        const summary = payload.summary as Partial<{
+          total: number;
+          successful: number;
+          failed: number;
+          updatedReadRecords: number;
+          notLinkedToRead: number;
+        }>;
+        aggregate.total += summary.total ?? batch.length;
+        aggregate.successful += summary.successful ?? 0;
+        aggregate.failed += summary.failed ?? 0;
+        aggregate.updatedReadRecords += summary.updatedReadRecords ?? 0;
+        aggregate.notLinkedToRead += summary.notLinkedToRead ?? 0;
+
+        const results = Array.isArray(payload.results) ? payload.results : [];
+        for (const result of results) {
+          if (
+            result &&
+            typeof result === "object" &&
+            typeof result.filePath === "string" &&
+            typeof result.checksum === "string"
+          ) {
+            computedPaths[result.filePath] = true;
+          }
+        }
+      }
+
+      const detailParts = [
+        `${aggregate.updatedReadRecords} stored in read records`,
+      ];
+      if (aggregate.notLinkedToRead > 0) {
+        detailParts.push(
+          `${aggregate.notLinkedToRead} not assigned to a read record`
+        );
+      }
+      if (aggregate.failed > 0) {
+        detailParts.push(`${aggregate.failed} failed`);
+      }
+
+      await refreshSubmgValidation();
+
+      setLocalChecksumOverrides((prev) => ({ ...prev, ...computedPaths }));
+      setChecksumResult({
+        success: aggregate.failed === 0,
+        message: `Calculated MD5 for ${aggregate.successful}/${aggregate.total} read files.`,
+        detail: detailParts.join(" · "),
+      });
+    } catch (error) {
+      setChecksumResult({
+        success: false,
+        message:
+          error instanceof Error ? error.message : "Failed to calculate read checksums",
+      });
+    } finally {
+      setCalculatingChecksums(false);
+    }
+  };
 
   const openRunDialog = async (pipeline: Pipeline) => {
     setSelectedPipeline(pipeline);
@@ -1029,6 +1234,8 @@ export function StudyPipelinesSection({
       [sampleId]: true,
     }));
 
+    let preferredAssemblySaved = false;
+
     try {
       const updateRes = await fetch(`/api/samples/${sampleId}/preferred-assembly`, {
         method: "PUT",
@@ -1052,27 +1259,26 @@ export function StudyPipelinesSection({
         throw new Error(message);
       }
 
-      const validationRes = await fetch("/api/pipelines/validate-metadata", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studyId, pipelineId: "submg" }),
-      });
-
-      if (validationRes.ok) {
-        const validation = (await validationRes.json()) as MetadataValidation;
-        setMetadataPrecheck((prev) => ({ ...prev, submg: validation }));
-        if (isSubmgDialog) {
-          setMetadataValidation(validation);
-        }
-      }
+      preferredAssemblySaved = true;
+      await refreshSubmgValidation();
     } catch (error) {
-      setPreferredAssemblyBySample((prev) => ({
-        ...prev,
-        [sampleId]: previousAssemblyId,
-      }));
-      setAssemblySelectionError(
-        error instanceof Error ? error.message : "Failed to update preferred assembly"
-      );
+      if (!preferredAssemblySaved) {
+        setPreferredAssemblyBySample((prev) => ({
+          ...prev,
+          [sampleId]: previousAssemblyId,
+        }));
+        setAssemblySelectionError(
+          error instanceof Error
+            ? error.message
+            : "Failed to update preferred assembly"
+        );
+      } else {
+        setAssemblySelectionError(
+          error instanceof Error
+            ? `Preferred assembly saved, but metadata refresh failed: ${error.message}`
+            : "Preferred assembly saved, but failed to refresh SubMG metadata validation."
+        );
+      }
     } finally {
       setAssemblySelectionSaving((prev) => ({
         ...prev,
@@ -1293,6 +1499,10 @@ export function StudyPipelinesSection({
               });
               const canRun = readiness.canRun;
               const category = pipeline.category || "metagenomics";
+              const isSubmgPipeline = pipeline.pipelineId === "submg";
+              const submgNeedsChecksums =
+                isSubmgPipeline &&
+                readiness.missingRequired.includes("Read checksums");
 
               return (
                 <GlassCard
@@ -1323,6 +1533,21 @@ export function StudyPipelinesSection({
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {pipeline.description}
                       </p>
+                      {isSubmgPipeline && (
+                        <p
+                          className={`text-xs mt-2 ${
+                            enaSubmissionServer?.isTestMode
+                              ? "text-amber-700"
+                              : enaSubmissionServer
+                                ? "text-blue-700"
+                                : "text-muted-foreground"
+                          }`}
+                        >
+                          {enaSubmissionServer
+                            ? `ENA target: ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - test submission mode." : ""}`
+                            : "ENA target: loading from Admin > ENA settings..."}
+                        </p>
+                      )}
                       <p
                         className={`text-xs mt-2 ${
                           canRun ? "text-muted-foreground" : "text-amber-700"
@@ -1345,6 +1570,46 @@ export function StudyPipelinesSection({
                       {readiness.checkDetails.length > 0 && (
                         <p className="text-xs text-muted-foreground mt-1">
                           {readiness.checkDetails.join(" • ")}
+                        </p>
+                      )}
+                      {submgNeedsChecksums &&
+                        isFacilityAdmin &&
+                        missingChecksumFilePaths.length > 0 && (
+                          <div className="mt-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              disabled={calculatingChecksums}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleComputeReadChecksums();
+                              }}
+                            >
+                              {calculatingChecksums ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : null}
+                              Compute and add read checksums
+                            </Button>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {missingChecksumFilePaths.length} read file
+                              {missingChecksumFilePaths.length === 1 ? "" : "s"}{" "}
+                              currently missing MD5 values.
+                            </p>
+                          </div>
+                        )}
+                      {isSubmgPipeline && checksumResult && (
+                        <p
+                          className={`text-xs mt-2 ${
+                            checksumResult.success
+                              ? "text-green-700"
+                              : "text-destructive"
+                          }`}
+                        >
+                          {checksumResult.message}
+                          {checksumResult.detail
+                            ? ` ${checksumResult.detail}`
+                            : ""}
                         </p>
                       )}
                     </div>
@@ -1884,6 +2149,19 @@ export function StudyPipelinesSection({
                 <div className="py-3 border-b">
                   <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
                     <p className="text-sm font-medium">SubMG Submission Scope</p>
+                    <p
+                      className={`text-xs ${
+                        enaSubmissionServer?.isTestMode
+                          ? "text-amber-700"
+                          : enaSubmissionServer
+                            ? "text-blue-700"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {enaSubmissionServer
+                        ? `Current ENA target (Admin > ENA): ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - this run will be a test submission." : ""}`
+                        : "Current ENA target: loading from Admin > ENA settings..."}
+                    </p>
                     {loadingMetadata ? (
                       <p className="text-xs text-muted-foreground">
                         Evaluating selected samples...
