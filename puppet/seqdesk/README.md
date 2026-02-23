@@ -49,6 +49,7 @@ class { 'seqdesk':
 | `run_dir` | Optional[String] | `undef` | Pipeline run directory (default `${install_dir}/pipeline_runs`) |
 | `manage_service` | Boolean | `false` | If true, install systemd unit and enable/start SeqDesk |
 | `config_hash` | Optional[Hash] | `undef` | Optional hash to render `seqdesk.config.json`. If undef, the repo's example config is copied. |
+| `config_source` | Optional[String] | `undef` | Optional path or URI to a JSON file to use as `seqdesk.config.json`. Use instead of `config_hash` to reference a file. Examples: `file:///etc/seqdesk/config.json`, `puppet:///modules/mymodule/seqdesk.config.json`, or an absolute path (treated as `file://`). If both `config_source` and `config_hash` are set, `config_source` wins. |
 
 ## Steps applied (per installation.md)
 
@@ -63,7 +64,7 @@ class { 'seqdesk':
 
 - Ensure the `seqdesk` user and group exist (create them in Puppet or separately).
 - Set `nextauth_secret` to a secure value (e.g. from Hiera with a generated or secret value).
-- If using `config_hash`, pass a hash that matches the [SeqDesk config schema](../../docs/seqdesk-config-schema.json) (or leave undef to use the copied example).
+- If using `config_hash`, pass a hash that matches the [SeqDesk config schema](../../docs/seqdesk-config-schema.json) (or leave undef to use the copied example). Alternatively use `config_source` to point to a JSON file (local path or Puppet file URI).
 
 ## Example: minimal with service and pipelines
 

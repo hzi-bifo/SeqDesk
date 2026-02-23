@@ -9,6 +9,7 @@ class seqdesk::config {
   $effective_nextauth_url = $seqdesk::effective_nextauth_url
   $database_url      = $seqdesk::database_url
   $config_hash       = $seqdesk::config_hash
+  $config_source     = $seqdesk::config_source
   $effective_data_path   = $seqdesk::effective_data_path
   $effective_run_dir     = $seqdesk::effective_run_dir
   $with_pipelines    = $seqdesk::with_pipelines
@@ -34,7 +35,21 @@ class seqdesk::config {
   }
 
   # seqdesk.config.json (installation.md step 4)
-  if $config_hash != undef {
+  if $config_source != undef and $config_source != '' {
+    # Reference a JSON file: file:///path or puppet:///modules/...
+    $source_uri = $config_source ? {
+      /^(file:\/\/|puppet:\/\/)/ => $config_source,
+      default                    => "file://${config_source}",
+    }
+    file { "${install_dir}/seqdesk.config.json":
+      ensure  => file,
+      owner   => $user,
+      group   => $group,
+      mode    => '0644',
+      source  => $source_uri,
+      require => Exec['seqdesk-git-clone'],
+    }
+  } elsif $config_hash != undef {
     file { "${install_dir}/seqdesk.config.json":
       ensure  => file,
       owner   => $user,
@@ -44,7 +59,7 @@ class seqdesk::config {
       require => Exec['seqdesk-git-clone'],
     }
   } else {
-    # Copy from example and optionally patch site.dataBasePath / pipelines
+    # Copy from example
     exec { 'seqdesk-copy-config':
       command => "/bin/cp ${install_dir}/seqdesk.config.example.json ${install_dir}/seqdesk.config.json",
       creates => "${install_dir}/seqdesk.config.json",

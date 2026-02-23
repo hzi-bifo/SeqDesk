@@ -15,6 +15,7 @@
 # @param run_dir Pipeline run directory (default: ${install_dir}/pipeline_runs)
 # @param manage_service If true, install systemd unit and enable service (default: false)
 # @param config_hash Optional hash to render seqdesk.config.json (site, pipelines, etc.). If undef, copy from example.
+# @param config_source Optional path or URI to a JSON file to use as seqdesk.config.json. Use this instead of config_hash to reference a file. Examples: 'file:///etc/seqdesk/config.json', 'puppet:///modules/mymodule/seqdesk.config.json'. If both config_source and config_hash are set, config_source wins.
 #
 class seqdesk (
   String $install_dir                          = '/opt/seqdesk',
@@ -32,6 +33,7 @@ class seqdesk (
   Optional[String] $run_dir                    = undef,
   Boolean $manage_service                     = false,
   Optional[Hash] $config_hash                  = undef,
+  Optional[String] $config_source              = undef,
 ) {
   $effective_nextauth_url = $nextauth_url ? {
     undef   => "http://localhost:${port}",
