@@ -52,6 +52,8 @@ import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRenderer";
 import type { FundingFieldValue } from "@/lib/field-types/funding";
+import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { toast } from "sonner";
 
 // Per-sample field definition
 interface PerSampleField extends Omit<FormFieldDefinition, 'options'> {
@@ -1159,6 +1161,103 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     });
   }, []);
 
+  const hasMetadataValue = useCallback(
+    (row: SampleMetadataRow) =>
+      allPerSampleFields.some((f) => {
+        const val = row[f.name];
+        return (
+          val !== undefined &&
+          val !== null &&
+          val !== "" &&
+          !(Array.isArray(val) && val.length === 0)
+        );
+      }),
+    [allPerSampleFields]
+  );
+
+  // Handle samples imported from Excel
+  const handleSamplesImported = useCallback(
+    (
+      importedRows: { id: string; sampleId: string; [key: string]: unknown }[],
+      mode: "replace" | "append"
+    ) => {
+      const normalizeSampleId = (value: unknown) =>
+        String(value ?? "").trim().toLowerCase();
+      const stripImportedIdentity = (
+        row: { id: string; sampleId: string; [key: string]: unknown }
+      ) => {
+        const { id, sampleId, ...rest } = row;
+        void id;
+        void sampleId;
+        return rest;
+      };
+
+      if (mode === "replace") {
+        setSampleMetadata((prev) => {
+          const importedBySampleId = new Map(
+            importedRows
+              .map((row) => [normalizeSampleId(row.sampleId), row] as const)
+              .filter(([key]) => key.length > 0)
+          );
+
+          return prev.map((existing) => {
+            const key = normalizeSampleId(existing.sampleId);
+            const imported = importedBySampleId.get(key);
+            if (!imported) return existing;
+            return { ...existing, ...stripImportedIdentity(imported) };
+          });
+        });
+      } else {
+        setSampleMetadata((prev) => {
+          const updated = [...prev];
+          const filledIndexes = new Set<number>();
+          const unmatchedRows: { id: string; sampleId: string; [key: string]: unknown }[] = [];
+
+          for (const row of importedRows) {
+            const key = normalizeSampleId(row.sampleId);
+            if (!key) {
+              unmatchedRows.push(row);
+              continue;
+            }
+            const targetIndex = updated.findIndex(
+              (existing) => normalizeSampleId(existing.sampleId) === key
+            );
+            if (targetIndex === -1 || hasMetadataValue(updated[targetIndex])) {
+              unmatchedRows.push(row);
+              continue;
+            }
+            updated[targetIndex] = {
+              ...updated[targetIndex],
+              ...stripImportedIdentity(row),
+            };
+            filledIndexes.add(targetIndex);
+          }
+
+          for (const row of unmatchedRows) {
+            const emptyIndex = updated.findIndex(
+              (existing, index) =>
+                !filledIndexes.has(index) && !hasMetadataValue(existing)
+            );
+            if (emptyIndex === -1) {
+              break;
+            }
+            updated[emptyIndex] = {
+              ...updated[emptyIndex],
+              ...stripImportedIdentity(row),
+            };
+            filledIndexes.add(emptyIndex);
+          }
+
+          return updated;
+        });
+      }
+      toast.success(
+        `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""} metadata`
+      );
+    },
+    [hasMetadataValue]
+  );
+
   const tableColumns = useMemo((): ColumnDef<SampleMetadataRow>[] => {
     const cols: ColumnDef<SampleMetadataRow>[] = [
       {
@@ -1543,10 +1642,21 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
     return (
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Add your sample metadata below. Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
-          <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd>, or arrow keys to navigate.
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Add your sample metadata below. Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
+            <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd>, or arrow keys to navigate.
+          </p>
+          <div className="flex items-center gap-2">
+            <ExcelToolbar
+              perSampleFields={allPerSampleFields as FormFieldDefinition[]}
+              samples={sampleMetadata}
+              onSamplesImported={handleSamplesImported}
+              disabled={isLoading}
+              entityName="study"
+            />
+          </div>
+        </div>
 
         {allPerSampleFields.length === 0 ? (
           <div className="text-center py-8 bg-muted/30 rounded-lg">

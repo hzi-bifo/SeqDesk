@@ -60,6 +60,7 @@ export default function OrdersPage() {
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canCreateOrder = isResearcher || isFacilityAdmin;
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -186,7 +187,7 @@ export default function OrdersPage() {
             {isResearcher && sharingMode === "department" && " from your department"}
           </p>
         </div>
-        {isResearcher && (
+        {canCreateOrder && (
           <Button size="sm" variant="outline" asChild>
             <Link href="/dashboard/orders/new">
               New Order
@@ -208,12 +209,12 @@ export default function OrdersPage() {
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             {isResearcher
               ? "Orders contain your samples for sequencing. Create an order, add samples, then mark it as ready for the sequencing facility."
-              : "Orders contain samples for sequencing. Researchers create orders and mark them as ready when samples are prepared."}
+              : "Orders contain samples for sequencing. Create an order, add samples, then mark it as ready when preparation is complete."}
           </p>
-          {isResearcher && (
+          {canCreateOrder && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/dashboard/orders/new">
-                Create Order
+                New Order
               </Link>
             </Button>
           )}

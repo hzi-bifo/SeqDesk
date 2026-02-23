@@ -24,6 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
+import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { toast } from "sonner";
 import {
   ArrowLeft,
   Loader2,
@@ -399,6 +401,65 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
     setSuccess("");
   }, [columns]);
 
+  // Flatten samples for Excel template (checklistData -> flat row)
+  const flatSamplesForExcel = useMemo(() => {
+    return samples.map((s) => {
+      const flat: Record<string, unknown> = {
+        id: s.id,
+        sampleId: s.sampleId,
+      };
+      if (s.checklistData) {
+        for (const [k, v] of Object.entries(s.checklistData)) {
+          flat[k] = v;
+        }
+      }
+      return flat as { id: string; sampleId: string; [key: string]: unknown };
+    });
+  }, [samples]);
+
+  // Handle samples imported from Excel - merge checklist data
+  const handleSamplesImported = useCallback(
+    (importedRows: { id: string; sampleId: string; [key: string]: unknown }[]) => {
+      const normalizeSampleId = (value: unknown) =>
+        String(value ?? "").trim().toLowerCase();
+      setSamples((prev) => {
+        const importedBySampleId = new Map(
+          importedRows
+            .map((row) => [normalizeSampleId(row.sampleId), row] as const)
+            .filter(([key]) => key.length > 0)
+        );
+
+        return prev.map((sample) => {
+          const key = normalizeSampleId(sample.sampleId);
+          const row = importedBySampleId.get(key);
+          if (!row) return sample;
+
+          const nextChecklistData = { ...(sample.checklistData || {}) };
+          let changed = false;
+          for (const field of checklistFields) {
+            if (row[field.name] !== undefined && row[field.name] !== "") {
+              nextChecklistData[field.name] = String(row[field.name]);
+              changed = true;
+            }
+          }
+
+          if (!changed) return sample;
+
+          return {
+            ...sample,
+            checklistData: nextChecklistData,
+            isModified: true,
+          };
+        });
+      });
+      setHasChanges(true);
+      toast.success(
+        `Imported metadata for ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""}`
+      );
+    },
+    [checklistFields]
+  );
+
   const table = useReactTable({
     data: samples,
     columns,
@@ -587,11 +648,25 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
               (unique per sample)
             </span>
           </h2>
-          {selectedField && (
-            <div className="text-sm text-muted-foreground">
-              <strong>{selectedField.label}:</strong> {selectedField.helpText || "No description"}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {selectedField && (
+              <div className="text-sm text-muted-foreground mr-2">
+                <strong>{selectedField.label}:</strong> {selectedField.helpText || "No description"}
+              </div>
+            )}
+            <ExcelToolbar
+              perSampleFields={checklistFields.map((f) => ({
+                ...f,
+                id: f.name,
+                order: 0,
+                perSample: true,
+              })) as unknown as import("@/types/form-config").FormFieldDefinition[]}
+              samples={flatSamplesForExcel}
+              onSamplesImported={handleSamplesImported}
+              disabled={saving}
+              entityName="metadata"
+            />
+          </div>
         </div>
 
         {samples.length === 0 ? (

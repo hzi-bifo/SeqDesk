@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  BarcodeSet,
   FlowCell,
   SequencerDevice,
   SequencingKit,
@@ -33,6 +34,7 @@ interface TechResponse {
   flowCells: FlowCell[];
   kits: SequencingKit[];
   software: SequencingSoftware[];
+  barcodeSets: BarcodeSet[];
 }
 
 export function TechnologySelector({
@@ -45,6 +47,7 @@ export function TechnologySelector({
   const [flowCells, setFlowCells] = useState<FlowCell[]>([]);
   const [kits, setKits] = useState<SequencingKit[]>([]);
   const [software, setSoftware] = useState<SequencingSoftware[]>([]);
+  const [barcodeSets, setBarcodeSets] = useState<BarcodeSet[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -75,6 +78,7 @@ export function TechnologySelector({
         setFlowCells(data.flowCells || []);
         setKits(data.kits || []);
         setSoftware(data.software || []);
+        setBarcodeSets(data.barcodeSets || []);
       } catch {
         console.error("Failed to load technologies");
         setLoadError("Failed to load sequencing technologies");
@@ -143,6 +147,8 @@ export function TechnologySelector({
         flowCellSku: undefined,
         kitId: undefined,
         kitSku: undefined,
+        barcodeKitId: undefined,
+        barcodeKitSku: undefined,
         softwareIds: undefined,
       });
     },
@@ -161,6 +167,8 @@ export function TechnologySelector({
           flowCellSku: undefined,
           kitId: undefined,
           kitSku: undefined,
+          barcodeKitId: undefined,
+          barcodeKitSku: undefined,
           softwareIds: undefined,
         });
         return;
@@ -174,6 +182,8 @@ export function TechnologySelector({
         flowCellSku: undefined,
         kitId: undefined,
         kitSku: undefined,
+        barcodeKitId: undefined,
+        barcodeKitSku: undefined,
         softwareIds: device.compatibleSoftware || [],
       });
     },
@@ -192,6 +202,8 @@ export function TechnologySelector({
           flowCellSku: undefined,
           kitId: undefined,
           kitSku: undefined,
+          barcodeKitId: undefined,
+          barcodeKitSku: undefined,
         });
         return;
       }
@@ -200,6 +212,10 @@ export function TechnologySelector({
         technologyId: resolvedTechnologyId,
         flowCellId: cell.id,
         flowCellSku: cell.sku,
+        kitId: undefined,
+        kitSku: undefined,
+        barcodeKitId: undefined,
+        barcodeKitSku: undefined,
       });
     },
     [disabled, selection, selectedDevice, updateSelection]
@@ -215,6 +231,8 @@ export function TechnologySelector({
           ...selection,
           kitId: undefined,
           kitSku: undefined,
+          barcodeKitId: undefined,
+          barcodeKitSku: undefined,
         });
         return;
       }
@@ -223,14 +241,83 @@ export function TechnologySelector({
         technologyId: resolvedTechnologyId,
         kitId: kit.id,
         kitSku: kit.sku,
+        barcodeKitId: undefined,
+        barcodeKitSku: undefined,
       });
     },
     [disabled, selection, selectedDevice, updateSelection]
   );
 
+  const selectBarcodeKit = useCallback(
+    (barcodeKit: SequencingKit) => {
+      if (disabled || !selection?.technologyId) return;
+      if (selection.barcodeKitId === barcodeKit.id) {
+        updateSelection({
+          ...selection,
+          barcodeKitId: undefined,
+          barcodeKitSku: undefined,
+        });
+        return;
+      }
+      updateSelection({
+        ...selection,
+        barcodeKitId: barcodeKit.id,
+        barcodeKitSku: barcodeKit.sku,
+      });
+    },
+    [disabled, selection, updateSelection]
+  );
+
   const autoDevice = availableDevices.length === 1 ? availableDevices[0] : null;
   const autoFlowCell = compatibleFlowCells.length === 1 ? compatibleFlowCells[0] : null;
   const autoKit = compatibleKits.length === 1 ? compatibleKits[0] : null;
+
+  // Resolve barcoding info for selected kit
+  const selectedKit = selectedKitId
+    ? compatibleKits.find((k) => k.id === selectedKitId)
+    : undefined;
+
+  const kitBarcoding = selectedKit?.barcoding;
+  const kitHasBuiltInBarcodes = kitBarcoding?.supported && kitBarcoding?.builtIn;
+  const kitNeedsCompanion =
+    kitBarcoding?.supported && kitBarcoding?.requiresAdditionalBarcodeKit;
+
+  // Companion barcode kits available for the selected kit
+  const companionBarcodeKits = useMemo(() => {
+    if (!kitNeedsCompanion || !kitBarcoding?.compatibleBarcodeKits) return [];
+    return kits.filter((k) =>
+      kitBarcoding.compatibleBarcodeKits!.includes(k.id)
+    );
+  }, [kitNeedsCompanion, kitBarcoding, kits]);
+
+  // Resolve the barcode set for display (from built-in or companion kit)
+  const resolvedBarcodeSet = useMemo(() => {
+    if (!selectedKit?.barcoding?.supported) return null;
+
+    if (kitHasBuiltInBarcodes && selectedKit.barcoding?.barcodeSetId) {
+      return barcodeSets.find(
+        (bs) => bs.id === selectedKit.barcoding!.barcodeSetId
+      );
+    }
+
+    if (kitNeedsCompanion && selection?.barcodeKitId) {
+      const barcodeKit = kits.find((k) => k.id === selection.barcodeKitId);
+      if (barcodeKit?.barcoding?.barcodeSetId) {
+        return barcodeSets.find(
+          (bs) => bs.id === barcodeKit.barcoding!.barcodeSetId
+        );
+      }
+    }
+
+    return null;
+  }, [
+    selectedKit,
+    kitHasBuiltInBarcodes,
+    kitNeedsCompanion,
+    selection?.barcodeKitId,
+    barcodeSets,
+    kits,
+  ]);
 
   useEffect(() => {
     if (!selectedTechnologyId || !autoDevice || selection?.deviceId) return;
@@ -756,10 +843,112 @@ export function TechnologySelector({
         </div>
       )}
 
+      {/* Barcode info / companion kit step */}
+      {showDeviceStep && selectedDevice && selectedKit && kitHasBuiltInBarcodes && (
+        <div className="space-y-3">
+          <GlassCard className="p-4 bg-blue-50/50 dark:bg-blue-950/20 border-blue-200/50 dark:border-blue-800/30">
+            <div className="flex items-start gap-3">
+              <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+                <Info className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">
+                  Built-in barcodes included
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  This kit includes {kitBarcoding?.maxBarcodesPerRun ?? "multiple"} built-in barcodes
+                  {resolvedBarcodeSet && (
+                    <> ({resolvedBarcodeSet.name}: barcode{String(resolvedBarcodeSet.barcodeRange[0]).padStart(2, "0")}
+                    &ndash;barcode{String(resolvedBarcodeSet.barcodeRange[1]).padStart(2, "0")})</>
+                  )}.
+                  Barcodes will be available for assignment in the samples step.
+                </p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {showDeviceStep && selectedDevice && selectedKit && kitNeedsCompanion && (
+        <div className="space-y-3">
+          <StepHeader
+            step={5}
+            title="Select Barcode Kit"
+            description="This sequencing kit requires a companion barcode kit for multiplexing"
+          />
+
+          {companionBarcodeKits.length === 0 ? (
+            <GlassCard className="p-4 text-sm text-muted-foreground">
+              No compatible barcode kits found.
+            </GlassCard>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {companionBarcodeKits.map((bKit) => {
+                const isSelected = selection?.barcodeKitId === bKit.id;
+                const barcodeSet = bKit.barcoding?.barcodeSetId
+                  ? barcodeSets.find(
+                      (bs) => bs.id === bKit.barcoding!.barcodeSetId
+                    )
+                  : null;
+                return (
+                  <GlassCard
+                    key={bKit.id}
+                    className={cn(
+                      "cursor-pointer transition-all",
+                      isSelected
+                        ? "ring-2 ring-primary bg-primary/5"
+                        : "hover:bg-muted/50",
+                      disabled && "opacity-50 cursor-not-allowed"
+                    )}
+                    onClick={() => selectBarcodeKit(bKit)}
+                  >
+                    <div className="p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold">
+                          BC
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-semibold">{bKit.name}</h4>
+                            {isSelected && (
+                              <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                                <Check className="h-3 w-3 text-primary-foreground" />
+                              </div>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {bKit.sku}
+                          </p>
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mt-2">
+                            {bKit.barcoding?.maxBarcodesPerRun && (
+                              <span>
+                                {bKit.barcoding.maxBarcodesPerRun} barcodes
+                              </span>
+                            )}
+                            {barcodeSet && (
+                              <span>
+                                {barcodeSet.name} (barcode
+                                {String(barcodeSet.barcodeRange[0]).padStart(2, "0")}
+                                &ndash;barcode
+                                {String(barcodeSet.barcodeRange[1]).padStart(2, "0")})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {showDeviceStep && selectedDevice && compatibleSoftware.length > 0 && (
         <GlassCard className="p-4 bg-muted/30">
           <StepHeader
-            step={5}
+            step={kitNeedsCompanion ? 6 : 5}
             title="Software"
             description="These tools are used for control and analysis"
           />

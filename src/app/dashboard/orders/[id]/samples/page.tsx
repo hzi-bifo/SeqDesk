@@ -59,6 +59,8 @@ import type { FormFieldDefinition } from "@/types/form-config";
 import { FIELD_TO_COLUMN_MAP } from "@/lib/sample-fields";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { OrganismCell } from "@/lib/field-types/organism";
+import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { toast } from "sonner";
 
 // Generate unique sample ID like v1: S-{timestamp}-{random}
 function generateSampleId(): string {
@@ -1123,6 +1125,91 @@ export default function SamplesPage({
     URL.revokeObjectURL(url);
   }, [samples, checklistFields, perSampleFields, order?.name]);
 
+  // Flatten samples for Excel template (ExcelToolbar expects flat SampleRow)
+  const flatSamplesForExcel = useMemo(() => {
+    return samples
+      .filter((s) => !s.isDeleted)
+      .map((s) => {
+        const flat: Record<string, unknown> = {
+          id: s.id || `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          sampleId: s.sampleId,
+          scientificName: s.scientificName,
+          taxId: s.taxId,
+          tax_id: s.taxId,
+        };
+        // Flatten core fields
+        flat.sampleAlias = s.sampleAlias;
+        flat.sampleTitle = s.sampleTitle;
+        flat.sampleDescription = s.sampleDescription;
+        // Flatten customFields
+        if (s.customFields) {
+          for (const [k, v] of Object.entries(s.customFields)) {
+            flat[k] = v;
+          }
+        }
+        // Flatten checklistData
+        if (s.checklistData) {
+          for (const [k, v] of Object.entries(s.checklistData)) {
+            flat[k] = v;
+          }
+        }
+        return flat as { id: string; sampleId: string; [key: string]: unknown };
+      });
+  }, [samples]);
+
+  // Handle samples imported from Excel
+  const handleSamplesImported = useCallback(
+    (
+      importedRows: { id: string; sampleId: string; [key: string]: unknown }[],
+      mode: "replace" | "append"
+    ) => {
+      const newSamples: Sample[] = importedRows.map((row) => {
+        const sample: Sample = {
+          sampleId: row.sampleId || generateSampleId(),
+          sampleAlias: String(row.sampleAlias || row.sample_alias || ""),
+          sampleTitle: String(row.sampleTitle || row.sample_title || ""),
+          sampleDescription: String(row.sampleDescription || row.sample_description || ""),
+          scientificName: String(row.scientificName || ""),
+          taxId: String(row.taxId || row.tax_id || ""),
+          checklistData: {},
+          customFields: {},
+          isNew: true,
+        };
+
+        // Map per-sample fields to core columns or customFields
+        for (const field of perSampleFields) {
+          const columnName = FIELD_TO_COLUMN_MAP[field.name];
+          if (columnName) {
+            // Core column - already handled above for known core fields
+            if (!(columnName in sample) || !sample[columnName]) {
+              (sample as Record<string, unknown>)[columnName] = row[field.name] ?? "";
+            }
+          } else {
+            // Custom field
+            sample.customFields![field.name] = row[field.name] ?? "";
+          }
+        }
+
+        return sample;
+      });
+
+      if (mode === "replace") {
+        // Mark existing samples as deleted, add new ones
+        setSamples((prev) => [
+          ...prev.map((s) => ({ ...s, isDeleted: true })),
+          ...newSamples,
+        ]);
+      } else {
+        setSamples((prev) => [...prev, ...newSamples]);
+      }
+      setHasChanges(true);
+      toast.success(
+        `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""}`
+      );
+    },
+    [perSampleFields]
+  );
+
   const handleSave = async () => {
     setError("");
     setSuccess("");
@@ -1364,9 +1451,16 @@ export default function SamplesPage({
               </>
             )}
             <div className="w-px h-6 bg-border mx-1" />
+            <ExcelToolbar
+              perSampleFields={perSampleFields}
+              samples={flatSamplesForExcel}
+              onSamplesImported={handleSamplesImported}
+              disabled={saving || !isEditable}
+              entityName={order?.name}
+            />
             <Button variant="outline" size="sm" onClick={handleExportCSV}>
               <Download className="h-4 w-4 mr-1" />
-              Export
+              Export CSV
             </Button>
             <Button
               variant="outline"

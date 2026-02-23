@@ -528,6 +528,7 @@ export default function SequencingTechPage() {
     if (!config || !kitForm.id || !kitForm.name || !kitForm.sku) return;
 
     const normalizedKit: SequencingKit = {
+      ...editingKit, // preserve synced fields (barcoding, kitKind, doradoKitName, etc.)
       id: kitForm.id,
       name: kitForm.name,
       sku: kitForm.sku,
@@ -1299,7 +1300,7 @@ export default function SequencingTechPage() {
                               !kit.available ? "opacity-60" : ""
                             }`}
                           >
-                            <div className="p-3 grid gap-4 items-center md:grid-cols-[2fr_1fr_2fr_auto]">
+                            <div className="p-3 grid gap-4 items-center md:grid-cols-[2fr_1fr_1fr_2fr_auto]">
                               <div>
                                 <div className="font-medium">{kit.name}</div>
                                 <div className="text-xs text-muted-foreground">
@@ -1307,6 +1308,20 @@ export default function SequencingTechPage() {
                                 </div>
                               </div>
                               <div className="text-sm capitalize">{kit.category}</div>
+                              <div className="text-xs">
+                                {kit.barcoding?.builtIn ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600">
+                                    <Dna className="h-3 w-3" />
+                                    {kit.barcoding.maxBarcodesPerRun ?? kit.barcodeCount ?? "?"} barcodes
+                                  </span>
+                                ) : kit.barcoding?.supported && kit.barcoding?.requiresAdditionalBarcodeKit ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600">
+                                    Companion kit
+                                  </span>
+                                ) : kit.barcoding?.supported === false ? (
+                                  <span className="text-muted-foreground">Singleplex</span>
+                                ) : null}
+                              </div>
                               <div className="text-xs text-muted-foreground line-clamp-2">
                                 {usedBy.length > 0
                                   ? usedBy.map((d) => d.name).join(", ")
@@ -2285,6 +2300,81 @@ export default function SequencingTechPage() {
                 />
               </div>
             </div>
+
+            {/* Barcoding info (read-only, from registry sync) */}
+            {kitForm.barcoding && (
+              <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Dna className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm font-medium">Barcoding Configuration</Label>
+                  <span className="text-xs text-muted-foreground">(from registry)</span>
+                </div>
+
+                {kitForm.barcoding.supported === false ? (
+                  <p className="text-sm text-muted-foreground">
+                    Barcoding is not available for this kit.
+                  </p>
+                ) : kitForm.barcoding.builtIn ? (
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                    {kitForm.kitKind && (
+                      <>
+                        <span className="text-muted-foreground">Kit Kind</span>
+                        <span className="capitalize">{kitForm.kitKind.replace(/_/g, " ")}</span>
+                      </>
+                    )}
+                    {kitForm.doradoKitName && (
+                      <>
+                        <span className="text-muted-foreground">Dorado Name</span>
+                        <span className="font-mono text-xs">{kitForm.doradoKitName}</span>
+                      </>
+                    )}
+                    <>
+                      <span className="text-muted-foreground">Barcode Set</span>
+                      <span>
+                        {kitForm.barcoding.barcodeSetId || "Not set"}
+                        {kitForm.barcoding.barcodeSetId && (() => {
+                          const set = (config?.barcodeSets || []).find(
+                            (s) => s.id === kitForm.barcoding?.barcodeSetId
+                          );
+                          return set ? ` (${set.name})` : "";
+                        })()}
+                      </span>
+                    </>
+                    {kitForm.barcoding.maxBarcodesPerRun != null && (
+                      <>
+                        <span className="text-muted-foreground">Max Barcodes</span>
+                        <span>{kitForm.barcoding.maxBarcodesPerRun}</span>
+                      </>
+                    )}
+                  </div>
+                ) : kitForm.barcoding.requiresAdditionalBarcodeKit ? (
+                  <div className="space-y-2 text-sm">
+                    {kitForm.kitKind && (
+                      <div className="flex gap-2">
+                        <span className="text-muted-foreground">Kit Kind:</span>
+                        <span className="capitalize">{kitForm.kitKind.replace(/_/g, " ")}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-muted-foreground">Compatible Barcode Kits:</span>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {(kitForm.barcoding.compatibleBarcodeKits || []).map((bkId) => {
+                          const bk = kits.find((k) => k.id === bkId);
+                          return (
+                            <span
+                              key={bkId}
+                              className="inline-flex px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 text-xs"
+                            >
+                              {bk ? `${bk.name} (${bk.sku})` : bkId}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Description</Label>

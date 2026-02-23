@@ -4,11 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LogOut,
-  Home,
   FileText,
   BookOpen,
   Settings,
-  Building2,
   Users,
   ChevronDown,
   ChevronUp,
@@ -47,6 +45,10 @@ export function Sidebar({ user, version }: SidebarProps) {
   const { focusedField, setFocusedField, validationError } = useFieldHelp();
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const { enabled: sequencingTechEnabled } = useModule("sequencing-tech");
+  const isAccountsPage = (path: string) =>
+    path.startsWith("/admin/users") ||
+    path.startsWith("/admin/departments") ||
+    path.startsWith("/dashboard/messages");
 
   // Helper to check if on a Configuration page (not users/departments which are top-level)
   const isConfigPage = (path: string) =>
@@ -55,6 +57,7 @@ export function Sidebar({ user, version }: SidebarProps) {
     !path.startsWith("/admin/departments");
   // Expand Configuration section if we're on a config page
   const [adminExpanded, setAdminExpanded] = useState(isConfigPage(pathname));
+  const [accountsExpanded, setAccountsExpanded] = useState(isAccountsPage(pathname));
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -197,14 +200,16 @@ export function Sidebar({ user, version }: SidebarProps) {
     if (isConfigPage(pathname)) {
       setAdminExpanded(true);
     }
+    if (isAccountsPage(pathname)) {
+      setAccountsExpanded(true);
+    }
     // Close mobile sidebar on navigation, but avoid no-op updates.
     setMobileOpen((isOpen) => (isOpen ? false : isOpen));
   }, [pathname, setMobileOpen]);
 
   const isActive = (path: string) => {
-    if (path === "/dashboard" && pathname === "/dashboard") return true;
     if (path === "/admin" && pathname === "/admin") return true;
-    if (path !== "/dashboard" && path !== "/admin" && pathname.startsWith(path)) return true;
+    if (path !== "/admin" && pathname.startsWith(path)) return true;
     return false;
   };
 
@@ -261,8 +266,8 @@ export function Sidebar({ user, version }: SidebarProps) {
                   SeqDesk
                 </span>
                 {version && (
-                  <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                    v{version}
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide self-start mt-0.5">
+                    V{version}
                   </span>
                 )}
                 <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
@@ -283,10 +288,6 @@ export function Sidebar({ user, version }: SidebarProps) {
 
       <nav className={cn("flex-1 p-4 space-y-1 overflow-y-auto", collapsed && "p-2")}>
         {/* Core workflow items */}
-        <Link href="/dashboard" className={navItemClass("/dashboard")} title="Dashboard">
-          <Home className="h-4 w-4 shrink-0" />
-          {!collapsed && "Dashboard"}
-        </Link>
         <Link href="/dashboard/orders" className={navItemClass("/dashboard/orders")} title="Orders">
           <FileText className="h-4 w-4 shrink-0" />
           {!collapsed && "Orders"}
@@ -305,15 +306,6 @@ export function Sidebar({ user, version }: SidebarProps) {
             </span>
           )}
         </Link>
-        <Link
-          href="/dashboard/assemblies"
-          className={navItemClass("/dashboard/assemblies")}
-          title="Assemblies"
-        >
-          <HardDrive className="h-4 w-4 shrink-0" />
-          {!collapsed && "Assemblies"}
-        </Link>
-
         {/* Sequencing Files - Admin only */}
         {isFacilityAdmin && (
           <Link href="/dashboard/files" className={navItemClass("/dashboard/files")} title="Sequencing Files">
@@ -327,11 +319,11 @@ export function Sidebar({ user, version }: SidebarProps) {
           </Link>
         )}
 
-        {/* Data Upload - Admin only */}
+        {/* ENA Submissions - Admin only */}
         {isFacilityAdmin && (
-          <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="Data Upload">
+          <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="ENA Submissions">
             <Send className="h-4 w-4 shrink-0" />
-            {!collapsed && "Data Upload"}
+            {!collapsed && "ENA Submissions"}
             {!collapsed && counts.submissions > 0 && (
               <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
                 {counts.submissions > 99 ? "99+" : counts.submissions}
@@ -352,7 +344,6 @@ export function Sidebar({ user, version }: SidebarProps) {
             </span>
           )}
         </Link>
-
         {/* Field Help Panel - show when a field is focused */}
         {focusedField && !collapsed && (
           <div className="mt-6 mb-6">
@@ -360,8 +351,6 @@ export function Sidebar({ user, version }: SidebarProps) {
               background: 'linear-gradient(135deg, rgba(247, 247, 244, 0.9) 0%, rgba(239, 239, 233, 0.95) 50%, rgba(247, 247, 244, 0.9) 100%)',
               border: '1px solid #e5e5e0'
             }}>
-              {/* Shimmer overlay */}
-              <div className="absolute inset-0 pointer-events-none shimmer-bg" />
               <div className="relative z-10">
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2">
@@ -506,208 +495,252 @@ export function Sidebar({ user, version }: SidebarProps) {
           </div>
         )}
 
-        {/* Users & Departments - Admin only */}
+        {/* Users and support - Admin only */}
         {isFacilityAdmin && (
           <>
-            <Link href="/admin/users" className={navItemClass("/admin/users")} title="Researchers">
-              <Users className="h-4 w-4 shrink-0" />
-              {!collapsed && "Researchers"}
-            </Link>
-            <Link href="/admin/departments" className={navItemClass("/admin/departments")} title="Departments">
-              <Building2 className="h-4 w-4 shrink-0" />
-              {!collapsed && "Departments"}
-            </Link>
-            <Link href="/dashboard/messages" className={navItemClass("/dashboard/messages")} title="Support">
-              <MessageSquare className="h-4 w-4 shrink-0" />
-              {!collapsed && "Support"}
-              {!collapsed && unreadMessages > 0 && (
-                <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full ml-auto h-5 min-w-5 px-1.5">
-                  {unreadMessages > 9 ? "9+" : unreadMessages}
-                </span>
-              )}
-            </Link>
-          </>
-        )}
-      </nav>
-
-      {/* Settings - Admin only, above user menu */}
-      {isFacilityAdmin && (
-        <div className={cn("px-4 pb-2", collapsed && "px-2")}>
-          {collapsed ? (
-            <Link
-              href="/admin/form-builder"
-              className={cn(
-                "flex items-center justify-center p-2 rounded-lg transition-all text-sm",
-                pathname.startsWith("/admin") &&
-                  !pathname.startsWith("/admin/users") &&
-                  !pathname.startsWith("/admin/departments")
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-              )}
-              title="Settings"
-            >
-              <Settings className="h-4 w-4" />
-            </Link>
-          ) : (
-            <>
-              <button
-                onClick={() => setAdminExpanded(!adminExpanded)}
+            {collapsed ? (
+              <Link
+                href="/admin/users"
                 className={cn(
-                  "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-all text-sm",
+                  "flex items-center justify-center p-2 rounded-lg transition-all text-sm",
+                  isAccountsPage(pathname)
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                )}
+                title="Users"
+              >
+                <Users className="h-4 w-4" />
+              </Link>
+            ) : (
+              <>
+                <button
+                  onClick={() => setAccountsExpanded(!accountsExpanded)}
+                  className={cn(
+                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-all text-sm",
+                    isAccountsPage(pathname)
+                      ? "bg-secondary text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <Users className="h-4 w-4" />
+                    Users
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-200",
+                      accountsExpanded && "rotate-180"
+                    )}
+                  />
+                </button>
+
+                <div
+                  className={cn(
+                    "overflow-hidden transition-all duration-200",
+                    accountsExpanded ? "max-h-32 opacity-100 mt-1" : "max-h-0 opacity-0"
+                  )}
+                >
+                  <Link href="/admin/users" className={adminSubItemClass("/admin/users")}>
+                    Researchers
+                  </Link>
+                  <Link href="/admin/departments" className={adminSubItemClass("/admin/departments")}>
+                    Departments
+                  </Link>
+                  <Link
+                    href="/dashboard/messages"
+                    className={cn(
+                      adminSubItemClass("/dashboard/messages"),
+                      "flex items-center justify-between gap-2"
+                    )}
+                  >
+                    <span>Support</span>
+                    {unreadMessages > 0 && (
+                      <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full h-5 min-w-5 px-1.5">
+                        {unreadMessages > 9 ? "9+" : unreadMessages}
+                      </span>
+                    )}
+                  </Link>
+                </div>
+              </>
+            )}
+
+            {/* Settings menu - below Users */}
+            {collapsed ? (
+              <Link
+                href="/admin/form-builder"
+                className={cn(
+                  "flex items-center justify-center p-2 rounded-lg transition-all text-sm",
                   pathname.startsWith("/admin") &&
                     !pathname.startsWith("/admin/users") &&
                     !pathname.startsWith("/admin/departments")
-                    ? "bg-secondary text-foreground font-medium"
+                    ? "bg-secondary text-foreground"
                     : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                 )}
+                title="Settings"
               >
-                <span className="flex items-center gap-3">
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </span>
-                <ChevronDown
+                <Settings className="h-4 w-4" />
+              </Link>
+            ) : (
+              <>
+                <button
+                  onClick={() => setAdminExpanded(!adminExpanded)}
                   className={cn(
-                    "h-4 w-4 transition-transform duration-200",
-                    adminExpanded && "rotate-180"
-                  )}
-                />
-              </button>
-
-              {/* Settings sub-items */}
-              <div
-                className={cn(
-                  "overflow-hidden transition-all duration-200",
-                  adminExpanded ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"
-                )}
-              >
-                <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-                  Order Form
-                </Link>
-                <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
-                  Study Forms
-                </Link>
-                <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
-                  Modules
-                </Link>
-                {sequencingTechEnabled && (
-                  <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
-                    Sequencers
-                  </Link>
-                )}
-                <Link
-                  href="/admin/data-compute"
-                  className={cn(
-                    adminSubItemClass("/admin/data-compute"),
-                    "flex items-center justify-between gap-2"
+                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-all text-sm",
+                    pathname.startsWith("/admin") &&
+                      !pathname.startsWith("/admin/users") &&
+                      !pathname.startsWith("/admin/departments")
+                      ? "bg-secondary text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                   )}
                 >
-                  <span>Infrastructure</span>
-                  {!infrastructureReadiness.loading &&
-                    (hasRequiredInfrastructureGaps ||
-                      hasRecommendedInfrastructureGaps) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              router.push(infrastructureReadiness.firstMissingHref);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
+                  <span className="flex items-center gap-3">
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-200",
+                      adminExpanded && "rotate-180"
+                    )}
+                  />
+                </button>
+
+                {/* Settings sub-items */}
+                <div
+                  className={cn(
+                    "overflow-hidden transition-all duration-200",
+                    adminExpanded ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"
+                  )}
+                >
+                  <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
+                    Order Form
+                  </Link>
+                  <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
+                    Study Forms
+                  </Link>
+                  <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
+                    Modules
+                  </Link>
+                  {sequencingTechEnabled && (
+                    <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
+                      Sequencers
+                    </Link>
+                  )}
+                  <Link
+                    href="/admin/data-compute"
+                    className={cn(
+                      adminSubItemClass("/admin/data-compute"),
+                      "flex items-center justify-between gap-2"
+                    )}
+                  >
+                    <span>Infrastructure</span>
+                    {!infrastructureReadiness.loading &&
+                      (hasRequiredInfrastructureGaps ||
+                        hasRecommendedInfrastructureGaps) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
                                 router.push(infrastructureReadiness.firstMissingHref);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  router.push(infrastructureReadiness.firstMissingHref);
+                                }
+                              }}
+                              className={cn(
+                                "inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full text-[11px] font-semibold",
+                                hasRequiredInfrastructureGaps
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-amber-100 text-amber-700"
+                              )}
+                              aria-label={
+                                hasRequiredInfrastructureGaps
+                                  ? `${infrastructureReadiness.requiredMissingCount} required infrastructure settings missing`
+                                  : `${infrastructureReadiness.recommendedMissingCount} recommended infrastructure settings pending`
                               }
-                            }}
-                            className={cn(
-                              "inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full text-[11px] font-semibold",
-                              hasRequiredInfrastructureGaps
-                                ? "bg-red-100 text-red-700"
-                                : "bg-amber-100 text-amber-700"
-                            )}
-                            aria-label={
-                              hasRequiredInfrastructureGaps
-                                ? `${infrastructureReadiness.requiredMissingCount} required infrastructure settings missing`
-                                : `${infrastructureReadiness.recommendedMissingCount} recommended infrastructure settings pending`
-                            }
+                            >
+                              {hasRequiredInfrastructureGaps ? (
+                                "!"
+                              ) : (
+                                <AlertTriangle className="h-3 w-3" />
+                              )}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent
+                            side="right"
+                            align="start"
+                            sideOffset={8}
+                            className="max-w-xs text-left"
                           >
-                            {hasRequiredInfrastructureGaps ? (
-                              "!"
-                            ) : (
-                              <AlertTriangle className="h-3 w-3" />
-                            )}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="right"
-                          align="start"
-                          sideOffset={8}
-                          className="max-w-xs text-left"
-                        >
-                          <div className="space-y-2">
-                            <p className="font-medium">
-                              {hasRequiredInfrastructureGaps
-                                ? `${infrastructureReadiness.requiredMissingCount} required setting${
-                                    infrastructureReadiness.requiredMissingCount ===
-                                    1
-                                      ? ""
-                                      : "s"
-                                  } missing`
-                                : `${infrastructureReadiness.recommendedMissingCount} recommended setting${
-                                    infrastructureReadiness.recommendedMissingCount ===
-                                    1
-                                      ? ""
-                                      : "s"
-                                  } pending`}
-                            </p>
-                            <ul className="space-y-1">
-                              {infrastructureReadiness.missingItems.map((item) => (
-                                <li key={item.key} className="flex items-center gap-1.5">
-                                  <span
-                                    className={cn(
-                                      "h-1.5 w-1.5 rounded-full",
-                                      item.severity === "required"
-                                        ? "bg-red-300"
-                                        : "bg-amber-300"
-                                    )}
-                                  />
-                                  <Link
-                                    href={item.href}
-                                    className="underline underline-offset-2 hover:opacity-90"
-                                  >
-                                    {item.label}
-                                  </Link>
-                                </li>
-                              ))}
-                            </ul>
-                            <p className="opacity-80">
-                              Click the badge to jump to the first missing item.
-                            </p>
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                </Link>
-                <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
-                  Accounts
-                </Link>
-                <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
-                  Data Upload
-                </Link>
-                <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
-                  Info
-                </Link>
-                <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
-                  Pipelines
-                </Link>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+                            <div className="space-y-2">
+                              <p className="font-medium">
+                                {hasRequiredInfrastructureGaps
+                                  ? `${infrastructureReadiness.requiredMissingCount} required setting${
+                                      infrastructureReadiness.requiredMissingCount ===
+                                      1
+                                        ? ""
+                                        : "s"
+                                    } missing`
+                                  : `${infrastructureReadiness.recommendedMissingCount} recommended setting${
+                                      infrastructureReadiness.recommendedMissingCount ===
+                                      1
+                                        ? ""
+                                        : "s"
+                                    } pending`}
+                              </p>
+                              <ul className="space-y-1">
+                                {infrastructureReadiness.missingItems.map((item) => (
+                                  <li key={item.key} className="flex items-center gap-1.5">
+                                    <span
+                                      className={cn(
+                                        "h-1.5 w-1.5 rounded-full",
+                                        item.severity === "required"
+                                          ? "bg-red-300"
+                                          : "bg-amber-300"
+                                      )}
+                                    />
+                                    <Link
+                                      href={item.href}
+                                      className="underline underline-offset-2 hover:opacity-90"
+                                    >
+                                      {item.label}
+                                    </Link>
+                                  </li>
+                                ))}
+                              </ul>
+                              <p className="opacity-80">
+                                Click the badge to jump to the first missing item.
+                              </p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                  </Link>
+                  <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
+                    Accounts
+                  </Link>
+                  <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
+                    Data Upload
+                  </Link>
+                  <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
+                    Info
+                  </Link>
+                  <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
+                    Pipelines
+                  </Link>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </nav>
 
       {/* Support section at bottom - Researchers only */}
       {!isFacilityAdmin && (
@@ -735,8 +768,8 @@ export function Sidebar({ user, version }: SidebarProps) {
         </div>
       )}
 
-      {/* New Order Button - Researchers only, hide on admin config pages */}
-      {!isFacilityAdmin && !isConfigPage(pathname) && (
+      {/* New Order Button - hide on admin config pages */}
+      {!isConfigPage(pathname) && (
         <div className={cn("px-4 pb-3", collapsed && "px-2")}>
           <Link
             href="/dashboard/orders/new"

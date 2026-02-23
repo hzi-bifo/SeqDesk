@@ -2,6 +2,7 @@
 #
 # SeqDesk Installation Script
 # Usage: curl -fsSL https://seqdesk.com/install.sh | bash
+# CLI usage: curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -16,6 +17,18 @@
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
+#   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
+#   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
+#   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
+#   SEQDESK_EXEC_SLURM_CORES=4     - Optional pipeline execution override
+#   SEQDESK_EXEC_SLURM_MEMORY=64GB - Optional pipeline execution override
+#   SEQDESK_EXEC_SLURM_TIME_LIMIT=12 - Optional pipeline execution override
+#   SEQDESK_EXEC_SLURM_OPTIONS=... - Optional pipeline execution override
+#   SEQDESK_EXEC_CONDA_PATH=/opt/miniconda3 - Optional pipeline execution override
+#   SEQDESK_EXEC_CONDA_ENV=seqdesk-pipelines - Optional pipeline execution override
+#   SEQDESK_EXEC_NEXTFLOW_PROFILE=conda - Optional pipeline execution override
+#   SEQDESK_EXEC_WEBLOG_URL=http://host/api/pipelines/weblog - Optional override
+#   SEQDESK_EXEC_WEBLOG_SECRET=secret - Optional override
 #
 
 set -euo pipefail
@@ -43,6 +56,18 @@ SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
+SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
+SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
+SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
+SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
+SEQDESK_EXEC_SLURM_MEMORY="${SEQDESK_EXEC_SLURM_MEMORY:-}"
+SEQDESK_EXEC_SLURM_TIME_LIMIT="${SEQDESK_EXEC_SLURM_TIME_LIMIT:-}"
+SEQDESK_EXEC_SLURM_OPTIONS="${SEQDESK_EXEC_SLURM_OPTIONS:-}"
+SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH:-}"
+SEQDESK_EXEC_CONDA_ENV="${SEQDESK_EXEC_CONDA_ENV:-}"
+SEQDESK_EXEC_NEXTFLOW_PROFILE="${SEQDESK_EXEC_NEXTFLOW_PROFILE:-}"
+SEQDESK_EXEC_WEBLOG_URL="${SEQDESK_EXEC_WEBLOG_URL:-}"
+SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
 
 TOTAL_STEPS=8
 CURRENT_STEP=0
@@ -152,6 +177,422 @@ prompt_yes_no() {
             printf -v "$var_name" '%s' "false"
             ;;
     esac
+}
+
+print_usage() {
+    cat <<'EOF'
+Usage:
+  curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
+
+Options:
+  -y, --yes                    Non-interactive mode (accept defaults)
+  --config <path-or-url>       Infrastructure JSON file (local path or https URL)
+  --dir <path>                 Install directory
+  --branch <branch>            Git branch to install (source installer)
+  --with-pipelines             Enable pipeline dependencies
+  --without-pipelines          Disable pipeline dependencies
+  --skip-deps                  Skip dependency installation
+  --port <port>                App port
+  --data-path <path>           Sequencing data directory
+  --run-dir <path>             Pipeline run directory
+  --nextauth-url <url>         NEXTAUTH_URL override
+  --database-url <url>         DATABASE_URL override
+  -h, --help                   Show this help
+
+Examples:
+  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
+  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
+EOF
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -y|--yes)
+                SEQDESK_YES="1"
+                ;;
+            --config)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --config"
+                    exit 1
+                fi
+                SEQDESK_CONFIG="$2"
+                shift
+                ;;
+            --dir)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --dir"
+                    exit 1
+                fi
+                SEQDESK_DIR="$2"
+                shift
+                ;;
+            --branch)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --branch"
+                    exit 1
+                fi
+                SEQDESK_BRANCH="$2"
+                shift
+                ;;
+            --with-pipelines)
+                SEQDESK_WITH_PIPELINES="1"
+                ;;
+            --without-pipelines)
+                SEQDESK_WITH_PIPELINES="0"
+                SEQDESK_WITH_CONDA="0"
+                ;;
+            --skip-deps)
+                SEQDESK_SKIP_DEPS="1"
+                ;;
+            --port)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --port"
+                    exit 1
+                fi
+                SEQDESK_PORT="$2"
+                shift
+                ;;
+            --data-path)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --data-path"
+                    exit 1
+                fi
+                SEQDESK_DATA_PATH="$2"
+                shift
+                ;;
+            --run-dir)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --run-dir"
+                    exit 1
+                fi
+                SEQDESK_RUN_DIR="$2"
+                shift
+                ;;
+            --nextauth-url)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --nextauth-url"
+                    exit 1
+                fi
+                SEQDESK_NEXTAUTH_URL="$2"
+                shift
+                ;;
+            --database-url)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --database-url"
+                    exit 1
+                fi
+                SEQDESK_DATABASE_URL="$2"
+                shift
+                ;;
+            -h|--help)
+                print_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+apply_config_value() {
+    local target_var="$1"
+    local config_var="$2"
+    local current_value="${!target_var:-}"
+    local config_value="${!config_var:-}"
+
+    if [ -z "$current_value" ] && [ -n "$config_value" ]; then
+        printf -v "$target_var" '%s' "$config_value"
+    fi
+}
+
+load_install_config() {
+    local config_ref="$1"
+    local config_path="$config_ref"
+    local temp_json=""
+    local temp_env=""
+
+    if ! command_exists node; then
+        print_error "Node.js is required to parse --config JSON."
+        exit 1
+    fi
+
+    if [[ "$config_ref" =~ ^https?:// ]]; then
+        if ! command_exists curl; then
+            print_error "curl is required to download config URL: $config_ref"
+            exit 1
+        fi
+        temp_json=$(mktemp)
+        if ! curl -fsSL "$config_ref" -o "$temp_json"; then
+            rm -f "$temp_json"
+            print_error "Failed to download config: $config_ref"
+            exit 1
+        fi
+        config_path="$temp_json"
+    elif [ ! -f "$config_ref" ]; then
+        print_error "Config file not found: $config_ref"
+        exit 1
+    fi
+
+    temp_env=$(mktemp)
+    if ! node - "$config_path" >"$temp_env" <<'NODE'
+const fs = require("fs");
+
+const configPath = process.argv[2];
+const raw = fs.readFileSync(configPath, "utf8");
+const input = JSON.parse(raw);
+
+function isRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function toRecord(value) {
+  return isRecord(value) ? value : undefined;
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function toOptionalString(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toOptionalBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "y", "1", "on"].includes(normalized)) return true;
+  if (["false", "no", "n", "0", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+function toOptionalInt(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.trunc(parsed);
+  }
+  return undefined;
+}
+
+function escapeShell(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`");
+}
+
+if (!isRecord(input)) {
+  throw new Error("Config root must be a JSON object.");
+}
+
+const root = input;
+const app = toRecord(root.app);
+const site = toRecord(root.site);
+const pipelines = toRecord(root.pipelines);
+const execution = toRecord(pipelines?.execution);
+const conda = toRecord(execution?.conda);
+const slurm = toRecord(execution?.slurm);
+const runtime = toRecord(root.runtime);
+
+const executionMode = toOptionalString(execution?.mode)?.toLowerCase();
+const explicitUseSlurm = toOptionalBoolean(
+  firstDefined(root.useSlurm, execution?.useSlurm, slurm?.enabled)
+);
+let useSlurm = explicitUseSlurm;
+if (useSlurm === undefined) {
+  if (executionMode === "slurm") {
+    useSlurm = true;
+  } else if (executionMode === "local" || executionMode === "kubernetes") {
+    useSlurm = false;
+  }
+}
+
+const values = {
+  port: toOptionalInt(firstDefined(root.port, root.appPort, app?.port)),
+  dataPath: toOptionalString(
+    firstDefined(
+      root.sequencingDataDir,
+      root.sequencingDataPath,
+      root.dataBasePath,
+      site?.dataBasePath
+    )
+  ),
+  runDir: toOptionalString(
+    firstDefined(
+      root.pipelineRunDir,
+      root.runDirectory,
+      execution?.runDirectory,
+      execution?.pipelineRunDir
+    )
+  ),
+  nextAuthUrl: toOptionalString(
+    firstDefined(root.nextAuthUrl, root.nextauthUrl, app?.nextAuthUrl)
+  ),
+  databaseUrl: toOptionalString(firstDefined(root.databaseUrl, app?.databaseUrl)),
+  useSlurm,
+  slurmQueue: toOptionalString(
+    firstDefined(root.slurmQueue, execution?.slurmQueue, slurm?.queue)
+  ),
+  slurmCores: toOptionalInt(
+    firstDefined(root.slurmCores, execution?.slurmCores, slurm?.cores)
+  ),
+  slurmMemory: toOptionalString(
+    firstDefined(root.slurmMemory, execution?.slurmMemory, slurm?.memory)
+  ),
+  slurmTimeLimit: toOptionalInt(
+    firstDefined(root.slurmTimeLimit, execution?.slurmTimeLimit, slurm?.timeLimit)
+  ),
+  slurmOptions: toOptionalString(
+    firstDefined(
+      root.slurmOptions,
+      root.clusterOptions,
+      execution?.slurmOptions,
+      execution?.clusterOptions,
+      slurm?.options,
+      slurm?.clusterOptions
+    )
+  ),
+  condaPath: toOptionalString(
+    firstDefined(root.condaPath, root.condaBase, execution?.condaPath, conda?.path)
+  ),
+  condaEnv: toOptionalString(
+    firstDefined(
+      root.condaEnv,
+      root.condaEnvironment,
+      execution?.condaEnv,
+      conda?.environment
+    )
+  ),
+  nextflowProfile: toOptionalString(
+    firstDefined(root.nextflowProfile, execution?.nextflowProfile)
+  ),
+  weblogUrl: toOptionalString(
+    firstDefined(
+      root.nextflowWeblogUrl,
+      root.weblogUrl,
+      execution?.weblogUrl,
+      runtime?.weblogUrl
+    )
+  ),
+  weblogSecret: toOptionalString(
+    firstDefined(root.weblogSecret, execution?.weblogSecret, runtime?.weblogSecret)
+  ),
+};
+
+if (values.runDir === "/") {
+  values.runDir = undefined;
+}
+
+const explicitPipelines = toOptionalBoolean(
+  firstDefined(root.pipelinesEnabled, root.pipelineEnabled, pipelines?.enabled)
+);
+let withPipelines = explicitPipelines;
+if (withPipelines === undefined) {
+  const hints = [
+    values.runDir,
+    values.useSlurm,
+    values.condaPath,
+    values.condaEnv,
+    values.nextflowProfile,
+    values.weblogUrl,
+    values.weblogSecret,
+  ];
+  if (hints.some((value) => value !== undefined && value !== "")) {
+    withPipelines = true;
+  }
+}
+
+const out = {};
+if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
+if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
+if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
+if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
+if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
+if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
+if (values.useSlurm !== undefined) {
+  out.SEQDESK_CFG_EXEC_USE_SLURM = values.useSlurm ? "true" : "false";
+}
+if (values.slurmQueue) out.SEQDESK_CFG_EXEC_SLURM_QUEUE = values.slurmQueue;
+if (values.slurmCores !== undefined && values.slurmCores > 0) {
+  out.SEQDESK_CFG_EXEC_SLURM_CORES = String(values.slurmCores);
+}
+if (values.slurmMemory) out.SEQDESK_CFG_EXEC_SLURM_MEMORY = values.slurmMemory;
+if (values.slurmTimeLimit !== undefined && values.slurmTimeLimit > 0) {
+  out.SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT = String(values.slurmTimeLimit);
+}
+if (values.slurmOptions) out.SEQDESK_CFG_EXEC_SLURM_OPTIONS = values.slurmOptions;
+if (values.condaPath) out.SEQDESK_CFG_EXEC_CONDA_PATH = values.condaPath;
+if (values.condaEnv) out.SEQDESK_CFG_EXEC_CONDA_ENV = values.condaEnv;
+if (values.nextflowProfile) {
+  out.SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE = values.nextflowProfile;
+}
+if (values.weblogUrl) out.SEQDESK_CFG_EXEC_WEBLOG_URL = values.weblogUrl;
+if (values.weblogSecret) out.SEQDESK_CFG_EXEC_WEBLOG_SECRET = values.weblogSecret;
+
+for (const [key, value] of Object.entries(out)) {
+  console.log(`${key}="${escapeShell(value)}"`);
+}
+NODE
+    then
+        rm -f "$temp_env"
+        if [ -n "$temp_json" ]; then
+            rm -f "$temp_json"
+        fi
+        print_error "Failed to parse config JSON: $config_ref"
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$temp_env"
+    rm -f "$temp_env"
+    if [ -n "$temp_json" ]; then
+        rm -f "$temp_json"
+    fi
+
+    apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
+    apply_config_value SEQDESK_DATA_PATH SEQDESK_CFG_DATA_PATH
+    apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
+    apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
+    apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
+    apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
+
+    apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
+    apply_config_value SEQDESK_EXEC_SLURM_QUEUE SEQDESK_CFG_EXEC_SLURM_QUEUE
+    apply_config_value SEQDESK_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_CORES
+    apply_config_value SEQDESK_EXEC_SLURM_MEMORY SEQDESK_CFG_EXEC_SLURM_MEMORY
+    apply_config_value SEQDESK_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT
+    apply_config_value SEQDESK_EXEC_SLURM_OPTIONS SEQDESK_CFG_EXEC_SLURM_OPTIONS
+    apply_config_value SEQDESK_EXEC_CONDA_PATH SEQDESK_CFG_EXEC_CONDA_PATH
+    apply_config_value SEQDESK_EXEC_CONDA_ENV SEQDESK_CFG_EXEC_CONDA_ENV
+    apply_config_value SEQDESK_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE
+    apply_config_value SEQDESK_EXEC_WEBLOG_URL SEQDESK_CFG_EXEC_WEBLOG_URL
+    apply_config_value SEQDESK_EXEC_WEBLOG_SECRET SEQDESK_CFG_EXEC_WEBLOG_SECRET
+
+    unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
+    unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
+    unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
+    unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
+    unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
+    unset SEQDESK_CFG_EXEC_CONDA_PATH SEQDESK_CFG_EXEC_CONDA_ENV
+    unset SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_WEBLOG_URL
+    unset SEQDESK_CFG_EXEC_WEBLOG_SECRET
 }
 
 sed_inplace() {
@@ -288,6 +729,217 @@ console.log('Wrote seqdesk.config.json');
 NODE
 }
 
+has_infrastructure_overrides() {
+    [ -n "$SEQDESK_DATA_PATH" ] || \
+    [ -n "$SEQDESK_RUN_DIR" ] || \
+    [ -n "$SEQDESK_EXEC_USE_SLURM" ] || \
+    [ -n "$SEQDESK_EXEC_SLURM_QUEUE" ] || \
+    [ -n "$SEQDESK_EXEC_SLURM_CORES" ] || \
+    [ -n "$SEQDESK_EXEC_SLURM_MEMORY" ] || \
+    [ -n "$SEQDESK_EXEC_SLURM_TIME_LIMIT" ] || \
+    [ -n "$SEQDESK_EXEC_SLURM_OPTIONS" ] || \
+    [ -n "$SEQDESK_EXEC_CONDA_PATH" ] || \
+    [ -n "$SEQDESK_EXEC_CONDA_ENV" ] || \
+    [ -n "$SEQDESK_EXEC_NEXTFLOW_PROFILE" ] || \
+    [ -n "$SEQDESK_EXEC_WEBLOG_URL" ] || \
+    [ -n "$SEQDESK_EXEC_WEBLOG_SECRET" ]
+}
+
+apply_infrastructure_settings() {
+    if ! has_infrastructure_overrides; then
+        return 0
+    fi
+
+    if ! command_exists node; then
+        print_warning "Node not found; skipping infrastructure settings import"
+        return 0
+    fi
+
+    SEQDESK_INFRA_DATA_PATH="$SEQDESK_DATA_PATH" \
+    SEQDESK_INFRA_RUN_DIR="$SEQDESK_RUN_DIR" \
+    SEQDESK_INFRA_USE_SLURM="$SEQDESK_EXEC_USE_SLURM" \
+    SEQDESK_INFRA_SLURM_QUEUE="$SEQDESK_EXEC_SLURM_QUEUE" \
+    SEQDESK_INFRA_SLURM_CORES="$SEQDESK_EXEC_SLURM_CORES" \
+    SEQDESK_INFRA_SLURM_MEMORY="$SEQDESK_EXEC_SLURM_MEMORY" \
+    SEQDESK_INFRA_SLURM_TIME_LIMIT="$SEQDESK_EXEC_SLURM_TIME_LIMIT" \
+    SEQDESK_INFRA_SLURM_OPTIONS="$SEQDESK_EXEC_SLURM_OPTIONS" \
+    SEQDESK_INFRA_CONDA_PATH="$SEQDESK_EXEC_CONDA_PATH" \
+    SEQDESK_INFRA_CONDA_ENV="$SEQDESK_EXEC_CONDA_ENV" \
+    SEQDESK_INFRA_NEXTFLOW_PROFILE="$SEQDESK_EXEC_NEXTFLOW_PROFILE" \
+    SEQDESK_INFRA_WEBLOG_URL="$SEQDESK_EXEC_WEBLOG_URL" \
+    SEQDESK_INFRA_WEBLOG_SECRET="$SEQDESK_EXEC_WEBLOG_SECRET" \
+    node <<'NODE'
+const fs = require("fs");
+
+function parseEnvBool(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+function parseEnvInt(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const intValue = Math.trunc(parsed);
+  return intValue > 0 ? intValue : undefined;
+}
+
+function trimOrUndefined(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line || line.startsWith("#")) continue;
+    const equals = line.indexOf("=");
+    if (equals < 1) continue;
+    const key = line.slice(0, equals).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let value = line.slice(equals + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+async function main() {
+  loadEnvFile(".env");
+  loadEnvFile(".env.local");
+  if (!process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = "file:./dev.db";
+  }
+
+  const { PrismaClient } = require("@prisma/client");
+  const prisma = new PrismaClient();
+
+  try {
+    const defaults = {
+      useSlurm: false,
+      slurmQueue: "cpu",
+      slurmCores: 4,
+      slurmMemory: "64GB",
+      slurmTimeLimit: 12,
+      slurmOptions: "",
+      runtimeMode: "conda",
+      condaPath: "",
+      condaEnv: "seqdesk-pipelines",
+      nextflowProfile: "",
+      pipelineRunDir: "/data/pipeline_runs",
+      weblogUrl: "",
+      weblogSecret: "",
+    };
+
+    const currentSettings = await prisma.siteSettings.findUnique({
+      where: { id: "singleton" },
+      select: { extraSettings: true, dataBasePath: true },
+    });
+
+    let extra = {};
+    if (currentSettings?.extraSettings) {
+      try {
+        const parsed = JSON.parse(currentSettings.extraSettings);
+        if (parsed && typeof parsed === "object") {
+          extra = parsed;
+        }
+      } catch {
+        extra = {};
+      }
+    }
+
+    const nextExecution = {
+      ...defaults,
+      ...(extra.pipelineExecution || {}),
+      runtimeMode: "conda",
+    };
+
+    const dataPath = trimOrUndefined(process.env.SEQDESK_INFRA_DATA_PATH);
+    const runDir = trimOrUndefined(process.env.SEQDESK_INFRA_RUN_DIR);
+    const useSlurm = parseEnvBool(process.env.SEQDESK_INFRA_USE_SLURM);
+    const slurmQueue = trimOrUndefined(process.env.SEQDESK_INFRA_SLURM_QUEUE);
+    const slurmCores = parseEnvInt(process.env.SEQDESK_INFRA_SLURM_CORES);
+    const slurmMemory = trimOrUndefined(process.env.SEQDESK_INFRA_SLURM_MEMORY);
+    const slurmTimeLimit = parseEnvInt(process.env.SEQDESK_INFRA_SLURM_TIME_LIMIT);
+    const slurmOptions = trimOrUndefined(process.env.SEQDESK_INFRA_SLURM_OPTIONS);
+    const condaPath = trimOrUndefined(process.env.SEQDESK_INFRA_CONDA_PATH);
+    const condaEnv = trimOrUndefined(process.env.SEQDESK_INFRA_CONDA_ENV);
+    const nextflowProfile = trimOrUndefined(process.env.SEQDESK_INFRA_NEXTFLOW_PROFILE);
+    const weblogUrl = trimOrUndefined(process.env.SEQDESK_INFRA_WEBLOG_URL);
+    const weblogSecret = trimOrUndefined(process.env.SEQDESK_INFRA_WEBLOG_SECRET);
+
+    if (runDir && runDir !== "/") {
+      nextExecution.pipelineRunDir = runDir;
+    }
+    if (useSlurm !== undefined) {
+      nextExecution.useSlurm = useSlurm;
+    }
+    if (slurmQueue) {
+      nextExecution.slurmQueue = slurmQueue;
+    }
+    if (slurmCores !== undefined) {
+      nextExecution.slurmCores = slurmCores;
+    }
+    if (slurmMemory) {
+      nextExecution.slurmMemory = slurmMemory;
+    }
+    if (slurmTimeLimit !== undefined) {
+      nextExecution.slurmTimeLimit = slurmTimeLimit;
+    }
+    if (slurmOptions !== undefined) {
+      nextExecution.slurmOptions = slurmOptions;
+    }
+    if (condaPath !== undefined) {
+      nextExecution.condaPath = condaPath;
+    }
+    if (condaEnv !== undefined) {
+      nextExecution.condaEnv = condaEnv;
+    }
+    if (nextflowProfile !== undefined) {
+      nextExecution.nextflowProfile = nextflowProfile;
+    }
+    if (weblogUrl !== undefined) {
+      nextExecution.weblogUrl = weblogUrl;
+    }
+    if (weblogSecret !== undefined) {
+      nextExecution.weblogSecret = weblogSecret;
+    }
+
+    extra.pipelineExecution = nextExecution;
+
+    const updateData = {
+      extraSettings: JSON.stringify(extra),
+    };
+    if (dataPath) {
+      updateData.dataBasePath = dataPath;
+    }
+
+    await prisma.siteSettings.upsert({
+      where: { id: "singleton" },
+      update: updateData,
+      create: {
+        id: "singleton",
+        ...updateData,
+      },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+main().catch((error) => {
+  console.error("ERROR: Failed to apply infrastructure settings:", error?.message || error);
+  process.exit(1);
+});
+NODE
+}
+
 on_error() {
     local exit_code=$?
     set +e
@@ -297,6 +949,8 @@ on_error() {
     fi
     exit $exit_code
 }
+
+parse_args "$@"
 
 trap on_error ERR
 
@@ -447,11 +1101,23 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ] && [ -z "$SEQDESK_SKIP_DEPS" ]; then
     print_success "Dependencies installed"
 fi
 
+if [ -n "$SEQDESK_CONFIG" ]; then
+    print_info "Loading installer config: $SEQDESK_CONFIG"
+    load_install_config "$SEQDESK_CONFIG"
+    print_success "Loaded installer config"
+fi
+
 # Pipeline support
 print_step "Pipeline support"
 
 PIPELINES_ENABLED=""
-if is_truthy "$SEQDESK_WITH_PIPELINES" || is_truthy "$SEQDESK_WITH_CONDA"; then
+if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
+    if is_truthy "$SEQDESK_WITH_PIPELINES"; then
+        PIPELINES_ENABLED="true"
+    else
+        PIPELINES_ENABLED="false"
+    fi
+elif is_truthy "$SEQDESK_WITH_CONDA"; then
     PIPELINES_ENABLED="true"
 fi
 
@@ -641,6 +1307,12 @@ if [ "$SEED_OK" = "true" ]; then
     print_success "Database initialized"
 else
     print_info "Seed did not complete during install -- the app will auto-seed on first launch"
+fi
+
+if has_infrastructure_overrides; then
+    print_info "Applying infrastructure settings to site runtime config..."
+    apply_infrastructure_settings
+    print_success "Infrastructure settings applied"
 fi
 
 # Pipeline environment

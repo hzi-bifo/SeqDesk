@@ -56,6 +56,8 @@ export async function GET() {
         flowCells: availableFlowCells,
         kits: availableKits,
         software: availableSoftware,
+        barcodeSchemes: config.barcodeSchemes || [],
+        barcodeSets: config.barcodeSets || [],
       },
       {
         headers: {

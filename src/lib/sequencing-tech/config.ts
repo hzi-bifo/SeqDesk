@@ -100,6 +100,12 @@ export function normalizeTechConfig(
     software: Array.isArray(config.software)
       ? config.software
       : defaults.software || [],
+    barcodeSchemes: Array.isArray(config.barcodeSchemes)
+      ? config.barcodeSchemes
+      : defaults.barcodeSchemes || [],
+    barcodeSets: Array.isArray(config.barcodeSets)
+      ? config.barcodeSets
+      : defaults.barcodeSets || [],
     categories: config.categories ?? defaults.categories,
     version: config.version ?? defaults.version,
   };

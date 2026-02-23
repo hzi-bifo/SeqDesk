@@ -22,7 +22,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  BookOpen,
   Plus,
   Pencil,
   Trash2,
@@ -55,9 +54,6 @@ const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
   { id: "group_metadata", name: "Metadata", order: 1 },
 ];
 
-const STUDY_INFO_VISITED_KEY = "studyFormBuilderInfoVisited";
-const STUDY_INFO_COLLAPSED_KEY = "studyFormBuilderInfoCollapsed";
-
 const LEGACY_SUBMG_PER_SAMPLE_FIELDS = new Set([
   "collection date",
   "geographic location",
@@ -88,7 +84,6 @@ export default function StudyFormBuilderPage() {
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [jumpTarget, setJumpTarget] = useState<string | undefined>(undefined);
-  const [studyInfoCollapsed, setStudyInfoCollapsed] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveInitializedRef = useRef(false);
   const lastPersistedSnapshotRef = useRef("");
@@ -175,20 +170,6 @@ export default function StudyFormBuilderPage() {
       }
     };
     fetchConfig();
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const storedCollapsed = window.localStorage.getItem(STUDY_INFO_COLLAPSED_KEY);
-    if (storedCollapsed !== null) {
-      setStudyInfoCollapsed(storedCollapsed === "1");
-      return;
-    }
-
-    const hasVisited = window.localStorage.getItem(STUDY_INFO_VISITED_KEY) === "1";
-    setStudyInfoCollapsed(hasVisited);
-    window.localStorage.setItem(STUDY_INFO_VISITED_KEY, "1");
   }, []);
 
   // Generate field name from label
@@ -670,16 +651,6 @@ export default function StudyFormBuilderPage() {
     }
   };
 
-  const toggleStudyInfo = () => {
-    setStudyInfoCollapsed((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(STUDY_INFO_COLLAPSED_KEY, next ? "1" : "0");
-      }
-      return next;
-    });
-  };
-
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -690,15 +661,8 @@ export default function StudyFormBuilderPage() {
 
   return (
     <PageContainer>
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold">Study Configuration</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Define what information users provide when creating studies for ENA submission
-        </p>
-      </div>
-
-      <div className="sticky top-16 z-30 mb-6">
-        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="sticky top-0 z-40 -mx-4 md:-mx-8 mb-6 border-y border-border bg-background/95 backdrop-blur">
+        <div className="px-4 md:px-8 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
             className={`text-xs ${
               autoSaveStatus === "error"
@@ -739,57 +703,11 @@ export default function StudyFormBuilderPage() {
         </div>
       </div>
 
-      {/* Info Box */}
-      <div className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-emerald-500/10">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-        <div className="relative p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <BookOpen className="h-4 w-4 text-primary" />
-              <h3 className="text-base font-semibold">What is a Study?</h3>
-            </div>
-            <Button type="button" variant="ghost" size="sm" onClick={toggleStudyInfo} className="h-7 px-2 text-xs">
-              {studyInfoCollapsed ? "Show details" : "Hide details"}
-              {studyInfoCollapsed ? (
-                <ChevronDown className="h-3 w-3 ml-1" />
-              ) : (
-                <ChevronUp className="h-3 w-3 ml-1" />
-              )}
-            </Button>
-          </div>
-          {!studyInfoCollapsed && (
-            <div className="mt-3">
-              <p className="text-sm text-muted-foreground mb-4">
-                A <strong>Study</strong> groups samples that share the same scientific context and metadata requirements.
-                Unlike an Order (which is about logistics: who, when, billing), a Study captures the scientific metadata
-                needed for data repositories like ENA.
-              </p>
-              <div className="grid md:grid-cols-2 gap-4 text-sm mb-4">
-                <div className="bg-white/60 rounded-lg p-3 border border-stone-200/50">
-                  <h4 className="font-medium mb-1">Order (Logistics)</h4>
-                  <ul className="text-muted-foreground space-y-0.5 text-xs">
-                    <li>Who is requesting sequencing</li>
-                    <li>Billing and cost center</li>
-                    <li>Sequencing technology choice</li>
-                    <li>Sample list and quantities</li>
-                  </ul>
-                </div>
-                <div className="bg-white/60 rounded-lg p-3 border border-stone-200/50">
-                  <h4 className="font-medium mb-1">Study (Scientific)</h4>
-                  <ul className="text-muted-foreground space-y-0.5 text-xs">
-                    <li>Environment type (gut, soil, water...)</li>
-                    <li>MIxS metadata fields</li>
-                    <li>Funding and grant information</li>
-                    <li>Publication-ready metadata</li>
-                  </ul>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                <strong>User flow:</strong> Researcher submits Order → Assigns samples to Studies → Fills Study metadata → Ready for ENA submission
-              </p>
-            </div>
-          )}
-        </div>
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold">Study Configuration</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Define what information users provide when creating studies for ENA submission
+        </p>
       </div>
 
       {error && (

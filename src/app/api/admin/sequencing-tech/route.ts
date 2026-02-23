@@ -33,7 +33,12 @@ const mergeItems = <T extends MergeableItem>(localItems: T[], remoteItems: T[]) 
       continue;
     }
     if (localItem.localOverrides) {
-      merged.push(localItem);
+      merged.push({
+        ...remoteItem,
+        ...localItem,
+        available: localItem.available ?? remoteItem.available,
+        localOverrides: localItem.localOverrides ?? remoteItem.localOverrides,
+      });
       continue;
     }
     merged.push({
@@ -52,6 +57,76 @@ const mergeItems = <T extends MergeableItem>(localItems: T[], remoteItems: T[]) 
   return merged;
 };
 
+const hasMissingRemoteItems = <T extends { id: string }>(
+  localItems: T[],
+  remoteItems: T[]
+): boolean => {
+  if (!remoteItems.length) {
+    return false;
+  }
+  const localIds = new Set(localItems.map((item) => item.id));
+  return remoteItems.some((item) => !localIds.has(item.id));
+};
+
+const hasMissingRemoteBarcodeData = (
+  currentConfig: SequencingTechConfig,
+  remoteConfig: SequencingTechConfig
+): boolean => {
+  const currentBarcodeSchemes = currentConfig.barcodeSchemes || [];
+  const currentBarcodeSets = currentConfig.barcodeSets || [];
+  const remoteBarcodeSchemes = remoteConfig.barcodeSchemes || [];
+  const remoteBarcodeSets = remoteConfig.barcodeSets || [];
+  const currentKits = currentConfig.kits || [];
+  const remoteKits = remoteConfig.kits || [];
+
+  if (
+    hasMissingRemoteItems(currentBarcodeSchemes, remoteBarcodeSchemes) ||
+    hasMissingRemoteItems(currentBarcodeSets, remoteBarcodeSets)
+  ) {
+    return true;
+  }
+
+  const currentKitsById = new Map(currentKits.map((kit) => [kit.id, kit]));
+  for (const remoteKit of remoteKits) {
+    const currentKit = currentKitsById.get(remoteKit.id);
+    if (!currentKit) {
+      continue;
+    }
+
+    if (remoteKit.kitKind && !currentKit.kitKind) {
+      return true;
+    }
+    if (remoteKit.doradoKitName && !currentKit.doradoKitName) {
+      return true;
+    }
+    if (remoteKit.barcoding && !currentKit.barcoding) {
+      return true;
+    }
+
+    if (remoteKit.barcoding && currentKit.barcoding) {
+      if (remoteKit.barcoding.barcodeSetId && !currentKit.barcoding.barcodeSetId) {
+        return true;
+      }
+      if (
+        typeof remoteKit.barcoding.maxBarcodesPerRun === "number" &&
+        typeof currentKit.barcoding.maxBarcodesPerRun !== "number"
+      ) {
+        return true;
+      }
+      if (
+        Array.isArray(remoteKit.barcoding.compatibleBarcodeKits) &&
+        remoteKit.barcoding.compatibleBarcodeKits.length > 0 &&
+        (!Array.isArray(currentKit.barcoding.compatibleBarcodeKits) ||
+          currentKit.barcoding.compatibleBarcodeKits.length === 0)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
 const normalizeRemoteConfig = (raw: SequencingTechConfig): SequencingTechConfig => {
   const defaults = loadDefaultTechConfig();
   return {
@@ -62,6 +137,8 @@ const normalizeRemoteConfig = (raw: SequencingTechConfig): SequencingTechConfig 
     flowCells: Array.isArray(raw.flowCells) ? raw.flowCells : [],
     kits: Array.isArray(raw.kits) ? raw.kits : [],
     software: Array.isArray(raw.software) ? raw.software : [],
+    barcodeSchemes: Array.isArray(raw.barcodeSchemes) ? raw.barcodeSchemes : [],
+    barcodeSets: Array.isArray(raw.barcodeSets) ? raw.barcodeSets : [],
     version: parseInt(String(raw.version || 0)) || 0,
   };
 };
@@ -204,7 +281,9 @@ export async function PUT(request: NextRequest) {
       flowCells: config.flowCells ?? [],
       kits: config.kits ?? [],
       software: config.software ?? [],
-      version: (config.version || 0) + 1,
+      barcodeSchemes: config.barcodeSchemes ?? [],
+      barcodeSets: config.barcodeSets ?? [],
+      version: config.version ?? 1,
     };
     extraSettings[SETTINGS_KEY] = JSON.stringify(updatedConfig);
 
@@ -307,6 +386,7 @@ export async function POST(request: NextRequest) {
           remoteData?.config && typeof remoteData.config === "object"
             ? remoteData.config
             : remoteData;
+        const normalizedRemoteConfig = normalizeRemoteConfig(remoteConfig);
 
         // Get current config
         const currentSettings = await db.siteSettings.findUnique({
@@ -328,31 +408,34 @@ export async function POST(request: NextRequest) {
 
         const currentConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
         const currentVersion = currentConfig.version || 0;
-        const remoteVersion = parseInt(String(remoteConfig.version || 0)) || 0;
+        const remoteVersion = parseInt(String(normalizedRemoteConfig.version || 0)) || 0;
+
+        const hasMissingRemoteCoreItems =
+          hasMissingRemoteItems(
+            currentConfig.technologies || [],
+            normalizedRemoteConfig.technologies || []
+          ) ||
+          hasMissingRemoteItems(currentConfig.devices || [], normalizedRemoteConfig.devices || []) ||
+          hasMissingRemoteItems(currentConfig.flowCells || [], normalizedRemoteConfig.flowCells || []) ||
+          hasMissingRemoteItems(currentConfig.kits || [], normalizedRemoteConfig.kits || []) ||
+          hasMissingRemoteItems(currentConfig.software || [], normalizedRemoteConfig.software || []);
 
         const shouldUpdate =
           remoteVersion > currentVersion ||
           (currentConfig.technologies.length === 0 &&
-            remoteConfig.technologies &&
-            remoteConfig.technologies.length > 0);
+            normalizedRemoteConfig.technologies.length > 0) ||
+          hasMissingRemoteCoreItems ||
+          hasMissingRemoteBarcodeData(currentConfig, normalizedRemoteConfig);
 
         // Compare versions
         if (shouldUpdate) {
-          const remoteTechnologies = Array.isArray(remoteConfig.technologies)
-            ? remoteConfig.technologies
-            : [];
-          const remoteDevices = Array.isArray(remoteConfig.devices)
-            ? remoteConfig.devices
-            : [];
-          const remoteFlowCells = Array.isArray(remoteConfig.flowCells)
-            ? remoteConfig.flowCells
-            : [];
-          const remoteKits = Array.isArray(remoteConfig.kits)
-            ? remoteConfig.kits
-            : [];
-          const remoteSoftware = Array.isArray(remoteConfig.software)
-            ? remoteConfig.software
-            : [];
+          const remoteTechnologies = normalizedRemoteConfig.technologies || [];
+          const remoteDevices = normalizedRemoteConfig.devices || [];
+          const remoteFlowCells = normalizedRemoteConfig.flowCells || [];
+          const remoteKits = normalizedRemoteConfig.kits || [];
+          const remoteSoftware = normalizedRemoteConfig.software || [];
+          const remoteBarcodeSchemes = normalizedRemoteConfig.barcodeSchemes || [];
+          const remoteBarcodeSets = normalizedRemoteConfig.barcodeSets || [];
 
           const mergedConfig: SequencingTechConfig = {
             ...currentConfig,
@@ -361,6 +444,8 @@ export async function POST(request: NextRequest) {
             flowCells: mergeItems(currentConfig.flowCells || [], remoteFlowCells),
             kits: mergeItems(currentConfig.kits || [], remoteKits),
             software: mergeItems(currentConfig.software || [], remoteSoftware),
+            barcodeSchemes: mergeItems(currentConfig.barcodeSchemes || [], remoteBarcodeSchemes),
+            barcodeSets: mergeItems(currentConfig.barcodeSets || [], remoteBarcodeSets),
             version: remoteVersion,
             lastSyncedAt: new Date().toISOString(),
             syncUrl: SEQDESK_API_URL,
@@ -384,7 +469,7 @@ export async function POST(request: NextRequest) {
             hasUpdates: true,
             newTechnologies: Math.max(
               0,
-              (remoteConfig.technologies?.length || 0) -
+              (normalizedRemoteConfig.technologies?.length || 0) -
                 (currentConfig.technologies?.length || 0)
             ),
             updatedVersion: remoteVersion,

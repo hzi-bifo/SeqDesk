@@ -16,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  BookOpen,
   X,
   Loader2,
   Check,
@@ -51,6 +50,8 @@ import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRenderer";
 import type { FundingFieldValue } from "@/lib/field-types/funding";
+import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { toast } from "sonner";
 
 // Note: TanStack Table meta types are extended globally in orders/new/page.tsx
 // PerSampleField extends FormFieldDefinition properties for compatibility
@@ -1275,6 +1276,103 @@ export default function NewStudyPage() {
     });
   }, []);
 
+  const hasMetadataValue = useCallback(
+    (row: SampleMetadataRow) =>
+      allPerSampleFields.some((f) => {
+        const val = row[f.name];
+        return (
+          val !== undefined &&
+          val !== null &&
+          val !== "" &&
+          !(Array.isArray(val) && val.length === 0)
+        );
+      }),
+    [allPerSampleFields]
+  );
+
+  // Handle samples imported from Excel
+  const handleSamplesImported = useCallback(
+    (
+      importedRows: { id: string; sampleId: string; [key: string]: unknown }[],
+      mode: "replace" | "append"
+    ) => {
+      const normalizeSampleId = (value: unknown) =>
+        String(value ?? "").trim().toLowerCase();
+      const stripImportedIdentity = (
+        row: { id: string; sampleId: string; [key: string]: unknown }
+      ) => {
+        const { id, sampleId, ...rest } = row;
+        void id;
+        void sampleId;
+        return rest;
+      };
+
+      if (mode === "replace") {
+        setSampleMetadata((prev) => {
+          const importedBySampleId = new Map(
+            importedRows
+              .map((row) => [normalizeSampleId(row.sampleId), row] as const)
+              .filter(([key]) => key.length > 0)
+          );
+
+          return prev.map((existing) => {
+            const key = normalizeSampleId(existing.sampleId);
+            const imported = importedBySampleId.get(key);
+            if (!imported) return existing;
+            return { ...existing, ...stripImportedIdentity(imported) };
+          });
+        });
+      } else {
+        setSampleMetadata((prev) => {
+          const updated = [...prev];
+          const filledIndexes = new Set<number>();
+          const unmatchedRows: { id: string; sampleId: string; [key: string]: unknown }[] = [];
+
+          for (const row of importedRows) {
+            const key = normalizeSampleId(row.sampleId);
+            if (!key) {
+              unmatchedRows.push(row);
+              continue;
+            }
+            const targetIndex = updated.findIndex(
+              (existing) => normalizeSampleId(existing.sampleId) === key
+            );
+            if (targetIndex === -1 || hasMetadataValue(updated[targetIndex])) {
+              unmatchedRows.push(row);
+              continue;
+            }
+            updated[targetIndex] = {
+              ...updated[targetIndex],
+              ...stripImportedIdentity(row),
+            };
+            filledIndexes.add(targetIndex);
+          }
+
+          for (const row of unmatchedRows) {
+            const emptyIndex = updated.findIndex(
+              (existing, index) =>
+                !filledIndexes.has(index) && !hasMetadataValue(existing)
+            );
+            if (emptyIndex === -1) {
+              break;
+            }
+            updated[emptyIndex] = {
+              ...updated[emptyIndex],
+              ...stripImportedIdentity(row),
+            };
+            filledIndexes.add(emptyIndex);
+          }
+
+          return updated;
+        });
+      }
+      toast.success(
+        `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""} metadata`
+      );
+    },
+    [hasMetadataValue]
+  );
+
   // Build table columns
   const tableColumns = useMemo((): ColumnDef<SampleMetadataRow>[] => {
     const cols: ColumnDef<SampleMetadataRow>[] = [
@@ -1735,6 +1833,15 @@ export default function NewStudyPage() {
               <span> Click column headers for field help.</span>
             )}
           </p>
+          <div className="flex items-center gap-2">
+            <ExcelToolbar
+              perSampleFields={allPerSampleFields as FormFieldDefinition[]}
+              samples={sampleMetadata}
+              onSamplesImported={handleSamplesImported}
+              disabled={isLoading}
+              entityName="study"
+            />
+          </div>
         </div>
 
         {allPerSampleFields.length === 0 ? (
@@ -2305,99 +2412,88 @@ export default function NewStudyPage() {
           <div className="space-y-6">
             {/* Validation Summary */}
             {allValid ? (
-              <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5">
-                <div className="flex items-start gap-4">
-                  <div className="h-12 w-12 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="h-6 w-6 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-lg font-semibold text-green-700">Ready to create your study</p>
-                    <p className="text-sm text-green-600 mt-1">
-                      Click &quot;Create Study&quot; to save. You can continue adding metadata after creation.
-                    </p>
-                  </div>
-                </div>
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+                <p className="text-base font-semibold text-green-700">Ready to create your study</p>
+                <p className="mt-1 text-sm text-green-600">
+                  Click &quot;Create Study&quot; to save. You can continue adding metadata after creation.
+                </p>
               </div>
             ) : (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-5">
-                <div className="flex items-start gap-4">
-                  <div className="h-12 w-12 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                    <AlertCircle className="h-6 w-6 text-amber-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-lg font-semibold text-amber-700">Missing required information</p>
-                    <p className="text-sm text-amber-600 mt-1">
-                      Please go back and complete all required fields before creating the study.
-                    </p>
-                  </div>
-                </div>
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+                <p className="text-base font-semibold text-amber-700">Missing required information</p>
+                <p className="mt-1 text-sm text-amber-600">
+                  Please go back and complete all required fields before creating the study.
+                </p>
               </div>
             )}
 
             {/* Compact Summary */}
-            <div className="bg-card border border-border rounded-xl p-6">
-              <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">Summary</h3>
-              <div className="space-y-4">
+            <div className="bg-card border border-border rounded-xl p-4">
+              <h3 className="text-base font-semibold mb-3">Summary</h3>
+              <div className="divide-y divide-border">
                 {/* Title */}
-                <div className="flex items-center justify-between py-2 border-b border-border">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm text-muted-foreground">Title</span>
-                  </div>
+                <div className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="text-sm text-muted-foreground">Title</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">{title || "Not specified"}</span>
-                    {isTitleValid ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4 text-amber-500" />
-                    )}
+                    <span className="font-medium text-sm text-right">{title || "Not specified"}</span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                        isTitleValid
+                          ? "bg-green-500/10 text-green-700"
+                          : "bg-amber-500/10 text-amber-700"
+                      )}
+                    >
+                      {isTitleValid ? "OK" : "Missing"}
+                    </span>
                   </div>
                 </div>
 
                 {/* Environment Type */}
                 {formConfig?.modules.mixs && (
-                  <div className="flex items-center justify-between py-2 border-b border-border">
-                    <div className="flex items-center gap-3">
-                      <Leaf className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">Environment</span>
-                    </div>
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="text-sm text-muted-foreground">Environment</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{selectedChecklist?.name || "Not selected"}</span>
-                      {isChecklistValid ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <AlertCircle className="h-4 w-4 text-amber-500" />
-                      )}
+                      <span className="font-medium text-sm text-right">{selectedChecklist?.name || "Not selected"}</span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                          isChecklistValid
+                            ? "bg-green-500/10 text-green-700"
+                            : "bg-amber-500/10 text-amber-700"
+                        )}
+                      >
+                        {isChecklistValid ? "OK" : "Missing"}
+                      </span>
                     </div>
                   </div>
                 )}
 
                 {/* Samples */}
                 {formConfig?.modules.sampleAssociation && (
-                  <div className="flex items-center justify-between py-2 border-b border-border">
-                    <div className="flex items-center gap-3">
-                      <FlaskConical className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">Samples</span>
-                    </div>
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="text-sm text-muted-foreground">Samples</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{selectedSampleIds.length} selected</span>
-                      {isSamplesValid ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <AlertCircle className="h-4 w-4 text-amber-500" />
-                      )}
+                      <span className="font-medium text-sm text-right">{selectedSampleIds.length} selected</span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                          isSamplesValid
+                            ? "bg-green-500/10 text-green-700"
+                            : "bg-amber-500/10 text-amber-700"
+                        )}
+                      >
+                        {isSamplesValid ? "OK" : "Missing"}
+                      </span>
                     </div>
                   </div>
                 )}
 
                 {/* Metadata fields */}
                 {hasPerSampleFields && (
-                  <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-3">
-                      <TableIcon className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">Metadata Fields</span>
-                    </div>
-                    <span className="font-medium">{allPerSampleFields.length} fields configured</span>
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="text-sm text-muted-foreground">Metadata Fields</span>
+                    <span className="font-medium text-sm">{allPerSampleFields.length} fields configured</span>
                   </div>
                 )}
               </div>
@@ -2468,21 +2564,14 @@ export default function NewStudyPage() {
 
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <BookOpen className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold">New Study</h1>
-            <p className="text-muted-foreground">
-              Step {currentStep + 1} of {STEPS.length}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-semibold">New Study</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Step {currentStep + 1} of {STEPS.length}
+          </p>
         </div>
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/studies">
-            <X className="h-5 w-5" />
-          </Link>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dashboard/studies">Cancel</Link>
         </Button>
       </div>
 
@@ -2490,10 +2579,10 @@ export default function NewStudyPage() {
       <div>
         {/* Progress bar with integrated steps */}
         <div className="mb-6">
-          <div className="relative h-8 bg-muted rounded-lg overflow-hidden">
+          <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
             {/* Progress fill */}
             <div
-              className="absolute inset-y-0 left-0 bg-primary transition-all duration-300 ease-out"
+              className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
               style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
             />
             {/* Step labels */}
@@ -2503,12 +2592,6 @@ export default function NewStudyPage() {
                 const isCurrent = index === currentStep;
                 const isClickable = isCompleted;
                 const isInFilledArea = index <= currentStep;
-
-                // Check if step has validation issues
-                let stepValid = true;
-                if (step.id === "details") stepValid = isTitleValid;
-                if (step.id === "environment") stepValid = isChecklistValid;
-                if (step.id === "samples") stepValid = isSamplesValid;
 
                 return (
                   <button
@@ -2522,19 +2605,18 @@ export default function NewStudyPage() {
                     }}
                     disabled={!isClickable}
                     style={{ width: `${100 / STEPS.length}%` }}
-                    className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1 ${
+                    className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
                       isInFilledArea
-                        ? "text-primary-foreground"
+                        ? "text-background"
                         : "text-muted-foreground"
                     } ${
-                      isClickable ? "hover:bg-black/10 cursor-pointer" : ""
+                      isClickable ? "hover:bg-white/10 cursor-pointer" : ""
                     } ${
                       isCurrent ? "font-semibold" : ""
                     }`}
                     title={isClickable ? `Go back to ${step.title}` : step.title}
                   >
-                    {isCompleted && stepValid && <Check className="h-3 w-3 flex-shrink-0" />}
-                    {isCompleted && !stepValid && <AlertCircle className="h-3 w-3 flex-shrink-0 text-amber-300" />}
+                    {isCompleted && <Check className="h-3 w-3 flex-shrink-0" />}
                     <span className="truncate">{step.title}</span>
                   </button>
                 );
@@ -2544,8 +2626,7 @@ export default function NewStudyPage() {
         </div>
 
         {error && (
-          <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 flex-shrink-0" />
+          <div className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
             {error}
           </div>
         )}
