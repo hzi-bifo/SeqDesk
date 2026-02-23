@@ -13,6 +13,7 @@ import "./mixs";
 import "./funding";
 import "./billing";
 import "./sequencing-tech";
+import "./barcode";
 
 // Re-export everything from the main index
 export * from "./index";
@@ -21,6 +22,7 @@ export * from "./mixs";
 export * from "./funding";
 export * from "./billing";
 export * from "./sequencing-tech";
+export * from "./barcode";
 export { MixsAdminEditor } from "./mixs/MixsAdminEditor";
 export { MixsFormRenderer } from "./mixs/MixsFormRenderer";
 export { FundingAdminEditor } from "./funding/FundingAdminEditor";

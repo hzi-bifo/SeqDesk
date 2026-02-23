@@ -11,7 +11,8 @@ export type FieldType =
   | "funding" // Special type for funding/grant information
   | "billing" // Special type for billing/cost center information
   | "sequencing-tech" // Special type for sequencing technology selector
-  | "organism"; // Special type for NCBI taxonomy lookup (ENA required)
+  | "organism" // Special type for NCBI taxonomy lookup (ENA required)
+  | "barcode"; // Special type for per-sample barcode assignment (from sequencing-tech module)
 
 // Simple validation settings
 export interface SimpleValidation {
@@ -360,6 +361,7 @@ export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   billing: "Billing Info",
   "sequencing-tech": "Sequencing Technology",
   organism: "Organism (Taxonomy)",
+  barcode: "Barcode",
 };
 
 // Core field labels for UI

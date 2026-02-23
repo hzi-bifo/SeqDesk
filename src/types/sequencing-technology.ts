@@ -106,6 +106,33 @@ export interface FlowCell {
   localOverrides?: boolean;
 }
 
+// Kit barcoding capabilities
+export interface KitBarcoding {
+  supported: boolean;
+  builtIn: boolean;
+  requiresAdditionalBarcodeKit: boolean;
+  barcodeSetId?: string; // References BarcodeSet.id (for built-in barcodes)
+  maxBarcodesPerRun?: number;
+  compatibleBarcodeKits?: string[]; // Kit IDs for sequencing-only kits
+}
+
+// Barcode scheme (e.g., native_nb, rapid_rb)
+export interface BarcodeScheme {
+  id: string;
+  name: string;
+  chemistry: string;
+  description?: string;
+}
+
+// Barcode set (e.g., NB01_24 = barcodes 1-24 using native_nb scheme)
+export interface BarcodeSet {
+  id: string;
+  name: string;
+  schemeId: string; // References BarcodeScheme.id
+  barcodeRange: [number, number]; // [start, end] inclusive
+  count: number;
+}
+
 export interface SequencingKit {
   id: string;
   name: string;
@@ -123,6 +150,9 @@ export interface SequencingKit {
   inputType?: "dna" | "rna" | "both";
   multiplexing?: boolean;
   barcodeCount?: number;
+  kitKind?: "sequencing_only" | "barcoding_and_sequencing";
+  doradoKitName?: string;
+  barcoding?: KitBarcoding;
   image?: string;
   available: boolean;
   order: number;
@@ -166,6 +196,8 @@ export interface SequencingTechConfig {
   flowCells?: FlowCell[];
   kits?: SequencingKit[];
   software?: SequencingSoftware[];
+  barcodeSchemes?: BarcodeScheme[];
+  barcodeSets?: BarcodeSet[];
   categories?: TechnologyCategory[];
   lastSyncedAt?: string; // When last synced with central server
   syncUrl?: string; // URL to fetch updates from
@@ -188,6 +220,8 @@ export interface SequencingTechSelection {
   flowCellSku?: string;
   kitId?: string;
   kitSku?: string;
+  barcodeKitId?: string; // Companion barcode kit (when main kit requires one)
+  barcodeKitSku?: string;
   softwareIds?: string[];
   [optionId: string]: unknown;
 }
@@ -199,5 +233,7 @@ export const DEFAULT_TECH_CONFIG: SequencingTechConfig = {
   flowCells: [],
   kits: [],
   software: [],
+  barcodeSchemes: [],
+  barcodeSets: [],
   version: 1,
 };

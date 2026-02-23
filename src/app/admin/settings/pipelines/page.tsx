@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -20,6 +20,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
   Loader2,
@@ -355,6 +356,32 @@ export default function PipelineSettingsPage() {
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [togglingPipeline, setTogglingPipeline] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
+  const [savingAssemblyDownloadSetting, setSavingAssemblyDownloadSetting] = useState(false);
+  const [assemblyDownloadSettingError, setAssemblyDownloadSettingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchAccessSettings = async () => {
+      try {
+        const res = await fetch("/api/admin/settings/access");
+        if (!res.ok) return;
+        const payload = (await res.json()) as { allowUserAssemblyDownload?: boolean };
+        if (mounted) {
+          setAllowUserAssemblyDownload(payload.allowUserAssemblyDownload === true);
+        }
+      } catch {
+        // Best effort only.
+      }
+    };
+
+    void fetchAccessSettings();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const compareVersions = (a?: string, b?: string) => {
     if (!a || !b) return 0;
@@ -610,6 +637,29 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  const handleAllowUserAssemblyDownloadChange = async (enabled: boolean) => {
+    const previousValue = allowUserAssemblyDownload;
+    setAllowUserAssemblyDownload(enabled);
+    setSavingAssemblyDownloadSetting(true);
+    setAssemblyDownloadSettingError(null);
+
+    try {
+      const res = await fetch("/api/admin/settings/access", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowUserAssemblyDownload: enabled }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to save setting");
+      }
+    } catch {
+      setAllowUserAssemblyDownload(previousValue);
+      setAssemblyDownloadSettingError("Failed to update researcher assembly download setting.");
+    } finally {
+      setSavingAssemblyDownloadSetting(false);
+    }
+  };
+
   const installedPipelines: PipelineConfig[] = data?.pipelines || [];
   const installedPipelineIds = new Set(installedPipelines.map((p) => p.pipelineId));
   const storePipelines: StorePipeline[] = storeData?.pipelines || [];
@@ -728,6 +778,45 @@ export default function PipelineSettingsPage() {
               </Badge>
             </div>
           </div>
+
+          <GlassCard>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium">Researcher Assembly Downloads</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Show final assemblies in researcher portal UI.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {savingAssemblyDownloadSetting && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+                <Switch
+                  checked={allowUserAssemblyDownload}
+                  onCheckedChange={(checked) => {
+                    void handleAllowUserAssemblyDownloadChange(checked);
+                  }}
+                  disabled={savingAssemblyDownloadSetting}
+                  aria-label="Toggle researcher assembly downloads"
+                />
+              </div>
+            </div>
+          </GlassCard>
+
+          {assemblyDownloadSettingError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
+              <XCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">{assemblyDownloadSettingError}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setAssemblyDownloadSettingError(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
 
           {downloadError && (
             <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">

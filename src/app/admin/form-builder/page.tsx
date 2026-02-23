@@ -40,7 +40,6 @@ import {
   Leaf,
   Rocket,
   ExternalLink,
-  Package,
   Wallet,
   Receipt,
   Dna,
@@ -134,6 +133,7 @@ export default function FormBuilderPage() {
   // Integration service banner
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [isNewSetup, setIsNewSetup] = useState(false);
+  const showIntegrationServiceBanner = process.env.NODE_ENV === "production";
 
   // Group dialog state
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -455,7 +455,7 @@ export default function FormBuilderPage() {
 
     const name = fieldName.trim() || generateFieldName(fieldLabel);
 
-    const isSpecialFieldType = ["mixs", "funding", "billing", "sequencing-tech"].includes(fieldType);
+    const isSpecialFieldType = ["mixs", "funding", "billing", "sequencing-tech", "barcode"].includes(fieldType);
     if (name.startsWith("_") && !isSpecialFieldType) {
       const isExistingReserved = editingField?.name === name;
       if (!isExistingReserved) {
@@ -943,6 +943,41 @@ export default function FormBuilderPage() {
     setFields([...fields, newField]);
   };
 
+  // Add Barcode per-sample field (part of Sequencing Technologies module)
+  const addBarcodeField = () => {
+    if (fields.some((f) => f.type === "barcode" || f.name === "_barcode")) {
+      setError("A Barcode field already exists in the form");
+      setTimeout(() => setError(""), 3000);
+      return;
+    }
+
+    const currentPerSampleCount = fields.filter((f) => f.perSample).length;
+
+    const newField: FormFieldDefinition = {
+      id: `field_barcode_${Date.now()}`,
+      type: "barcode",
+      label: "Barcode",
+      name: "_barcode",
+      required: false,
+      visible: true,
+      perSample: true,
+      helpText:
+        "Assign a barcode to this sample. Available barcodes depend on the selected sequencing kit.",
+      order: currentPerSampleCount,
+      moduleSource: "sequencing-tech",
+    };
+
+    setFields([...fields, newField]);
+  };
+
+  const hasBarcodeField = fields.some(
+    (f) => f.type === "barcode" || f.name === "_barcode"
+  );
+
+  const hasSequencingTechField = fields.some(
+    (f) => f.type === "sequencing-tech"
+  );
+
   // Add ENA Sample Fields - adds essential per-sample fields for ENA submission
   const addEnaSampleFields = () => {
     // Check if organism field already exists
@@ -1008,6 +1043,7 @@ export default function FormBuilderPage() {
     if (field.type === "funding" && !fundingModuleEnabled) return false;
     if (field.type === "billing" && !billingModuleEnabled) return false;
     if (field.type === "sequencing-tech" && !sequencingTechModuleEnabled) return false;
+    if (field.type === "barcode" && !sequencingTechModuleEnabled) return false;
     if (field.moduleSource === "ena-sample-fields" && !enaSampleFieldsEnabled) return false;
     return true;
   };
@@ -1068,6 +1104,11 @@ export default function FormBuilderPage() {
       className: "bg-teal-500/15 text-teal-700",
       icon: Receipt,
     },
+    barcode: {
+      label: "Barcode",
+      className: "bg-sky-500/15 text-sky-700",
+      icon: Dna,
+    },
   };
 
   if (loading) {
@@ -1080,15 +1121,8 @@ export default function FormBuilderPage() {
 
   return (
     <PageContainer>
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold">Order Configuration</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Define what information users provide when creating sequencing orders
-        </p>
-      </div>
-
-      <div className="sticky top-16 z-30 mb-6">
-        <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="sticky top-0 z-40 -mx-4 md:-mx-8 mb-6 border-y border-border bg-background/95 backdrop-blur">
+        <div className="px-4 md:px-8 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div
             className={`text-xs ${
               autoSaveStatus === "error"
@@ -1129,6 +1163,13 @@ export default function FormBuilderPage() {
         </div>
       </div>
 
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold">Order Configuration</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Define what information users provide when creating sequencing orders
+        </p>
+      </div>
+
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive">
           {error}
@@ -1152,7 +1193,7 @@ export default function FormBuilderPage() {
       )}
 
       {/* Integration Service Banner */}
-      {!bannerDismissed && (
+      {showIntegrationServiceBanner && !bannerDismissed && (
         <div className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-violet-500/10">
           <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
           <div className="relative p-6">
@@ -1286,12 +1327,7 @@ export default function FormBuilderPage() {
       <div id="order-fields-section" className="scroll-mt-28">
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <FileText className="h-4 w-4 text-primary" />
-            </div>
-            <h2 className="text-base font-semibold">Order Fields</h2>
-          </div>
+          <h2 className="text-base font-semibold">Order Fields</h2>
           <Button onClick={() => handleAddField(false)} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
@@ -1484,12 +1520,7 @@ export default function FormBuilderPage() {
       <div id="order-per-sample-section" className="scroll-mt-28">
       <GlassCard className="p-6 border-amber-200 bg-amber-50/30 mt-8">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-              <Table className="h-4 w-4 text-amber-600" />
-            </div>
-            <h2 className="text-base font-semibold">Per-Sample Fields</h2>
-          </div>
+          <h2 className="text-base font-semibold">Per-Sample Fields</h2>
           <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="border-amber-300 hover:bg-amber-100">
             <Plus className="h-4 w-4 mr-2" />
             Add Field
@@ -2102,12 +2133,7 @@ export default function FormBuilderPage() {
 
       {/* Module Forms Section */}
       <div id="order-modules-section" className="mt-8 scroll-mt-28">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="h-8 w-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
-            <Package className="h-4 w-4 text-violet-600" />
-          </div>
-          <h2 className="text-base font-semibold">Module Forms</h2>
-        </div>
+        <h2 className="text-base font-semibold mb-2">Module Forms</h2>
         <p className="text-sm text-muted-foreground mb-4">
           Modules extend SeqDesk with specialized form components. Enable modules in Configuration &rarr; Modules to unlock additional form features.
           Each module adds domain-specific fields, validation, and workflows tailored to your needs.
@@ -2199,6 +2225,44 @@ export default function FormBuilderPage() {
                     Configuration &gt; Sequencing Technologies
                   </a>.
                 </p>
+              )}
+
+              {/* Barcode per-sample field (sub-feature of Sequencing Tech) */}
+              {hasSequencingTechField && (
+                <div className="mt-4 pt-4 border-t border-border/50">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-medium">Per-Sample Barcode Assignment</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Adds a barcode dropdown to each sample. Options are automatically determined from the selected kit.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={addBarcodeField}
+                      disabled={hasBarcodeField}
+                      variant="outline"
+                      size="sm"
+                      className="bg-white ml-4 flex-shrink-0"
+                    >
+                      {hasBarcodeField ? (
+                        <>
+                          <Check className="h-4 w-4 mr-2" />
+                          Added
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add to Samples
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {hasBarcodeField && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      <strong>Added to Per-Sample Fields.</strong> The barcode dropdown will appear in the sample entry table when a barcoding-capable kit is selected.
+                    </p>
+                  )}
+                </div>
               )}
             </ModuleGate>
           </GlassCard>

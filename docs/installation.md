@@ -6,11 +6,12 @@ This guide covers installing SeqDesk on a fresh machine, including setting up Co
 
 1. [Prerequisites](#prerequisites)
 2. [Quick Start](#quick-start)
-3. [Detailed Installation](#detailed-installation)
-4. [Conda Setup for Pipelines](#conda-setup-for-pipelines)
-5. [Configuration](#configuration)
-6. [Running in Production](#running-in-production)
-7. [Troubleshooting](#troubleshooting)
+3. [Automated Installer](#automated-installer)
+4. [Detailed Installation](#detailed-installation)
+5. [Conda Setup for Pipelines](#conda-setup-for-pipelines)
+6. [Configuration](#configuration)
+7. [Running in Production](#running-in-production)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -54,6 +55,25 @@ npm run dev
 Open http://localhost:3000 and log in with:
 - **Admin**: `admin@example.com` / `admin`
 - **Researcher**: `user@example.com` / `user`
+
+---
+
+## Automated Installer
+
+```bash
+# Interactive installer
+curl -fsSL https://seqdesk.com/install.sh | bash
+
+# Fully unattended install (accept defaults)
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
+
+# Unattended install using infrastructure JSON (same shape as Admin import JSON)
+curl -fsSL https://seqdesk.com/install.sh | \
+  bash -s -- -y --config https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/setups/twincore/infrastructure-setup.json
+```
+
+`--config` can be a local file path or HTTPS URL. CLI flags and explicit
+environment variables still take precedence over values from the JSON file.
 
 ---
 

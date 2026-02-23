@@ -31,11 +31,18 @@ This will download SeqDesk, install dependencies, and set up the database.
 
 Options:
 ```bash
+# Fully non-interactive install (accept defaults)
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
+
 # Custom install directory
 SEQDESK_DIR=/opt/seqdesk curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
 
 # Include Conda for pipeline support
 SEQDESK_WITH_CONDA=1 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+
+# Unattended install with infrastructure JSON (same format as admin import JSON)
+curl -fsSL https://seqdesk.com/install.sh | \
+  bash -s -- -y --config https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/setups/twincore/infrastructure-setup.json
 ```
 
 ## Manual Installation

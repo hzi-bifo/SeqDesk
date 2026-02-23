@@ -136,6 +136,11 @@ function detectReadType(filename: string): "file1" | "file2" | null {
   return null;
 }
 
+function isMissingDataBasePathError(message: string | undefined): boolean {
+  if (!message) return false;
+  return /data\s*base path not configured/i.test(message);
+}
+
 export default function FileBrowserPage() {
   const { data: session } = useSession();
   const [data, setData] = useState<FilesResponse | null>(null);
@@ -257,7 +262,7 @@ export default function FileBrowserPage() {
         });
       }
 
-      if (result.error) {
+      if (result.error && !isMissingDataBasePathError(result.error)) {
         setError(result.error);
       }
     } catch {

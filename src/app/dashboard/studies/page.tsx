@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import {
@@ -56,11 +55,10 @@ export default function StudiesPage() {
   const [userFilter, setUserFilter] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("created");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
-  const [savingAssemblyDownloadSetting, setSavingAssemblyDownloadSetting] = useState(false);
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canCreateStudy = isResearcher || isFacilityAdmin;
 
   useEffect(() => {
     const fetchStudies = async () => {
@@ -78,35 +76,6 @@ export default function StudiesPage() {
 
     fetchStudies();
   }, []);
-
-  useEffect(() => {
-    if (!isFacilityAdmin) {
-      return;
-    }
-
-    let mounted = true;
-
-    const fetchAccessSettings = async () => {
-      try {
-        const res = await fetch("/api/admin/settings/access");
-        if (!res.ok) {
-          return;
-        }
-        const data = (await res.json()) as { allowUserAssemblyDownload?: boolean };
-        if (mounted) {
-          setAllowUserAssemblyDownload(data.allowUserAssemblyDownload === true);
-        }
-      } catch {
-        // Best effort only, keep local default.
-      }
-    };
-
-    void fetchAccessSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, [isFacilityAdmin]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
@@ -198,27 +167,6 @@ export default function StudiesPage() {
 
   const hasActiveFilters = searchQuery || statusFilter || userFilter;
 
-  const handleAllowUserAssemblyDownloadChange = async (enabled: boolean) => {
-    setAllowUserAssemblyDownload(enabled);
-    setSavingAssemblyDownloadSetting(true);
-
-    try {
-      const res = await fetch("/api/admin/settings/access", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowUserAssemblyDownload: enabled }),
-      });
-      if (!res.ok) {
-        throw new Error("Failed to save setting");
-      }
-    } catch {
-      setAllowUserAssemblyDownload(!enabled);
-      setError("Failed to update assembly download setting");
-    } finally {
-      setSavingAssemblyDownloadSetting(false);
-    }
-  };
-
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -240,28 +188,7 @@ export default function StudiesPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
-          {isFacilityAdmin && (
-            <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
-              <div className="text-right">
-                <p className="text-xs font-medium leading-none">User Assembly Downloads</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Show final assemblies in researcher portal
-                </p>
-              </div>
-              {savingAssemblyDownloadSetting && (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              )}
-              <Switch
-                checked={allowUserAssemblyDownload}
-                onCheckedChange={(checked) => {
-                  void handleAllowUserAssemblyDownloadChange(checked);
-                }}
-                disabled={savingAssemblyDownloadSetting}
-                aria-label="Toggle user assembly downloads"
-              />
-            </div>
-          )}
-          {isResearcher && (
+          {canCreateStudy && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/dashboard/studies/new">
                 New Study
@@ -284,9 +211,9 @@ export default function StudiesPage() {
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             {isResearcher
               ? "Studies group samples for ENA submission. First create an order with samples, then create a study to associate those samples with metadata."
-              : "Studies group samples for ENA submission. Researchers need to first create orders with samples, then create studies to associate those samples with metadata."}
+              : "Studies group samples for ENA submission. Create an order with samples first, then create a study to associate metadata."}
           </p>
-          {isResearcher && (
+          {canCreateStudy && (
             <div className="flex flex-col items-center gap-3">
               <Button size="sm" variant="outline" asChild>
                 <Link href="/dashboard/studies/new">

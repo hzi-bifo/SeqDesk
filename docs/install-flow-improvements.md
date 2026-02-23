@@ -45,15 +45,18 @@ After prompts, the installer prints a configuration summary and asks for
 confirmation (skipped when `SEQDESK_YES=1`).
 
 ## Non-Interactive Mode
+- CLI: `curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y`
 - `SEQDESK_YES=1` (accept defaults, skip prompts)
 - `SEQDESK_WITH_PIPELINES=1` (force pipeline setup)
 - `SEQDESK_WITH_CONDA=1` (legacy alias for pipeline setup)
 - `SEQDESK_SKIP_DEPS=1` (skip dependency install prompts)
+- `--config <path-or-url>` (or `SEQDESK_CONFIG=...`) to load infrastructure JSON
 - Overrides:
   - `SEQDESK_DATA_PATH`
   - `SEQDESK_RUN_DIR`
   - `SEQDESK_NEXTAUTH_URL`
   - `SEQDESK_DATABASE_URL`
+  - `SEQDESK_EXEC_*` runtime settings (SLURM, conda, weblog)
 
 ## Error Reporting
 - Uses `set -euo pipefail` and an `ERR` trap to print the failed command.

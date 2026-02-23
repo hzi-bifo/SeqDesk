@@ -78,10 +78,16 @@ import { SequencingTechFormRenderer } from "@/lib/field-types/sequencing-tech/Se
 import { useModule } from "@/lib/modules";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
-import type { SequencingTechSelection } from "@/types/sequencing-technology";
+import type {
+  SequencingTechSelection,
+  SequencingKit,
+  BarcodeSet,
+} from "@/types/sequencing-technology";
 import { toast } from "sonner";
 import { OrganismCell } from "@/lib/field-types/organism";
+import { BarcodeCell } from "@/lib/field-types/barcode/BarcodeCell";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
+import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 
 // Extend TanStack Table meta types for the wizard
 declare module "@tanstack/react-table" {
@@ -92,6 +98,7 @@ declare module "@tanstack/react-table" {
     validateCell?: (field: FormFieldDefinition, value: unknown) => string | null;
     getScrollPosition?: () => number;
     restoreScrollPosition?: (scrollLeft: number) => void;
+    barcodeOptions?: { options: { value: string; label: string }[]; count: number } | null;
   }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -516,6 +523,10 @@ export default function NewOrderPage() {
   const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(true);
 
+  // Tech data for barcode resolution
+  const [techKits, setTechKits] = useState<SequencingKit[]>([]);
+  const [techBarcodeSets, setTechBarcodeSets] = useState<BarcodeSet[]>([]);
+
   // MIxS state
   const [mixsTemplates, setMixsTemplates] = useState<MixsTemplate[]>([]);
   const [selectedMixsChecklist, setSelectedMixsChecklist] = useState<string>("");
@@ -547,12 +558,117 @@ export default function NewOrderPage() {
     .filter((f) => f.visible && f.perSample)
     .sort((a, b) => a.order - b.order);
 
+  // Resolve barcode options from sequencing tech selection
+  const barcodeOptions = useMemo(() => {
+    if (techKits.length === 0) return null;
+
+    const seqTechFields = (formSchema?.fields || []).filter(
+      (f) => f.type === "sequencing-tech" && !f.perSample
+    );
+    if (seqTechFields.length === 0) return null;
+
+    // Find the first sequencing-tech selection that contains kit information.
+    const selection = seqTechFields
+      .map((field) => fieldValues[field.name])
+      .find(
+        (value): value is SequencingTechSelection =>
+          !!value &&
+          typeof value === "object" &&
+          (Boolean((value as SequencingTechSelection).kitId) ||
+            Boolean((value as SequencingTechSelection).kitSku) ||
+            Boolean((value as SequencingTechSelection).barcodeKitId) ||
+            Boolean((value as SequencingTechSelection).barcodeKitSku))
+      );
+    if (!selection) return null;
+
+    const findKit = (id?: string, sku?: string): SequencingKit | undefined => {
+      if (id) {
+        const byId = techKits.find((k) => k.id === id);
+        if (byId) return byId;
+      }
+      if (sku) {
+        const normalizedSku = sku.trim().toLowerCase();
+        if (normalizedSku) {
+          return techKits.find((k) => k.sku.trim().toLowerCase() === normalizedSku);
+        }
+      }
+      return undefined;
+    };
+
+    const mainKit = findKit(selection.kitId, selection.kitSku);
+    const barcodeKit = findKit(selection.barcodeKitId, selection.barcodeKitSku);
+    const effectiveKit = barcodeKit || mainKit;
+    if (!effectiveKit) return null;
+
+    const buildBarcodeOptions = (count: number, startAt = 1) => {
+      const options: { value: string; label: string }[] = [];
+      for (let i = startAt; i < startAt + count; i++) {
+        const id = `barcode${String(i).padStart(2, "0")}`;
+        options.push({ value: id, label: id });
+      }
+      return options;
+    };
+
+    // Preferred source: explicit barcode set mapping from kit config.
+    const barcodeSetId = effectiveKit.barcoding?.barcodeSetId;
+    if (barcodeSetId && techBarcodeSets.length > 0) {
+      const barcodeSet = techBarcodeSets.find((bs) => bs.id === barcodeSetId);
+      if (barcodeSet) {
+        const [start, end] = barcodeSet.barcodeRange;
+        const count = Math.max(0, end - start + 1);
+        const options = buildBarcodeOptions(count, start);
+        if (options.length > 0) {
+          return { options, setName: barcodeSet.name, count: options.length };
+        }
+      }
+    }
+
+    // Fallback for legacy kit configs without barcodeSet metadata.
+    const fallbackCount =
+      effectiveKit.barcoding?.maxBarcodesPerRun ?? effectiveKit.barcodeCount;
+    if (typeof fallbackCount === "number" && fallbackCount > 0) {
+      const options = buildBarcodeOptions(fallbackCount);
+      return {
+        options,
+        setName: effectiveKit.name,
+        count: options.length,
+      };
+    }
+
+    return null;
+  }, [techKits, techBarcodeSets, formSchema, fieldValues]);
+
   // Generate unique sample ID
   const generateSampleId = () => {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 7).toUpperCase();
     return `S-${timestamp}-${random}`;
   };
+
+  const validateSampleIds = useCallback((rows: SampleRow[]): string | null => {
+    const seen = new Map<string, number>();
+    const duplicateMessages: string[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const normalized = String(rows[i].sampleId ?? "").trim();
+      if (!normalized) {
+        return `Sample ${i + 1} is missing a Sample ID`;
+      }
+
+      const key = normalized.toLowerCase();
+      const firstSeenAt = seen.get(key);
+      if (firstSeenAt !== undefined) {
+        duplicateMessages.push(`${normalized} (samples ${firstSeenAt + 1} and ${i + 1})`);
+      } else {
+        seen.set(key, i);
+      }
+    }
+
+    if (duplicateMessages.length > 0) {
+      return `Duplicate Sample ID detected: ${duplicateMessages[0]}`;
+    }
+    return null;
+  }, []);
 
   // Create a new sample row with default values
   const createNewSample = () => {
@@ -592,6 +708,30 @@ export default function NewOrderPage() {
       return newSamples;
     });
   };
+
+  // Handle samples imported from Excel
+  const handleSamplesImported = useCallback(
+    (importedSamples: SampleRow[], mode: "replace" | "append") => {
+      const newSamples =
+        mode === "replace"
+          ? importedSamples
+          : [...samples, ...importedSamples];
+      const sampleIdError = validateSampleIds(newSamples);
+      if (sampleIdError) {
+        toast.error(sampleIdError);
+        return;
+      }
+      setSamples(newSamples);
+      setFieldValues((prev) => ({
+        ...prev,
+        numberOfSamples: newSamples.length,
+      }));
+      toast.success(
+        `Imported ${importedSamples.length} sample${importedSamples.length !== 1 ? "s" : ""}`
+      );
+    },
+    [samples, validateSampleIds]
+  );
 
   // Remove a sample row
   const handleRemoveSample = (id: string) => {
@@ -776,6 +916,33 @@ export default function NewOrderPage() {
     fetchSchema();
   }, []);
 
+  // Show form-level errors immediately so submit failures are visible.
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error);
+  }, [error]);
+
+  // Fetch tech data for barcode resolution (kits + barcode sets)
+  useEffect(() => {
+    if (!sequencingTechModuleEnabled) return;
+    const fetchTechData = async () => {
+      try {
+        const res = await fetch("/api/sequencing-tech", {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setTechKits(data.kits || []);
+          setTechBarcodeSets(data.barcodeSets || []);
+        }
+      } catch {
+        console.error("Failed to load tech data for barcodes");
+      }
+    };
+    fetchTechData();
+  }, [sequencingTechModuleEnabled]);
+
   // Load existing order data when in edit mode
   useEffect(() => {
     if (!isEditMode || !editOrderId || !formSchema) return;
@@ -901,6 +1068,25 @@ export default function NewOrderPage() {
     fetchOrder();
   }, [isEditMode, editOrderId, formSchema]);
 
+  // Get groups sorted by order
+  const allGroups = (formSchema?.groups || DEFAULT_GROUPS).sort((a, b) => a.order - b.order);
+  // Hide software step/group when Sequencing Tech is enabled and active on the form.
+  const hasActiveSequencingTechField = sequencingTechModuleEnabled && (formSchema?.fields || []).some(
+    (field) => field.visible && !field.perSample && field.type === "sequencing-tech"
+  );
+  const hiddenGroupIds = new Set(
+    hasActiveSequencingTechField
+      ? allGroups
+          .filter((group) => {
+            const groupName = group.name.toLowerCase();
+            const groupId = group.id.toLowerCase();
+            return groupName.includes("software") || groupId.includes("software");
+          })
+          .map((group) => group.id)
+      : []
+  );
+  const groups = allGroups.filter((group) => !hiddenGroupIds.has(group.id));
+
   // Get visible fields sorted by order (also filter by module state)
   // Exclude perSample fields - those are collected in the samples table after order creation
   const visibleFields = (formSchema?.fields || [])
@@ -908,6 +1094,8 @@ export default function NewOrderPage() {
       if (!f.visible) return false;
       // Filter out per-sample fields - they go in the samples table
       if (f.perSample) return false;
+      // Hide fields that belong to software-related groups.
+      if (f.groupId && hiddenGroupIds.has(f.groupId)) return false;
       // Filter out funding fields if module is disabled
       if (f.type === "funding" && !fundingModuleEnabled) return false;
       // Filter out billing fields if module is disabled
@@ -917,9 +1105,6 @@ export default function NewOrderPage() {
       return true;
     })
     .sort((a, b) => a.order - b.order);
-
-  // Get groups sorted by order
-  const groups = (formSchema?.groups || DEFAULT_GROUPS).sort((a, b) => a.order - b.order);
 
   // Check if there's a MIxS field with available templates
   const mixsFieldDef = visibleFields.find((f) => f.type === "mixs");
@@ -1227,6 +1412,12 @@ export default function NewOrderPage() {
       return false;
     }
 
+    const sampleIdError = validateSampleIds(samples);
+    if (sampleIdError) {
+      setError(sampleIdError);
+      return false;
+    }
+
     // Per-sample validation (required + simple validation)
     for (let i = 0; i < samples.length; i++) {
       const sample = samples[i];
@@ -1263,6 +1454,23 @@ export default function NewOrderPage() {
       if (duplicates.length > 0) {
         setError("Sample Alias values must be unique");
         return false;
+      }
+    }
+
+    // Enforce unique barcode assignments
+    if (barcodeOptions) {
+      const usedBarcodes = new Map<string, number>();
+      for (let i = 0; i < samples.length; i++) {
+        const bc = samples[i]._barcode as string | undefined;
+        if (bc) {
+          if (usedBarcodes.has(bc)) {
+            setError(
+              `Barcode ${bc} is assigned to both sample ${usedBarcodes.get(bc)! + 1} and sample ${i + 1}`
+            );
+            return false;
+          }
+          usedBarcodes.set(bc, i);
+        }
       }
     }
 
@@ -2210,19 +2418,22 @@ export default function NewOrderPage() {
       const cellComponent =
         field.type === "organism"
           ? OrganismCell
-          : field.type === "select" && field.options
-            ? SelectCell
-            : field.type === "multiselect"
-              ? MultiSelectCell
-              : field.type === "checkbox"
-                ? CheckboxCell
-                : EditableCell;
+          : field.type === "barcode"
+            ? BarcodeCell
+            : field.type === "select" && field.options
+              ? SelectCell
+              : field.type === "multiselect"
+                ? MultiSelectCell
+                : field.type === "checkbox"
+                  ? CheckboxCell
+                  : EditableCell;
 
       // Determine column width based on field type - wider columns for better readability
       const columnSize =
         field.type === "organism" ? 280
         : field.type === "textarea" ? 240
         : field.type === "date" ? 160
+        : field.type === "barcode" ? 160
         : field.type === "select" ? 180
         : 180;
 
@@ -2239,6 +2450,11 @@ export default function NewOrderPage() {
             )}
           >
             {field.label}
+            {field.type === "barcode" && barcodeOptions && (
+              <span className="text-xs text-muted-foreground font-normal">
+                ({barcodeOptions.count})
+              </span>
+            )}
             {field.required && <span className="text-destructive">*</span>}
           </button>
         ),
@@ -2270,7 +2486,7 @@ export default function NewOrderPage() {
     });
 
     return cols;
-  }, [perSampleFields, focusedField, saving]);
+  }, [perSampleFields, focusedField, saving, barcodeOptions]);
 
   // Update sample data from table
   // Supports both single field update: updateSampleData(rowIndex, columnId, value)
@@ -2306,6 +2522,7 @@ export default function NewOrderPage() {
       updateData: updateSampleData,
       onColumnClick: (field) => setFocusedField(field),
       validateCell: validateSampleField,
+      barcodeOptions,
     },
   });
 
@@ -2331,6 +2548,13 @@ export default function NewOrderPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <ExcelToolbar
+              perSampleFields={perSampleFields}
+              samples={samples}
+              barcodeOptions={barcodeOptions}
+              onSamplesImported={handleSamplesImported}
+              disabled={saving}
+            />
             {/* Quick Actions Dropdown */}
             {samples.length > 0 && (hasSampleAliasField || hasOrganismField) && (
               <DropdownMenu>
@@ -2483,38 +2707,23 @@ export default function NewOrderPage() {
           const hasIssue = aiResult && !aiResult.checking && !aiResult.valid;
 
           return (
-            <div className={`py-4 ${hasIssue ? "bg-amber-500/5 -mx-6 px-6" : ""}`}>
-              <div className="flex items-start justify-between gap-4">
+            <div className={`py-3 ${hasIssue ? "bg-amber-500/5 -mx-4 px-4" : ""}`}>
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-muted-foreground mb-1">{field.label}</p>
-                  <p className="text-base font-medium break-words">{displayValue}</p>
+                  <p className="text-xs text-muted-foreground mb-0.5">{field.label}</p>
+                  <p className="text-sm font-medium break-words">{displayValue}</p>
                 </div>
-                {aiResult && !aiResult.checking && (
-                  <div className="flex-shrink-0 mt-5">
-                    {aiResult.valid ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <div className="group relative">
-                        <AlertCircle className="h-5 w-5 text-amber-500 cursor-help" />
-                        <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block w-72 p-3 bg-popover border border-border rounded-lg shadow-lg text-sm z-10">
-                          <p className="font-medium text-amber-600 mb-1">Potential Issue</p>
-                          <p className="text-foreground">{aiResult.message}</p>
-                          {aiResult.suggestion && (
-                            <p className="text-muted-foreground mt-2 text-xs italic">
-                              Suggestion: {aiResult.suggestion}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                {hasIssue && (
+                  <span className="mt-0.5 inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+                    Needs review
+                  </span>
                 )}
               </div>
               {hasIssue && (
-                <div className="mt-2 p-2 rounded bg-amber-500/10 border border-amber-500/20">
-                  <p className="text-sm text-amber-700">{aiResult?.message}</p>
+                <div className="mt-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 p-1.5">
+                  <p className="text-xs text-amber-700">{aiResult?.message}</p>
                   {aiResult?.suggestion && (
-                    <p className="text-xs text-amber-600 mt-1 italic">
+                    <p className="mt-0.5 text-[11px] italic text-amber-600">
                       Suggestion: {aiResult.suggestion}
                     </p>
                   )}
@@ -2525,55 +2734,43 @@ export default function NewOrderPage() {
         };
 
         return (
-          <div className="space-y-8">
+          <div className="space-y-5">
             {/* AI Validation Summary */}
             {aiIssues.length > 0 && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-5">
-                <div className="flex items-start gap-4">
-                  <div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                    <AlertCircle className="h-5 w-5 text-amber-600" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold text-amber-700 dark:text-amber-400">
-                      {aiIssues.length} field{aiIssues.length > 1 ? "s" : ""} may need attention
-                    </p>
-                    <p className="text-amber-600 dark:text-amber-500 mt-1">
-                      AI validation flagged potential issues. Review the highlighted fields below,
-                      or proceed if you believe the values are correct.
-                    </p>
-                  </div>
-                </div>
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+                <p className="text-base font-semibold text-amber-700 dark:text-amber-400">
+                  {aiIssues.length} field{aiIssues.length > 1 ? "s" : ""} may need attention
+                </p>
+                <p className="mt-1 text-sm text-amber-600 dark:text-amber-500">
+                  AI validation flagged potential issues. Review the highlighted fields below,
+                  or proceed if you believe the values are correct.
+                </p>
               </div>
             )}
 
             {/* Contact Information Section */}
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="bg-muted/50 px-6 py-4 border-b border-border">
-                <h3 className="text-lg font-semibold flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <User className="h-4 w-4 text-primary" />
-                  </div>
-                  Contact Information
-                </h3>
+              <div className="bg-muted/50 px-4 py-3 border-b border-border">
+                <h3 className="text-base font-semibold">Contact Information</h3>
               </div>
-              <div className="p-6">
-                <div className="grid sm:grid-cols-2 gap-6">
+              <div className="p-4">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <p className="text-sm text-muted-foreground mb-1">Full Name</p>
-                    <p className="text-lg font-medium">
+                    <p className="mb-0.5 text-xs text-muted-foreground">Full Name</p>
+                    <p className="text-base font-medium">
                       {userProfile?.firstName} {userProfile?.lastName}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground mb-1">Email</p>
-                    <p className="text-lg font-medium break-all">
+                    <p className="mb-0.5 text-xs text-muted-foreground">Email</p>
+                    <p className="text-base font-medium break-all">
                       {userProfile?.email || session?.user?.email}
                     </p>
                   </div>
                   {(userProfile?.institution || userProfile?.department) && (
                     <div className="sm:col-span-2">
-                      <p className="text-sm text-muted-foreground mb-1">Institution / Department</p>
-                      <p className="text-lg font-medium">
+                      <p className="mb-0.5 text-xs text-muted-foreground">Institution / Department</p>
+                      <p className="text-base font-medium">
                         {[userProfile?.department?.name, userProfile?.institution]
                           .filter(Boolean)
                           .join(" - ")}
@@ -2593,18 +2790,17 @@ export default function NewOrderPage() {
               });
               if (filledFields.length === 0) return null;
 
-              const GroupIcon = iconMap[group.icon || "FileText"] || FileText;
               return (
                 <div key={group.id} className="bg-card border border-border rounded-xl overflow-hidden">
-                  <div className="bg-muted/50 px-6 py-4 border-b border-border">
-                    <h3 className="text-lg font-semibold flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <GroupIcon className="h-4 w-4 text-primary" />
-                      </div>
-                      {group.name}
-                    </h3>
+                  <div className="bg-muted/50 px-4 py-3 border-b border-border">
+                    <div className="flex items-center justify-between gap-4">
+                      <h3 className="text-base font-semibold">{group.name}</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {filledFields.length} field{filledFields.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
                   </div>
-                  <div className="px-6 divide-y divide-border">
+                  <div className="px-4 divide-y divide-border">
                     {filledFields.map((field) => {
                       const value = fieldValues[field.name];
                       return <ReviewRow key={field.id} field={field} value={value} />;
@@ -2623,15 +2819,10 @@ export default function NewOrderPage() {
               if (filledUngrouped.length === 0) return null;
               return (
                 <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  <div className="bg-muted/50 px-6 py-4 border-b border-border">
-                    <h3 className="text-lg font-semibold flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <ClipboardList className="h-4 w-4 text-primary" />
-                      </div>
-                      Additional Details
-                    </h3>
+                  <div className="bg-muted/50 px-4 py-3 border-b border-border">
+                    <h3 className="text-base font-semibold">Additional Details</h3>
                   </div>
-                  <div className="px-6 divide-y divide-border">
+                  <div className="px-4 divide-y divide-border">
                     {filledUngrouped.map((field) => {
                       const value = fieldValues[field.name];
                       return <ReviewRow key={field.id} field={field} value={value} />;
@@ -2644,26 +2835,21 @@ export default function NewOrderPage() {
             {/* MIxS Metadata Section */}
             {selectedMixsChecklist && (
               <div className="bg-card border border-emerald-500/30 rounded-xl overflow-hidden">
-                <div className="bg-emerald-500/5 px-6 py-4 border-b border-emerald-500/20">
-                  <h3 className="text-lg font-semibold flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                      <Leaf className="h-4 w-4 text-emerald-600" />
-                    </div>
-                    <span>MIxS Metadata</span>
-                  </h3>
+                <div className="bg-emerald-500/5 px-4 py-3 border-b border-emerald-500/20">
+                  <h3 className="text-base font-semibold">MIxS Metadata</h3>
                 </div>
-                <div className="p-6">
-                  <div className="grid sm:grid-cols-2 gap-4">
+                <div className="p-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <div>
-                      <p className="text-sm text-muted-foreground mb-1">Environment Type</p>
-                      <p className="text-lg font-medium">{selectedMixsChecklist}</p>
+                      <p className="mb-0.5 text-xs text-muted-foreground">Environment Type</p>
+                      <p className="text-base font-medium">{selectedMixsChecklist}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground mb-1">Fields to Collect</p>
-                      <p className="text-lg font-medium">{selectedMixsFields.length} fields per sample</p>
+                      <p className="mb-0.5 text-xs text-muted-foreground">Fields to Collect</p>
+                      <p className="text-base font-medium">{selectedMixsFields.length} fields per sample</p>
                     </div>
                   </div>
-                  <p className="text-sm text-emerald-600 mt-3">
+                  <p className="mt-2 text-xs text-emerald-600">
                     These metadata fields will be collected when adding samples to this order.
                   </p>
                 </div>
@@ -2672,24 +2858,19 @@ export default function NewOrderPage() {
 
             {/* Samples Section */}
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="bg-muted/50 px-6 py-4 border-b border-border">
-                <h3 className="text-lg font-semibold flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <TableIcon className="h-4 w-4 text-primary" />
-                  </div>
-                  Samples
-                </h3>
+              <div className="bg-muted/50 px-4 py-3 border-b border-border">
+                <h3 className="text-base font-semibold">Samples</h3>
               </div>
-              <div className="p-6">
-                <div className="grid sm:grid-cols-2 gap-4 mb-4">
+              <div className="p-4">
+                <div className="mb-3 grid gap-3 sm:grid-cols-2">
                   <div>
-                    <p className="text-sm text-muted-foreground mb-1">Total Samples</p>
-                    <p className="text-lg font-medium">{samples.length}</p>
+                    <p className="mb-0.5 text-xs text-muted-foreground">Total Samples</p>
+                    <p className="text-base font-medium">{samples.length}</p>
                   </div>
                   {perSampleFields.length > 0 && (
                     <div>
-                      <p className="text-sm text-muted-foreground mb-1">Per-Sample Fields</p>
-                      <p className="text-lg font-medium">{perSampleFields.length} fields</p>
+                      <p className="mb-0.5 text-xs text-muted-foreground">Per-Sample Fields</p>
+                      <p className="text-base font-medium">{perSampleFields.length} fields</p>
                     </div>
                   )}
                 </div>
@@ -2698,15 +2879,15 @@ export default function NewOrderPage() {
                     <table className="w-full text-sm">
                       <thead className="bg-muted/50 border-b">
                         <tr>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
-                          <th className="px-3 py-2 text-left font-medium">Sample ID</th>
+                          <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">#</th>
+                          <th className="px-2.5 py-1.5 text-left font-medium">Sample ID</th>
                           {perSampleFields.slice(0, 3).map((field) => (
-                            <th key={field.id} className="px-3 py-2 text-left font-medium">
+                            <th key={field.id} className="px-2.5 py-1.5 text-left font-medium">
                               {field.label}
                             </th>
                           ))}
                           {perSampleFields.length > 3 && (
-                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">
                               +{perSampleFields.length - 3} more
                             </th>
                           )}
@@ -2715,25 +2896,25 @@ export default function NewOrderPage() {
                       <tbody className="divide-y">
                         {samples.slice(0, 5).map((sample, index) => (
                           <tr key={sample.id}>
-                            <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                            <td className="px-3 py-2">
+                            <td className="px-2.5 py-1.5 text-muted-foreground">{index + 1}</td>
+                            <td className="px-2.5 py-1.5">
                               <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
                                 {sample.sampleId}
                               </code>
                             </td>
                             {perSampleFields.slice(0, 3).map((field) => (
-                              <td key={field.id} className="px-3 py-2">
+                              <td key={field.id} className="px-2.5 py-1.5">
                                 {field.type === "organism"
                                   ? String(sample.scientificName || sample.scientific_name || sample.taxId || sample.tax_id || "-")
                                   : String(sample[field.name] || "-")}
                               </td>
                             ))}
-                            {perSampleFields.length > 3 && <td className="px-3 py-2">...</td>}
+                            {perSampleFields.length > 3 && <td className="px-2.5 py-1.5">...</td>}
                           </tr>
                         ))}
                         {samples.length > 5 && (
                           <tr className="bg-muted/30">
-                            <td colSpan={3 + Math.min(perSampleFields.length, 3) + (perSampleFields.length > 3 ? 1 : 0)} className="px-3 py-2 text-center text-muted-foreground">
+                            <td colSpan={3 + Math.min(perSampleFields.length, 3) + (perSampleFields.length > 3 ? 1 : 0)} className="px-2.5 py-1.5 text-center text-xs text-muted-foreground">
                               ... and {samples.length - 5} more samples
                             </td>
                           </tr>
@@ -2746,41 +2927,31 @@ export default function NewOrderPage() {
             </div>
 
             {/* Ready to Submit */}
-            <div className={`rounded-xl p-5 flex items-start gap-4 ${
+            <div className={`rounded-xl p-4 ${
               aiIssues.length > 0
                 ? "bg-amber-500/5 border border-amber-500/20"
                 : "bg-green-500/5 border border-green-500/20"
             }`}>
               {aiIssues.length > 0 ? (
-                <>
-                  <div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                    <AlertCircle className="h-5 w-5 text-amber-600" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold text-amber-700 dark:text-amber-400">
-                      Review before submitting
-                    </p>
-                    <p className="text-amber-600 dark:text-amber-500 mt-1">
-                      Some fields have potential issues. You can go back to make changes
-                      or proceed if you believe the values are correct.
-                    </p>
-                  </div>
-                </>
+                <div>
+                  <p className="text-base font-semibold text-amber-700 dark:text-amber-400">
+                    Review before submitting
+                  </p>
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-500">
+                    Some fields have potential issues. You can go back to make changes
+                    or proceed if you believe the values are correct.
+                  </p>
+                </div>
               ) : (
-                <>
-                  <div className="h-10 w-10 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold text-green-700 dark:text-green-400">
-                      Ready to submit
-                    </p>
-                    <p className="text-green-600 dark:text-green-500 mt-1">
-                      Your order with {samples.length} sample{samples.length !== 1 ? "s" : ""} is ready.
-                      After submitting, you can edit samples and track progress from the order page.
-                    </p>
-                  </div>
-                </>
+                <div>
+                  <p className="text-base font-semibold text-green-700 dark:text-green-400">
+                    Ready to submit
+                  </p>
+                  <p className="mt-1 text-sm text-green-600 dark:text-green-500">
+                    Your order with {samples.length} sample{samples.length !== 1 ? "s" : ""} is ready.
+                    After submitting, you can edit samples and track progress from the order page.
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -2926,6 +3097,11 @@ export default function NewOrderPage() {
             <div className="mb-6">
               <h2 className="text-xl font-semibold">{steps[currentStep].title}</h2>
               <p className="text-sm text-muted-foreground">{steps[currentStep].description}</p>
+              {error && (
+                <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
               {currentStep === 0 && (
                 <div className="mt-3 p-2.5 rounded-lg bg-muted/50 border border-border">
                   <p className="text-sm text-muted-foreground">
@@ -2975,7 +3151,7 @@ export default function NewOrderPage() {
                     onClick={() => setAcknowledgedAiWarnings(true)}
                   >
                     <AlertCircle className="h-4 w-4 mr-2" />
-                    {aiIssueCount} issue{aiIssueCount > 1 ? "s" : ""} - Review & Continue
+                    Acknowledge {aiIssueCount} issue{aiIssueCount > 1 ? "s" : ""} to continue
                   </Button>
                 );
               }
