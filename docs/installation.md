@@ -4,13 +4,28 @@ This guide covers installing SeqDesk on a fresh machine, including setting up Co
 
 ## Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Quick Start](#quick-start)
-3. [Detailed Installation](#detailed-installation)
-4. [Conda Setup for Pipelines](#conda-setup-for-pipelines)
-5. [Configuration](#configuration)
-6. [Running in Production](#running-in-production)
-7. [Troubleshooting](#troubleshooting)
+1. [Install via script](#install-via-script)
+2. [Prerequisites](#prerequisites)
+3. [Quick Start](#quick-start)
+4. [Detailed Installation](#detailed-installation)
+5. [Conda Setup for Pipelines](#conda-setup-for-pipelines)
+6. [Configuration](#configuration)
+7. [Running in Production](#running-in-production)
+8. [Troubleshooting](#troubleshooting)
+
+---
+
+## Install via script
+
+You can install SeqDesk in one command. The script detects your system, checks (and optionally installs) Node and Git, clones the repo, installs dependencies, configures `.env` and `seqdesk.config.json`, initializes the database, and optionally sets up Conda and pipeline support. It installs into `./seqdesk` by default and uses port 8000.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+```
+
+Set environment variables before the command to customize (e.g. `SEQDESK_DIR=/opt/seqdesk`, `SEQDESK_WITH_PIPELINES=1`, `SEQDESK_YES=1`). See the [README](../README.md#quick-install) or the script header in `scripts/install.sh` for all options.
+
+The sections below describe the same steps manually.
 
 ---
 
@@ -22,6 +37,8 @@ This guide covers installing SeqDesk on a fresh machine, including setting up Co
 - **npm** or **yarn** - Package manager
 - **Git** - Version control
 
+The install script can install Node and Git for you on macOS (Homebrew), Debian, and RHEL/CentOS. If you use the script, you can omit manual Node/Git install when it offers to install missing dependencies.
+
 ### Optional (for pipeline execution)
 
 - **Conda** (Miniconda or Anaconda) - For nf-core pipeline dependencies
@@ -32,7 +49,7 @@ This guide covers installing SeqDesk on a fresh machine, including setting up Co
 ## Quick Start
 
 ```bash
-# Clone the repository
+# Clone the repository (or use a different directory name; the script uses ./seqdesk)
 git clone https://github.com/hzi-bifo/SeqDesk.git
 cd SeqDesk
 
@@ -41,7 +58,12 @@ npm install
 
 # Set up environment
 cp .env.example .env
-# Edit .env and set NEXTAUTH_SECRET
+# Edit .env: set NEXTAUTH_SECRET (e.g. openssl rand -base64 32), NEXTAUTH_URL, PORT (default 8000)
+
+# Optional: create config file so the app knows data paths and pipeline settings
+cp seqdesk.config.example.json seqdesk.config.json
+# Or use an environment-specific example from setups/ (e.g. setups/twincore/seqdesk.config.example.json)
+# Edit seqdesk.config.json as needed
 
 # Initialize database
 npx prisma db push
@@ -51,7 +73,7 @@ npx prisma db seed
 npm run dev
 ```
 
-Open http://localhost:3000 and log in with:
+Open http://localhost:8000 (or the port you set in `PORT`) and log in with:
 - **Admin**: `admin@example.com` / `admin`
 - **Researcher**: `user@example.com` / `user`
 
@@ -87,7 +109,7 @@ npm --version
 ### 2. Clone and Install SeqDesk
 
 ```bash
-# Clone the repository
+# Clone the repository (the install script uses ./seqdesk and --depth 1)
 git clone https://github.com/hzi-bifo/SeqDesk.git
 cd SeqDesk
 
@@ -108,7 +130,8 @@ Edit `.env` with your settings:
 # Required
 DATABASE_URL="file:./dev.db"
 NEXTAUTH_SECRET="generate-a-random-string-here"
-NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_URL="http://localhost:8000"
+PORT="8000"
 
 # Optional: AI validation features
 ANTHROPIC_API_KEY="sk-ant-..."
@@ -119,7 +142,19 @@ Generate a secure secret:
 openssl rand -base64 32
 ```
 
-### 4. Initialize Database
+`NEXTAUTH_URL` and `PORT` must match: if you use port 8000, set `NEXTAUTH_URL="http://localhost:8000"` and `PORT="8000"`. If you omit `PORT`, Next.js defaults to 3000.
+
+### 4. Create or update config file
+
+Create a config file so the app knows data paths and pipeline settings. The install script does this automatically; when installing manually:
+
+```bash
+cp seqdesk.config.example.json seqdesk.config.json
+```
+
+A suitable example for a specific environment may be in `setups/` (e.g. `setups/twincore/` contains `seqdesk.config.example.json` and `infrastructure-setup.json` for the Twincore environment). Edit `seqdesk.config.json` (e.g. `site.dataBasePath`, `pipelines.execution.runDirectory`). See [Configuration](#configuration) and [configuration.md](configuration.md).
+
+### 5. Initialize Database
 
 ```bash
 # Create database schema
@@ -129,18 +164,28 @@ npx prisma db push
 npx prisma db seed
 ```
 
-### 5. Start the Application
+If `npx prisma db seed` fails, try running the seed script directly: `node prisma/seed.mjs` (or `prisma/seed.js` if present). The install script also installs the `bcryptjs` dependency if it is missing for seeding.
+
+### 6. Start the Application
 
 **Development mode:**
 ```bash
 npm run dev
 ```
 
+Open http://localhost:8000 (or the port in your `PORT` / `NEXTAUTH_URL`).
+
 **Production mode:**
 ```bash
 npm run build
 npm start
 ```
+
+**Next steps after first start:**
+
+1. Log in as admin and configure **Data Storage** under Admin > Data Storage.
+2. If you use pipelines, configure **Pipeline Runtime** under Admin > Pipeline Runtime.
+3. See [Running in Production](#running-in-production) below for PM2/systemd deployment.
 
 ---
 
@@ -401,7 +446,7 @@ WorkingDirectory=/opt/seqdesk
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=8000
 
 [Install]
 WantedBy=multi-user.target
@@ -430,7 +475,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/seqdesk.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -520,8 +565,8 @@ Edit `seqdesk.config.json` to increase resources:
 ### Port Already in Use
 
 ```bash
-# Find process using port 3000
-lsof -i :3000
+# Find process using port 8000 (or 3000 if you did not set PORT)
+lsof -i :8000
 
 # Kill it
 kill -9 <PID>
@@ -549,11 +594,13 @@ env | grep SEQDESK
 
 After installation:
 
-1. **Configure your facility** - Set site name, data paths in Admin Settings
-2. **Set up departments** - Create departments for your organization
-3. **Invite users** - Create researcher accounts or enable registration
-4. **Configure pipelines** - Enable and test nf-core/mag pipeline
-5. **Set up ENA** - Configure ENA credentials for data submission
+1. **Configure Data Storage** - Log in as admin, go to Admin > Data Storage, and set data paths.
+2. **Configure Pipeline Runtime** - If pipelines are enabled, go to Admin > Pipeline Runtime.
+3. **Configure your facility** - Set site name and other options in Admin Settings.
+4. **Set up departments** - Create departments for your organization.
+5. **Invite users** - Create researcher accounts or enable registration.
+6. **Configure pipelines** - Enable and test nf-core/mag pipeline.
+7. **Set up ENA** - Configure ENA credentials for data submission.
 
 For more information, see:
 - [Configuration Reference](configuration.md)

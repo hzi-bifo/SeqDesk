@@ -27,70 +27,127 @@ A modern sequencing facility management system built with Next.js for managing s
 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
 ```
 
-This will download SeqDesk, install dependencies, and set up the database.
+The script will detect your system, check (and optionally install) dependencies, clone SeqDesk, install Node dependencies, configure environment and config file, initialize the database, and optionally set up Conda and pipeline support. It defaults to installing into `./seqdesk` and using port 8000.
 
-Options:
+**Options** (environment variables; set before the curl command; same as [scripts/install.sh](scripts/install.sh)):
+
 ```bash
-# Custom install directory
+# Example: custom install directory
 SEQDESK_DIR=/opt/seqdesk curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
-
-# Include Conda for pipeline support
-SEQDESK_WITH_CONDA=1 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
 ```
+
+You can combine any of these variables with the same curl command:
+
+| Variable | Description |
+|----------|-------------|
+| `SEQDESK_DIR` | Install directory (default: `./seqdesk`) |
+| `SEQDESK_BRANCH` | Git branch (default: `main`) |
+| `SEQDESK_YES=1` | Non-interactive; accept defaults |
+| `SEQDESK_WITH_PIPELINES=1` | Enable pipeline support (Conda + Nextflow). Legacy: `SEQDESK_WITH_CONDA=1` |
+| `SEQDESK_PORT` | App port (default: `8000`) |
+| `SEQDESK_DATA_PATH` | Sequencing data base path |
+| `SEQDESK_RUN_DIR` | Pipeline run directory |
+| `SEQDESK_NEXTAUTH_URL` | NextAuth URL |
+| `SEQDESK_DATABASE_URL` | Database URL (default: SQLite in project) |
+| `SEQDESK_SKIP_DEPS=1` | Skip dependency checks |
+| `SEQDESK_LOG` | Write install log to path |
 
 ## Manual Installation
 
+Manual steps mirror what [scripts/install.sh](scripts/install.sh) does. Default port is 8000 (script uses 8000; Next.js uses 3000 only if `PORT` is not set).
+
 ### Prerequisites
 
-- Node.js 18+
-- npm or yarn
+- **Node.js 18+**
+- **npm**
+- **Git** (for clone)
+
+Optional (for pipeline execution):
+
+- **Conda** (Miniconda or Anaconda)
+- **Nextflow**
+
+On some systems the install script can install Node and Git for you (e.g. Homebrew on macOS, NodeSource on Debian/RHEL). See [docs/installation.md](docs/installation.md) for details.
 
 ### 1. Clone and install
 
+Clone into a directory (the script uses `./seqdesk` by default):
+
 ```bash
-git clone https://github.com/hzi-bifo/SeqDesk.git
-cd SeqDesk
+git clone --branch main --depth 1 https://github.com/hzi-bifo/SeqDesk.git seqdesk
+cd seqdesk
 npm install
 ```
 
-### 2. Set up environment variables
+### 2. Configure environment
 
-Copy the example environment file and configure:
+Copy the example environment file, then set required variables. Generate a secret for `NEXTAUTH_SECRET` (e.g. `openssl rand -base64 32`):
 
 ```bash
 cp .env.example .env
 ```
 
-Required variables:
-```
-DATABASE_URL="file:./dev.db"
-NEXTAUTH_SECRET="your-secret-key"
-ANTHROPIC_API_KEY="sk-ant-..."  # Optional: for AI validation features
-```
+Edit `.env`. Required:
 
-### 3. Set up the database
+- `DATABASE_URL` – e.g. `file:./dev.db` for SQLite
+- `NEXTAUTH_SECRET` – random string (required by NextAuth)
+- `NEXTAUTH_URL` – e.g. `http://localhost:8000` (must match the port you run on)
+- `PORT` – e.g. `8000` (optional; Next.js defaults to 3000 if unset)
+
+Optional: `ANTHROPIC_API_KEY` for AI validation features.
+
+### 3. Config file (optional but recommended)
+
+Create or update `seqdesk.config.json` so the app knows data paths and pipeline settings. The install script does this automatically; for manual install:
 
 ```bash
-# Push the schema to the database
-npx prisma db push
+cp seqdesk.config.example.json seqdesk.config.json
+# Edit seqdesk.config.json (site.dataBasePath, pipelines.execution.runDirectory, etc.)
+```
 
-# Seed with initial data (users, departments, form config)
+Environment-specific example configs (e.g. for Twincore) can be found in `setups/` (e.g. `setups/twincore/seqdesk.config.example.json`).
+
+See [Configuration](#configuration) and [docs/configuration.md](docs/configuration.md).
+
+### 4. Initialize the database
+
+```bash
+npx prisma db push
 npx prisma db seed
 ```
 
-### 4. Run the development server
+This creates the schema and seeds initial data (users, departments, form config). If `prisma db seed` fails, you can try running `node prisma/seed.mjs` if present.
+
+### 5. Pipeline support (optional)
+
+If you want to run nf-core pipelines (e.g. MAG), install Conda and Nextflow, then use the project script:
+
+```bash
+./scripts/setup-conda-env.sh --full --yes
+```
+
+This configures Conda, creates the pipeline environment, and updates `seqdesk.config.json`. See [docs/installation.md](docs/installation.md) for Conda setup details.
+
+### 6. Run the development server
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser.
+Open **http://localhost:8000** (or the port you set in `PORT` / `NEXTAUTH_URL`) in your browser.
 
-### Default Login Credentials
+### Default login credentials
 
-After seeding the database:
+After seeding:
+
 - **Admin**: `admin@example.com` / `admin`
 - **Researcher**: `user@example.com` / `user`
+
+### Next steps
+
+1. Log in as admin and configure **Data Storage** under Admin > Data Storage.
+2. If pipelines are enabled, configure **Pipeline Runtime** under Admin > Pipeline Runtime.
+3. See [docs/installation.md](docs/installation.md) for production deployment.
 
 ## Database Management
 
@@ -138,7 +195,7 @@ SeqDesk can be configured via config file, environment variables, or the Admin U
 ### Quick Setup with Config File
 
 ```bash
-# Copy the example config
+# Copy the example config (or use an environment-specific one from setups/, e.g. setups/twincore/)
 cp seqdesk.config.example.json seqdesk.config.json
 
 # Edit for your environment
