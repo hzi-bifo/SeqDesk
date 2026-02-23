@@ -1,0 +1,16 @@
+[Unit]
+Description=SeqDesk Sequencing Management
+After=network.target
+
+[Service]
+Type=simple
+User=<%= $user %>
+Group=<%= $group %>
+WorkingDirectory=<%= $install_dir %>
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+Environment=NODE_ENV=production
+Environment=PORT=<%= $port %>
+
+[Install]
+WantedBy=multi-user.target

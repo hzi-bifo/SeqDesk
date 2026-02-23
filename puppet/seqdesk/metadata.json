@@ -1,0 +1,38 @@
+{
+  "name": "seqdesk-seqdesk",
+  "version": "0.1.0",
+  "author": "SeqDesk",
+  "summary": "Install and configure SeqDesk per docs/installation.md",
+  "license": "MIT",
+  "source": "https://github.com/hzi-bifo/SeqDesk",
+  "dependencies": [
+    {
+      "name": "puppetlabs-stdlib",
+      "version_requirement": ">= 8.0.0"
+    }
+  ],
+  "operatingsystem_support": [
+    {
+      "operatingsystem": "Debian",
+      "operatingsystemrelease": ["10", "11", "12"]
+    },
+    {
+      "operatingsystem": "Ubuntu",
+      "operatingsystemrelease": ["20.04", "22.04", "24.04"]
+    },
+    {
+      "operatingsystem": "RedHat",
+      "operatingsystemrelease": ["8", "9"]
+    },
+    {
+      "operatingsystem": "CentOS",
+      "operatingsystemrelease": ["8", "9"]
+    }
+  ],
+  "requirements": [
+    {
+      "name": "puppet",
+      "version_requirement": ">= 7.0.0"
+    }
+  ]
+}
