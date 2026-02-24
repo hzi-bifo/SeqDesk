@@ -1,10 +1,12 @@
 # @summary Install Node.js 18+, npm, and Git per installation.md
 # Uses NodeSource for Node 20 on Debian/Ubuntu and RHEL/CentOS.
+# Optionally install extra packages (e.g. htop).
 #
 class seqdesk::prerequisites {
-  $install_dir = $seqdesk::install_dir
-  $user        = $seqdesk::user
-  $group       = $seqdesk::group
+  $install_dir   = $seqdesk::install_dir
+  $user          = $seqdesk::user
+  $group         = $seqdesk::group
+  $extra_packages = $seqdesk::extra_packages
 
   # Git (required for clone)
   package { 'git':
@@ -44,5 +46,13 @@ class seqdesk::prerequisites {
 
   package { 'curl':
     ensure => installed,
+  }
+
+  unless empty($extra_packages) {
+    $extra_packages.each |String $pkg| {
+      package { $pkg:
+        ensure => installed,
+      }
+    }
   }
 }

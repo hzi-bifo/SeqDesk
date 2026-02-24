@@ -48,6 +48,6 @@ class seqdesk::install {
     user        => $user,
     environment => ['HOME=/tmp'],
     require     => Exec['seqdesk-git-clone'],
-    unless      => "test -f ${install_dir}/node_modules/.package-lock.json",
+    unless      => "/usr/bin/test -f ${install_dir}/node_modules/.package-lock.json",
   }
 }

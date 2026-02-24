@@ -27,7 +27,7 @@ class seqdesk::conda {
   exec { 'seqdesk-chown-conda':
     command => "/bin/chown -R ${user}:${group} ${effective_conda_path}",
     require => Exec['seqdesk-install-miniconda'],
-    unless  => "test $(stat -c %U ${effective_conda_path} 2>/dev/null) = ${user}",
+    unless  => "/usr/bin/test $(stat -c %U ${effective_conda_path} 2>/dev/null) = ${user}",
   }
 
   # Run SeqDesk's setup-conda-env.sh (--yes --write-config --pipelines-enabled)
@@ -37,6 +37,6 @@ class seqdesk::conda {
     user        => $user,
     environment => ["HOME=/tmp", "PATH=/usr/bin:${effective_conda_path}/bin:/bin"],
     require     => [Exec['seqdesk-prisma-seed'], File["${install_dir}/.env"], Exec['seqdesk-chown-conda']],
-    unless      => "test -f ${effective_conda_path}/envs/seqdesk-pipelines/bin/nextflow 2>/dev/null",
+    unless      => "/usr/bin/test -f ${effective_conda_path}/envs/seqdesk-pipelines/bin/nextflow 2>/dev/null",
   }
 }

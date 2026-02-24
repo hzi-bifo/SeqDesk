@@ -14,7 +14,7 @@ class seqdesk::service {
     user        => $user,
     environment => ['HOME=/tmp', 'NODE_ENV=production'],
     require     => Exec['seqdesk-prisma-seed'],
-    unless      => "test -d ${install_dir}/.next",
+    unless      => "/usr/bin/test -d ${install_dir}/.next",
   }
 
   file { '/etc/systemd/system/seqdesk.service':

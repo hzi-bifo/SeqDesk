@@ -50,6 +50,23 @@ class { 'seqdesk':
 | `manage_service` | Boolean | `false` | If true, install systemd unit and enable/start SeqDesk |
 | `config_hash` | Optional[Hash] | `undef` | Optional hash to render `seqdesk.config.json`. If undef, the repo's example config is copied. |
 | `config_source` | Optional[String] | `undef` | Optional path or URI to a JSON file to use as `seqdesk.config.json`. Use instead of `config_hash` to reference a file. Examples: `file:///etc/seqdesk/config.json`, `puppet:///modules/mymodule/seqdesk.config.json`, or an absolute path (treated as `file://`). If both `config_source` and `config_hash` are set, `config_source` wins. |
+| `manage_firewalld` | Boolean | `false` | If true, open `port` and `firewalld_extra_ports` in firewalld. Requires firewalld on the node (e.g. RHEL/CentOS). |
+| `firewalld_zone` | String | `public` | Firewalld zone for port rules. |
+| `firewalld_extra_ports` | Array[String] | `[]` | Extra port specs to open, e.g. `['60001-63000/tcp']` for Nextflow. |
+| `ensure_directories` | Array[String] | `[]` | Directory paths to create (owner/group from `user`/`group`). E.g. `['/net/broker', '/net/broker/env']` for NFS or shared paths. |
+| `mounts` | Array[Hash] | `[]` | Mount points. Each hash: `path`, `device`, `fstype`, `options` (optional). E.g. NFS: `[{'path'=>'/net/broker','device'=>'192.168.8.82:/net/broker','fstype'=>'nfs','options'=>'rw,async,hard,intr,vers=4.2,_netdev'}]`. |
+| `extra_packages` | Array[String] | `[]` | Extra packages to install (e.g. `['htop']`). |
+| `user_home` | Optional[String] | `undef` | Home directory for `user` (default `/home/${user}`). Used for `.bashrc`/`.bash_profile` when set. |
+| `bashrc_source` | Optional[String] | `undef` | If set, manage `${user_home}/.bashrc` from this source (e.g. `puppet:///modules/profile/seqdesk_bashrc`). |
+| `bash_profile_source` | Optional[String] | `undef` | If set, manage `${user_home}/.bash_profile` from this source. |
+| `puppet_conf_path` | Optional[String] | `undef` | If set with `puppet_conf_source` or `puppet_conf_content`, manage this file (e.g. `/etc/puppetlabs/puppet/puppet.conf`). |
+| `puppet_conf_source` | Optional[String] | `undef` | Source for the puppet.conf file. |
+| `puppet_conf_content` | Optional[String] | `undef` | Content for the puppet.conf file. |
+| `sudoers_path` | Optional[String] | `undef` | If set with `sudoers_source` or `sudoers_content`, manage this sudoers fragment (e.g. `/etc/sudoers.d/seqdesk`). |
+| `sudoers_source` | Optional[String] | `undef` | Source for the sudoers fragment. |
+| `sudoers_content` | Optional[String] | `undef` | Content for the sudoers fragment. |
+| `ssh_config_source` | Optional[String] | `undef` | If set, manage `${user_home}/.ssh/config` from this source (e.g. `puppet:///modules/profile/ssh_config`). |
+| `ssh_keys` | Array[Hash] | `[]` | SSH key pairs to deploy under `${user_home}/.ssh/`. Each hash: `path` => basename (e.g. `id_ed25519_deploy`), `private_source` => puppet URI, `public_source` => puppet URI (optional). Private key mode 0600, public 0644. |
 
 ## Steps applied (per installation.md)
 
@@ -59,6 +76,14 @@ class { 'seqdesk':
 4. **Database** – Run `npx prisma db push` and `npx prisma db seed`.
 5. **Conda (optional)** – If `with_pipelines` is true: install Miniconda (if needed), then run `scripts/setup-conda-env.sh --yes --write-config --pipelines-enabled` with data/run paths.
 6. **Service (optional)** – If `manage_service` is true: build app and install systemd unit, enable and start service.
+
+**Optional (from legacy broker-style deployments):**
+
+- **Mounts** – If `mounts` is non-empty: ensure mount point dirs exist and mount NFS (or other) filesystems (e.g. `/net/broker`).
+- **Directories** – If `ensure_directories` is non-empty: create listed directories with `user`/`group` ownership (e.g. `/net/broker/env`).
+- **Firewalld** – If `manage_firewalld` is true: open app port and `firewalld_extra_ports` (e.g. 8000 and 60001–63000/tcp for Nextflow).
+- **Extra packages** – If `extra_packages` is non-empty: install listed packages (e.g. `htop`).
+- **User shell / puppet.conf / sudoers / SSH** – If `bashrc_source`, `bash_profile_source`, puppet/sudoers path+source/content, `ssh_config_source`, or `ssh_keys` are set: manage the corresponding files (legacy broker-style). For SSH: ensures `${user_home}/.ssh` (0700), then `.ssh/config` and each key pair (private + optional public).
 
 ## Before first run
 
@@ -84,3 +109,50 @@ class { 'seqdesk':
   manage_service  => true,
 }
 ```
+
+## Example: broker-style (NFS, firewalld, extra dirs)
+
+```yaml
+# Hiera – same layout as legacy broker where app and data live under NFS
+seqdesk::install_dir: '/net/broker/env/seqdesk'
+seqdesk::user: 'seqdesk'
+seqdesk::group: 'seqdesk'
+seqdesk::port: 8000
+seqdesk::nextauth_secret: '%{lookup("seqdesk_nextauth_secret")}'
+seqdesk::with_pipelines: true
+seqdesk::conda_path: '/net/broker/env/miniconda3'
+seqdesk::manage_service: true
+seqdesk::manage_firewalld: true
+seqdesk::firewalld_extra_ports:
+  - '60001-63000/tcp'
+seqdesk::ensure_directories:
+  - '/net/broker'
+  - '/net/broker/env'
+seqdesk::mounts:
+  - path: '/net/broker'
+    device: '192.168.8.82:/net/broker'
+    fstype: 'nfs'
+    options: 'rw,async,hard,intr,vers=4.2,_netdev'
+seqdesk::extra_packages:
+  - 'htop'
+```
+
+## Example: broker-style user config and sudoers
+
+```yaml
+# Optional: same pattern as legacy broker (puppet.conf, .bashrc, .bash_profile, sudoers.d)
+seqdesk::user_home: '/home/seqdesk'
+seqdesk::bashrc_source: 'puppet:///modules/profile/seqdesk_bashrc'
+seqdesk::bash_profile_source: 'puppet:///modules/profile/seqdesk_bash_profile'
+seqdesk::puppet_conf_path: '/etc/puppetlabs/puppet/puppet.conf'
+seqdesk::puppet_conf_source: 'puppet:///modules/profile/seqdesk_puppet.conf'
+seqdesk::sudoers_path: '/etc/sudoers.d/seqdesk'
+seqdesk::sudoers_source: 'puppet:///modules/profile/seqdesk_sudoers'
+seqdesk::ssh_config_source: 'puppet:///modules/profile/ssh_config'
+seqdesk::ssh_keys:
+  - path: 'id_ed25519_seqdesk'
+    private_source: 'puppet:///modules/profile/id_ed25519_seqdesk'
+    public_source: 'puppet:///modules/profile/id_ed25519_seqdesk.pub'
+```
+
+Put the actual file contents in your profile (or seqdesk) module under `files/` and reference them as above. For content from a template use `puppet_conf_content` / `sudoers_content` with a template() in Hiera or in your manifest.
