@@ -92,7 +92,7 @@ Features:
 
 ### Phase 2: Order-level file assignment (core workflow) - COMPLETED
 
-Create a dedicated page `/dashboard/orders/[id]/files` (full-width like other order pages) with:
+Create a dedicated page `/orders/[id]/files` (full-width like other order pages) with:
 
 - [x] Table of all samples in the order - Using shadcn Table component with all samples listed
 - [x] Columns: Sample ID, Sample Alias, Read 1 file, Read 2 file (optional), status - Includes editable inputs for admins
@@ -100,7 +100,7 @@ Create a dedicated page `/dashboard/orders/[id]/files` (full-width like other or
 - [x] Auto-detect fills suggestions; auto-assign only when there is a single unambiguous match - Pre-fills input fields for exact matches (confidence >= 0.9)
 - [x] Facility admins can edit; researchers see read-only - Conditional rendering based on role and order status
 
-- [x] Add a link from `/dashboard/orders/[id]` for facility admins when status >= `READY_FOR_SEQUENCING` - "Manage Files" button added to order detail page header
+- [x] Add a link from `/orders/[id]` for facility admins when status >= `READY_FOR_SEQUENCING` - "Manage Files" button added to order detail page header
 
 **API routes:**
 - [x] `GET /api/orders/[id]/files` - Returns samples with current assignments and file existence checks via `checkFileExists()`
@@ -111,7 +111,7 @@ Create a dedicated page `/dashboard/orders/[id]/files` (full-width like other or
 
 Facility-wide view of all sequencing files with assignment status:
 
-- [x] `/dashboard/files` (facility admin only) - Full page with stats cards and file table
+- [x] `/files` (facility admin only) - Full page with stats cards and file table
 - [x] Filters: extension dropdown, assigned/unassigned toggle, search across filename/sample/order
 - [x] "Scan Now" button to force refresh cache
 - [x] Added "Seq. Files" link to sidebar for facility admins
@@ -304,11 +304,11 @@ The system should be flexible enough to handle common conventions and use sample
 - `src/app/api/admin/settings/sequencing-files/test/route.ts` - Path validation
 - `src/app/api/orders/[id]/files/route.ts` - Files GET/PUT for orders
 - `src/app/api/orders/[id]/files/discover/route.ts` - Auto-discovery endpoint
-- `src/app/dashboard/orders/[id]/files/page.tsx` - File assignment UI
+- `src/app/orders/[id]/files/page.tsx` - File assignment UI
 
 **Files modified:**
 - `src/app/admin/settings/page.tsx` - Added "Sequencing Files" settings section
-- `src/app/dashboard/orders/[id]/page.tsx` - Added "Manage Files" button for admins
+- `src/app/orders/[id]/page.tsx` - Added "Manage Files" button for admins
 
 **Key decisions:**
 - Used in-memory caching (not database) for MVP simplicity
@@ -320,7 +320,7 @@ The system should be flexible enough to handle common conventions and use sample
 
 **Files created:**
 - `src/app/api/files/route.ts` - Global file listing API with assignment status
-- `src/app/dashboard/files/page.tsx` - File browser UI with stats, filters, table
+- `src/app/files/page.tsx` - File browser UI with stats, filters, table
 
 **Files modified:**
 - `src/components/layout/Sidebar.tsx` - Added "Seq. Files" link for facility admins
@@ -351,8 +351,8 @@ The system should be flexible enough to handle common conventions and use sample
 9. `src/app/api/files/route.ts` - GET global file listing
 
 **Pages:**
-10. `src/app/dashboard/orders/[id]/files/page.tsx` - Order file assignment UI
-11. `src/app/dashboard/files/page.tsx` - Global file browser UI
+10. `src/app/orders/[id]/files/page.tsx` - Order file assignment UI
+11. `src/app/files/page.tsx` - Global file browser UI
 
 **Documentation:**
 12. `PLAN_SEQUENCING_FILES.md` - This plan file
@@ -360,5 +360,5 @@ The system should be flexible enough to handle common conventions and use sample
 ### Modified Files (3 total)
 
 1. `src/app/admin/settings/page.tsx` - Added "Sequencing Files" settings section
-2. `src/app/dashboard/orders/[id]/page.tsx` - Added "Manage Files" button
+2. `src/app/orders/[id]/page.tsx` - Added "Manage Files" button
 3. `src/components/layout/Sidebar.tsx` - Added "Seq. Files" nav link for admins

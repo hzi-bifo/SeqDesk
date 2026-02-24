@@ -150,7 +150,7 @@ export default function AdminAccountsPage() {
   useEffect(() => {
     if (status === "loading") return;
     if (!session || session.user.role !== "FACILITY_ADMIN") {
-      router.push("/dashboard");
+      router.push("/orders");
       return;
     }
     void fetchData(true);

@@ -4,6 +4,20 @@ const nextConfig: NextConfig = {
   // Standalone output for distribution
   // Creates minimal deployment without node_modules
   output: "standalone",
+  async redirects() {
+    return [
+      {
+        source: "/dashboard",
+        destination: "/orders",
+        permanent: true,
+      },
+      {
+        source: "/dashboard/:path*",
+        destination: "/:path*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

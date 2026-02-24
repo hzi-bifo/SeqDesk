@@ -98,7 +98,7 @@ The watcher:
 2. Open the run detail page:
 
 ```
-/dashboard/analysis/<runId>
+/analysis/<runId>
 ```
 
 3. The status and DAG nodes should update live (running/completed/failed).

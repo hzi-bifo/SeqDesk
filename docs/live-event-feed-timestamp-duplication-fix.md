@@ -139,7 +139,7 @@ In `/src/app/api/pipelines/weblog/route.ts`:
 ## Validation Checklist
 
 1. Start a new run and open:
-   - `/dashboard/analysis/<runId>`
+   - `/analysis/<runId>`
 2. Confirm new feed cards show near-real-time age (`0s ago` to a few seconds).
 3. Trigger duplicate webhook delivery (same payload twice).
 4. Confirm only one event card is persisted for that duplicate delivery window.

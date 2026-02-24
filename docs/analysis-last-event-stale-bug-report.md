@@ -10,7 +10,7 @@ even when there is evidence that the run is still updating "right now".
 
 Example page:
 
-`https://broker-dev2.bifo.helmholtz-hzi.de/dashboard/analysis/cmlhy1kbl0005y8y9xaj62rve`
+`https://broker-dev2.bifo.helmholtz-hzi.de/analysis/cmlhy1kbl0005y8y9xaj62rve`
 
 Observed on: **February 11, 2026**.
 ## Expected vs Actual
@@ -34,20 +34,20 @@ Observed on: **February 11, 2026**.
 
 ### Frontend timestamp display and candidate selection
 
-- `src/app/dashboard/analysis/[id]/page.tsx:737` builds `latestEventSnapshot` from:
+- `src/app/analysis/[id]/page.tsx:737` builds `latestEventSnapshot` from:
   - `run.lastEventAt`
   - `run.lastWeblogAt`
   - `run.lastTraceAt`
   - `run.queueUpdatedAt`
   - `queueHeartbeatAt` (ephemeral client heartbeat)
   - fallbacks like `startedAt`, `queuedAt`, `updatedAt`, `createdAt`
-- `src/app/dashboard/analysis/[id]/page.tsx:906` renders:
+- `src/app/analysis/[id]/page.tsx:906` renders:
   - `Last event: {formatRelativeTime(lastEventAt)}`
 
 ### Frontend sync behavior
 
-- `src/app/dashboard/analysis/[id]/page.tsx:529` only starts periodic sync when `run.status === "running"`.
-- `src/app/dashboard/analysis/[id]/page.tsx:514` calls `POST /api/pipelines/runs/${id}/sync`.
+- `src/app/analysis/[id]/page.tsx:529` only starts periodic sync when `run.status === "running"`.
+- `src/app/analysis/[id]/page.tsx:514` calls `POST /api/pipelines/runs/${id}/sync`.
 - The sync call currently does not verify `res.ok`; non-2xx responses are effectively silent in UI logic.
 
 ### Backend sync authorization
@@ -62,19 +62,19 @@ Observed on: **February 11, 2026**.
 
 ## Senior Engineer Code Map (read in this order)
 
-1. `src/app/dashboard/analysis/[id]/page.tsx`
+1. `src/app/analysis/[id]/page.tsx`
 2. `src/app/api/pipelines/runs/[id]/sync/route.ts`
 3. `src/app/api/pipelines/runs/[id]/queue/route.ts`
 4. `src/app/api/pipelines/weblog/route.ts`
 5. `src/app/api/pipelines/runs/[id]/route.ts`
 6. `prisma/schema.prisma`
-7. `src/app/dashboard/analysis/page.tsx`
+7. `src/app/analysis/page.tsx`
 
 ## Key Code Excerpts
 
 ### 1) Detail page sync is only active for `running` status
 
-File: `src/app/dashboard/analysis/[id]/page.tsx:514`
+File: `src/app/analysis/[id]/page.tsx:514`
 
 ```ts
 const syncRun = useCallback(async () => {
@@ -107,7 +107,7 @@ useEffect(() => {
 
 ### 2) Detail page queue heartbeat is conditional on `queueJobId`
 
-File: `src/app/dashboard/analysis/[id]/page.tsx:659`
+File: `src/app/analysis/[id]/page.tsx:659`
 
 ```ts
 const fetchQueueStatus = useCallback(async () => {
@@ -126,7 +126,7 @@ const fetchQueueStatus = useCallback(async () => {
 
 ### 3) `Last event` chooses the max timestamp from multiple candidates
 
-File: `src/app/dashboard/analysis/[id]/page.tsx:745`
+File: `src/app/analysis/[id]/page.tsx:745`
 
 ```ts
 const candidates = [
@@ -231,7 +231,7 @@ events: {
 },
 ```
 
-File: `src/app/dashboard/analysis/[id]/page.tsx:225`
+File: `src/app/analysis/[id]/page.tsx:225`
 
 ```ts
 events?: {
@@ -255,7 +255,7 @@ updatedAt     DateTime @updatedAt
 
 ### 11) List page also syncs only `running` runs
 
-File: `src/app/dashboard/analysis/page.tsx:170`
+File: `src/app/analysis/page.tsx:170`
 
 ```ts
 const runningRuns = data.runs.filter((run) => run.status === "running");
