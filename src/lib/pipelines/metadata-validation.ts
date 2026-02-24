@@ -533,7 +533,7 @@ export async function validatePipelineMetadata(
           'Sequencing platform is required for this pipeline (set the system "Sequencing Platform" field or select a technology in "Sequencing Technologies").',
         severity: 'error',
         fixUrl: firstOrderId
-          ? `/dashboard/orders/${firstOrderId}/edit`
+          ? `/orders/${firstOrderId}/edit`
           : undefined,
       });
     } else {
@@ -552,7 +552,7 @@ export async function validatePipelineMetadata(
               : `Some selected samples are missing sequencing platform metadata (${samples}).`,
           severity: 'error',
           fixUrl: firstOrderId
-            ? `/dashboard/orders/${firstOrderId}/edit`
+            ? `/orders/${firstOrderId}/edit`
             : undefined,
         });
       }
@@ -581,7 +581,7 @@ export async function validatePipelineMetadata(
           message,
           severity: 'error',
           fixUrl: firstOrderId
-            ? `/dashboard/orders/${firstOrderId}/edit`
+            ? `/orders/${firstOrderId}/edit`
             : undefined,
         });
       }

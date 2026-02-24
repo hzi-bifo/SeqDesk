@@ -48,7 +48,7 @@ export function Sidebar({ user, version }: SidebarProps) {
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
     path.startsWith("/admin/departments") ||
-    path.startsWith("/dashboard/messages");
+    path.startsWith("/messages");
 
   // Helper to check if on a Configuration page (not users/departments which are top-level)
   const isConfigPage = (path: string) =>
@@ -215,16 +215,19 @@ export function Sidebar({ user, version }: SidebarProps) {
 
   const navItemClass = (path: string) =>
     cn(
-      "flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm",
-      collapsed && "justify-center px-2",
+      "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
+      collapsed && "justify-center px-0 py-2.5",
       isActive(path)
         ? "bg-secondary text-foreground font-medium"
         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
 
+  // Larger icons when collapsed to fill the wider space
+  const navIconClass = collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0";
+
   const adminSubItemClass = (path: string, exact = false) =>
     cn(
-      "block px-3 py-1.5 rounded-lg transition-all text-sm",
+      "block px-3 py-1.5 rounded-lg transition-colors text-sm",
       collapsed ? "ml-0 text-center" : "ml-7",
       (exact ? pathname === path : isActive(path))
         ? "bg-secondary text-foreground font-medium"
@@ -252,16 +255,16 @@ export function Sidebar({ user, version }: SidebarProps) {
           {collapsed ? (
             <button
               onClick={toggle}
-              className="flex items-center justify-center w-full"
+              className="flex items-center justify-center w-full py-0.5"
               title="Expand sidebar"
             >
-              <span className="inline-flex items-center justify-center px-2 py-1 bg-foreground text-background text-sm font-semibold rounded-md">
+              <span className="inline-flex items-center justify-center h-8 w-8 bg-foreground text-background text-sm font-semibold rounded-md">
                 S
               </span>
             </button>
           ) : (
             <>
-              <Link href="/dashboard" className="flex items-center gap-2.5">
+              <Link href="/orders" className="flex items-center gap-2.5">
                 <span className="inline-flex items-center px-2.5 py-1 bg-foreground text-background text-sm font-semibold rounded-md">
                   SeqDesk
                 </span>
@@ -286,10 +289,10 @@ export function Sidebar({ user, version }: SidebarProps) {
         </div>
       </div>
 
-      <nav className={cn("flex-1 p-4 space-y-1 overflow-y-auto", collapsed && "p-2")}>
+      <nav className={cn("flex-1 p-3 space-y-1 overflow-y-auto", collapsed && "px-2")}>
         {/* Core workflow items */}
-        <Link href="/dashboard/orders" className={navItemClass("/dashboard/orders")} title="Orders">
-          <FileText className="h-4 w-4 shrink-0" />
+        <Link href="/orders" className={navItemClass("/orders")} title="Orders">
+          <FileText className={navIconClass} />
           {!collapsed && "Orders"}
           {!collapsed && counts.orders > 0 && (
             <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
@@ -297,8 +300,8 @@ export function Sidebar({ user, version }: SidebarProps) {
             </span>
           )}
         </Link>
-        <Link href="/dashboard/studies" className={navItemClass("/dashboard/studies")} title="Studies">
-          <BookOpen className="h-4 w-4 shrink-0" />
+        <Link href="/studies" className={navItemClass("/studies")} title="Studies">
+          <BookOpen className={navIconClass} />
           {!collapsed && "Studies"}
           {!collapsed && counts.studies > 0 && (
             <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
@@ -308,8 +311,8 @@ export function Sidebar({ user, version }: SidebarProps) {
         </Link>
         {/* Sequencing Files - Admin only */}
         {isFacilityAdmin && (
-          <Link href="/dashboard/files" className={navItemClass("/dashboard/files")} title="Sequencing Files">
-            <HardDrive className="h-4 w-4 shrink-0" />
+          <Link href="/files" className={navItemClass("/files")} title="Sequencing Files">
+            <HardDrive className={navIconClass} />
             {!collapsed && "Files"}
             {!collapsed && counts.files > 0 && (
               <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
@@ -321,8 +324,8 @@ export function Sidebar({ user, version }: SidebarProps) {
 
         {/* ENA Submissions - Admin only */}
         {isFacilityAdmin && (
-          <Link href="/dashboard/submissions" className={navItemClass("/dashboard/submissions")} title="ENA Submissions">
-            <Send className="h-4 w-4 shrink-0" />
+          <Link href="/submissions" className={navItemClass("/submissions")} title="ENA Submissions">
+            <Send className={navIconClass} />
             {!collapsed && "ENA Submissions"}
             {!collapsed && counts.submissions > 0 && (
               <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
@@ -333,8 +336,8 @@ export function Sidebar({ user, version }: SidebarProps) {
         )}
 
         {/* Analysis */}
-        <Link href="/dashboard/analysis" className={navItemClass("/dashboard/analysis")} title="Analysis">
-          <FlaskConical className="h-4 w-4 shrink-0" />
+        <Link href="/analysis" className={navItemClass("/analysis")} title="Analysis">
+          <FlaskConical className={navIconClass} />
           {!collapsed && "Analysis"}
           {!collapsed && counts.analysis > 0 && (
             <span
@@ -498,25 +501,20 @@ export function Sidebar({ user, version }: SidebarProps) {
         {/* Users and support - Admin only */}
         {isFacilityAdmin && (
           <>
+            {/* Section separator */}
+            <div className={cn("my-2", collapsed ? "mx-1" : "mx-3")}>
+              <div className="h-px bg-border" />
+            </div>
             {collapsed ? (
-              <Link
-                href="/admin/users"
-                className={cn(
-                  "flex items-center justify-center p-2 rounded-lg transition-all text-sm",
-                  isAccountsPage(pathname)
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                )}
-                title="Users"
-              >
-                <Users className="h-4 w-4" />
+              <Link href="/admin/users" className={navItemClass("/admin/users")} title="Users">
+                <Users className={navIconClass} />
               </Link>
             ) : (
               <>
                 <button
                   onClick={() => setAccountsExpanded(!accountsExpanded)}
                   className={cn(
-                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-all text-sm",
+                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-colors text-sm",
                     isAccountsPage(pathname)
                       ? "bg-secondary text-foreground font-medium"
                       : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
@@ -547,9 +545,9 @@ export function Sidebar({ user, version }: SidebarProps) {
                     Departments
                   </Link>
                   <Link
-                    href="/dashboard/messages"
+                    href="/messages"
                     className={cn(
-                      adminSubItemClass("/dashboard/messages"),
+                      adminSubItemClass("/messages"),
                       "flex items-center justify-between gap-2"
                     )}
                   >
@@ -566,26 +564,15 @@ export function Sidebar({ user, version }: SidebarProps) {
 
             {/* Settings menu - below Users */}
             {collapsed ? (
-              <Link
-                href="/admin/form-builder"
-                className={cn(
-                  "flex items-center justify-center p-2 rounded-lg transition-all text-sm",
-                  pathname.startsWith("/admin") &&
-                    !pathname.startsWith("/admin/users") &&
-                    !pathname.startsWith("/admin/departments")
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                )}
-                title="Settings"
-              >
-                <Settings className="h-4 w-4" />
+              <Link href="/admin/form-builder" className={navItemClass("/admin/form-builder")} title="Settings">
+                <Settings className={navIconClass} />
               </Link>
             ) : (
               <>
                 <button
                   onClick={() => setAdminExpanded(!adminExpanded)}
                   className={cn(
-                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-all text-sm",
+                    "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-colors text-sm",
                     pathname.startsWith("/admin") &&
                       !pathname.startsWith("/admin/users") &&
                       !pathname.startsWith("/admin/departments")
@@ -744,19 +731,23 @@ export function Sidebar({ user, version }: SidebarProps) {
 
       {/* Support section at bottom - Researchers only */}
       {!isFacilityAdmin && (
-        <div className={cn("px-4 pb-2", collapsed && "px-2")}>
+        <div className={cn("px-3 pb-2", collapsed && "px-2")}>
+          {/* Section separator */}
+          <div className={cn("mb-2", collapsed ? "mx-1" : "mx-3")}>
+            <div className="h-px bg-border" />
+          </div>
           {!collapsed && (
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 px-3">
               Support
             </p>
           )}
           <div className="space-y-1">
-            <Link href="/dashboard/help" className={navItemClass("/dashboard/help")} title="Help">
-              <HelpCircle className="h-4 w-4 shrink-0" />
+            <Link href="/help" className={navItemClass("/help")} title="Help">
+              <HelpCircle className={navIconClass} />
               {!collapsed && "Help & Guide"}
             </Link>
-            <Link href="/dashboard/messages" className={navItemClass("/dashboard/messages")} title="Support">
-              <MessageSquare className="h-4 w-4 shrink-0" />
+            <Link href="/messages" className={navItemClass("/messages")} title="Support">
+              <MessageSquare className={navIconClass} />
               {!collapsed && "Support"}
               {!collapsed && unreadMessages > 0 && (
                 <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full ml-auto h-5 min-w-5 px-1.5">
@@ -770,17 +761,16 @@ export function Sidebar({ user, version }: SidebarProps) {
 
       {/* New Order Button - hide on admin config pages */}
       {!isConfigPage(pathname) && (
-        <div className={cn("px-4 pb-3", collapsed && "px-2")}>
+        <div className={cn("px-3 pb-3", collapsed && "px-2")}>
           <Link
-            href="/dashboard/orders/new"
+            href="/orders/new"
             className={cn(
-              "flex items-center justify-center gap-2 w-full py-2.5 rounded-lg font-medium text-sm transition-all",
-              "border border-border text-foreground hover:bg-secondary",
-              collapsed && "px-0"
+              "flex items-center justify-center gap-2 w-full py-2.5 rounded-lg font-medium text-sm transition-colors",
+              "border border-border text-foreground hover:bg-secondary"
             )}
             title="Create new order"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className={navIconClass} />
             {!collapsed && "New Order"}
           </Link>
         </div>
@@ -792,7 +782,7 @@ export function Sidebar({ user, version }: SidebarProps) {
         {userMenuOpen && !collapsed && (
           <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden">
             <Link
-              href="/dashboard/settings"
+              href="/settings"
               onClick={() => setUserMenuOpen(false)}
               className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-secondary transition-colors"
             >
@@ -809,65 +799,64 @@ export function Sidebar({ user, version }: SidebarProps) {
           </div>
         )}
 
-        {collapsed ? (
-          <div className="flex flex-col items-center gap-2">
-            <button
-              onClick={() => setUserMenuOpen(!userMenuOpen)}
-              className="relative"
-              title={user.name || "User"}
-            >
-              <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium bg-foreground text-background">
-                {user.name?.charAt(0) || "U"}
-              </div>
-            </button>
-            {userMenuOpen && (
-              <div className="absolute bottom-full left-2 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden w-48">
-                <div className="px-4 py-2 border-b border-border">
-                  <p className="text-sm font-medium truncate">{user.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {isFacilityAdmin ? "Facility Admin" : "Researcher"}
-                  </p>
-                </div>
-                <Link
-                  href="/dashboard/settings"
-                  onClick={() => setUserMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-secondary transition-colors"
-                >
-                  <Settings className="h-4 w-4" />
-                  Account Settings
-                </Link>
-                <button
-                  onClick={handleSignOut}
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left text-red-600"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <button
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="flex items-center gap-3 w-full rounded-xl p-2 hover:bg-secondary transition-all"
-          >
-            <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium bg-foreground text-background shrink-0">
-              {user.name?.charAt(0) || "U"}
-            </div>
-            <div className="flex-1 min-w-0 text-left">
+        {/* User menu dropdown - collapsed */}
+        {collapsed && userMenuOpen && (
+          <div className="absolute bottom-full left-2 right-2 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden w-48">
+            <div className="px-4 py-2 border-b border-border">
               <p className="text-sm font-medium truncate">{user.name}</p>
-              <p className="text-xs text-muted-foreground truncate">
+              <p className="text-xs text-muted-foreground">
                 {isFacilityAdmin ? "Facility Admin" : "Researcher"}
               </p>
             </div>
-            <ChevronUp
-              className={cn(
-                "h-4 w-4 text-muted-foreground transition-transform shrink-0",
-                userMenuOpen && "rotate-180"
-              )}
-            />
-          </button>
+            <Link
+              href="/settings"
+              onClick={() => setUserMenuOpen(false)}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-secondary transition-colors"
+            >
+              <Settings className="h-4 w-4" />
+              Account Settings
+            </Link>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left text-red-600"
+            >
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </button>
+          </div>
         )}
+
+        <button
+          onClick={() => setUserMenuOpen(!userMenuOpen)}
+          className={cn(
+            "flex items-center gap-3 w-full rounded-xl p-2 hover:bg-secondary transition-colors",
+            collapsed && "justify-center p-1.5"
+          )}
+          title={collapsed ? (user.name || "User") : undefined}
+        >
+          <div className={cn(
+            "rounded-full flex items-center justify-center text-sm font-medium bg-foreground text-background shrink-0",
+            collapsed ? "h-8 w-8" : "h-9 w-9"
+          )}>
+            {user.name?.charAt(0) || "U"}
+          </div>
+          {!collapsed && (
+            <>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-sm font-medium truncate">{user.name}</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {isFacilityAdmin ? "Facility Admin" : "Researcher"}
+                </p>
+              </div>
+              <ChevronUp
+                className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform shrink-0",
+                  userMenuOpen && "rotate-180"
+                )}
+              />
+            </>
+          )}
+        </button>
       </div>
     </aside>
   );

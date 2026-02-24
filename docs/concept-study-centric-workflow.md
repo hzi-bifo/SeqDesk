@@ -107,7 +107,7 @@ model Sample {
 
 #### Step 1: Create Order
 ```
-/dashboard/orders/new
+/orders/new
 ├── Order name
 ├── Contact information
 ├── Sequencing parameters (platform, library prep)
@@ -116,7 +116,7 @@ model Sample {
 
 #### Step 2: Add Samples
 ```
-/dashboard/orders/{id}/samples
+/orders/{id}/samples
 ├── Bulk add sample IDs (spreadsheet interface)
 ├── Basic sample info only
 └── [Next: Create/Assign Studies]
@@ -124,7 +124,7 @@ model Sample {
 
 #### Step 3: Create & Assign Studies
 ```
-/dashboard/orders/{id}/studies
+/orders/{id}/studies
 ├── Create new study OR select existing
 │   ├── Study title
 │   ├── Description
@@ -136,7 +136,7 @@ model Sample {
 
 #### Step 4: Fill Study Metadata
 ```
-/dashboard/studies/{id}/metadata
+/studies/{id}/metadata
 ├── Study-level fields (apply to all samples)
 │   └── e.g., "geographic location", "collection date range"
 ├── Sample-level fields (unique per sample)
@@ -193,12 +193,12 @@ model Sample {
 
 #### Phase 3: Order Workflow Redesign
 1. Simplify order creation (remove MIxS from order level)
-2. New study assignment page `/dashboard/orders/{id}/studies`
+2. New study assignment page `/orders/{id}/studies`
 3. Drag-and-drop sample-to-study assignment
 4. Visual sample grouping
 
 #### Phase 4: Study Metadata Entry
-1. New metadata entry page `/dashboard/studies/{id}/metadata`
+1. New metadata entry page `/studies/{id}/metadata`
 2. Spreadsheet interface for sample-level fields
 3. Progress tracking per study
 4. Validation based on MIxS requirements
@@ -224,10 +224,10 @@ model Sample {
 - `src/app/admin/form-builder/page.tsx` - Simplify (order-only fields)
 
 **User Pages:**
-- `src/app/dashboard/orders/[id]/studies/page.tsx` - NEW (assignment UI)
-- `src/app/dashboard/studies/[id]/metadata/page.tsx` - NEW
-- `src/app/dashboard/orders/[id]/page.tsx` - Update visualization
-- `src/app/dashboard/page.tsx` - Update to show study progress
+- `src/app/orders/[id]/studies/page.tsx` - NEW (assignment UI)
+- `src/app/studies/[id]/metadata/page.tsx` - NEW
+- `src/app/orders/[id]/page.tsx` - Update visualization
+- `src/app/page.tsx` - Update to show study progress
 
 **Components:**
 - `src/components/studies/SampleAssignment.tsx` - NEW (drag-drop)

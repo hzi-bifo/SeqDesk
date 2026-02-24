@@ -95,6 +95,7 @@ export interface FormFieldDefinition {
   perSample?: boolean; // If true, field is collected per sample (table view); if false, once per order/study
   group?: string; // MIxS field group/category (e.g., "geography", "chemistry")
   moduleSource?: string; // Which module added this field (e.g., "ena-sample-fields", "mixs-metadata")
+  adminOnly?: boolean; // If true, field is only visible to FACILITY_ADMIN users (facility-internal fields)
 }
 
 // Pattern presets with their regex and descriptions

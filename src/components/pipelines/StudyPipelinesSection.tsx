@@ -1744,7 +1744,7 @@ export function StudyPipelinesSection({
             </h3>
             {runsData?.total > pipelineRuns.length && (
               <Link
-                href={`/dashboard/analysis?studyId=${studyId}`}
+                href={`/analysis?studyId=${studyId}`}
                 className="text-xs text-primary hover:underline flex items-center gap-1"
               >
                 View all {runsData.total} runs
@@ -1769,7 +1769,7 @@ export function StudyPipelinesSection({
                 <TableRow
                   key={run.id}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => window.location.href = `/dashboard/analysis/${run.id}`}
+                  onClick={() => window.location.href = `/analysis/${run.id}`}
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -2059,7 +2059,7 @@ export function StudyPipelinesSection({
                       </p>
                       <div className="mt-4 flex flex-col gap-2">
                         <Link
-                          href={`/dashboard/analysis/${runResult.runId}`}
+                          href={`/analysis/${runResult.runId}`}
                           className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
                         >
                           <FlaskConical className="h-4 w-4" />

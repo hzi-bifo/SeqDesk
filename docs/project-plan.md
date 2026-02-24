@@ -221,8 +221,8 @@ Add a **"Studies"** section showing:
 
 **UI Updates:**
 - **Studies list page** - Added guidance explaining Order vs Study concept
-- **New Study page** - Created `/dashboard/studies/new` for creating studies
-- **Study detail page** - Created `/dashboard/studies/[id]` with:
+- **New Study page** - Created `/studies/new` for creating studies
+- **Study detail page** - Created `/studies/[id]` with:
   - Study info editing
   - Sample assignment modal
   - List of assigned samples with remove capability

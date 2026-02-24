@@ -540,14 +540,14 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                       </p>
                       <div className="mt-4 flex flex-col gap-2">
                         <Link
-                          href={`/dashboard/analysis/${runResult.runId}`}
+                          href={`/analysis/${runResult.runId}`}
                           className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
                         >
                           <FlaskConical className="h-4 w-4" />
                           View Run Details
                         </Link>
                         <Link
-                          href="/dashboard/analysis"
+                          href="/analysis"
                           className="text-sm text-muted-foreground hover:text-primary transition-colors"
                         >
                           Go to Analysis Dashboard

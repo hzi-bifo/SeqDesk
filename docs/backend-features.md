@@ -1518,7 +1518,7 @@ function RunPipelineDialog({
       });
       const run = await res.json();
       // Redirect to analysis page
-      router.push(`/dashboard/analysis/${run.id}`);
+      router.push(`/analysis/${run.id}`);
     } catch (err) {
       // Handle error
     }
@@ -1581,7 +1581,7 @@ const sidebarItems = [
   // ... existing items
   {
     title: "Analysis",
-    href: "/dashboard/analysis",
+    href: "/analysis",
     icon: FlaskConical,
     adminOnly: true,  // Only show for facility admins
   },
@@ -1590,7 +1590,7 @@ const sidebarItems = [
 
 ### 8.2 Analysis Dashboard Page
 
-Create `/dashboard/analysis/page.tsx`:
+Create `/analysis/page.tsx`:
 
 ```tsx
 export default function AnalysisDashboardPage() {
@@ -1661,7 +1661,7 @@ export default function AnalysisDashboardPage() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Link href={`/dashboard/studies/${run.studyId}`}>
+                  <Link href={`/studies/${run.studyId}`}>
                     {run.study?.title}
                   </Link>
                 </TableCell>
@@ -1704,7 +1704,7 @@ export default function AnalysisDashboardPage() {
 
 ### 8.3 Analysis Run Detail Page
 
-Create `/dashboard/analysis/[id]/page.tsx`:
+Create `/analysis/[id]/page.tsx`:
 
 ```tsx
 export default function AnalysisRunDetailPage({ params }: { params: { id: string } }) {
@@ -1744,7 +1744,7 @@ export default function AnalysisRunDetailPage({ params }: { params: { id: string
       {/* Study Info */}
       <GlassCard className="mb-6">
         <h2>Study</h2>
-        <Link href={`/dashboard/studies/${run.studyId}`} className="text-primary">
+        <Link href={`/studies/${run.studyId}`} className="text-primary">
           {run.study?.title}
         </Link>
         <div className="grid grid-cols-3 gap-4 mt-4 text-sm">

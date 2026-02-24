@@ -37,6 +37,7 @@ import {
   FileText,
   Table,
   Link2,
+  Shield,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
@@ -115,6 +116,7 @@ export default function StudyFormBuilderPage() {
   const [newOptionLabel, setNewOptionLabel] = useState("");
   const [fieldGroupId, setFieldGroupId] = useState<string>("");
   const [fieldPerSample, setFieldPerSample] = useState(false);
+  const [fieldAdminOnly, setFieldAdminOnly] = useState(false);
 
   // Fetch configuration
   useEffect(() => {
@@ -188,6 +190,7 @@ export default function StudyFormBuilderPage() {
     setFieldRequired(false);
     setFieldVisible(true);
     setFieldPerSample(false);
+    setFieldAdminOnly(false);
     setFieldHelpText("");
     setFieldPlaceholder("");
     setFieldOptions([]);
@@ -196,10 +199,11 @@ export default function StudyFormBuilderPage() {
   };
 
   // Open dialog for new field
-  const handleAddField = (perSample: boolean = false) => {
+  const handleAddField = (perSample: boolean = false, adminOnly: boolean = false) => {
     resetFieldForm();
     setFieldPerSample(perSample);
-    if (!perSample && groups.length > 0) {
+    setFieldAdminOnly(adminOnly);
+    if (!perSample && !adminOnly && groups.length > 0) {
       const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
       setFieldGroupId(sortedGroups[0].id);
     }
@@ -232,6 +236,7 @@ export default function StudyFormBuilderPage() {
     setFieldPlaceholder(field.placeholder || "");
     setFieldOptions(field.options || []);
     setFieldGroupId(field.groupId || "");
+    setFieldAdminOnly(field.adminOnly || false);
     setDialogOpen(true);
   };
 
@@ -282,6 +287,7 @@ export default function StudyFormBuilderPage() {
       options: fieldType === "select" || fieldType === "multiselect" ? fieldOptions : undefined,
       order,
       groupId: fieldGroupId || undefined,
+      adminOnly: fieldAdminOnly || undefined,
     };
 
     if (editingField) {
@@ -603,11 +609,15 @@ export default function StudyFormBuilderPage() {
   const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
 
   const orderedStudyFields = visibleFields
-    .filter((f) => !f.perSample && f.name !== "_sample_association")
+    .filter((f) => !f.perSample && f.name !== "_sample_association" && !f.adminOnly)
     .sort((a, b) => a.order - b.order);
 
   const orderedPerSampleFields = visibleFields
-    .filter((f) => f.perSample)
+    .filter((f) => f.perSample && !f.adminOnly)
+    .sort((a, b) => a.order - b.order);
+
+  const adminOnlyFields = visibleFields
+    .filter((f) => f.adminOnly)
     .sort((a, b) => a.order - b.order);
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
   const hasMixsField = visibleFields.some((f) => f.type === "mixs");
@@ -683,6 +693,7 @@ export default function StudyFormBuilderPage() {
                 <SelectItem value="study-groups-section">Form Groups</SelectItem>
                 <SelectItem value="study-fields-section">Study Fields</SelectItem>
                 <SelectItem value="study-per-sample-section">Per-Sample Fields</SelectItem>
+                <SelectItem value="study-facility-section">Facility-Only Fields</SelectItem>
                 <SelectItem value="study-modules-section">Module Forms</SelectItem>
               </SelectContent>
             </Select>
@@ -1304,6 +1315,109 @@ export default function StudyFormBuilderPage() {
         </div>
       </GlassCard>
 
+      {/* Facility-Only Fields - visible only to admins */}
+      <div id="study-facility-section" className="scroll-mt-28">
+      <GlassCard className="p-6 border-slate-300 bg-slate-50/50 mt-8">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Shield className="h-4 w-4 text-slate-500" />
+            Facility-Only Fields
+          </h2>
+          <Button onClick={() => handleAddField(false, true)} variant="outline" size="sm" className="border-slate-300 hover:bg-slate-100">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Field
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Fields visible <strong>only to facility admins</strong>. Researchers will not see these fields.
+          Use for internal tracking, QC notes, or other facility-specific information.
+        </p>
+
+        <div className="space-y-3">
+          {adminOnlyFields.map((field) => {
+            const indexInSection = adminOnlyFields.findIndex(f => f.id === field.id);
+            return (
+            <div
+              key={field.id}
+              className="flex items-center gap-3 p-4 rounded-lg bg-slate-100/50 border border-slate-200"
+            >
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleMoveField(field.id, !!field.perSample, "up")}
+                  disabled={indexInSection === 0}
+                  className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
+                >
+                  <ChevronUp className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMoveField(field.id, !!field.perSample, "down")}
+                  disabled={indexInSection === adminOnlyFields.length - 1}
+                  className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </div>
+
+              <GripVertical className="h-4 w-4 text-slate-400" />
+
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium">{field.label}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    {FIELD_TYPE_LABELS[field.type] || field.type}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium flex items-center gap-1">
+                    <Shield className="h-2.5 w-2.5" />
+                    Admin only
+                  </span>
+                  {field.perSample && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                      Per-sample
+                    </span>
+                  )}
+                  {field.required && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600">
+                      Required
+                    </span>
+                  )}
+                </div>
+                {field.helpText && (
+                  <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleEditField(field)}
+                  title="Edit field"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => openDeleteFieldDialog(field)}
+                  className="text-destructive hover:text-destructive"
+                  title="Delete field"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )})}
+          {adminOnlyFields.length === 0 && (
+            <div className="text-center py-6 text-slate-500/70 border border-dashed border-slate-300 rounded-lg bg-slate-50">
+              No facility-only fields defined. Add fields here for internal tracking visible only to admins.
+            </div>
+          )}
+        </div>
+      </GlassCard>
+      </div>
+
       {/* Module Forms Section */}
       <div id="study-modules-section" className="mt-8 scroll-mt-28">
         <div className="flex items-center gap-3 mb-2">
@@ -1542,6 +1656,18 @@ export default function StudyFormBuilderPage() {
                   />
                   <span className="text-sm">Required</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer" title="Only visible to facility admins">
+                  <input
+                    type="checkbox"
+                    checked={fieldAdminOnly}
+                    onChange={(e) => setFieldAdminOnly(e.target.checked)}
+                    className="rounded border-input h-4 w-4"
+                  />
+                  <span className="text-sm flex items-center gap-1">
+                    <Shield className="h-3 w-3 text-slate-500" />
+                    Admin only
+                  </span>
+                </label>
               </div>
               <div className="space-y-2">
                 <Label>Field Scope</Label>
@@ -1585,6 +1711,12 @@ export default function StudyFormBuilderPage() {
             {!fieldPerSample && (
               <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
                 <strong>Study Field:</strong> This field will be filled once when creating the study.
+              </div>
+            )}
+
+            {fieldAdminOnly && (
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-600">
+                <strong>Facility-Only:</strong> This field is only visible to facility admins. Researchers will not see it.
               </div>
             )}
 

@@ -17,7 +17,7 @@ export default async function AdminLayout({
   }
 
   if (session.user.role !== "FACILITY_ADMIN") {
-    redirect("/dashboard");
+    redirect("/orders");
   }
 
   const version = getCurrentVersion();

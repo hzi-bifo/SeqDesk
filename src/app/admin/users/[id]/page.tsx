@@ -26,7 +26,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   const { id } = await params;
 
   if (!session || session.user.role !== "FACILITY_ADMIN") {
-    redirect("/dashboard");
+    redirect("/orders");
   }
 
   const user = await db.user.findUnique({
@@ -193,7 +193,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
           <h2 className="text-sm font-medium">Recent Orders</h2>
           {user._count.orders > 10 && (
-            <Link href={`/dashboard/orders?user=${user.id}`} className="text-xs text-primary hover:underline">
+            <Link href={`/orders?user=${user.id}`} className="text-xs text-primary hover:underline">
               View all
             </Link>
           )}
@@ -208,7 +208,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
             {user.orders.map((order) => (
               <Link
                 key={order.id}
-                href={`/dashboard/orders/${order.id}`}
+                href={`/orders/${order.id}`}
                 className="flex items-center gap-4 px-5 py-3 hover:bg-stone-50 transition-colors group"
               >
                 <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -235,7 +235,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
           <h2 className="text-sm font-medium">Recent Studies</h2>
           {user._count.studies > 10 && (
-            <Link href={`/dashboard/studies?user=${user.id}`} className="text-xs text-primary hover:underline">
+            <Link href={`/studies?user=${user.id}`} className="text-xs text-primary hover:underline">
               View all
             </Link>
           )}
@@ -250,7 +250,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
             {user.studies.map((study) => (
               <Link
                 key={study.id}
-                href={`/dashboard/studies/${study.id}`}
+                href={`/studies/${study.id}`}
                 className="flex items-center gap-4 px-5 py-3 hover:bg-stone-50 transition-colors group"
               >
                 <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
