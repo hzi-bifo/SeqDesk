@@ -70,10 +70,21 @@ curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
 # Unattended install using infrastructure JSON (same shape as Admin import JSON)
 curl -fsSL https://seqdesk.com/install.sh | \
   bash -s -- -y --config https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/setups/twincore/infrastructure-setup.json
+
+# Repeatable config rollout on an existing install (no re-download/extract)
+curl -fsSL https://seqdesk.com/install.sh | \
+  bash -s -- -y --reconfigure --config ./infrastructure-setup.json
 ```
 
 `--config` can be a local file path or HTTPS URL. CLI flags and explicit
 environment variables still take precedence over values from the JSON file.
+Use `--reconfigure` (or `SEQDESK_RECONFIGURE=1`) to apply new JSON/env values
+to an existing installation directory in place.
+
+You can keep runtime values in `seqdesk.config.json` under `runtime` (for
+example `databaseUrl`, `nextAuthUrl`, `nextAuthSecret`, `anthropicApiKey`).
+These are loaded into process env at server startup when corresponding env vars
+are not already set.
 
 ---
 

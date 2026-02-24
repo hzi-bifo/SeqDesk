@@ -2,6 +2,9 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { db } from "./db";
+import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
+
+bootstrapRuntimeEnv();
 
 export const authOptions: NextAuthOptions = {
   providers: [

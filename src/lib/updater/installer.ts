@@ -56,8 +56,22 @@ async function loadDatabaseUrl(): Promise<string | null> {
     const parsed = dotenv.parse(envContents);
     return parsed.DATABASE_URL ?? null;
   } catch {
-    return null;
+    // Fall through to runtime config file lookup.
   }
+
+  try {
+    const configPath = path.join(INSTALL_DIR, 'seqdesk.config.json');
+    const configContents = await fs.readFile(configPath, 'utf-8');
+    const parsed = JSON.parse(configContents) as { runtime?: { databaseUrl?: unknown } };
+    const databaseUrl = parsed?.runtime?.databaseUrl;
+    if (typeof databaseUrl === 'string' && databaseUrl.trim().length > 0) {
+      return databaseUrl.trim();
+    }
+  } catch {
+    // Ignore missing/invalid config and continue with null.
+  }
+
+  return null;
 }
 
 function resolveSqlitePath(databaseUrl: string): string | null {

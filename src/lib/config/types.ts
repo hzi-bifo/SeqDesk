@@ -94,6 +94,23 @@ export interface AuthConfig {
   sessionTimeout?: number;
 }
 
+export interface RuntimeConfig {
+  /** Runtime database URL (maps to DATABASE_URL) */
+  databaseUrl?: string;
+  /** Runtime NextAuth URL (maps to NEXTAUTH_URL) */
+  nextAuthUrl?: string;
+  /** Runtime NextAuth secret (maps to NEXTAUTH_SECRET) */
+  nextAuthSecret?: string;
+  /** API key for AI validation/extraction routes */
+  anthropicApiKey?: string;
+  /** Release publishing admin secret for scripts */
+  adminSecret?: string;
+  /** Vercel Blob token for release publishing scripts */
+  blobReadWriteToken?: string;
+  /** Optional override for update server URL */
+  updateServer?: string;
+}
+
 /**
  * Complete SeqDesk configuration schema
  */
@@ -103,6 +120,7 @@ export interface SeqDeskConfig {
   ena?: EnaConfig;
   sequencingFiles?: SequencingFilesConfig;
   auth?: AuthConfig;
+  runtime?: RuntimeConfig;
 }
 
 /**

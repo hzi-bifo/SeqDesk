@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+bootstrapRuntimeEnv();
+
+function getAnthropicApiKey(): string | undefined {
+  return process.env.ANTHROPIC_API_KEY;
+}
 
 interface ExtractedDepartment {
   name: string;
@@ -72,7 +77,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if API key is configured
-    if (!ANTHROPIC_API_KEY) {
+    const anthropicApiKey = getAnthropicApiKey();
+    if (!anthropicApiKey) {
       return NextResponse.json(
         { error: "AI extraction not configured (no API key)" },
         { status: 503 }
@@ -141,7 +147,7 @@ Find all departments, research groups, or labs mentioned. Return them using the 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
+        "x-api-key": anthropicApiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({

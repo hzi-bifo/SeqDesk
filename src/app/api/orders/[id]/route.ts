@@ -220,19 +220,6 @@ export async function PUT(
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    // Researchers can only edit their own orders in DRAFT status
-    if (!isFacilityAdmin) {
-      if (existing.userId !== session.user.id) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-      if (existing.status !== "DRAFT") {
-        return NextResponse.json(
-          { error: "Cannot edit order after submission" },
-          { status: 400 }
-        );
-      }
-    }
-
     const {
       name,
       contactName,
@@ -249,6 +236,33 @@ export async function PUT(
       status,
       statusNote,
     } = body;
+
+    const requestedMetadataUpdate =
+      name !== undefined ||
+      contactName !== undefined ||
+      contactEmail !== undefined ||
+      contactPhone !== undefined ||
+      billingAddress !== undefined ||
+      platform !== undefined ||
+      instrumentModel !== undefined ||
+      librarySelection !== undefined ||
+      libraryStrategy !== undefined ||
+      librarySource !== undefined ||
+      numberOfSamples !== undefined ||
+      customFields !== undefined;
+
+    // Researchers can edit metadata on DRAFT/SUBMITTED orders, but not COMPLETED ones.
+    if (!isFacilityAdmin) {
+      if (existing.userId !== session.user.id) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (requestedMetadataUpdate && existing.status === "COMPLETED") {
+        return NextResponse.json(
+          { error: "Cannot edit completed order" },
+          { status: 400 }
+        );
+      }
+    }
 
     // Build update data
     const updateData: Record<string, unknown> = {};

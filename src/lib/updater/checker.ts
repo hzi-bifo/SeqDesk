@@ -8,6 +8,7 @@ import type { UpdateCheckResult, ReleaseInfo } from './types';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
+import { bootstrapRuntimeEnv } from '@/lib/config/runtime-env';
 
 // Read current version from package.json
 function readVersionFromPackageJson(): string {
@@ -20,8 +21,11 @@ function readVersionFromPackageJson(): string {
   }
 }
 
-// Update server URL
-const UPDATE_SERVER = process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
+bootstrapRuntimeEnv();
+
+function getUpdateServer(): string {
+  return process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
+}
 
 // Cache update check for 1 hour
 let cachedResult: UpdateCheckResult | null = null;
@@ -46,7 +50,7 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
 
   try {
     const response = await fetch(
-      `${UPDATE_SERVER}/api/version?current=${currentVersion}&channel=stable`,
+      `${getUpdateServer()}/api/version?current=${currentVersion}&channel=stable`,
       {
         headers: {
           'User-Agent': `SeqDesk/${currentVersion}`,

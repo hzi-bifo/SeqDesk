@@ -18,9 +18,13 @@
 #   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
+#   SEQDESK_ANTHROPIC_API_KEY=...  - Optional Anthropic API key
+#   SEQDESK_ADMIN_SECRET=...       - Optional admin secret
+#   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
+#   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_CORES=4     - Optional pipeline execution override
@@ -57,9 +61,13 @@ SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
+SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
+SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
+SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
+SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
 SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
@@ -74,6 +82,7 @@ SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
 
 PM2_CONFIGURED="false"
 PM2_STARTUP_ENABLED="false"
+PM2_PROCESS_EXISTS="false"
 
 MIN_NODE_VERSION=18
 INSTALL_START_TS=$(date +%s)
@@ -205,13 +214,18 @@ Options:
   --run-dir <path>             Pipeline run directory
   --nextauth-url <url>         NEXTAUTH_URL override
   --database-url <url>         DATABASE_URL override
+  --anthropic-api-key <key>    ANTHROPIC_API_KEY override
+  --admin-secret <secret>      ADMIN_SECRET override
+  --blob-read-write-token <token>  BLOB_READ_WRITE_TOKEN override
   --use-pm2                    Enable PM2 auto-restart setup
   --no-pm2                     Disable PM2 setup
+  --reconfigure                Reconfigure an existing install in place
   -h, --help                   Show this help
 
 Examples:
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
+  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
 EOF
 }
 
@@ -295,11 +309,38 @@ parse_args() {
                 SEQDESK_DATABASE_URL="$2"
                 shift
                 ;;
+            --anthropic-api-key)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --anthropic-api-key"
+                    exit 1
+                fi
+                SEQDESK_ANTHROPIC_API_KEY="$2"
+                shift
+                ;;
+            --admin-secret)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --admin-secret"
+                    exit 1
+                fi
+                SEQDESK_ADMIN_SECRET="$2"
+                shift
+                ;;
+            --blob-read-write-token)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --blob-read-write-token"
+                    exit 1
+                fi
+                SEQDESK_BLOB_READ_WRITE_TOKEN="$2"
+                shift
+                ;;
             --use-pm2)
                 SEQDESK_USE_PM2="1"
                 ;;
             --no-pm2)
                 SEQDESK_USE_PM2="0"
+                ;;
+            --reconfigure)
+                SEQDESK_RECONFIGURE="1"
                 ;;
             -h|--help)
                 print_usage
@@ -459,9 +500,25 @@ const values = {
     )
   ),
   nextAuthUrl: toOptionalString(
-    firstDefined(root.nextAuthUrl, root.nextauthUrl, app?.nextAuthUrl)
+    firstDefined(
+      root.nextAuthUrl,
+      root.nextauthUrl,
+      app?.nextAuthUrl,
+      runtime?.nextAuthUrl
+    )
   ),
-  databaseUrl: toOptionalString(firstDefined(root.databaseUrl, app?.databaseUrl)),
+  databaseUrl: toOptionalString(
+    firstDefined(root.databaseUrl, app?.databaseUrl, runtime?.databaseUrl)
+  ),
+  anthropicApiKey: toOptionalString(
+    firstDefined(root.anthropicApiKey, runtime?.anthropicApiKey)
+  ),
+  adminSecret: toOptionalString(
+    firstDefined(root.adminSecret, runtime?.adminSecret)
+  ),
+  blobReadWriteToken: toOptionalString(
+    firstDefined(root.blobReadWriteToken, runtime?.blobReadWriteToken)
+  ),
   useSlurm,
   slurmQueue: toOptionalString(
     firstDefined(root.slurmQueue, execution?.slurmQueue, slurm?.queue)
@@ -541,6 +598,11 @@ if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
 if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
 if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
+if (values.anthropicApiKey) out.SEQDESK_CFG_ANTHROPIC_API_KEY = values.anthropicApiKey;
+if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
+if (values.blobReadWriteToken) {
+  out.SEQDESK_CFG_BLOB_READ_WRITE_TOKEN = values.blobReadWriteToken;
+}
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
   out.SEQDESK_CFG_EXEC_USE_SLURM = values.useSlurm ? "true" : "false";
@@ -587,6 +649,9 @@ NODE
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
+    apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
+    apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
+    apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -603,12 +668,137 @@ NODE
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
+    unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
+    unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
     unset SEQDESK_CFG_EXEC_CONDA_PATH SEQDESK_CFG_EXEC_CONDA_ENV
     unset SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_WEBLOG_URL
     unset SEQDESK_CFG_EXEC_WEBLOG_SECRET
+}
+
+load_existing_install_values() {
+    local install_dir="$1"
+
+    if [ ! -d "$install_dir" ]; then
+        return 0
+    fi
+
+    if ! command_exists node; then
+        print_warning "Node not found; cannot read defaults from existing installation."
+        return 0
+    fi
+
+    local temp_env
+    temp_env=$(mktemp)
+    if ! SEQDESK_EXISTING_INSTALL_DIR="$install_dir" node <<'NODE' >"$temp_env"
+const fs = require("fs");
+const path = require("path");
+
+const installDir = process.env.SEQDESK_EXISTING_INSTALL_DIR;
+if (!installDir) {
+  process.exit(0);
+}
+
+function escapeShell(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`");
+}
+
+function trimString(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const parsed = {};
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line || line.trim().startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[match[1]] = value;
+  }
+  return parsed;
+}
+
+const envPath = path.join(installDir, ".env");
+const configPath = path.join(installDir, "seqdesk.config.json");
+const envValues = parseEnvFile(envPath);
+
+let config = {};
+if (fs.existsSync(configPath)) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (parsed && typeof parsed === "object") {
+      config = parsed;
+    }
+  } catch {
+    // Ignore malformed existing config and keep defaults empty.
+  }
+}
+
+const port = trimString(envValues.PORT);
+const runtime = config && typeof config.runtime === "object" ? config.runtime : {};
+const nextAuthUrl =
+  trimString(runtime.nextAuthUrl) || trimString(envValues.NEXTAUTH_URL);
+const databaseUrl =
+  trimString(runtime.databaseUrl) || trimString(envValues.DATABASE_URL);
+const dataPath = trimString(config?.site?.dataBasePath);
+const runDir = trimString(config?.pipelines?.execution?.runDirectory);
+
+let withPipelines;
+if (typeof config?.pipelines?.enabled === "boolean") {
+  withPipelines = config.pipelines.enabled ? "1" : "0";
+}
+
+const out = {};
+if (port) out.SEQDESK_EXISTING_PORT = port;
+if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
+if (databaseUrl) out.SEQDESK_EXISTING_DATABASE_URL = databaseUrl;
+if (dataPath) out.SEQDESK_EXISTING_DATA_PATH = dataPath;
+if (runDir) out.SEQDESK_EXISTING_RUN_DIR = runDir;
+if (withPipelines !== undefined) {
+  out.SEQDESK_EXISTING_WITH_PIPELINES = withPipelines;
+}
+
+for (const [key, value] of Object.entries(out)) {
+  console.log(`${key}="${escapeShell(value)}"`);
+}
+NODE
+    then
+        rm -f "$temp_env"
+        print_warning "Could not read defaults from existing installation at ${install_dir}."
+        return 0
+    fi
+
+    # shellcheck disable=SC1090
+    source "$temp_env"
+    rm -f "$temp_env"
+
+    apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
+    apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
+    apply_config_value SEQDESK_DATABASE_URL SEQDESK_EXISTING_DATABASE_URL
+    apply_config_value SEQDESK_DATA_PATH SEQDESK_EXISTING_DATA_PATH
+    apply_config_value SEQDESK_RUN_DIR SEQDESK_EXISTING_RUN_DIR
+    apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
+
+    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL
+    unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATA_PATH
+    unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_WITH_PIPELINES
 }
 
 print_kv() {
@@ -916,12 +1106,16 @@ write_config() {
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
+    SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
+    SEQDESK_INSTALL_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
     node <<'NODE'
 const fs = require('fs');
 
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
+const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
+const databaseUrl = process.env.SEQDESK_INSTALL_DATABASE_URL || '';
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -931,6 +1125,32 @@ function readJson(filePath) {
     console.error(`ERROR: Failed to parse ${filePath}: ${err.message}`);
     process.exit(1);
   }
+}
+
+function readDotEnv(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const parsed = {};
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    if (!line || line.trim().startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[match[1]] = value;
+  }
+  return parsed;
+}
+
+function toOptionalString(value) {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 const config = readJson('seqdesk.config.json') || {};
@@ -946,6 +1166,23 @@ if (runDir) {
   config.pipelines.execution = config.pipelines.execution || {};
   if (!config.pipelines.execution.mode) config.pipelines.execution.mode = 'local';
   config.pipelines.execution.runDirectory = runDir;
+}
+
+const envValues = readDotEnv('.env');
+const nextAuthSecret = toOptionalString(envValues.NEXTAUTH_SECRET);
+const anthropicApiKey = toOptionalString(envValues.ANTHROPIC_API_KEY);
+const adminSecret = toOptionalString(envValues.ADMIN_SECRET);
+const blobReadWriteToken = toOptionalString(envValues.BLOB_READ_WRITE_TOKEN);
+
+const runtime = config.runtime && typeof config.runtime === 'object' ? config.runtime : {};
+if (nextAuthUrl) runtime.nextAuthUrl = nextAuthUrl;
+if (databaseUrl) runtime.databaseUrl = databaseUrl;
+if (nextAuthSecret) runtime.nextAuthSecret = nextAuthSecret;
+if (anthropicApiKey) runtime.anthropicApiKey = anthropicApiKey;
+if (adminSecret) runtime.adminSecret = adminSecret;
+if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
+if (Object.keys(runtime).length > 0) {
+  config.runtime = runtime;
 }
 
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
@@ -1184,6 +1421,11 @@ parse_args "$@"
 SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
 SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
 
+if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
+    print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
+    exit 1
+fi
+
 trap on_error ERR
 
 if [ -n "$SEQDESK_LOG" ]; then
@@ -1191,8 +1433,8 @@ if [ -n "$SEQDESK_LOG" ]; then
     exec > >(tee -a "$SEQDESK_LOG") 2>&1
 fi
 
-if [ -z "$SEQDESK_YES" ] && [ ! -e /dev/tty ]; then
-    print_error "No TTY available. Set SEQDESK_YES=1 for non-interactive installs."
+if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ] && [ ! -t 1 ]; then
+    print_error "No interactive TTY detected. Use -y (or SEQDESK_YES=1) for automated installs."
     exit 1
 fi
 
@@ -1301,6 +1543,11 @@ if [ -n "$SEQDESK_CONFIG" ]; then
     print_success "Loaded installer config"
 fi
 
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    print_info "Reconfigure mode: loading defaults from existing installation"
+    load_existing_install_values "$SEQDESK_DIR"
+fi
+
 # Pipeline support
 print_step "Pipeline support"
 
@@ -1362,95 +1609,120 @@ fi
 # Download
 print_step "Downloading SeqDesk"
 
-if [ -n "$SEQDESK_VERSION" ]; then
-    VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version?version=$SEQDESK_VERSION" 2>/dev/null || true)
+LATEST_VERSION=""
+TEMP_FILE=""
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    print_info "Reconfigure mode enabled; skipping release download."
 else
-    VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version" 2>/dev/null || true)
-fi
-
-if [ -z "$VERSION_INFO" ]; then
-    print_error "Could not connect to SeqDesk server"
-    exit 1
-fi
-
-LATEST_VERSION=$(echo "$VERSION_INFO" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-DOWNLOAD_URL=$(echo "$VERSION_INFO" | grep -o '"downloadUrl":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-CHECKSUM=$(echo "$VERSION_INFO" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-FILE_SIZE=$(echo "$VERSION_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d':' -f2 || true)
-
-if [ -z "$LATEST_VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
-    print_error "Could not fetch version info"
-    exit 1
-fi
-
-print_success "Latest version: $LATEST_VERSION"
-
-TEMP_FILE=$(mktemp)
-
-if [ -n "$FILE_SIZE" ] && [ "$FILE_SIZE" -gt 0 ]; then
-    SIZE_MB=$((FILE_SIZE / 1024 / 1024))
-    print_info "File size: ${SIZE_MB}MB"
-fi
-
-curl -fL "$DOWNLOAD_URL" -o "$TEMP_FILE" --progress-bar 2>&1 | \
-    stdbuf -oL tr '\r' '\n' | \
-    while IFS= read -r line; do
-        if [[ "$line" =~ ([0-9]+)\.([0-9]+)% ]]; then
-            percent="${BASH_REMATCH[1]}"
-            printf "\r  Downloading: [%-40s] %3d%%" "$(printf '#%.0s' $(seq 1 $((percent * 40 / 100))))" "$percent"
-        fi
-    done
-
-echo -e "\r  Downloading: [########################################] 100%"
-print_success "Downloaded successfully"
-
-if [ -n "$CHECKSUM" ]; then
-    print_info "Verifying checksum..."
-    EXPECTED_CHECKSUM="$CHECKSUM"
-    if [[ "$EXPECTED_CHECKSUM" == sha256:* ]]; then
-        EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM#sha256:}"
-    fi
-    if command -v sha256sum &> /dev/null; then
-        ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | cut -d' ' -f1)
+    if [ -n "$SEQDESK_VERSION" ]; then
+        VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version?version=$SEQDESK_VERSION" 2>/dev/null || true)
     else
-        ACTUAL_CHECKSUM=$(shasum -a 256 "$TEMP_FILE" | cut -d' ' -f1)
+        VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version" 2>/dev/null || true)
     fi
 
-    if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
-        print_success "Checksum verified"
-    else
-        print_error "Checksum mismatch"
-        print_error "Expected: $CHECKSUM"
-        print_error "Got:      $ACTUAL_CHECKSUM"
-        rm -f "$TEMP_FILE"
+    if [ -z "$VERSION_INFO" ]; then
+        print_error "Could not connect to SeqDesk server"
         exit 1
+    fi
+
+    LATEST_VERSION=$(echo "$VERSION_INFO" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    DOWNLOAD_URL=$(echo "$VERSION_INFO" | grep -o '"downloadUrl":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    CHECKSUM=$(echo "$VERSION_INFO" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    FILE_SIZE=$(echo "$VERSION_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d':' -f2 || true)
+
+    if [ -z "$LATEST_VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
+        print_error "Could not fetch version info"
+        exit 1
+    fi
+
+    print_success "Latest version: $LATEST_VERSION"
+
+    TEMP_FILE=$(mktemp)
+
+    if [ -n "$FILE_SIZE" ] && [ "$FILE_SIZE" -gt 0 ]; then
+        SIZE_MB=$((FILE_SIZE / 1024 / 1024))
+        print_info "File size: ${SIZE_MB}MB"
+    fi
+
+    if command_exists stdbuf; then
+        curl -fL "$DOWNLOAD_URL" -o "$TEMP_FILE" --progress-bar 2>&1 | \
+            stdbuf -oL tr '\r' '\n' | \
+            while IFS= read -r line; do
+                if [[ "$line" =~ ([0-9]+)\.([0-9]+)% ]]; then
+                    percent="${BASH_REMATCH[1]}"
+                    printf "\r  Downloading: [%-40s] %3d%%" "$(printf '#%.0s' $(seq 1 $((percent * 40 / 100))))" "$percent"
+                fi
+            done
+    else
+        curl -fL "$DOWNLOAD_URL" -o "$TEMP_FILE" --progress-bar 2>&1 | \
+            tr '\r' '\n' | \
+            while IFS= read -r line; do
+                if [[ "$line" =~ ([0-9]+)\.([0-9]+)% ]]; then
+                    percent="${BASH_REMATCH[1]}"
+                    printf "\r  Downloading: [%-40s] %3d%%" "$(printf '#%.0s' $(seq 1 $((percent * 40 / 100))))" "$percent"
+                fi
+            done
+    fi
+
+    echo -e "\r  Downloading: [########################################] 100%"
+    print_success "Downloaded successfully"
+
+    if [ -n "$CHECKSUM" ]; then
+        print_info "Verifying checksum..."
+        EXPECTED_CHECKSUM="$CHECKSUM"
+        if [[ "$EXPECTED_CHECKSUM" == sha256:* ]]; then
+            EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM#sha256:}"
+        fi
+        if command -v sha256sum &> /dev/null; then
+            ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | cut -d' ' -f1)
+        else
+            ACTUAL_CHECKSUM=$(shasum -a 256 "$TEMP_FILE" | cut -d' ' -f1)
+        fi
+
+        if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+            print_success "Checksum verified"
+        else
+            print_error "Checksum mismatch"
+            print_error "Expected: $CHECKSUM"
+            print_error "Got:      $ACTUAL_CHECKSUM"
+            rm -f "$TEMP_FILE"
+            exit 1
+        fi
     fi
 fi
 
 # Extract
 print_step "Extracting package"
 
-if [ -d "$SEQDESK_DIR" ]; then
-    if is_truthy "$SEQDESK_YES"; then
-        print_error "Directory $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
-        rm -f "$TEMP_FILE"
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    if [ ! -d "$SEQDESK_DIR" ]; then
+        print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
         exit 1
     fi
-    print_warning "Directory exists: $SEQDESK_DIR"
-    response=$(read_input "Backup and replace? (y/N): ")
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        rm -f "$TEMP_FILE"
-        exit 0
+    print_success "Using existing installation: $SEQDESK_DIR"
+else
+    if [ -d "$SEQDESK_DIR" ]; then
+        if is_truthy "$SEQDESK_YES"; then
+            print_error "Directory $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
+            rm -f "$TEMP_FILE"
+            exit 1
+        fi
+        print_warning "Directory exists: $SEQDESK_DIR"
+        response=$(read_input "Backup and replace? (y/N): ")
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            rm -f "$TEMP_FILE"
+            exit 0
+        fi
+        mv "$SEQDESK_DIR" "${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
     fi
-    mv "$SEQDESK_DIR" "${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+
+    mkdir -p "$SEQDESK_DIR"
+    tar -xzf "$TEMP_FILE" -C "$SEQDESK_DIR" --strip-components=1
+    rm "$TEMP_FILE"
+
+    print_success "Extracted"
 fi
-
-mkdir -p "$SEQDESK_DIR"
-tar -xzf "$TEMP_FILE" -C "$SEQDESK_DIR" --strip-components=1
-rm "$TEMP_FILE"
-
-print_success "Extracted"
 
 cd "$SEQDESK_DIR"
 
@@ -1460,6 +1732,9 @@ if command_exists node && [ -f package.json ]; then
     if [ -n "$DETECTED_VERSION" ]; then
         INSTALLED_VERSION="$DETECTED_VERSION"
     fi
+fi
+if [ -z "$INSTALLED_VERSION" ]; then
+    INSTALLED_VERSION="${SEQDESK_VERSION:-unknown}"
 fi
 
 # Configure environment
@@ -1512,6 +1787,9 @@ fi
 
 set_env_var "NEXTAUTH_URL" "$SEQDESK_NEXTAUTH_URL"
 set_env_var "DATABASE_URL" "$SEQDESK_DATABASE_URL"
+set_env_var "ANTHROPIC_API_KEY" "$SEQDESK_ANTHROPIC_API_KEY"
+set_env_var "ADMIN_SECRET" "$SEQDESK_ADMIN_SECRET"
+set_env_var "BLOB_READ_WRITE_TOKEN" "$SEQDESK_BLOB_READ_WRITE_TOKEN"
 set_env_var "PORT" "$SEQDESK_PORT"
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
@@ -1596,7 +1874,18 @@ fi
 print_step "Process manager"
 
 if [ -z "$SEQDESK_USE_PM2" ]; then
-    prompt_yes_no SEQDESK_USE_PM2 "Start SeqDesk with PM2 for auto-restart? (recommended)" "y"
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        if command_exists pm2 && pm2 describe seqdesk >/dev/null 2>&1; then
+            PM2_PROCESS_EXISTS="true"
+            SEQDESK_USE_PM2="1"
+            print_info "Detected existing PM2 process 'seqdesk'; it will be restarted."
+        else
+            SEQDESK_USE_PM2="0"
+            print_info "Reconfigure mode: PM2 not detected, skipping process manager changes."
+        fi
+    else
+        prompt_yes_no SEQDESK_USE_PM2 "Start SeqDesk with PM2 for auto-restart? (recommended)" "y"
+    fi
 fi
 
 if is_truthy "$SEQDESK_USE_PM2"; then
@@ -1610,18 +1899,33 @@ if is_truthy "$SEQDESK_USE_PM2"; then
     fi
 
     if command_exists pm2; then
-        print_info "Starting SeqDesk with PM2..."
-        if pm2 start "$SEQDESK_DIR/start.sh" --name seqdesk; then
-            PM2_CONFIGURED="true"
-            pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
-            if pm2 startup >/dev/null 2>&1; then
-                PM2_STARTUP_ENABLED="true"
+        if [ "$PM2_PROCESS_EXISTS" != "true" ] && pm2 describe seqdesk >/dev/null 2>&1; then
+            PM2_PROCESS_EXISTS="true"
+        fi
+
+        if [ "$PM2_PROCESS_EXISTS" = "true" ]; then
+            print_info "Restarting existing SeqDesk PM2 process..."
+            if pm2 restart seqdesk; then
+                PM2_CONFIGURED="true"
+                pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
+                print_success "PM2 process restarted"
             else
-                print_warning "PM2 boot startup is not enabled yet. Run: pm2 startup"
+                print_warning "PM2 failed to restart seqdesk. You can restart manually with: pm2 restart seqdesk"
             fi
-            print_success "PM2 configured for auto-restart"
         else
-            print_warning "PM2 failed to start SeqDesk. You can start manually with ./start.sh"
+            print_info "Starting SeqDesk with PM2..."
+            if pm2 start "$SEQDESK_DIR/start.sh" --name seqdesk; then
+                PM2_CONFIGURED="true"
+                pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
+                if pm2 startup >/dev/null 2>&1; then
+                    PM2_STARTUP_ENABLED="true"
+                else
+                    print_warning "PM2 boot startup is not enabled yet. Run: pm2 startup"
+                fi
+                print_success "PM2 configured for auto-restart"
+            else
+                print_warning "PM2 failed to start SeqDesk. You can start manually with ./start.sh"
+            fi
         fi
     else
         print_warning "PM2 not available. You can start manually with ./start.sh"
@@ -1636,6 +1940,9 @@ print_header "Installation Complete!"
 echo -e "${GREEN}SeqDesk v$INSTALLED_VERSION installed successfully!${NC}"
 echo ""
 echo "Installed version: v$INSTALLED_VERSION"
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    echo "Mode: reconfigure existing install"
+fi
 echo "App directory: $SEQDESK_DIR"
 echo "Node: v$NODE_VERSION"
 if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then

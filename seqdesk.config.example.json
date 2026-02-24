@@ -54,5 +54,15 @@
     "allowRegistration": true,
     "requireEmailVerification": false,
     "sessionTimeout": 24
+  },
+
+  "runtime": {
+    "databaseUrl": "file:./dev.db",
+    "nextAuthUrl": "http://localhost:8000",
+    "nextAuthSecret": "",
+    "anthropicApiKey": "",
+    "adminSecret": "",
+    "blobReadWriteToken": "",
+    "updateServer": "https://seqdesk.com"
   }
 }

@@ -25,8 +25,9 @@ model User {
   createdInvites AdminInvite[]   @relation("InviteCreator")
   orders         Order[]
   statusNotes    StatusNote[]
-  studies        Study[]
-  tickets        Ticket[]
+  studies          Study[]         @relation("StudyOwner")
+  studyNotesEdited Study[]         @relation("StudyNotesEditor")
+  tickets          Ticket[]
   ticketMessages TicketMessage[]
   pipelineRuns   PipelineRun[]
   department     Department?     @relation(fields: [departmentId], references: [id])
@@ -81,12 +82,16 @@ model Study {
   submitted          Boolean       @default(false)
   submittedAt        DateTime?
   testRegisteredAt   DateTime?
+  notes              String?
+  notesEditedAt      DateTime?
+  notesEditedById    String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   userId             String
   samples            Sample[]
   pipelineRuns       PipelineRun[]
-  user               User          @relation(fields: [userId], references: [id])
+  user               User          @relation("StudyOwner", fields: [userId], references: [id])
+  notesEditedBy      User?         @relation("StudyNotesEditor", fields: [notesEditedById], references: [id])
 }
 
 model Sampleset {

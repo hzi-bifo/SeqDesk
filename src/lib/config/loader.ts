@@ -65,6 +65,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
     requireEmailVerification: false,
     sessionTimeout: 24,
   },
+  runtime: {},
 };
 
 /**

@@ -16,6 +16,9 @@
 #   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
+#   SEQDESK_ANTHROPIC_API_KEY=...  - Optional Anthropic API key
+#   SEQDESK_ADMIN_SECRET=...       - Optional admin secret
+#   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
@@ -55,6 +58,9 @@ SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
+SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
+SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
+SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
@@ -197,6 +203,9 @@ Options:
   --run-dir <path>             Pipeline run directory
   --nextauth-url <url>         NEXTAUTH_URL override
   --database-url <url>         DATABASE_URL override
+  --anthropic-api-key <key>    ANTHROPIC_API_KEY override
+  --admin-secret <secret>      ADMIN_SECRET override
+  --blob-read-write-token <token>  BLOB_READ_WRITE_TOKEN override
   -h, --help                   Show this help
 
 Examples:
@@ -283,6 +292,30 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_DATABASE_URL="$2"
+                shift
+                ;;
+            --anthropic-api-key)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --anthropic-api-key"
+                    exit 1
+                fi
+                SEQDESK_ANTHROPIC_API_KEY="$2"
+                shift
+                ;;
+            --admin-secret)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --admin-secret"
+                    exit 1
+                fi
+                SEQDESK_ADMIN_SECRET="$2"
+                shift
+                ;;
+            --blob-read-write-token)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --blob-read-write-token"
+                    exit 1
+                fi
+                SEQDESK_BLOB_READ_WRITE_TOKEN="$2"
                 shift
                 ;;
             -h|--help)
@@ -443,9 +476,25 @@ const values = {
     )
   ),
   nextAuthUrl: toOptionalString(
-    firstDefined(root.nextAuthUrl, root.nextauthUrl, app?.nextAuthUrl)
+    firstDefined(
+      root.nextAuthUrl,
+      root.nextauthUrl,
+      app?.nextAuthUrl,
+      runtime?.nextAuthUrl
+    )
   ),
-  databaseUrl: toOptionalString(firstDefined(root.databaseUrl, app?.databaseUrl)),
+  databaseUrl: toOptionalString(
+    firstDefined(root.databaseUrl, app?.databaseUrl, runtime?.databaseUrl)
+  ),
+  anthropicApiKey: toOptionalString(
+    firstDefined(root.anthropicApiKey, runtime?.anthropicApiKey)
+  ),
+  adminSecret: toOptionalString(
+    firstDefined(root.adminSecret, runtime?.adminSecret)
+  ),
+  blobReadWriteToken: toOptionalString(
+    firstDefined(root.blobReadWriteToken, runtime?.blobReadWriteToken)
+  ),
   useSlurm,
   slurmQueue: toOptionalString(
     firstDefined(root.slurmQueue, execution?.slurmQueue, slurm?.queue)
@@ -525,6 +574,11 @@ if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
 if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
 if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
+if (values.anthropicApiKey) out.SEQDESK_CFG_ANTHROPIC_API_KEY = values.anthropicApiKey;
+if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
+if (values.blobReadWriteToken) {
+  out.SEQDESK_CFG_BLOB_READ_WRITE_TOKEN = values.blobReadWriteToken;
+}
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
   out.SEQDESK_CFG_EXEC_USE_SLURM = values.useSlurm ? "true" : "false";
@@ -571,6 +625,9 @@ NODE
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
+    apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
+    apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
+    apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -587,6 +644,8 @@ NODE
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
+    unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
+    unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
@@ -692,12 +751,16 @@ write_config() {
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
+    SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
+    SEQDESK_INSTALL_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
     node <<'NODE'
 const fs = require('fs');
 
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
+const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
+const databaseUrl = process.env.SEQDESK_INSTALL_DATABASE_URL || '';
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -707,6 +770,32 @@ function readJson(filePath) {
     console.error(`ERROR: Failed to parse ${filePath}: ${err.message}`);
     process.exit(1);
   }
+}
+
+function readDotEnv(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const parsed = {};
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    if (!line || line.trim().startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[match[1]] = value;
+  }
+  return parsed;
+}
+
+function toOptionalString(value) {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 const config = readJson('seqdesk.config.json') || {};
@@ -722,6 +811,23 @@ if (runDir) {
   config.pipelines.execution = config.pipelines.execution || {};
   if (!config.pipelines.execution.mode) config.pipelines.execution.mode = 'local';
   config.pipelines.execution.runDirectory = runDir;
+}
+
+const envValues = readDotEnv('.env');
+const nextAuthSecret = toOptionalString(envValues.NEXTAUTH_SECRET);
+const anthropicApiKey = toOptionalString(envValues.ANTHROPIC_API_KEY);
+const adminSecret = toOptionalString(envValues.ADMIN_SECRET);
+const blobReadWriteToken = toOptionalString(envValues.BLOB_READ_WRITE_TOKEN);
+
+const runtime = config.runtime && typeof config.runtime === 'object' ? config.runtime : {};
+if (nextAuthUrl) runtime.nextAuthUrl = nextAuthUrl;
+if (databaseUrl) runtime.databaseUrl = databaseUrl;
+if (nextAuthSecret) runtime.nextAuthSecret = nextAuthSecret;
+if (anthropicApiKey) runtime.anthropicApiKey = anthropicApiKey;
+if (adminSecret) runtime.adminSecret = adminSecret;
+if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
+if (Object.keys(runtime).length > 0) {
+  config.runtime = runtime;
 }
 
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
@@ -1248,6 +1354,9 @@ fi
 
 set_env_var "NEXTAUTH_URL" "$SEQDESK_NEXTAUTH_URL"
 set_env_var "DATABASE_URL" "$SEQDESK_DATABASE_URL"
+set_env_var "ANTHROPIC_API_KEY" "$SEQDESK_ANTHROPIC_API_KEY"
+set_env_var "ADMIN_SECRET" "$SEQDESK_ADMIN_SECRET"
+set_env_var "BLOB_READ_WRITE_TOKEN" "$SEQDESK_BLOB_READ_WRITE_TOKEN"
 set_env_var "PORT" "$SEQDESK_PORT"
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
