@@ -1,16 +1,19 @@
-# @summary Install Node.js 18+, npm, and Git per installation.md
+# @summary Install Node.js 18+, npm, and optionally Git per installation.md
 # Uses NodeSource for Node 20 on Debian/Ubuntu and RHEL/CentOS.
 # Optionally install extra packages (e.g. htop).
+# Set manage_git false if another module installs git.
 #
 class seqdesk::prerequisites {
-  $install_dir   = $seqdesk::install_dir
-  $user          = $seqdesk::user
-  $group         = $seqdesk::group
+  $install_dir    = $seqdesk::install_dir
+  $user           = $seqdesk::user
+  $group          = $seqdesk::group
   $extra_packages = $seqdesk::extra_packages
+  $manage_git     = $seqdesk::manage_git
 
-  # Git (required for clone)
-  package { 'git':
-    ensure => installed,
+  if $manage_git {
+    package { 'git':
+      ensure => installed,
+    }
   }
 
   # Node.js 20 via NodeSource (matches installation.md)

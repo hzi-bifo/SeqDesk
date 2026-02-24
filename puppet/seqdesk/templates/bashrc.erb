@@ -1,0 +1,85 @@
+# .bashrc
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+	. /etc/bashrc
+fi
+
+# User specific environment
+if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]
+then
+    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+fi
+export PATH
+
+HOSTNAME=$(hostname)
+USER=$(id -n --user)
+
+if [ "${HOSTNAME}" = "dzif-student-0201" ]
+then
+	HOST_ENV="TEST"
+elif [ "${HOSTNAME}" = "dzif-student-0203" ]
+then
+	HOST_ENV="PROD"
+elif [ "${HOSTNAME}" = "dzif-student-0204" ]
+then
+	HOST_ENV="DEVGARY"
+elif [ "${HOSTNAME}" = "dzif-student-0205" ]
+then
+	HOST_ENV="DEVPHIL"
+elif [ "${HOSTNAME}" = "dzif-student-0206" ]
+then
+	HOST_ENV="DEMO"
+fi
+
+if [ "${USER}" = "brokerts" ]
+then
+	USER_ENV="TEST"
+elif [ "${USER}" = "broker" ]
+then
+	USER_ENV="PROD"
+elif [ "${USER}" = "brokerdg" ]
+then
+	USER_ENV="DEVGARY"
+elif [ "${USER}" = "brokerdp" ]
+then
+	USER_ENV="DEVPHIL"
+elif [ "${USER}" = "brokerdm" ]
+then
+	USER_ENV="DEMO"
+fi
+
+if [ "${HOST_ENV}" = "${USER_ENV}" ]
+then
+	banner ${HOST_ENV}
+else
+	banner "Environment mismatch"
+	echo "Host environment: ${HOST_ENV}"
+	echo "User environment: ${USER_ENV}"
+fi
+
+### export ENA_USERNAME='<%= @broker_ena_username %>'
+### export ENA_PASSWORD='<%= @broker_ena_password %>'
+
+### source "$HOME/.sdkman/bin/sdkman-init.sh"
+
+# Uncomment the following line if you don't like systemctl's auto-paging feature:
+# export SYSTEMD_PAGER=
+
+# User specific aliases and functions
+
+### # >>> conda initialize >>>
+### # !! Contents within this block are managed by 'conda init' !!
+### __conda_setup="$('/net/broker/<%= @broker_env  %>/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+### if [ $? -eq 0 ]; then
+###     eval "$__conda_setup"
+### else
+###     if [ -f "/net/broker/<%= @broker_env  %>/miniconda3/etc/profile.d/conda.sh" ]; then
+###         . "/net/broker/<%= @broker_env  %>/miniconda3/etc/profile.d/conda.sh"
+###     else
+###         export PATH="/net/broker/<%= @broker_env  %>/miniconda3/bin:$PATH"
+###     fi
+### fi
+### unset __conda_setup
+### # <<< conda initialize <<<
+

@@ -36,18 +36,42 @@ class seqdesk::config {
 
   # seqdesk.config.json (installation.md step 4)
   if $config_source != undef and $config_source != '' {
-    # Reference a JSON file: file:///path or puppet:///modules/...
-    $source_uri = $config_source ? {
-      /^(file:\/\/|puppet:\/\/)/ => $config_source,
-      default                    => "file://${config_source}",
+    # Path relative to clone: puppet:///modules/seqdesk/... (strip prefix) or bare relative path. Copy on agent via exec to avoid file:// being resolved on server.
+    $config_repo_relative = $config_source ? {
+      /^puppet:\/\/\/modules\/seqdesk\// => regsubst($config_source, '^puppet:///modules/seqdesk/', ''),
+      /^(file:\/\/|puppet:\/\/|\/)/      => undef,
+      default                             => $config_source,
     }
-    file { "${install_dir}/seqdesk.config.json":
-      ensure  => file,
-      owner   => $user,
-      group   => $group,
-      mode    => '0644',
-      source  => $source_uri,
-      require => Exec['seqdesk-git-clone'],
+    if $config_repo_relative != undef and $config_repo_relative != '' {
+      $config_src_path = "${install_dir}/${config_repo_relative}"
+      exec { 'seqdesk-copy-config-from-repo':
+        command => "/bin/cp ${config_src_path} ${install_dir}/seqdesk.config.json && /usr/bin/chown ${user}:${group} ${install_dir}/seqdesk.config.json",
+        creates => "${install_dir}/seqdesk.config.json",
+        user    => 'root',
+        require => Exec['seqdesk-git-clone'],
+      }
+      file { "${install_dir}/seqdesk.config.json":
+        ensure  => file,
+        owner   => $user,
+        group   => $group,
+        mode    => '0644',
+        require => Exec['seqdesk-copy-config-from-repo'],
+      }
+    } else {
+      # file:/// or puppet:/// (other) or absolute path: use File source
+      $config_source_uri = $config_source ? {
+        /^(file:\/\/|puppet:\/\/)/ => $config_source,
+        /^\//                       => "file://${config_source}",
+        default                     => "file://${config_source}",
+      }
+      file { "${install_dir}/seqdesk.config.json":
+        ensure  => file,
+        owner   => $user,
+        group   => $group,
+        mode    => '0644',
+        source  => $config_source_uri,
+        require => Exec['seqdesk-git-clone'],
+      }
     }
   } elsif $config_hash != undef {
     file { "${install_dir}/seqdesk.config.json":

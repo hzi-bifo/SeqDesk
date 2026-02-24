@@ -1,0 +1,11 @@
+Host github.com
+Hostname github.com
+User git
+IdentityFile ~/.ssh/id_rsa
+
+Host sysadmin_SeqDesk
+Hostname github.com
+User git
+IdentityFile ~/.ssh/id_ed25519__SeqDesk__dzif-student-xxxx
+
+

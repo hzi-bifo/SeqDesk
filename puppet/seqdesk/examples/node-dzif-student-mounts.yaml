@@ -1,0 +1,12 @@
+# Correct YAML for seqdesk::mounts (paste this into your node file, replacing the broken mounts block).
+# Use "key: value" with a colon and space. Do not use 'path'=>'...' or quoted keys.
+#
+seqdesk::mounts:
+  - path: '/net/broker'
+    device: '192.168.8.82:/net/broker'
+    fstype: 'nfs'
+    options: 'rw,async,hard,intr,vers=4.2,_netdev'
+  - path: '/home'
+    device: '192.168.8.82:/home'
+    fstype: 'nfs'
+    options: 'rw,async,hard,intr,vers=4.2,_netdev'

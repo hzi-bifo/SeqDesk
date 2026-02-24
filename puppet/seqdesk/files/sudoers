@@ -1,0 +1,12 @@
+pmuench ALL=(ALL) NOPASSWD: /usr/bin/su - broker
+pmuench ALL=(ALL) NOPASSWD: /usr/bin/su - brokerts
+pmuench ALL=(ALL) NOPASSWD: /usr/bin/su - brokerdm
+pmuench ALL=(ALL) NOPASSWD: /usr/bin/su - brokerdg
+pmuench ALL=(ALL) NOPASSWD: /usr/bin/su - brokerdp
+pmuench ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+broker ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+brokerts ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+brokerdm ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+brokerdg ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+brokerdp ALL=(ALL) NOPASSWD: /opt/puppetlabs/bin/puppet agent --test
+
