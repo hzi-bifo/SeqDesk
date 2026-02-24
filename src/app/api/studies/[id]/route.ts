@@ -79,6 +79,17 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
       submitted: true,
       submittedAt: true,
       testRegisteredAt: true,
+      notes: true,
+      notesEditedAt: true,
+      notesEditedById: true,
+      notesEditedBy: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
       createdAt: true,
       updatedAt: true,
       userId: true,
@@ -329,7 +340,7 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { title, description, alias, checklistType, studyMetadata, readyForSubmission } = body;
+    const { title, description, alias, checklistType, studyMetadata, readyForSubmission, notes } = body;
 
     // Check study exists and ownership
     const existing = await db.study.findUnique({
@@ -365,6 +376,11 @@ export async function PUT(
       } else {
         updateData.readyAt = null;
       }
+    }
+    if (notes !== undefined) {
+      updateData.notes = notes;
+      updateData.notesEditedAt = new Date();
+      updateData.notesEditedById = session.user.id;
     }
 
     await db.study.update({

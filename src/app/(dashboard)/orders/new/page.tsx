@@ -515,6 +515,7 @@ export default function NewOrderPage() {
   const editOrderId = searchParams.get("edit");
   const isEditMode = !!editOrderId;
   const [loadingOrder, setLoadingOrder] = useState(isEditMode);
+  const [editOrderStatus, setEditOrderStatus] = useState<string | null>(null);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -982,6 +983,7 @@ export default function NewOrderPage() {
         }
 
         const order = await res.json();
+        setEditOrderStatus(order.status ?? null);
 
         // Pre-fill field values from order data
         const values: Record<string, unknown> = {};
@@ -1113,6 +1115,7 @@ export default function NewOrderPage() {
   const groups = allGroups.filter((group) => !hiddenGroupIds.has(group.id));
 
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canEditSamples = !isEditMode || editOrderStatus === "DRAFT";
 
   // Get visible fields sorted by order (also filter by module state)
   // Exclude perSample fields - those are collected in the samples table after order creation
@@ -1626,6 +1629,10 @@ export default function NewOrderPage() {
       let orderId: string;
 
       if (isEditMode && editOrderId) {
+        if (!canEditSamples) {
+          systemFieldData.numberOfSamples = samples.length;
+        }
+
         // Update existing order
         const res = await fetch(`/api/orders/${editOrderId}`, {
           method: "PUT",
@@ -1645,7 +1652,7 @@ export default function NewOrderPage() {
         orderId = editOrderId;
 
         // Update samples for the order
-        if (samples.length > 0) {
+        if (samples.length > 0 && canEditSamples) {
           const samplesToSave = samples.map((sample) => {
             const { coreSampleData, customFields } = buildSamplePayload(sample);
             return {
@@ -2525,7 +2532,7 @@ export default function NewOrderPage() {
         cell: cellComponent,
         meta: {
           field,
-          editable: !saving,
+          editable: !saving && canEditSamples,
         },
       };
       cols.push(col);
@@ -2540,7 +2547,7 @@ export default function NewOrderPage() {
         <button
           type="button"
           onClick={() => handleRemoveSample(row.original.id)}
-          disabled={saving}
+          disabled={saving || !canEditSamples}
           className="w-full h-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
         >
           <Trash2 className="h-4 w-4" />
@@ -2549,7 +2556,7 @@ export default function NewOrderPage() {
     });
 
     return cols;
-  }, [perSampleFields, saving, barcodeOptions, focusFieldWithScrollPreserved]);
+  }, [perSampleFields, saving, barcodeOptions, focusFieldWithScrollPreserved, canEditSamples]);
 
   // Update sample data from table
   // Supports both single field update: updateSampleData(rowIndex, columnId, value)
@@ -2608,6 +2615,11 @@ export default function NewOrderPage() {
   const SamplesTableStep = () => {
     return (
       <div className="space-y-4">
+        {!canEditSamples && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            This order is already submitted. Sample rows are read-only, but order fields can still be updated.
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">
@@ -2624,13 +2636,13 @@ export default function NewOrderPage() {
               samples={samples}
               barcodeOptions={barcodeOptions}
               onSamplesImported={handleSamplesImported}
-              disabled={saving}
+              disabled={saving || !canEditSamples}
             />
             {/* Quick Actions Dropdown */}
             {samples.length > 0 && (hasSampleAliasField || hasOrganismField) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={saving}>
+                  <Button variant="outline" size="sm" disabled={saving || !canEditSamples}>
                     <ChevronDown className="h-4 w-4 mr-1" />
                     Quick Actions
                   </Button>
@@ -2649,7 +2661,7 @@ export default function NewOrderPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <Button onClick={handleAddSample} size="sm" disabled={saving}>
+            <Button onClick={handleAddSample} size="sm" disabled={saving || !canEditSamples}>
               <Plus className="h-4 w-4 mr-1" />
               Add Sample
             </Button>
@@ -2708,7 +2720,7 @@ export default function NewOrderPage() {
             </table>
           </div>
           <div className="bg-muted/30 px-3 py-2 border-t flex items-center justify-between">
-            <Button variant="ghost" size="sm" onClick={handleAddSample} disabled={saving}>
+            <Button variant="ghost" size="sm" onClick={handleAddSample} disabled={saving || !canEditSamples}>
               <Plus className="h-4 w-4 mr-1" />
               Add Row
             </Button>

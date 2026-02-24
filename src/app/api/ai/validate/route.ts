@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+bootstrapRuntimeEnv();
+
+function getAnthropicApiKey(): string | undefined {
+  return process.env.ANTHROPIC_API_KEY;
+}
 
 interface ModulesConfig {
   modules: Record<string, boolean>;
@@ -114,7 +119,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if API key is configured
-    if (!ANTHROPIC_API_KEY) {
+    const anthropicApiKey = getAnthropicApiKey();
+    if (!anthropicApiKey) {
       return NextResponse.json(
         {
           valid: true,
@@ -147,7 +153,7 @@ Is this a valid entry for this field? Use the validation_result tool to respond.
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
+        "x-api-key": anthropicApiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -217,10 +223,10 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    configured: !!ANTHROPIC_API_KEY,
+    configured: !!getAnthropicApiKey(),
     moduleDisabled: false,
-    message: ANTHROPIC_API_KEY
+    message: getAnthropicApiKey()
       ? "AI validation is configured"
-      : "Add ANTHROPIC_API_KEY to .env to enable AI validation",
+      : "Add ANTHROPIC_API_KEY to seqdesk.config.json (runtime.anthropicApiKey) or .env to enable AI validation",
   });
 }

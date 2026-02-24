@@ -3097,7 +3097,7 @@ Example: A project code in format PROJ-XXXX where XXXX is a 4-digit number. Shou
                 {aiConfigured === false && (
                   <div className="py-4 text-center">
                     <p className="text-sm text-muted-foreground">
-                      Add ANTHROPIC_API_KEY to .env to enable AI validation
+                      Add ANTHROPIC_API_KEY to seqdesk.config.json (runtime.anthropicApiKey) or .env to enable AI validation
                     </p>
                   </div>
                 )}

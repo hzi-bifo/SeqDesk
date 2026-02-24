@@ -51,6 +51,7 @@ confirmation (skipped when `SEQDESK_YES=1`).
 - `SEQDESK_WITH_CONDA=1` (legacy alias for pipeline setup)
 - `SEQDESK_SKIP_DEPS=1` (skip dependency install prompts)
 - `--config <path-or-url>` (or `SEQDESK_CONFIG=...`) to load infrastructure JSON
+- `--reconfigure` (or `SEQDESK_RECONFIGURE=1`) to apply settings to an existing install in place
 - Overrides:
   - `SEQDESK_DATA_PATH`
   - `SEQDESK_RUN_DIR`

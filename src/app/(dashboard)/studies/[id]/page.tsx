@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { useState, useEffect, useCallback, use, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
   Dialog,
@@ -33,6 +35,8 @@ import {
   RotateCcw,
   Download,
   HardDrive,
+  FileText,
+  Save,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 
@@ -82,6 +86,15 @@ interface Study {
   submittedAt: string | null;
   testRegisteredAt: string | null;
   studyAccessionId: string | null;
+  notes: string | null;
+  notesEditedAt: string | null;
+  notesEditedById: string | null;
+  notesEditedBy: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+  } | null;
   createdAt: string;
   samples: Sample[];
   user: {
@@ -157,6 +170,21 @@ function getTestExpirationStatus(registeredAt: string | null): { expired: boolea
   }
 }
 
+function formatRelativeTime(dateInput: string | Date) {
+  const date = new Date(dateInput);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
 export default function StudyDetailPage({
   params,
 }: {
@@ -173,6 +201,10 @@ export default function StudyDetailPage({
   const [markingReady, setMarkingReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
+
+  // Notes state
+  const [notesContent, setNotesContent] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
 
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -252,6 +284,37 @@ export default function StudyDetailPage({
   useEffect(() => {
     void fetchStudy();
   }, [fetchStudy]);
+
+  // Sync notes content when study loads
+  useEffect(() => {
+    if (study) {
+      setNotesContent(study.notes ?? "");
+    }
+  }, [study?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveNotes = async () => {
+    if (!study) return;
+    setNotesSaving(true);
+    try {
+      const res = await fetch(`/api/studies/${apiStudyId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notesContent || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(typeof data.error === "string" ? data.error : "Failed to save notes");
+        return;
+      }
+      const updated = await res.json();
+      setStudy(updated);
+      toast.success("Notes saved");
+    } catch {
+      toast.error("Failed to save notes");
+    } finally {
+      setNotesSaving(false);
+    }
+  };
 
   const handleDeleteStudy = async () => {
     if (!study) return;
@@ -629,6 +692,7 @@ export default function StudyDetailPage({
           {isAdmin && totalSamples > 0 && (
             <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
           )}
+          <TabsTrigger value="notes">Notes</TabsTrigger>
           <TabsTrigger value="ena">ENA</TabsTrigger>
         </TabsList>
 
@@ -987,6 +1051,56 @@ export default function StudyDetailPage({
             <StudyPipelinesSection studyId={study.id} samples={study.samples} />
           </TabsContent>
         )}
+
+        {/* Notes Tab */}
+        <TabsContent value="notes">
+          <div className="bg-card rounded-lg border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Study Notes
+              </h2>
+              {(isOwner || isAdmin) && (
+                <Button
+                  size="sm"
+                  onClick={handleSaveNotes}
+                  disabled={notesSaving || notesContent === (study.notes ?? "")}
+                >
+                  {notesSaving ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  Save
+                </Button>
+              )}
+            </div>
+
+            {(isOwner || isAdmin) ? (
+              <Textarea
+                value={notesContent}
+                onChange={(e) => setNotesContent(e.target.value)}
+                placeholder="Add notes about this study..."
+                className="min-h-[200px] font-mono text-sm"
+              />
+            ) : (
+              <div className="min-h-[100px] rounded-lg border bg-muted/50 p-3 text-sm whitespace-pre-wrap">
+                {study.notes || <span className="text-muted-foreground">No notes yet.</span>}
+              </div>
+            )}
+
+            {study.notesEditedBy && study.notesEditedAt && (
+              <p className="text-xs text-muted-foreground mt-3">
+                Last edited by{" "}
+                {study.notesEditedBy.firstName && study.notesEditedBy.lastName
+                  ? `${study.notesEditedBy.firstName} ${study.notesEditedBy.lastName}`
+                  : study.notesEditedBy.email}
+                {" · "}
+                {formatRelativeTime(study.notesEditedAt)}
+              </p>
+            )}
+          </div>
+        </TabsContent>
 
         {/* ENA Tab */}
         <TabsContent value="ena">

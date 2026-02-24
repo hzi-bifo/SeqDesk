@@ -233,6 +233,7 @@ export default function OrderDetailPage({
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isOwner = order?.user.id === session?.user?.id;
+  const canEditOrder = isFacilityAdmin || ((isOwner ?? false) && order?.status !== "COMPLETED");
 
   // Admin-only field names from form schema (used to filter custom fields display)
   const [adminOnlyFieldNames, setAdminOnlyFieldNames] = useState<Set<string>>(new Set());
@@ -593,7 +594,7 @@ export default function OrderDetailPage({
           {/* Action buttons */}
           {(isOwner || isFacilityAdmin) && (
             <div className="flex items-center gap-2">
-              {order.status === "DRAFT" && (isOwner || isFacilityAdmin) && (
+              {canEditOrder && (
                 <Button variant="outline" size="sm" asChild>
                   <Link href={`/orders/${order.id}/edit`}>
                     <Pencil className="h-4 w-4 mr-2" />
@@ -719,24 +720,6 @@ export default function OrderDetailPage({
               </div>
             );
           })()}
-
-          {/* Summary stats */}
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Samples</p>
-              <p className="text-2xl font-semibold mt-1">{order._count.samples}</p>
-            </div>
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Researcher</p>
-              <p className="text-sm font-medium mt-1 truncate">
-                {order.user.firstName} {order.user.lastName}
-              </p>
-            </div>
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Platform</p>
-              <p className="text-sm font-medium mt-1 truncate">{order.platform || "Not specified"}</p>
-            </div>
-          </div>
 
           {/* Sequencing Parameters */}
           <div className="bg-card rounded-lg border overflow-hidden mb-4">

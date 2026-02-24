@@ -3,15 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -29,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square } from "lucide-react";
+import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square, Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -171,6 +163,7 @@ type RunData = {
 export default function AnalysisDashboardPage() {
   const [pipelineFilter, setPipelineFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
   const [stopTarget, setStopTarget] = useState<RunData | null>(null);
   const [stopping, setStopping] = useState(false);
   const [syncDisabled, setSyncDisabled] = useState(false);
@@ -246,6 +239,18 @@ export default function AnalysisDashboardPage() {
     )
     .map((run: { id: string }) => run.id) as string[];
   const activeKey = activeIds.join(",");
+  const searchLower = search.trim().toLowerCase();
+  const filteredRuns: RunData[] = (data?.runs ?? []).filter((run: RunData) => {
+    if (!searchLower) return true;
+    const startedBy = [run.user?.firstName, run.user?.lastName].filter(Boolean).join(" ").toLowerCase();
+    return (
+      run.runNumber.toLowerCase().includes(searchLower) ||
+      run.pipelineName.toLowerCase().includes(searchLower) ||
+      run.study?.title?.toLowerCase().includes(searchLower) ||
+      startedBy.includes(searchLower) ||
+      run.user?.email?.toLowerCase().includes(searchLower)
+    );
+  });
 
   useEffect(() => {
     if (syncDisabled || !activeKey) return;
@@ -286,36 +291,52 @@ export default function AnalysisDashboardPage() {
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-4 mb-6">
-        <Select value={pipelineFilter} onValueChange={setPipelineFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Pipeline" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Pipelines</SelectItem>
-            <SelectItem value="mag">MAG Pipeline</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="queued">Queued</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
       {/* Runs Table */}
-      <GlassCard>
+      <div className="bg-card rounded-lg overflow-hidden border border-border">
+        <div className="px-4 py-3 border-b border-border">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search run, pipeline, study, or user..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+
+            <div className="relative">
+              <select
+                value={pipelineFilter}
+                onChange={(e) => setPipelineFilter(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="all">All Pipelines</option>
+                <option value="mag">MAG Pipeline</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            </div>
+
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="all">All Statuses</option>
+                <option value="running">Running</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="queued">Queued</option>
+                <option value="pending">Pending</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -335,147 +356,154 @@ export default function AnalysisDashboardPage() {
               <Link href="/studies">View Studies</Link>
             </Button>
           </div>
+        ) : filteredRuns.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            No pipeline runs match the current filters
+          </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Run</TableHead>
-                <TableHead>Pipeline</TableHead>
-                <TableHead>Study</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Progress</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Started By</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-[50px]"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data?.runs?.map((run: RunData) => (
-                (() => {
-                  const effectiveStatus =
-                    ["completed", "failed", "cancelled"].includes(run.status) &&
-                    isQueueStateLikelyActive(run.queueStatus)
-                      ? queueStateToDisplayStatus(run.queueStatus)
-                      : run.status;
-                  return (
-                <TableRow
-                  key={run.id}
-                  className={effectiveStatus === "running" ? "bg-blue-50/60 dark:bg-blue-950/30" : undefined}
-                >
-                  <TableCell>
-                    <Link
-                      href={`/analysis/${run.id}`}
-                      className="font-mono text-sm hover:underline"
-                    >
-                      {run.runNumber}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {getPipelineIcon(run.pipelineIcon)}
-                      <span>{run.pipelineName}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {run.study ? (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/50">
+                  <TableHead>Run</TableHead>
+                  <TableHead>Pipeline</TableHead>
+                  <TableHead>Study</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Progress</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Started By</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredRuns.map((run: RunData) => (
+                  (() => {
+                    const effectiveStatus =
+                      ["completed", "failed", "cancelled"].includes(run.status) &&
+                      isQueueStateLikelyActive(run.queueStatus)
+                        ? queueStateToDisplayStatus(run.queueStatus)
+                        : run.status;
+                    return (
+                  <TableRow
+                    key={run.id}
+                    className={effectiveStatus === "running" ? "bg-blue-50/60 dark:bg-blue-950/30" : undefined}
+                  >
+                    <TableCell>
                       <Link
-                        href={`/studies/${run.study.id}`}
-                        className="hover:underline"
+                        href={`/analysis/${run.id}`}
+                        className="font-mono text-sm hover:underline"
                       >
-                        {run.study.title}
+                        {run.runNumber}
                       </Link>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      {getStatusBadge(effectiveStatus)}
-                      <span className="text-xs text-muted-foreground">
-                        Last event: {formatRelativeTime(getLatestTimestamp(
-                          run.lastEventAt,
-                          run.lastWeblogAt,
-                          run.lastTraceAt,
-                          run.queueUpdatedAt,
-                          run.completedAt,
-                          run.startedAt,
-                          run.queuedAt,
-                          run.updatedAt,
-                          run.createdAt
-                        ))}
-                      </span>
-                      {run.queueStatus && (
-                        <Badge
-                          variant="outline"
-                          className="text-xs w-fit"
-                          title={run.queueReason ? `Reason: ${run.queueReason}` : undefined}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {getPipelineIcon(run.pipelineIcon)}
+                        <span>{run.pipelineName}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {run.study ? (
+                        <Link
+                          href={`/studies/${run.study.id}`}
+                          className="hover:underline"
                         >
-                          {run.queueJobId?.startsWith("local-") ? "Local" : "Queue"}: {run.queueStatus}
-                          {run.queueReason ? ` (${run.queueReason})` : ""}
-                        </Badge>
+                          {run.study.title}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {effectiveStatus === "running" ? (
-                      <div className="flex flex-col">
-                        <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-blue-600 transition-all"
-                            style={{ width: `${run.progress || 0}%` }}
-                          />
-                        </div>
-                        {run.currentStep && (
-                          <span className="text-xs text-muted-foreground mt-1">
-                            {run.currentStep}
-                          </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        {getStatusBadge(effectiveStatus)}
+                        <span className="text-xs text-muted-foreground">
+                          Last event: {formatRelativeTime(getLatestTimestamp(
+                            run.lastEventAt,
+                            run.lastWeblogAt,
+                            run.lastTraceAt,
+                            run.queueUpdatedAt,
+                            run.completedAt,
+                            run.startedAt,
+                            run.queuedAt,
+                            run.updatedAt,
+                            run.createdAt
+                          ))}
+                        </span>
+                        {run.queueStatus && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs w-fit"
+                            title={run.queueReason ? `Reason: ${run.queueReason}` : undefined}
+                          >
+                            {run.queueJobId?.startsWith("local-") ? "Local" : "Queue"}: {run.queueStatus}
+                            {run.queueReason ? ` (${run.queueReason})` : ""}
+                          </Badge>
                         )}
                       </div>
-                    ) : effectiveStatus === "completed" ? (
-                      <span className="text-sm text-muted-foreground">
-                        {run._count.assembliesCreated} assemblies, {run._count.binsCreated} bins
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {formatDuration(run.startedAt, run.completedAt)}
-                  </TableCell>
-                  <TableCell>
-                    {[run.user?.firstName, run.user?.lastName].filter(Boolean).join(" ") || run.user?.email || "Unknown"}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(run.createdAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      {effectiveStatus === "running" && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => setStopTarget(run)}
-                        >
-                          <Square className="h-4 w-4" />
-                        </Button>
+                    </TableCell>
+                    <TableCell>
+                      {effectiveStatus === "running" ? (
+                        <div className="flex flex-col">
+                          <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-600 transition-all"
+                              style={{ width: `${run.progress || 0}%` }}
+                            />
+                          </div>
+                          {run.currentStep && (
+                            <span className="text-xs text-muted-foreground mt-1">
+                              {run.currentStep}
+                            </span>
+                          )}
+                        </div>
+                      ) : effectiveStatus === "completed" ? (
+                        <span className="text-sm text-muted-foreground">
+                          {run._count.assembliesCreated} assemblies, {run._count.binsCreated} bins
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
                       )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-                  );
-                })()
-              ))}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDuration(run.startedAt, run.completedAt)}
+                    </TableCell>
+                    <TableCell>
+                      {[run.user?.firstName, run.user?.lastName].filter(Boolean).join(" ") || run.user?.email || "Unknown"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Date(run.createdAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        {effectiveStatus === "running" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => setStopTarget(run)}
+                          >
+                            <Square className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                    );
+                  })()
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
-      </GlassCard>
+      </div>
 
       {/* Summary stats */}
       {data?.runs && data.runs.length > 0 && (
         <div className="mt-4 text-sm text-muted-foreground">
-          Showing {data.runs.length} of {data.total} runs
+          Showing {filteredRuns.length} of {data.runs.length} loaded run{data.runs.length === 1 ? "" : "s"}
+          {data.total > data.runs.length ? ` (${data.total} total)` : ""}
         </div>
       )}
 

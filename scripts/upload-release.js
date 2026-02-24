@@ -33,6 +33,30 @@ function loadEnv() {
   }
 }
 
+function loadRuntimeConfigEnvFallback() {
+  const configPath = path.join(process.cwd(), "seqdesk.config.json");
+  if (!fs.existsSync(configPath)) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const runtime = parsed?.runtime;
+    if (!runtime || typeof runtime !== "object") {
+      return;
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN && typeof runtime.blobReadWriteToken === "string") {
+      process.env.BLOB_READ_WRITE_TOKEN = runtime.blobReadWriteToken;
+    }
+    if (!process.env.ADMIN_SECRET && typeof runtime.adminSecret === "string") {
+      process.env.ADMIN_SECRET = runtime.adminSecret;
+    }
+  } catch {
+    // Ignore invalid runtime config and continue with env-only behavior.
+  }
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
@@ -151,6 +175,7 @@ async function publishRelease(release, adminSecret) {
 
 async function main() {
   loadEnv();
+  loadRuntimeConfigEnvFallback();
 
   const options = parseArgs();
 

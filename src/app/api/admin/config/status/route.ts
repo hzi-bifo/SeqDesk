@@ -18,6 +18,15 @@ export async function GET() {
     if (safeConfig.ena?.password) {
       safeConfig.ena = { ...safeConfig.ena, password: '********' };
     }
+    if (safeConfig.runtime) {
+      safeConfig.runtime = {
+        ...safeConfig.runtime,
+        nextAuthSecret: safeConfig.runtime.nextAuthSecret ? '********' : undefined,
+        anthropicApiKey: safeConfig.runtime.anthropicApiKey ? '********' : undefined,
+        adminSecret: safeConfig.runtime.adminSecret ? '********' : undefined,
+        blobReadWriteToken: safeConfig.runtime.blobReadWriteToken ? '********' : undefined,
+      };
+    }
 
     return NextResponse.json({
       config: safeConfig,
