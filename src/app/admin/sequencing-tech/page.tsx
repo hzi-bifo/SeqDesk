@@ -80,9 +80,18 @@ const SOFTWARE_CATEGORIES: SequencingSoftware["category"][] = [
   "other",
 ];
 
+type SequencingTechTab = "platforms" | "devices" | "accessories";
+
+const SEQUENCING_TECH_TABS: Array<{ value: SequencingTechTab; label: string }> = [
+  { value: "platforms", label: "Platforms" },
+  { value: "devices", label: "Devices" },
+  { value: "accessories", label: "Accessories" },
+];
+
 export default function SequencingTechPage() {
   const { enabled: moduleEnabled } = useModule("sequencing-tech");
   const { loading: moduleLoading } = useModules();
+  const [activeTab, setActiveTab] = useState<SequencingTechTab>("platforms");
   const [config, setConfig] = useState<SequencingTechConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -638,7 +647,7 @@ export default function SequencingTechPage() {
               <div>
                 <h3 className="font-medium">Module Not Enabled</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Enable the "Sequencing Technologies" module in{" "}
+                  Enable the &quot;Sequencing Technologies&quot; module in{" "}
                   <a href="/admin/modules" className="text-primary hover:underline">
                     Modules
                   </a>{" "}
@@ -653,78 +662,90 @@ export default function SequencingTechPage() {
   }
 
   return (
-    <PageContainer>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Dna className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">Sequencing Technologies</h1>
-              <p className="text-muted-foreground">
-                Configure available sequencing platforms for your facility
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCheckUpdates}
-              disabled={checkingUpdates}
-            >
-              {checkingUpdates ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
-              )}
-              Check for Updates
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setResetDialogOpen(true)}
-              disabled={resetting}
-            >
-              {resetting ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RotateCcw className="h-4 w-4 mr-2" />
-              )}
-              Reset to Defaults
-            </Button>
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as SequencingTechTab)}
+      className="gap-0"
+    >
+      <div className="sticky top-0 z-30 border-b border-border bg-card">
+        <div className="flex h-[52px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+          <span className="text-sm font-medium whitespace-nowrap">Sequencing Tech</span>
+
+          <div className="flex flex-1 justify-center overflow-x-auto">
+            <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
+              {SEQUENCING_TECH_TABS.map((tab) => (
+                <TabsTrigger
+                  key={tab.value}
+                  value={tab.value}
+                  className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                >
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
         </div>
+      </div>
 
-        {updateNotice && (
-          <div
-            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${updateNoticeStyles[updateNotice.tone]}`}
-          >
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              <span>{updateNotice.message}</span>
+      <PageContainer>
+        <div className="space-y-8">
+          <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <h1 className="text-xl font-semibold">Sequencing Technologies</h1>
+              <p className="text-sm text-muted-foreground">
+                Configure available sequencing platforms for your facility.
+              </p>
             </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setUpdateNotice(null)}
-              aria-label="Dismiss update status"
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCheckUpdates}
+                disabled={checkingUpdates}
+              >
+                {checkingUpdates ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                )}
+                Check for Updates
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setResetDialogOpen(true)}
+                disabled={resetting}
+              >
+                {resetting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                )}
+                Reset to Defaults
+              </Button>
+            </div>
           </div>
-        )}
 
-        <Tabs defaultValue="platforms" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="platforms">Platforms</TabsTrigger>
-            <TabsTrigger value="devices">Devices</TabsTrigger>
-            <TabsTrigger value="accessories">Accessories</TabsTrigger>
-          </TabsList>
+          {updateNotice && (
+            <div
+              className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${updateNoticeStyles[updateNotice.tone]}`}
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                <span>{updateNotice.message}</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setUpdateNotice(null)}
+                aria-label="Dismiss update status"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
 
-          <TabsContent value="platforms" className="space-y-3 mt-0">
+          <TabsContent value="platforms" className="m-0 space-y-3">
             <div className="space-y-3">
               {technologies.map((tech) => {
                 const isExpanded = expandedIds.has(tech.id);
@@ -1423,7 +1444,6 @@ export default function SequencingTechPage() {
               </TabsContent>
             </Tabs>
           </TabsContent>
-        </Tabs>
 
         {/* Save Button */}
         <div className="flex justify-end gap-3 pt-4 border-t">
@@ -2642,5 +2662,6 @@ export default function SequencingTechPage() {
         </DialogContent>
       </Dialog>
     </PageContainer>
+    </Tabs>
   );
 }
