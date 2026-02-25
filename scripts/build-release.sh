@@ -12,6 +12,10 @@ Options:
   --skip-build    Skip `npm run build` (use existing .next/standalone)
   --offline-fonts Generate mocked Google Fonts data for offline builds
   --webpack       Build with webpack instead of Turbopack
+
+Environment:
+  SEQDESK_PRIVATE_PIPELINES   Comma-separated package IDs to exclude from public release
+                              tarballs (default: metaxpath)
 EOF
 }
 
@@ -19,6 +23,7 @@ VERSION=""
 SKIP_BUILD=0
 OFFLINE_FONTS=0
 USE_WEBPACK=0
+PRIVATE_PIPELINES="${SEQDESK_PRIVATE_PIPELINES:-metaxpath}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -134,6 +139,21 @@ for item in public prisma pipelines seqdesk.config.example.json package-lock.jso
   fi
 done
 
+if [[ -d "${RELEASE_DIR}/pipelines" && -n "${PRIVATE_PIPELINES}" ]]; then
+  IFS=',' read -r -a private_pipeline_list <<< "${PRIVATE_PIPELINES}"
+  for pipeline in "${private_pipeline_list[@]}"; do
+    pipeline="${pipeline#"${pipeline%%[![:space:]]*}"}"
+    pipeline="${pipeline%"${pipeline##*[![:space:]]}"}"
+    if [[ -z "${pipeline}" ]]; then
+      continue
+    fi
+    if [[ -d "${RELEASE_DIR}/pipelines/${pipeline}" ]]; then
+      echo "Excluding private pipeline from public release: ${pipeline}"
+      rm -rf "${RELEASE_DIR}/pipelines/${pipeline}"
+    fi
+  done
+fi
+
 # Remove any database files from the release (CRITICAL: prevents data loss on update)
 echo "Removing database files from release..."
 rm -f "${RELEASE_DIR}/prisma/dev.db" "${RELEASE_DIR}/prisma/dev.db-wal" "${RELEASE_DIR}/prisma/dev.db-shm" "${RELEASE_DIR}/prisma/dev.db-journal"
@@ -142,6 +162,12 @@ rm -f "${RELEASE_DIR}/prisma/"*.db "${RELEASE_DIR}/prisma/"*.db-*
 if [[ -f "${ROOT_DIR}/scripts/install-wizard.mjs" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp "${ROOT_DIR}/scripts/install-wizard.mjs" "${RELEASE_DIR}/scripts/"
+fi
+
+if [[ -f "${ROOT_DIR}/scripts/install-private-metaxpath.sh" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/install-private-metaxpath.sh" "${RELEASE_DIR}/scripts/"
+  chmod +x "${RELEASE_DIR}/scripts/install-private-metaxpath.sh"
 fi
 
 mkdir -p "${RELEASE_DIR}/data"
