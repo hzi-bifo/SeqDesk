@@ -186,12 +186,27 @@ interface StorePipeline {
   author?: string;
   downloads?: number;
   icon?: string;
+  isPrivate?: boolean;
+  licenseRequired?: boolean;
+  privateInstall?: {
+    requiresKey?: boolean;
+    packageUrlDefault?: string;
+    keyLabel?: string;
+  };
 }
 
 interface StoreCategory {
   id: string;
   name: string;
   description?: string;
+}
+
+interface PrivateInstallTarget {
+  pipelineId: string;
+  name: string;
+  version?: string;
+  packageUrlDefault?: string;
+  keyLabel?: string;
 }
 
 function getPipelineIcon(icon: string) {
@@ -232,6 +247,12 @@ function getCategoryColor(category: string): string {
     default:
       return "bg-gray-100 text-gray-700 border-gray-200";
   }
+}
+
+function isPrivateStorePipeline(pipeline?: StorePipeline | null): boolean {
+  if (!pipeline) return false;
+  if (pipeline.isPrivate === true || pipeline.licenseRequired === true) return true;
+  return pipeline.privateInstall?.requiresKey === true;
 }
 
 interface MetadataHint {
@@ -349,6 +370,13 @@ export default function PipelineSettingsPage() {
   const [installingPipeline, setInstallingPipeline] = useState<string | null>(null);
   const [installAction, setInstallAction] = useState<"install" | "update" | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [privateInstallDialogOpen, setPrivateInstallDialogOpen] = useState(false);
+  const [privateInstallTarget, setPrivateInstallTarget] = useState<PrivateInstallTarget | null>(null);
+  const [privateInstallMode, setPrivateInstallMode] = useState<"install" | "update">("install");
+  const [privatePackageUrl, setPrivatePackageUrl] = useState("");
+  const [privateAccessKey, setPrivateAccessKey] = useState("");
+  const [privateSha256, setPrivateSha256] = useState("");
+  const [privateInstallError, setPrivateInstallError] = useState<string | null>(null);
   const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
   const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -417,6 +445,73 @@ export default function PipelineSettingsPage() {
       unitIndex += 1;
     }
     return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
+  };
+
+  const openPrivateInstallDialog = (
+    target: PrivateInstallTarget,
+    mode: "install" | "update"
+  ) => {
+    setPrivateInstallTarget(target);
+    setPrivateInstallMode(mode);
+    setPrivatePackageUrl(target.packageUrlDefault || "");
+    setPrivateAccessKey("");
+    setPrivateSha256("");
+    setPrivateInstallError(null);
+    setPrivateInstallDialogOpen(true);
+  };
+
+  const handlePrivateInstallPipeline = async () => {
+    if (!privateInstallTarget) return;
+
+    const packageUrl = privatePackageUrl.trim();
+    const accessKey = privateAccessKey.trim();
+    const sha256 = privateSha256.trim();
+
+    if (!packageUrl || !accessKey) {
+      setPrivateInstallError("Package URL and access key are required.");
+      return;
+    }
+
+    setInstallingPipeline(privateInstallTarget.pipelineId);
+    setInstallAction(privateInstallMode);
+    setInstallError(null);
+    setPrivateInstallError(null);
+
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: privateInstallTarget.pipelineId,
+          version: privateInstallTarget.version,
+          replace: privateInstallMode === "update",
+          privatePackageUrl: packageUrl,
+          privateAccessKey: accessKey,
+          privateSha256: sha256 || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const message = data?.details || data?.error || "Private package installation failed";
+        setPrivateInstallError(message);
+        setInstallError(message);
+        return;
+      }
+
+      setPrivateInstallDialogOpen(false);
+      setPrivateInstallTarget(null);
+      setPrivateAccessKey("");
+      setPrivateSha256("");
+      await Promise.all([mutate(), mutateStore()]);
+    } catch (err) {
+      const message = "Private package installation failed. Check logs for details.";
+      setPrivateInstallError(message);
+      setInstallError(message);
+      console.error("Private install error:", err);
+    } finally {
+      setInstallingPipeline(null);
+      setInstallAction(null);
+    }
   };
 
   // Install a pipeline from the store
@@ -896,6 +991,16 @@ export default function PipelineSettingsPage() {
                 <GlassCard key={pipeline.pipelineId} className="relative">
                   {(() => {
                     const storeEntry = storePipelineMap.get(pipeline.pipelineId);
+                    const privateStorePipeline = isPrivateStorePipeline(storeEntry);
+                    const privateInstallTargetData: PrivateInstallTarget | null = privateStorePipeline
+                      ? {
+                          pipelineId: pipeline.pipelineId,
+                          name: pipeline.name,
+                          version: storeEntry?.latestVersion || pipeline.version,
+                          packageUrlDefault: storeEntry?.privateInstall?.packageUrlDefault,
+                          keyLabel: storeEntry?.privateInstall?.keyLabel,
+                        }
+                      : null;
                     const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
                     const updateAvailable =
                       latestVersion &&
@@ -960,6 +1065,11 @@ export default function PipelineSettingsPage() {
                                 >
                                   {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
+                                {privateStorePipeline && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Private license
+                                  </Badge>
+                                )}
                                 {codeStatus === "downloaded" && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     Pipeline cached
@@ -1025,16 +1135,21 @@ export default function PipelineSettingsPage() {
                               <p className="text-xs text-muted-foreground font-mono mt-1">
                                 {pipeline.pipelineId}
                               </p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {latestVersion
-                                  ? `Latest version: v${latestVersion}`
-                                  : "Latest version: unknown"}
-                              </p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {codeStatus === "downloaded"
-                                  ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
-                                  : codeStatus === "missing"
-                                    ? "Pipeline cache: not downloaded"
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {latestVersion
+                                    ? `Latest version: v${latestVersion}`
+                                    : "Latest version: unknown"}
+                                </p>
+                                {privateStorePipeline && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Package install requires a private access key.
+                                  </p>
+                                )}
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {codeStatus === "downloaded"
+                                    ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
+                                    : codeStatus === "missing"
+                                      ? "Pipeline cache: not downloaded"
                                     : codeStatus === "unsupported"
                                       ? "Pipeline cache: managed externally"
                                       : "Pipeline cache: unknown"}
@@ -1181,7 +1296,7 @@ export default function PipelineSettingsPage() {
                                 </Button>
                               );
                             })}
-                            {updateAvailable && (
+                            {updateAvailable && !privateStorePipeline && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1197,6 +1312,24 @@ export default function PipelineSettingsPage() {
                                 {installingPipeline === pipeline.pipelineId && installAction === "update"
                                   ? "Updating..."
                                   : "Update"}
+                              </Button>
+                            )}
+                            {privateStorePipeline && privateInstallTargetData && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openPrivateInstallDialog(privateInstallTargetData, "update")}
+                                className="h-8"
+                                disabled={installingPipeline === pipeline.pipelineId}
+                              >
+                                {installingPipeline === pipeline.pipelineId && installAction === "update" ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4 mr-1" />
+                                )}
+                                {installingPipeline === pipeline.pipelineId && installAction === "update"
+                                  ? "Updating..."
+                                  : "Reinstall package"}
                               </Button>
                             )}
                             <Button
@@ -1241,6 +1374,17 @@ export default function PipelineSettingsPage() {
 
               {availablePipelines.map((pipeline) => (
                 <GlassCard key={pipeline.id} className="relative">
+                  {(() => {
+                    const privateStorePipeline = isPrivateStorePipeline(pipeline);
+                    const privateTarget: PrivateInstallTarget = {
+                      pipelineId: pipeline.id,
+                      name: pipeline.name,
+                      version: pipeline.latestVersion || pipeline.version,
+                      packageUrlDefault: pipeline.privateInstall?.packageUrlDefault,
+                      keyLabel: pipeline.privateInstall?.keyLabel,
+                    };
+                    return (
+                      <>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-4">
                       <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
@@ -1255,6 +1399,11 @@ export default function PipelineSettingsPage() {
                           <Badge variant="secondary" className="text-xs">
                             Not installed
                           </Badge>
+                          {privateStorePipeline && (
+                            <Badge variant="secondary" className="text-xs">
+                              Private license
+                            </Badge>
+                          )}
                           <Badge variant="secondary" className="text-xs capitalize">
                             {pipeline.category}
                           </Badge>
@@ -1268,6 +1417,11 @@ export default function PipelineSettingsPage() {
                         <p className="text-xs text-muted-foreground mt-1">
                           by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
                         </p>
+                        {privateStorePipeline && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Installation requires package URL and private access key.
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1276,7 +1430,14 @@ export default function PipelineSettingsPage() {
                       variant="outline"
                       className="bg-white"
                       size="sm"
-                      onClick={() => handleInstallPipeline(pipeline.id, pipeline.latestVersion || pipeline.version)}
+                      onClick={() =>
+                        privateStorePipeline
+                          ? openPrivateInstallDialog(privateTarget, "install")
+                          : handleInstallPipeline(
+                              pipeline.id,
+                              pipeline.latestVersion || pipeline.version
+                            )
+                      }
                       disabled={installingPipeline === pipeline.id}
                     >
                       {installingPipeline === pipeline.id && installAction === "install" ? (
@@ -1284,9 +1445,16 @@ export default function PipelineSettingsPage() {
                       ) : (
                         <Download className="h-4 w-4 mr-2" />
                       )}
-                      {installingPipeline === pipeline.id && installAction === "install" ? "Installing..." : "Install"}
+                      {installingPipeline === pipeline.id && installAction === "install"
+                        ? "Installing..."
+                        : privateStorePipeline
+                          ? "Install (key required)"
+                          : "Install"}
                     </Button>
                   </div>
+                      </>
+                    );
+                  })()}
                 </GlassCard>
               ))}
             </div>
@@ -1307,6 +1475,96 @@ export default function PipelineSettingsPage() {
           )}
         </section>
       </div>
+
+      <Dialog
+        open={privateInstallDialogOpen}
+        onOpenChange={(open) => {
+          setPrivateInstallDialogOpen(open);
+          if (!open) {
+            setPrivateInstallError(null);
+            setPrivateAccessKey("");
+            setPrivateSha256("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg w-[94vw]">
+          <DialogHeader>
+            <DialogTitle>
+              {privateInstallMode === "update" ? "Reinstall private package" : "Install private package"}
+            </DialogTitle>
+            <DialogDescription>
+              {privateInstallTarget
+                ? `${privateInstallTarget.name} requires a private package URL and access key.`
+                : "Provide private package details."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="private-package-url">Package URL</Label>
+              <Input
+                id="private-package-url"
+                value={privatePackageUrl}
+                onChange={(event) => setPrivatePackageUrl(event.target.value)}
+                placeholder="https://host.example.org/metaxpath-0.1.0.tar.gz"
+                className="bg-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="private-access-key">
+                {privateInstallTarget?.keyLabel || `${privateInstallTarget?.name || "Pipeline"} access key`}
+              </Label>
+              <Input
+                id="private-access-key"
+                value={privateAccessKey}
+                onChange={(event) => setPrivateAccessKey(event.target.value)}
+                placeholder="Enter private access key"
+                className="bg-white"
+                type="password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="private-sha256">SHA256 checksum (optional)</Label>
+              <Input
+                id="private-sha256"
+                value={privateSha256}
+                onChange={(event) => setPrivateSha256(event.target.value)}
+                placeholder="Optional checksum verification"
+                className="bg-white"
+              />
+            </div>
+
+            {privateInstallError && (
+              <p className="text-sm text-destructive">{privateInstallError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPrivateInstallDialogOpen(false)}
+              disabled={installingPipeline === privateInstallTarget?.pipelineId}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handlePrivateInstallPipeline}
+              disabled={installingPipeline === privateInstallTarget?.pipelineId}
+            >
+              {installingPipeline === privateInstallTarget?.pipelineId && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              {installingPipeline === privateInstallTarget?.pipelineId
+                ? privateInstallMode === "update"
+                  ? "Updating..."
+                  : "Installing..."
+                : privateInstallMode === "update"
+                  ? "Update package"
+                  : "Install package"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Configuration Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>

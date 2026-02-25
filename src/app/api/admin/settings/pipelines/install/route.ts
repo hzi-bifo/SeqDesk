@@ -5,10 +5,16 @@ import fs from 'fs';
 import path from 'path';
 import { clearPackageCache } from '@/lib/pipelines/package-loader';
 import { clearRegistryCache } from '@/lib/pipelines/registry';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
 const STORE_BASE_URL = process.env.SEQDESK_PIPELINE_STORE_URL || 'https://seqdesk.com';
 const REGISTRY_URL =
   process.env.SEQDESK_PIPELINE_REGISTRY_URL || `${STORE_BASE_URL}/api/registry`;
+const PRIVATE_METAXPATH_ID = 'metaxpath';
+const DEFAULT_METAXPATH_PACKAGE_URL = 'https://www.seqdesk.com/private/metaxpath-0.1.0.tar.gz';
+
+const execFileAsync = promisify(execFile);
 
 interface RegistryPipeline {
   id: string;
@@ -22,6 +28,12 @@ interface StoreFileEntry {
   path: string;
   content: string;
   encoding?: string;
+}
+
+interface PrivateInstallRequest {
+  packageUrl?: string;
+  accessKey?: string;
+  sha256?: string;
 }
 
 async function fetchRegistry(): Promise<RegistryPipeline[]> {
@@ -51,6 +63,76 @@ function resolveDownloadUrl(
 
   const fallbackUrl = `${STORE_BASE_URL}/api/registry/pipelines/${pipeline.id}/${resolvedVersion}/download`;
   return { version: resolvedVersion, url: fallbackUrl };
+}
+
+function trimToUndefined(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getDefaultMetaxPathPackageUrl(): string | undefined {
+  return trimToUndefined(
+    process.env.SEQDESK_METAXPATH_PACKAGE_URL ||
+      process.env.METAXPATH_PACKAGE_URL ||
+      DEFAULT_METAXPATH_PACKAGE_URL
+  );
+}
+
+async function installPrivateMetaxPathPackage(
+  opts: PrivateInstallRequest & { replace: boolean }
+): Promise<{ source: string; installedVersion?: string }> {
+  const packageUrl = trimToUndefined(opts.packageUrl) || getDefaultMetaxPathPackageUrl();
+  const accessKey = trimToUndefined(opts.accessKey);
+  const sha256 = trimToUndefined(opts.sha256);
+
+  if (!packageUrl || !accessKey) {
+    throw new Error('MetaxPath install requires both package URL and access key.');
+  }
+
+  const scriptPath = path.join(process.cwd(), 'scripts', 'install-private-metaxpath.sh');
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error('Missing scripts/install-private-metaxpath.sh in SeqDesk installation.');
+  }
+
+  const args = ['--url', packageUrl, '--token', accessKey, '--dir', process.cwd()];
+  if (sha256) {
+    args.push('--sha256', sha256);
+  }
+  if (!opts.replace) {
+    args.push('--keep-existing');
+  }
+
+  try {
+    await execFileAsync(scriptPath, args, { maxBuffer: 10 * 1024 * 1024 });
+  } catch (error) {
+    const details =
+      typeof error === 'object' &&
+      error !== null &&
+      'stderr' in error &&
+      typeof (error as { stderr?: string }).stderr === 'string' &&
+      (error as { stderr?: string }).stderr
+        ? (error as { stderr: string }).stderr.trim()
+        : error instanceof Error
+          ? error.message
+          : 'Unknown installation error';
+    throw new Error(details);
+  }
+
+  const manifestPath = path.join(process.cwd(), 'pipelines', PRIVATE_METAXPATH_ID, 'manifest.json');
+  let installedVersion: string | undefined;
+  try {
+    const manifestRaw = await fs.promises.readFile(manifestPath, 'utf8');
+    const manifest = JSON.parse(manifestRaw) as { package?: { version?: string } };
+    installedVersion = trimToUndefined(manifest?.package?.version);
+  } catch {
+    installedVersion = undefined;
+  }
+
+  return {
+    source: packageUrl,
+    installedVersion,
+  };
 }
 
 function resolveStorePath(baseDir: string, relativePath: string): string {
@@ -149,10 +231,53 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { pipelineId, version, replace } = body || {};
+    const {
+      pipelineId,
+      version,
+      replace,
+      privatePackageUrl,
+      privateAccessKey,
+      privateSha256,
+    } = body || {};
 
     if (!pipelineId || typeof pipelineId !== 'string') {
       return NextResponse.json({ error: 'Pipeline ID required' }, { status: 400 });
+    }
+
+    if (pipelineId === PRIVATE_METAXPATH_ID) {
+      const pipelinesDir = path.join(process.cwd(), 'pipelines');
+      const pipelineDir = path.join(pipelinesDir, pipelineId);
+      const exists = fs.existsSync(pipelineDir);
+      const replaceExisting = replace === true;
+
+      try {
+        const privateInstall = await installPrivateMetaxPathPackage({
+          packageUrl: privatePackageUrl,
+          accessKey: privateAccessKey,
+          sha256: privateSha256,
+          replace: replaceExisting,
+        });
+
+        clearPackageCache();
+        clearRegistryCache();
+
+        return NextResponse.json({
+          success: true,
+          message: `Pipeline ${pipelineId} ${exists ? 'updated' : 'installed'} successfully`,
+          pipelineId,
+          version: privateInstall.installedVersion || version || 'unknown',
+          source: privateInstall.source,
+          action: exists ? 'update' : 'install',
+          privateInstall: true,
+        });
+      } catch (error) {
+        const details = error instanceof Error ? error.message : 'Unknown error';
+        const status = /requires both package URL and access key/i.test(details) ? 400 : 500;
+        return NextResponse.json(
+          { error: 'Failed to install private MetaxPath package', details },
+          { status }
+        );
+      }
     }
 
     const registry = await fetchRegistry();
