@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, use, useMemo } from "react";
+import { useState, useEffect, useCallback, use, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -205,6 +205,7 @@ export default function StudyDetailPage({
   // Notes state
   const [notesContent, setNotesContent] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
+  const lastServerNotesRef = useRef("");
 
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -285,12 +286,18 @@ export default function StudyDetailPage({
     void fetchStudy();
   }, [fetchStudy]);
 
-  // Sync notes content when study loads
+  // Sync notes content when server notes change, but do not clobber local unsaved edits.
   useEffect(() => {
-    if (study) {
-      setNotesContent(study.notes ?? "");
+    if (!study) return;
+    const incomingNotes = study.notes ?? "";
+    const hasUnsavedLocalChanges = notesContent !== lastServerNotesRef.current;
+
+    if (!hasUnsavedLocalChanges) {
+      setNotesContent(incomingNotes);
     }
-  }, [study?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    lastServerNotesRef.current = incomingNotes;
+  }, [study, notesContent]);
 
   const handleSaveNotes = async () => {
     if (!study) return;

@@ -340,7 +340,38 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { title, description, alias, checklistType, studyMetadata, readyForSubmission, notes } = body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+
+    const { title, description, alias, checklistType, studyMetadata, readyForSubmission, notes } = body as {
+      title?: unknown;
+      description?: unknown;
+      alias?: unknown;
+      checklistType?: unknown;
+      studyMetadata?: unknown;
+      readyForSubmission?: unknown;
+      notes?: unknown;
+    };
+
+    if (title !== undefined && typeof title !== "string") {
+      return NextResponse.json({ error: "Title must be a string" }, { status: 400 });
+    }
+    if (description !== undefined && description !== null && typeof description !== "string") {
+      return NextResponse.json({ error: "Description must be a string or null" }, { status: 400 });
+    }
+    if (alias !== undefined && alias !== null && typeof alias !== "string") {
+      return NextResponse.json({ error: "Alias must be a string or null" }, { status: 400 });
+    }
+    if (checklistType !== undefined && checklistType !== null && typeof checklistType !== "string") {
+      return NextResponse.json({ error: "Checklist type must be a string or null" }, { status: 400 });
+    }
+    if (readyForSubmission !== undefined && typeof readyForSubmission !== "boolean") {
+      return NextResponse.json({ error: "readyForSubmission must be a boolean" }, { status: 400 });
+    }
+    if (notes !== undefined && notes !== null && typeof notes !== "string") {
+      return NextResponse.json({ error: "Notes must be a string or null" }, { status: 400 });
+    }
 
     // Check study exists and ownership
     const existing = await db.study.findUnique({
@@ -360,9 +391,9 @@ export async function PUT(
     // Build update data
     const updateData: Record<string, unknown> = {};
 
-    if (title !== undefined) updateData.title = title?.trim() || undefined;
-    if (description !== undefined) updateData.description = description?.trim() || null;
-    if (alias !== undefined) updateData.alias = alias?.trim() || null;
+    if (typeof title === "string") updateData.title = title.trim() || undefined;
+    if (description !== undefined) updateData.description = typeof description === "string" ? description.trim() || null : null;
+    if (alias !== undefined) updateData.alias = typeof alias === "string" ? alias.trim() || null : null;
     if (checklistType !== undefined) updateData.checklistType = checklistType;
     if (studyMetadata !== undefined) {
       updateData.studyMetadata = typeof studyMetadata === 'string'
