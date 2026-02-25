@@ -25,6 +25,7 @@
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
+#   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_CORES=4     - Optional pipeline execution override
@@ -74,6 +75,7 @@ SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
+SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
 SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
@@ -92,6 +94,8 @@ SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256
 PM2_CONFIGURED="false"
 PM2_STARTUP_ENABLED="false"
 PM2_PROCESS_EXISTS="false"
+PM2_BIN=""
+PM2_DISPLAY_CMD="pm2"
 
 MIN_NODE_VERSION=18
 INSTALL_START_TS=$(date +%s)
@@ -137,6 +141,45 @@ is_truthy() {
         1|true|TRUE|yes|YES|y|Y) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+update_pm2_display_cmd() {
+    case "$PM2_BIN" in
+        pm2)
+            PM2_DISPLAY_CMD="pm2"
+            ;;
+        */node_modules/.bin/pm2|./node_modules/.bin/pm2)
+            PM2_DISPLAY_CMD="./node_modules/.bin/pm2"
+            ;;
+        *)
+            PM2_DISPLAY_CMD="$PM2_BIN"
+            ;;
+    esac
+}
+
+resolve_pm2_bin() {
+    if command_exists pm2; then
+        PM2_BIN="pm2"
+        update_pm2_display_cmd
+        return 0
+    fi
+
+    if [ -x "./node_modules/.bin/pm2" ]; then
+        PM2_BIN="./node_modules/.bin/pm2"
+        update_pm2_display_cmd
+        return 0
+    fi
+
+    PM2_BIN=""
+    PM2_DISPLAY_CMD="pm2"
+    return 1
+}
+
+pm2_exec() {
+    if [ -z "$PM2_BIN" ] && ! resolve_pm2_bin; then
+        return 127
+    fi
+    "$PM2_BIN" "$@"
 }
 
 read_input() {
@@ -229,12 +272,14 @@ Options:
   --use-pm2                    Enable PM2 auto-restart setup
   --no-pm2                     Disable PM2 setup
   --reconfigure                Reconfigure an existing install in place
+  --reseed-db                  Force DB push + seed (default off for --reconfigure)
   -h, --help                   Show this help
 
 Examples:
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
+  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
 EOF
 }
 
@@ -350,6 +395,9 @@ parse_args() {
                 ;;
             --reconfigure)
                 SEQDESK_RECONFIGURE="1"
+                ;;
+            --reseed-db|--reseed_db)
+                SEQDESK_RESEED_DB="1"
                 ;;
             -h|--help)
                 print_usage
@@ -1615,6 +1663,24 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
     load_existing_install_values "$SEQDESK_DIR"
 fi
 
+if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+    SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH/#\~/$HOME}"
+fi
+
+CONDA_BIN_FROM_PATH=""
+if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+    for candidate in "$SEQDESK_EXEC_CONDA_PATH/condabin/conda" "$SEQDESK_EXEC_CONDA_PATH/bin/conda"; do
+        if [ -x "$candidate" ]; then
+            CONDA_BIN_FROM_PATH="$candidate"
+            break
+        fi
+    done
+    if [ -n "$CONDA_BIN_FROM_PATH" ]; then
+        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
+        print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
+    fi
+fi
+
 # Pipeline support
 print_step "Pipeline support"
 
@@ -1629,8 +1695,13 @@ elif is_truthy "$SEQDESK_WITH_CONDA"; then
     PIPELINES_ENABLED="true"
 fi
 
+HAS_CONDA="false"
+if [ -n "$CONDA_BIN_FROM_PATH" ] || command_exists conda; then
+    HAS_CONDA="true"
+fi
+
 if [ -z "$PIPELINES_ENABLED" ]; then
-    if command_exists conda; then
+    if [ "$HAS_CONDA" = "true" ]; then
         prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
     else
         prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
@@ -1645,7 +1716,7 @@ fi
 
 print_preflight_summary
 
-if [ "$PIPELINES_ENABLED" = "true" ] && ! command_exists conda; then
+if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Installing Miniconda"
 
     CONDA_INSTALLER="Miniconda3-latest-Linux-x86_64.sh"
@@ -1660,17 +1731,59 @@ if [ "$PIPELINES_ENABLED" = "true" ] && ! command_exists conda; then
     print_info "Downloading Miniconda..."
     curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
 
-    print_info "Installing Miniconda to ~/miniconda3..."
-    bash /tmp/miniconda.sh -b -p "$HOME/miniconda3"
+    CONDA_INSTALL_BASE="${SEQDESK_EXEC_CONDA_PATH:-$HOME/miniconda3}"
+    print_info "Installing Miniconda to $CONDA_INSTALL_BASE..."
+    bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
     rm /tmp/miniconda.sh
 
-    "$HOME/miniconda3/bin/conda" init bash 2>/dev/null || true
-    "$HOME/miniconda3/bin/conda" init zsh 2>/dev/null || true
+    CONDA_INIT_BIN=""
+    for candidate in "$CONDA_INSTALL_BASE/condabin/conda" "$CONDA_INSTALL_BASE/bin/conda"; do
+        if [ -x "$candidate" ]; then
+            CONDA_INIT_BIN="$candidate"
+            break
+        fi
+    done
+    if [ -z "$CONDA_INIT_BIN" ]; then
+        print_error "Miniconda install completed but conda binary was not found under $CONDA_INSTALL_BASE."
+        exit 1
+    fi
 
-    export PATH="$HOME/miniconda3/bin:$PATH"
+    CURRENT_SHELL="$(basename "${SHELL:-}")"
+    INIT_SHELLS=()
+    case "$CURRENT_SHELL" in
+        bash|zsh) INIT_SHELLS+=("$CURRENT_SHELL") ;;
+    esac
+    for default_shell in bash zsh; do
+        already_added="false"
+        for init_shell in "${INIT_SHELLS[@]}"; do
+            if [ "$init_shell" = "$default_shell" ]; then
+                already_added="true"
+                break
+            fi
+        done
+        if [ "$already_added" != "true" ]; then
+            INIT_SHELLS+=("$default_shell")
+        fi
+    done
+    for init_shell in "${INIT_SHELLS[@]}"; do
+        "$CONDA_INIT_BIN" init "$init_shell" 2>/dev/null || true
+    done
 
-    print_success "Miniconda installed to ~/miniconda3"
-    print_warning "Please restart your shell or run: source ~/.bashrc"
+    export PATH="$CONDA_INSTALL_BASE/bin:$PATH"
+    HAS_CONDA="true"
+
+    print_success "Miniconda installed to $CONDA_INSTALL_BASE"
+    case "$CURRENT_SHELL" in
+        zsh)
+            print_warning "Please restart your shell or run: source ~/.zshrc"
+            ;;
+        bash)
+            print_warning "Please restart your shell or run: source ~/.bashrc"
+            ;;
+        *)
+            print_warning "Please restart your shell. If needed, run: $CONDA_INIT_BIN init \"$CURRENT_SHELL\""
+            ;;
+    esac
 fi
 
 # Download
@@ -1866,57 +1979,79 @@ set_env_var "PORT" "$SEQDESK_PORT"
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 
 # Initialize database
-print_info "Initializing database..."
-PRISMA_CLI="./node_modules/.bin/prisma"
-PRISMA_VERSION=""
-PRISMA_SKIP_GENERATE=""
-if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
-    PRISMA_SKIP_GENERATE="--skip-generate"
-fi
-if command_exists node && [ -f package.json ]; then
-    PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
-    PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
-fi
-if [ -x "$PRISMA_CLI" ]; then
-    "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
-else
-    if [ -n "$PRISMA_VERSION" ]; then
-        print_info "Using Prisma CLI v$PRISMA_VERSION"
-        npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
-    else
-        npx prisma db push $PRISMA_SKIP_GENERATE
-    fi
-fi
-print_info "Seeding initial data..."
-ensure_seed_dependency "bcryptjs" || true
 SEED_OK="false"
-if [ -x "$PRISMA_CLI" ]; then
-    if "$PRISMA_CLI" db seed; then
-        SEED_OK="true"
-    fi
-elif [ -n "$PRISMA_VERSION" ]; then
-    print_info "Using Prisma CLI v$PRISMA_VERSION for seeding"
-    if npx prisma@"$PRISMA_VERSION" db seed; then
-        SEED_OK="true"
-    fi
+DB_INIT_SKIPPED="false"
+if is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_RESEED_DB"; then
+    DB_INIT_SKIPPED="true"
+    print_info "Reconfigure mode: skipping database push/seed to preserve existing data."
+    print_info "Use --reseed-db (or SEQDESK_RESEED_DB=1) to run DB push + seed explicitly."
 else
-    if npx prisma db seed; then
-        SEED_OK="true"
+    if is_truthy "$SEQDESK_RECONFIGURE" && is_truthy "$SEQDESK_RESEED_DB"; then
+        print_warning "Reconfigure mode with --reseed-db: running DB push + seed on existing database."
+    fi
+    print_info "Initializing database..."
+    PRISMA_CLI="./node_modules/.bin/prisma"
+    PRISMA_VERSION=""
+    PRISMA_SKIP_GENERATE=""
+    if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
+        PRISMA_SKIP_GENERATE="--skip-generate"
+    fi
+    if command_exists node && [ -f package.json ]; then
+        PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
+        PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
+    fi
+    if [ -x "$PRISMA_CLI" ]; then
+        "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
+    else
+        if [ -n "$PRISMA_VERSION" ]; then
+            print_info "Using Prisma CLI v$PRISMA_VERSION"
+            npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
+        else
+            npx prisma db push $PRISMA_SKIP_GENERATE
+        fi
+    fi
+    print_info "Seeding initial data..."
+    ensure_seed_dependency "bcryptjs" || true
+    if [ -x "$PRISMA_CLI" ]; then
+        if "$PRISMA_CLI" db seed; then
+            SEED_OK="true"
+        fi
+    elif [ -n "$PRISMA_VERSION" ]; then
+        print_info "Using Prisma CLI v$PRISMA_VERSION for seeding"
+        if npx prisma@"$PRISMA_VERSION" db seed; then
+            SEED_OK="true"
+        fi
+    else
+        if npx prisma db seed; then
+            SEED_OK="true"
+        fi
+    fi
+
+    # Fallback: run seed.mjs directly if prisma db seed failed
+    if [ "$SEED_OK" = "false" ]; then
+        print_info "Prisma seed command failed, trying direct seed..."
+        if [ -f prisma/seed.mjs ] && node prisma/seed.mjs; then
+            SEED_OK="true"
+        elif [ -f prisma/seed.js ] && node prisma/seed.js; then
+            SEED_OK="true"
+        fi
     fi
 fi
-# Fallback: run seed.mjs directly if prisma db seed failed
-if [ "$SEED_OK" = "false" ]; then
-    print_info "Prisma seed command failed, trying direct seed..."
-    if [ -f prisma/seed.mjs ] && node prisma/seed.mjs; then
-        SEED_OK="true"
-    elif [ -f prisma/seed.js ] && node prisma/seed.js; then
-        SEED_OK="true"
-    fi
-fi
-if [ "$SEED_OK" = "true" ]; then
+
+if [ "$DB_INIT_SKIPPED" = "true" ]; then
+    print_info "Database unchanged."
+elif [ "$SEED_OK" = "true" ]; then
     print_success "Database initialized"
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        print_info "Reconfigure mode: existing user accounts were kept."
+    else
+        print_info "Default users available: admin@example.com/admin and user@example.com/user"
+    fi
 else
     print_info "Seed did not complete during install -- the app will auto-seed on first launch"
+    if ! is_truthy "$SEQDESK_RECONFIGURE"; then
+        print_info "Default users after first launch: admin@example.com/admin and user@example.com/user"
+    fi
 fi
 
 if has_infrastructure_overrides; then
@@ -1937,6 +2072,9 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
         --data-path "${SEQDESK_DATA_PATH:-./data}"
         --run-dir "${SEQDESK_RUN_DIR:-./pipeline_runs}"
     )
+    if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+        setup_args+=(--conda-path "$SEQDESK_EXEC_CONDA_PATH")
+    fi
     ./scripts/setup-conda-env.sh "${setup_args[@]}"
 else
     print_info "Skipped pipeline environment setup"
@@ -1948,7 +2086,7 @@ print_step "Process manager"
 
 if [ -z "$SEQDESK_USE_PM2" ]; then
     if is_truthy "$SEQDESK_RECONFIGURE"; then
-        if command_exists pm2 && pm2 describe seqdesk >/dev/null 2>&1; then
+        if resolve_pm2_bin && pm2_exec describe seqdesk >/dev/null 2>&1; then
             PM2_PROCESS_EXISTS="true"
             SEQDESK_USE_PM2="1"
             print_info "Detected existing PM2 process 'seqdesk'; it will be restarted."
@@ -1962,46 +2100,57 @@ if [ -z "$SEQDESK_USE_PM2" ]; then
 fi
 
 if is_truthy "$SEQDESK_USE_PM2"; then
-    if ! command_exists pm2; then
-        print_info "Installing PM2 (requires npm)..."
+    if ! resolve_pm2_bin; then
+        print_info "Installing PM2 globally (may require writable npm global prefix)..."
         if npm install -g pm2; then
-            print_success "PM2 installed"
+            print_success "PM2 installed globally"
+            resolve_pm2_bin || true
         else
-            print_warning "PM2 install failed. You may need to run: npm install -g pm2"
+            print_warning "Global PM2 install failed. Trying local PM2 install (no sudo required)..."
+            if npm install --no-save pm2; then
+                if resolve_pm2_bin; then
+                    print_success "PM2 installed locally at ./node_modules/.bin/pm2"
+                else
+                    print_warning "PM2 install finished but PM2 binary was not found in PATH or local node_modules."
+                fi
+            else
+                print_warning "Local PM2 install failed. Manual fallback: npm install --no-save pm2"
+            fi
         fi
     fi
 
-    if command_exists pm2; then
-        if [ "$PM2_PROCESS_EXISTS" != "true" ] && pm2 describe seqdesk >/dev/null 2>&1; then
+    if resolve_pm2_bin; then
+        print_info "Using PM2 command: $PM2_DISPLAY_CMD"
+        if [ "$PM2_PROCESS_EXISTS" != "true" ] && pm2_exec describe seqdesk >/dev/null 2>&1; then
             PM2_PROCESS_EXISTS="true"
         fi
 
         if [ "$PM2_PROCESS_EXISTS" = "true" ]; then
             print_info "Restarting existing SeqDesk PM2 process..."
-            if pm2 restart seqdesk; then
+            if pm2_exec restart seqdesk; then
                 PM2_CONFIGURED="true"
-                pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
+                pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
                 print_success "PM2 process restarted"
             else
-                print_warning "PM2 failed to restart seqdesk. You can restart manually with: pm2 restart seqdesk"
+                print_warning "PM2 failed to restart seqdesk. You can restart manually with: $PM2_DISPLAY_CMD restart seqdesk"
             fi
         else
             print_info "Starting SeqDesk with PM2..."
-            if pm2 start "$SEQDESK_DIR/start.sh" --name seqdesk; then
+            if pm2_exec start "$SEQDESK_DIR/start.sh" --name seqdesk; then
                 PM2_CONFIGURED="true"
-                pm2 save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: pm2 save)"
-                if pm2 startup >/dev/null 2>&1; then
+                pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
+                if pm2_exec startup >/dev/null 2>&1; then
                     PM2_STARTUP_ENABLED="true"
                 else
-                    print_warning "PM2 boot startup is not enabled yet. Run: pm2 startup"
+                    print_warning "PM2 boot startup is not enabled yet. Run: $PM2_DISPLAY_CMD startup"
                 fi
                 print_success "PM2 configured for auto-restart"
             else
-                print_warning "PM2 failed to start SeqDesk. You can start manually with ./start.sh"
+                print_warning "PM2 failed to start SeqDesk. You can start manually with: $PM2_DISPLAY_CMD start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
             fi
         fi
     else
-        print_warning "PM2 not available. You can start manually with ./start.sh"
+        print_warning "PM2 is not available. You can start manually with ./start.sh, or set up systemd."
     fi
 else
     print_info "Skipping PM2 setup"
@@ -2050,23 +2199,23 @@ fi
 echo ""
 if [ "$PM2_CONFIGURED" = "true" ]; then
     echo "SeqDesk is running under PM2."
-    echo "  pm2 status"
-    echo "  pm2 logs seqdesk"
-    echo "  pm2 restart seqdesk"
+    echo "  $PM2_DISPLAY_CMD status"
+    echo "  $PM2_DISPLAY_CMD logs seqdesk"
+    echo "  $PM2_DISPLAY_CMD restart seqdesk"
     echo ""
     echo "Recommended run mode:"
     echo "  Keep SeqDesk running under PM2."
     echo "  ./start.sh is manual/foreground mode and does not provide PM2 restart behavior."
     echo ""
     echo "If the PM2 process was removed (for example with 'pm2 delete'):"
-    echo "  pm2 start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
-    echo "  pm2 save"
+    echo "  $PM2_DISPLAY_CMD start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
+    echo "  $PM2_DISPLAY_CMD save"
     if [ "$PM2_STARTUP_ENABLED" != "true" ]; then
         echo ""
         echo "Enable PM2 on reboot (one-time):"
-        echo "  pm2 startup"
+        echo "  $PM2_DISPLAY_CMD startup"
         echo "  # then run the sudo command printed by pm2 startup"
-        echo "  pm2 save"
+        echo "  $PM2_DISPLAY_CMD save"
     fi
 else
     echo "To start SeqDesk manually:"
@@ -2080,9 +2229,14 @@ fi
 echo ""
 echo "Open http://localhost:${SEQDESK_PORT:-8000}"
 echo ""
-echo "Default login:"
-echo "  Email:    admin@example.com"
-echo "  Password: admin"
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    echo "Login:"
+    echo "  Existing user accounts are unchanged (reconfigure mode)."
+else
+    echo "Default login:"
+    echo "  Admin:      admin@example.com / admin"
+    echo "  Researcher: user@example.com / user"
+fi
 echo ""
 echo "Next steps:"
 echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"

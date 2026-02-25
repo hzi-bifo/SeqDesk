@@ -1326,6 +1326,24 @@ if [ -n "$SEQDESK_CONFIG" ]; then
     print_success "Loaded installer config"
 fi
 
+if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+    SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH/#\~/$HOME}"
+fi
+
+CONDA_BIN_FROM_PATH=""
+if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+    for candidate in "$SEQDESK_EXEC_CONDA_PATH/condabin/conda" "$SEQDESK_EXEC_CONDA_PATH/bin/conda"; do
+        if [ -x "$candidate" ]; then
+            CONDA_BIN_FROM_PATH="$candidate"
+            break
+        fi
+    done
+    if [ -n "$CONDA_BIN_FROM_PATH" ]; then
+        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
+        print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
+    fi
+fi
+
 # Pipeline support
 print_step "Pipeline support"
 
@@ -1340,8 +1358,13 @@ elif is_truthy "$SEQDESK_WITH_CONDA"; then
     PIPELINES_ENABLED="true"
 fi
 
+HAS_CONDA="false"
+if [ -n "$CONDA_BIN_FROM_PATH" ] || command_exists conda; then
+    HAS_CONDA="true"
+fi
+
 if [ -z "$PIPELINES_ENABLED" ]; then
-    if command_exists conda; then
+    if [ "$HAS_CONDA" = "true" ]; then
         prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
     else
         prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
@@ -1355,7 +1378,7 @@ else
 fi
 
 # Install Miniconda if requested and missing
-if [ "$PIPELINES_ENABLED" = "true" ] && ! command_exists conda; then
+if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Installing Miniconda"
 
     CONDA_INSTALLER="Miniconda3-latest-Linux-x86_64.sh"
@@ -1370,18 +1393,60 @@ if [ "$PIPELINES_ENABLED" = "true" ] && ! command_exists conda; then
     print_info "Downloading Miniconda..."
     curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
 
-    print_info "Installing Miniconda to ~/miniconda3..."
-    bash /tmp/miniconda.sh -b -p "$HOME/miniconda3"
+    CONDA_INSTALL_BASE="${SEQDESK_EXEC_CONDA_PATH:-$HOME/miniconda3}"
+    print_info "Installing Miniconda to $CONDA_INSTALL_BASE..."
+    bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
     rm /tmp/miniconda.sh
 
-    "$HOME/miniconda3/bin/conda" init bash 2>/dev/null || true
-    "$HOME/miniconda3/bin/conda" init zsh 2>/dev/null || true
+    CONDA_INIT_BIN=""
+    for candidate in "$CONDA_INSTALL_BASE/condabin/conda" "$CONDA_INSTALL_BASE/bin/conda"; do
+        if [ -x "$candidate" ]; then
+            CONDA_INIT_BIN="$candidate"
+            break
+        fi
+    done
+    if [ -z "$CONDA_INIT_BIN" ]; then
+        print_error "Miniconda install completed but conda binary was not found under $CONDA_INSTALL_BASE."
+        exit 1
+    fi
 
-    export PATH="$HOME/miniconda3/bin:$PATH"
-    CONDA_VERSION=$(conda --version | cut -d' ' -f2 || true)
+    CURRENT_SHELL="$(basename "${SHELL:-}")"
+    INIT_SHELLS=()
+    case "$CURRENT_SHELL" in
+        bash|zsh) INIT_SHELLS+=("$CURRENT_SHELL") ;;
+    esac
+    for default_shell in bash zsh; do
+        already_added="false"
+        for init_shell in "${INIT_SHELLS[@]}"; do
+            if [ "$init_shell" = "$default_shell" ]; then
+                already_added="true"
+                break
+            fi
+        done
+        if [ "$already_added" != "true" ]; then
+            INIT_SHELLS+=("$default_shell")
+        fi
+    done
+    for init_shell in "${INIT_SHELLS[@]}"; do
+        "$CONDA_INIT_BIN" init "$init_shell" 2>/dev/null || true
+    done
 
-    print_success "Miniconda installed to ~/miniconda3"
-    print_warning "Please restart your shell or run: source ~/.bashrc"
+    export PATH="$CONDA_INSTALL_BASE/bin:$PATH"
+    CONDA_VERSION=$("$CONDA_INIT_BIN" --version | cut -d' ' -f2 || true)
+    HAS_CONDA="true"
+
+    print_success "Miniconda installed to $CONDA_INSTALL_BASE"
+    case "$CURRENT_SHELL" in
+        zsh)
+            print_warning "Please restart your shell or run: source ~/.zshrc"
+            ;;
+        bash)
+            print_warning "Please restart your shell or run: source ~/.bashrc"
+            ;;
+        *)
+            print_warning "Please restart your shell. If needed, run: $CONDA_INIT_BIN init \"$CURRENT_SHELL\""
+            ;;
+    esac
 fi
 
 # Clone repository
@@ -1555,6 +1620,9 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
         --data-path "${SEQDESK_DATA_PATH:-./data}"
         --run-dir "${SEQDESK_RUN_DIR:-./pipeline_runs}"
     )
+    if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+        setup_args+=(--conda-path "$SEQDESK_EXEC_CONDA_PATH")
+    fi
     ./scripts/setup-conda-env.sh "${setup_args[@]}"
 else
     print_info "Skipped pipeline environment setup"
