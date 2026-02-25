@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
+import { useSession } from "next-auth/react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
 import {
@@ -161,6 +162,7 @@ type RunData = {
 };
 
 export default function AnalysisDashboardPage() {
+  const { data: session } = useSession();
   const [pipelineFilter, setPipelineFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -168,6 +170,9 @@ export default function AnalysisDashboardPage() {
   const [stopping, setStopping] = useState(false);
   const [syncDisabled, setSyncDisabled] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const isResearcher = session?.user?.role === "RESEARCHER";
+  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canCreateStudy = isResearcher || isFacilityAdmin;
 
   // Build query params
   const params = new URLSearchParams();
@@ -277,15 +282,15 @@ export default function AnalysisDashboardPage() {
     <PageContainer>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Analysis Runs</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-xl font-semibold">Analysis Runs</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Monitor and manage pipeline executions
           </p>
           {syncWarning && (
             <p className="text-xs text-amber-700 mt-1">{syncWarning}</p>
           )}
         </div>
-        <Button variant="outline" onClick={handleRefresh}>
+        <Button size="sm" variant="outline" onClick={handleRefresh}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
         </Button>
@@ -346,18 +351,20 @@ export default function AnalysisDashboardPage() {
             Failed to load pipeline runs
           </div>
         ) : data?.runs?.length === 0 ? (
-          <div className="text-center py-12">
+          <div className="text-center p-12">
             <FlaskConical className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
-            <p className="text-muted-foreground font-medium">No pipeline runs found</p>
-            <p className="text-sm text-muted-foreground mt-1">
+            <h2 className="text-lg font-medium mb-2">No pipeline runs found</h2>
+            <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
               Pipeline runs are started from the study page. Open a study and go to the Pipelines tab to launch an analysis.
             </p>
-            <Button variant="outline" className="mt-4" asChild>
-              <Link href="/studies">View Studies</Link>
+            <Button size="sm" variant="outline" asChild>
+              <Link href={canCreateStudy ? "/studies/new" : "/studies"}>
+                {canCreateStudy ? "New Study" : "View Studies"}
+              </Link>
             </Button>
           </div>
         ) : filteredRuns.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
+          <div className="text-center py-12 text-sm text-muted-foreground">
             No pipeline runs match the current filters
           </div>
         ) : (

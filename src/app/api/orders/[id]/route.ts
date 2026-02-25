@@ -12,6 +12,7 @@ type OrderDetailResponse = {
   status: string;
   statusUpdatedAt: Date;
   createdAt: Date;
+  numberOfSamples: number | null;
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
@@ -33,7 +34,12 @@ type OrderDetailResponse = {
   samples: Array<{
     id: string;
     sampleId: string;
+    sampleAlias: string | null;
     sampleTitle: string | null;
+    sampleDescription: string | null;
+    scientificName: string | null;
+    taxId: string | null;
+    customFields: string | null;
     reads: Array<{
       id: string;
       file1: string | null;
@@ -68,6 +74,7 @@ async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailRes
       status: true,
       statusUpdatedAt: true,
       createdAt: true,
+      numberOfSamples: true,
       contactName: true,
       contactEmail: true,
       contactPhone: true,
@@ -105,7 +112,12 @@ async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailRes
       select: {
         id: true,
         sampleId: true,
+        sampleAlias: true,
         sampleTitle: true,
+        sampleDescription: true,
+        scientificName: true,
+        taxId: true,
+        customFields: true,
         reads: {
           select: {
             id: true,
@@ -235,6 +247,7 @@ export async function PUT(
       customFields,
       status,
       statusNote,
+      markSamplesSent,
     } = body;
 
     const requestedMetadataUpdate =
@@ -318,10 +331,40 @@ export async function PUT(
       });
     }
 
-    const order = await db.order.update({
-      where: { id },
-      data: updateData,
-    });
+    if (markSamplesSent === true) {
+      if (existing.status === "DRAFT") {
+        return NextResponse.json(
+          { error: "Cannot mark samples as sent before order submission" },
+          { status: 400 }
+        );
+      }
+
+      const existingShipmentNote = await db.statusNote.findFirst({
+        where: {
+          orderId: id,
+          noteType: "SAMPLES_SENT",
+        },
+        select: { id: true },
+      });
+
+      if (!existingShipmentNote) {
+        await db.statusNote.create({
+          data: {
+            orderId: id,
+            userId: session.user.id,
+            noteType: "SAMPLES_SENT",
+            content: "Samples marked as sent to institution",
+          },
+        });
+      }
+    }
+
+    const order = Object.keys(updateData).length > 0
+      ? await db.order.update({
+          where: { id },
+          data: updateData,
+        })
+      : existing;
 
     return NextResponse.json(order);
   } catch (error) {

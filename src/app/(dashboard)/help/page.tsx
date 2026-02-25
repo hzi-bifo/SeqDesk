@@ -1,263 +1,183 @@
 "use client";
 
+import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 
 export default function HelpPage() {
   return (
     <PageContainer>
-      {/* Header */}
-      <div className="mb-10">
-        <h1
-          className="text-2xl font-semibold mb-2"
-          style={{ color: '#171717', letterSpacing: '-0.02em' }}
-        >
-          Help & Guide
-        </h1>
-        <p style={{ color: '#525252' }}>
-          Learn how to use the sequencing portal to submit orders and manage your data
+      <div className="mb-8">
+        <h1 className="text-2xl font-semibold tracking-tight">Help</h1>
+        <p className="mt-2 text-muted-foreground">
+          Quick reference for submitting orders, organizing studies, and preparing ENA-ready metadata.
         </p>
       </div>
 
-      {/* Workflow Overview */}
-      <section className="mb-10">
-        <h2
-          className="text-lg font-semibold mb-3"
-          style={{ color: '#171717' }}
-        >
-          How It Works
-        </h2>
-        <p className="mb-6" style={{ color: '#525252' }}>
-          The sequencing portal helps you submit samples for sequencing and collect the metadata
-          needed for publication and data repository submission (like ENA).
+      <section className="mb-8">
+        <h2 className="text-lg font-semibold">Quick Workflow</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The shortest path for most users:
         </p>
-
-        {/* Visual Flow */}
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
           {[
-            { step: 1, title: "Create Order", desc: "Submit your sequencing request with samples" },
-            { step: 2, title: "Create Study", desc: "Group samples and select environment type" },
-            { step: 3, title: "Fill Metadata", desc: "Complete MIxS fields for each sample" },
-            { step: 4, title: "Submit to ENA", desc: "Facility submits data to the repository" },
+            {
+              step: "1",
+              title: "Create Order",
+              desc: "Add order details, sequencing settings, and your samples.",
+              href: "/orders/new",
+              cta: "New Order",
+            },
+            {
+              step: "2",
+              title: "Submit Order",
+              desc: "Send the order to the facility and follow shipping instructions.",
+              href: "/orders",
+              cta: "Orders",
+            },
+            {
+              step: "3",
+              title: "Create Study",
+              desc: "Select samples and define study context/checklist.",
+              href: "/studies/new",
+              cta: "New Study",
+            },
+            {
+              step: "4",
+              title: "Fill Metadata",
+              desc: "Complete per-sample metadata in the study editor.",
+              href: "/studies",
+              cta: "Studies",
+            },
+            {
+              step: "5",
+              title: "Mark Ready",
+              desc: "When complete, mark the study ready for facility review/submission.",
+              href: "/studies",
+              cta: "Track Status",
+            },
           ].map((item) => (
-            <div
-              key={item.step}
-              className="p-4 rounded-xl"
-              style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
-            >
-              <div
-                className="h-7 w-7 rounded-full flex items-center justify-center text-sm font-semibold mb-3"
-                style={{ background: '#171717', color: '#ffffff' }}
-              >
+            <div key={item.step} className="rounded-lg border bg-card p-4">
+              <div className="mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold">
                 {item.step}
               </div>
-              <h3 className="font-medium mb-1" style={{ color: '#171717' }}>
-                {item.title}
-              </h3>
-              <p className="text-sm" style={{ color: '#525252' }}>
-                {item.desc}
-              </p>
+              <h3 className="text-sm font-medium">{item.title}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">{item.desc}</p>
+              <Link href={item.href} className="mt-3 inline-block text-xs font-medium text-primary hover:underline">
+                {item.cta}
+              </Link>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Orders vs Studies */}
-      <section className="mb-10">
-        <div className="grid md:grid-cols-2 gap-6">
-          <div
-            className="p-6 rounded-xl"
-            style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-          >
-            <h2 className="text-lg font-semibold mb-3" style={{ color: '#171717' }}>
-              What is an Order?
-            </h2>
-            <p className="mb-4" style={{ color: '#525252' }}>
-              An Order is your <strong>sequencing request</strong>. It contains the information
-              needed to process your samples at the sequencing facility.
+      <section className="mb-8">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border bg-card p-5">
+            <h2 className="text-base font-semibold">Order</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              A sequencing request. Use it to define request-level fields and sample list.
             </p>
-            <ul className="space-y-2">
-              {[
-                "List of samples to sequence",
-                "Sequencing parameters (if configured)",
-                "Order status tracking",
-                "Additional fields as configured by the facility",
-              ].map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm" style={{ color: '#525252' }}>
-                  <span style={{ color: '#a3a3a3' }}>-</span>
-                  {item}
-                </li>
-              ))}
+            <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+              <li>- Order Details and Sequencing Parameters</li>
+              <li>- Sample IDs and order-specific fields</li>
+              <li>- Facility processing status (Draft/Submitted/Completed)</li>
             </ul>
           </div>
 
-          <div
-            className="p-6 rounded-xl"
-            style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-          >
-            <h2 className="text-lg font-semibold mb-3" style={{ color: '#171717' }}>
-              What is a Study?
-            </h2>
-            <p className="mb-4" style={{ color: '#525252' }}>
-              A Study groups samples that share the same <strong>scientific context</strong> and
-              metadata requirements for publication and repository submission.
+          <div className="rounded-lg border bg-card p-5">
+            <h2 className="text-base font-semibold">Study</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              A scientific grouping of samples for metadata completion and repository submission.
             </p>
-            <ul className="space-y-2">
-              {[
-                "Environment type (gut, soil, water, etc.)",
-                "MIxS metadata collection per sample",
-                "Samples from one or more orders",
-                "ENA/repository submission by facility",
-              ].map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm" style={{ color: '#525252' }}>
-                  <span style={{ color: '#a3a3a3' }}>-</span>
-                  {item}
-                </li>
-              ))}
+            <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+              <li>- Study title and context fields</li>
+              <li>- Environment/checklist selection</li>
+              <li>- Per-sample metadata completion and readiness</li>
             </ul>
           </div>
         </div>
       </section>
 
-      {/* Why Both? */}
-      <section className="mb-10">
-        <div
-          className="p-6 rounded-xl"
-          style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-        >
-          <h2 className="text-lg font-semibold mb-3" style={{ color: '#171717' }}>
-            Why are Orders and Studies separate?
-          </h2>
-          <p className="mb-4" style={{ color: '#525252' }}>
-            A single Order can contain samples from <strong>different environments</strong>.
-            For example, you might submit gut samples and water samples in the same sequencing batch,
-            but they need different MIxS metadata checklists.
-          </p>
-          <div
-            className="p-4 rounded-lg"
-            style={{ background: '#F7F7F4' }}
-          >
-            <p className="text-sm" style={{ color: '#525252' }}>
-              <strong>Example:</strong> You submit an order with 20 samples. 15 are from human gut
-              (needing gut-specific metadata like diet, host age) and 5 are from water sources
-              (needing water-specific metadata like depth, temperature). You create two Studies:
-              one for gut samples, one for water samples.
-            </p>
+      <section className="mb-8">
+        <div className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Status Flow</h2>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-sm font-medium">Orders</p>
+              <p className="mt-1 text-sm text-muted-foreground">Draft → Submitted → Completed</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium">Studies</p>
+              <p className="mt-1 text-sm text-muted-foreground">Draft → Ready → Submitted</p>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* MIxS Info */}
-      <section className="mb-10">
-        <div
-          className="p-6 rounded-xl"
-          style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-        >
-          <h2 className="text-lg font-semibold mb-3" style={{ color: '#171717' }}>
-            What is MIxS?
-          </h2>
-          <p className="mb-4" style={{ color: '#525252' }}>
-            <strong>MIxS</strong> (Minimum Information about any Sequence) is an international standard
-            for describing sequencing samples. It ensures your data is well-documented and can be
-            understood by other researchers.
-          </p>
-          <p className="mb-4" style={{ color: '#525252' }}>
-            Different environment types have different required and optional fields. For example:
-          </p>
-          <div className="grid md:grid-cols-3 gap-3">
-            {[
-              { title: "Human Gut", fields: "Host age, diet, disease status, medication..." },
-              { title: "Soil", fields: "pH, temperature, depth, land use, crop rotation..." },
-              { title: "Water", fields: "Depth, salinity, temperature, dissolved oxygen..." },
-            ].map((env, i) => (
-              <div
-                key={i}
-                className="p-3 rounded-lg"
-                style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
-              >
-                <h4 className="font-medium text-sm mb-1" style={{ color: '#171717' }}>
-                  {env.title}
-                </h4>
-                <p className="text-xs" style={{ color: '#a3a3a3' }}>
-                  {env.fields}
-                </p>
-              </div>
-            ))}
+      <section className="mb-8">
+        <div className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Where To Fill What</h2>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Task</th>
+                  <th className="px-3 py-2 text-left font-medium">Where</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                <tr>
+                  <td className="px-3 py-2">Request sequencing and define sample list</td>
+                  <td className="px-3 py-2">Orders</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2">Assign samples to scientific context/checklist</td>
+                  <td className="px-3 py-2">Studies</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2">Complete per-sample metadata</td>
+                  <td className="px-3 py-2">Study editor</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2">Mark package ready for submission</td>
+                  <td className="px-3 py-2">Study detail page</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2">Final ENA submission</td>
+                  <td className="px-3 py-2">Facility workflow</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
 
-      {/* Step by Step */}
-      <section className="mb-10">
-        <div
-          className="p-6 rounded-xl"
-          style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-        >
-          <h2 className="text-lg font-semibold mb-6" style={{ color: '#171717' }}>
-            Step-by-Step Guide
-          </h2>
-
-          <div className="space-y-6">
-            {[
-              {
-                step: 1,
-                title: "Create a new Order",
-                desc: "Go to Orders → New Order. Follow the wizard to fill in the required information and add your samples. The fields shown depend on your facility's configuration.",
-              },
-              {
-                step: 2,
-                title: "Submit the Order",
-                desc: "Review your order and submit it. The facility will process your request and begin sequencing. You can track the status on the order detail page.",
-              },
-              {
-                step: 3,
-                title: "Create a Study",
-                desc: "Go to Studies → New Study. Enter a title, select the environment type (e.g., Human Gut, Soil), and choose which samples to include from your orders.",
-              },
-              {
-                step: 4,
-                title: "Fill in sample metadata",
-                desc: "During study creation (or by clicking Edit on the study page), fill in the MIxS metadata for each sample using the spreadsheet interface. Required fields are marked with an asterisk.",
-              },
-              {
-                step: 5,
-                title: "Ready for ENA submission",
-                desc: "Once all metadata is complete, your study is ready for submission to ENA or other data repositories. The sequencing facility will handle the final submission on your behalf.",
-              },
-            ].map((item) => (
-              <div key={item.step} className="flex gap-4">
-                <div
-                  className="flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center text-sm font-medium"
-                  style={{ border: '2px solid #e5e5e0', color: '#525252' }}
-                >
-                  {item.step}
-                </div>
-                <div>
-                  <h3 className="font-medium" style={{ color: '#171717' }}>
-                    {item.title}
-                  </h3>
-                  <p className="text-sm mt-1" style={{ color: '#525252' }}>
-                    {item.desc}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
+      <section className="mb-8">
+        <div className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Notes</h2>
+          <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <li>- Order and Study fields are configured by your facility, so steps can differ between installations.</li>
+            <li>- After order submission, sample rows are typically read-only, while order metadata may still be editable until completion.</li>
+            <li>- A single order can feed one or multiple studies.</li>
+            <li>- For ENA, required checks (title, samples, taxonomy, metadata) are shown in the study ENA tab.</li>
+          </ul>
         </div>
       </section>
 
-      {/* Contact */}
       <section>
-        <div
-          className="p-6 rounded-xl"
-          style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
-        >
-          <h2 className="text-lg font-semibold mb-2" style={{ color: '#171717' }}>
-            Need Help?
-          </h2>
-          <p style={{ color: '#525252' }}>
-            If you have questions or need assistance, please contact the sequencing facility team.
-            We are happy to help you with your submission.
+        <div className="rounded-lg border bg-muted/30 p-5">
+          <h2 className="text-base font-semibold">Need Help?</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Contact your sequencing facility team for project-specific support and submission policy questions.
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/orders/new" className="text-sm font-medium text-primary hover:underline">
+              Start a New Order
+            </Link>
+            <Link href="/studies/new" className="text-sm font-medium text-primary hover:underline">
+              Start a New Study
+            </Link>
+          </div>
         </div>
       </section>
     </PageContainer>

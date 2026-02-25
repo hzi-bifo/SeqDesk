@@ -32,6 +32,21 @@ Width variants:
 - `medium`: max-w-4xl (896px) - for detail pages
 - `wide`: max-w-6xl (1152px) - for complex layouts
 
+### Fonts
+
+The app uses several font families. Use the right one for the right context:
+
+- **`font-sans`** (Geist Sans) - Default body text, headings, labels, UI elements
+- **`font-mono`** (Geist Mono) - Code blocks, sample IDs, file paths, technical identifiers
+- **`font-geist-pixel`** (Geist Pixel Square) - Decorative/accent text for emails, account info, metadata values. Always use at small sizes (`text-xs`) with muted color (`text-muted-foreground`). Never use at `text-base` or larger.
+- **`font-ghost-pixel`** (Press Start 2P) - **Do not use in the app UI.** Only kept for legacy reference. Use `font-geist-pixel` instead.
+
+**Geist Pixel rules:**
+- Max size: `text-xs` (0.75rem) or `text-sm` (0.875rem)
+- Always pair with `text-muted-foreground` for a subtle, understated look
+- Good for: email addresses, account types, read-only metadata values
+- Bad for: headings, buttons, form labels, primary content
+
 ### Field Templates (MIxS and Custom)
 
 Field templates for the Form Builder are loaded from JSON files in `data/field-templates/`.

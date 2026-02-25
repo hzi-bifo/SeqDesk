@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { Loader2 } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface UserProfile {
@@ -23,8 +23,8 @@ export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   // Form state
   const [firstName, setFirstName] = useState("");
@@ -59,7 +59,6 @@ export default function SettingsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setSuccess("");
     setSaving(true);
 
     try {
@@ -80,8 +79,6 @@ export default function SettingsPage() {
         return;
       }
 
-      setSuccess("Profile updated successfully");
-
       // Update session to reflect name change
       await updateSession({
         ...session,
@@ -90,6 +87,9 @@ export default function SettingsPage() {
           name: `${firstName} ${lastName}`,
         },
       });
+
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch {
       setError("Failed to update profile");
     } finally {
@@ -115,12 +115,6 @@ export default function SettingsPage() {
       </div>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
-
-      {success && (
-        <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-sm">
-          {success}
-        </div>
-      )}
 
       <form onSubmit={handleSubmit}>
         <div
@@ -195,11 +189,16 @@ export default function SettingsPage() {
           </div>
 
           <div className="pt-4 flex justify-end">
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || saved}>
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Saving...
+                </>
+              ) : saved ? (
+                <>
+                  <Check className="h-4 w-4 mr-2" />
+                  Saved
                 </>
               ) : (
                 "Save Changes"
@@ -212,7 +211,7 @@ export default function SettingsPage() {
       {/* Account Info */}
       <div
         className="p-6 mt-6 rounded-xl"
-        style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
+        style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
       >
         <h2 className="text-lg font-semibold mb-4" style={{ color: '#171717' }}>
           Account Information
@@ -220,13 +219,13 @@ export default function SettingsPage() {
         <div className="space-y-3 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Account Type</span>
-            <span className="font-medium">
+            <span className="font-medium font-geist-pixel text-xs text-muted-foreground">
               {session?.user?.role === "FACILITY_ADMIN" ? "Facility Admin" : "Researcher"}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Email</span>
-            <span className="font-medium">{email}</span>
+            <span className="font-medium font-geist-pixel text-xs text-muted-foreground">{email}</span>
           </div>
         </div>
       </div>

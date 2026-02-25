@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, use, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -33,10 +33,8 @@ import {
   MapPin,
   Pencil,
   Trash2,
-  ClipboardList,
   BookOpen,
   FolderOpen,
-  Info,
   HardDrive,
   Download,
   Eye,
@@ -44,6 +42,8 @@ import {
   FileCode,
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
+import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
+import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -104,12 +104,118 @@ function getFieldLabel(key: string): string {
   return labels[key] || key.replace(/_/g, " ");
 }
 
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore JSON parse errors and return empty object fallback.
+  }
+  return {};
+}
+
+function hasDisplayValue(value: unknown): boolean {
+  return !(
+    value === undefined ||
+    value === null ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): string {
+  if (!hasDisplayValue(value)) return "Not specified";
+
+  if (field.type === "select" && field.options) {
+    const option = field.options.find((o) => o.value === value);
+    return option?.label || String(value);
+  }
+
+  if (field.type === "multiselect" && Array.isArray(value) && field.options) {
+    return value
+      .map((v) => field.options?.find((o) => o.value === v)?.label || String(v))
+      .join(", ");
+  }
+
+  if (field.type === "checkbox") {
+    return value === true ? "Yes" : "No";
+  }
+
+  if (field.type === "funding") {
+    const fundingValue = value as {
+      entries?: Array<{
+        agencyId: string;
+        agencyOther?: string;
+        grantNumber: string;
+        isPrimary?: boolean;
+      }>;
+    };
+    if (!fundingValue?.entries || fundingValue.entries.length === 0) {
+      return "No funding sources";
+    }
+    return fundingValue.entries
+      .map((entry) => {
+        const agencyName = entry.agencyId === "other"
+          ? (entry.agencyOther || "Other")
+          : entry.agencyId.toUpperCase();
+        return `${agencyName}: ${entry.grantNumber}${entry.isPrimary ? " (Primary)" : ""}`;
+      })
+      .join("; ");
+  }
+
+  if (field.type === "billing") {
+    const billingValue = value as { costCenter?: string; pspElement?: string } | null;
+    if (!billingValue) return "Not specified";
+    const parts: string[] = [];
+    if (billingValue.costCenter) {
+      parts.push(`Cost Center: ${billingValue.costCenter}`);
+    }
+    if (billingValue.pspElement) {
+      parts.push(`PSP: ${billingValue.pspElement}`);
+    }
+    return parts.length > 0 ? parts.join(", ") : "Not specified";
+  }
+
+  if (field.type === "sequencing-tech" && typeof value === "object" && value !== null) {
+    const selection = value as {
+      technologyId?: string;
+      technologyName?: string;
+      deviceId?: string;
+      deviceName?: string;
+      flowCellId?: string;
+      flowCellSku?: string;
+      kitId?: string;
+      kitSku?: string;
+    };
+    const parts: string[] = [];
+    const platform = selection.technologyName || selection.technologyId;
+    const device = selection.deviceName || selection.deviceId;
+    const flowCell = selection.flowCellSku || selection.flowCellId;
+    const kit = selection.kitSku || selection.kitId;
+    if (platform) parts.push(`Platform: ${platform}`);
+    if (device) parts.push(`Device: ${device}`);
+    if (flowCell) parts.push(`Flow Cell: ${flowCell}`);
+    if (kit) parts.push(`Kit: ${kit}`);
+    return parts.length > 0 ? parts.join(" | ") : "Not selected";
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
 interface Order {
   id: string;
   name: string;
   status: string;
   statusUpdatedAt: string;
   createdAt: string;
+  numberOfSamples: number | null;
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
@@ -130,7 +236,12 @@ interface Order {
   samples: Array<{
     id: string;
     sampleId: string;
+    sampleAlias: string | null;
     sampleTitle: string | null;
+    sampleDescription: string | null;
+    scientificName: string | null;
+    taxId: string | null;
+    customFields: string | null;
     reads: Array<{
       id: string;
       file1: string | null;
@@ -199,8 +310,10 @@ export default function OrderDetailPage({
   const [instructions, setInstructions] = useState<string | null>(null);
   const [showFullInstructions, setShowFullInstructions] = useState(false);
 
-  // Form config for showing per-sample fields
-  const [perSampleFields, setPerSampleFields] = useState<Array<{ name: string; label: string }>>([]);
+  // Form config for showing order + sample fields in the same flow as order entry
+  const [formFields, setFormFields] = useState<FormFieldDefinition[]>([]);
+  const [formGroups, setFormGroups] = useState<FormFieldGroup[]>(DEFAULT_GROUPS);
+  const [perSampleFields, setPerSampleFields] = useState<FormFieldDefinition[]>([]);
 
   // Simulate reads states
   const [simulateReadsDialogOpen, setSimulateReadsDialogOpen] = useState(false);
@@ -280,20 +393,35 @@ export default function OrderDetailPage({
 
   useEffect(() => {
     fetchOrder();
-    // Fetch form schema to identify admin-only fields
+
+    // Fetch form schema so overview can mirror order-entry flow.
     fetch("/api/form-schema")
       .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.fields) {
-          const adminNames = new Set<string>(
-            data.fields
-              .filter((f: { adminOnly?: boolean; name: string }) => f.adminOnly)
-              .map((f: { name: string }) => f.name)
-          );
-          setAdminOnlyFieldNames(adminNames);
-        }
+      .then((data: {
+        fields?: FormFieldDefinition[];
+        groups?: FormFieldGroup[];
+        perSampleFields?: FormFieldDefinition[];
+      } | null) => {
+        const fields = (data?.fields || []).filter((field) => field.visible);
+        const groups = (data?.groups && data.groups.length > 0 ? data.groups : DEFAULT_GROUPS)
+          .slice()
+          .sort((a, b) => a.order - b.order);
+        const sampleFields = (data?.perSampleFields || fields.filter((field) => field.perSample))
+          .filter((field) => field.visible)
+          .sort((a, b) => a.order - b.order);
+
+        setFormFields(fields);
+        setFormGroups(groups);
+        setPerSampleFields(sampleFields);
+        setAdminOnlyFieldNames(
+          new Set(fields.filter((field) => field.adminOnly).map((field) => field.name))
+        );
       })
-      .catch(() => { /* ignore - non-critical */ });
+      .catch(() => {
+        setFormFields([]);
+        setFormGroups(DEFAULT_GROUPS);
+        setPerSampleFields([]);
+      });
   }, [orderId]);
 
   const handleSimulateReadsClick = () => {
@@ -357,26 +485,6 @@ export default function OrderDetailPage({
     }
   }, [order?.status]);
 
-  // Fetch form config to get per-sample fields
-  useEffect(() => {
-    fetch("/api/form-schema")
-      .then((res) => res.json())
-      .then((data) => {
-        const fields = data.perSampleFields || (data.fields || []).filter((f: { perSample?: boolean; visible?: boolean }) =>
-          f.perSample && f.visible
-        );
-        if (fields.length > 0) {
-          setPerSampleFields(
-            fields.map((f: { name: string; label: string }) => ({
-              name: f.name,
-              label: f.label,
-            }))
-          );
-        }
-      })
-      .catch(() => setPerSampleFields([]));
-  }, []);
-
   const handleStatusChange = async (newStatus: string) => {
     if (!order) return;
     setUpdating(true);
@@ -400,6 +508,32 @@ export default function OrderDetailPage({
       setOrder(updatedOrder);
     } catch {
       setError("Failed to update status");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleMarkSamplesSent = async () => {
+    if (!order) return;
+    setUpdating(true);
+    setError("");
+
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markSamplesSent: true }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Failed to mark samples as sent");
+        return;
+      }
+
+      await fetchOrder({ silent: true });
+    } catch {
+      setError("Failed to mark samples as sent");
     } finally {
       setUpdating(false);
     }
@@ -531,6 +665,20 @@ export default function OrderDetailPage({
     return `${value.toLocaleString("en-US")} reads`;
   };
 
+  const parsedOrderCustomFields = useMemo(
+    () => parseJsonObject(order?.customFields),
+    [order?.customFields]
+  );
+
+  const sampleCustomFieldsById = useMemo(() => {
+    if (!order) return {} as Record<string, Record<string, unknown>>;
+    const parsed: Record<string, Record<string, unknown>> = {};
+    for (const sample of order.samples) {
+      parsed[sample.id] = parseJsonObject(sample.customFields);
+    }
+    return parsed;
+  }, [order]);
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -561,72 +709,141 @@ export default function OrderDetailPage({
 
   const statusCfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
   const samplesWithFiles = order.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
+  const visibleOrderFields = formFields
+    .filter((field) => field.visible && !field.perSample && field.type !== "mixs")
+    .filter((field) => isFacilityAdmin || !field.adminOnly);
+  const visibleSampleFields = perSampleFields
+    .filter((field) => isFacilityAdmin || !field.adminOnly)
+    .slice()
+    .sort((a, b) => a.order - b.order);
+  const knownOrderFieldNames = new Set(formFields.map((field) => field.name));
+  const orderRecord = order as unknown as Record<string, unknown>;
+
+  const getOrderFieldRawValue = (field: FormFieldDefinition): unknown => {
+    if (field.isSystem && field.systemKey) {
+      const systemValue = orderRecord[field.systemKey];
+      if (!hasDisplayValue(systemValue) && field.systemKey === "numberOfSamples") {
+        return order.numberOfSamples ?? order._count.samples;
+      }
+      return systemValue;
+    }
+    return parsedOrderCustomFields[field.name];
+  };
+
+  const groupedOverviewSections = formGroups
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .flatMap((group) => {
+      const rows = visibleOrderFields
+        .filter((field) => field.groupId === group.id)
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map((field) => ({ field, value: getOrderFieldRawValue(field) }))
+        .filter(({ value }) => hasDisplayValue(value));
+      return rows.length > 0 ? [{ id: group.id, title: group.name, rows }] : [];
+    });
+
+  const ungroupedOverviewRows = visibleOrderFields
+    .filter((field) => !field.groupId)
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((field) => ({ field, value: getOrderFieldRawValue(field) }))
+    .filter(({ value }) => hasDisplayValue(value));
+
+  const fallbackCustomRows = Object.entries(parsedOrderCustomFields).filter(
+    ([key, value]) =>
+      !key.startsWith("_mixs") &&
+      !knownOrderFieldNames.has(key) &&
+      !adminOnlyFieldNames.has(key) &&
+      hasDisplayValue(value)
+  );
+  const fallbackAdminRows = Object.entries(parsedOrderCustomFields).filter(
+    ([key, value]) =>
+      !key.startsWith("_mixs") &&
+      !knownOrderFieldNames.has(key) &&
+      adminOnlyFieldNames.has(key) &&
+      hasDisplayValue(value)
+  );
+
+  const getSampleFieldRawValue = (sample: Order["samples"][number], field: FormFieldDefinition): unknown => {
+    if (field.type === "organism") {
+      const scientificName = sample.scientificName?.trim();
+      const taxId = sample.taxId?.trim();
+      if (scientificName && taxId) return `${scientificName} (Tax ID: ${taxId})`;
+      return scientificName || taxId || "";
+    }
+
+    const mappedColumn = mapPerSampleFieldToColumn(field.name);
+    if (mappedColumn) {
+      return sample[mappedColumn];
+    }
+
+    return sampleCustomFieldsById[sample.id]?.[field.name];
+  };
 
   return (
-    <PageContainer>
-      {/* Header */}
-      <div className="mb-4">
-        <Button variant="ghost" size="sm" asChild className="mb-2">
-          <Link href="/orders">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Orders
+    <>
+      {/* Tabs wrapper */}
+      <Tabs defaultValue="overview">
+      {/* Sticky header bar */}
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="flex items-center h-[52px] px-6 lg:px-8">
+          <Link
+            href="/orders"
+            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
           </Link>
-        </Button>
+          <span className="text-sm font-medium truncate">{order.name}</span>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-semibold">{order.name}</h1>
-              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusCfg.color}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${statusCfg.dot}`} />
-                {statusCfg.label}
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {[
-                order.platform,
-                `${order._count.samples} sample${order._count.samples !== 1 ? "s" : ""}`,
-                `Created ${formatDate(order.createdAt)}`,
-              ].filter(Boolean).join(" · ")}
-            </p>
+          {/* Tabs - centered */}
+          <div className="flex-1 flex justify-center">
+            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-0">
+              <TabsTrigger
+                value="overview"
+                className="relative h-[52px] rounded-none border-b-2 border-transparent px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="reads"
+                className="relative h-[52px] rounded-none border-b-2 border-transparent px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
+              </TabsTrigger>
+            </TabsList>
           </div>
 
-          {/* Action buttons */}
-          {(isOwner || isFacilityAdmin) && (
-            <div className="flex items-center gap-2">
-              {canEditOrder && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/orders/${order.id}/edit`}>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Edit
-                  </Link>
-                </Button>
-              )}
-              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/orders/${order.id}/files`}>
-                    <HardDrive className="h-4 w-4 mr-2" />
-                    Manage Files
-                  </Link>
-                </Button>
-              )}
-              {(order.status === "DRAFT" || isFacilityAdmin) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={handleDeleteClick}
-                  disabled={updating}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
-              )}
-            </div>
-          )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {(isOwner || isFacilityAdmin) && (
+              <>
+                {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
+                    <Link href={`/orders/${order.id}/files`}>
+                      <HardDrive className="h-3.5 w-3.5 mr-1.5" />
+                      Manage Files
+                    </Link>
+                  </Button>
+                )}
+                {(order.status === "DRAFT" || isFacilityAdmin) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-destructive hover:text-destructive"
+                    onClick={handleDeleteClick}
+                    disabled={updating}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                    Delete
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
+    <PageContainer>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
           <AlertCircle className="h-5 w-5" />
@@ -634,175 +851,279 @@ export default function OrderDetailPage({
         </div>
       )}
 
-      {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList className="w-full justify-start mb-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="reads">
-            Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
-          </TabsTrigger>
-        </TabsList>
-
         {/* Overview Tab */}
         <TabsContent value="overview">
-          {/* Order Progress - only when there are samples */}
+          {/* Order Process - only when there are samples */}
           {order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
             const allSamplesHaveFiles = order.samples.length > 0 && samplesWithFiles === order.samples.length;
+            const canShowShippingInstructions = isSubmitted && Boolean(instructions?.trim());
+            const samplesSentNote = order.statusNotes.find((note) => note.noteType === "SAMPLES_SENT");
+            const samplesMarkedSent = Boolean(samplesSentNote);
+            const canMarkSamplesSent = isSubmitted && !samplesMarkedSent && Boolean(isOwner || isFacilityAdmin);
+            const shippingStatus = !isSubmitted ? "Pending" : (samplesMarkedSent || allSamplesHaveFiles) ? "Done" : "In Progress";
+            const sequencingStatus = allSamplesHaveFiles
+              ? "Done"
+              : isSubmitted
+                ? "Waiting"
+                : "Pending";
 
             return (
-              <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-violet-500/10 p-5 mb-4">
-                <h3 className="font-semibold mb-4 flex items-center gap-2">
-                  <ClipboardList className="h-5 w-5" />
-                  Order Progress
-                </h3>
-                <div className="grid grid-cols-2 gap-3">
+              <div className="mb-4 rounded-lg border bg-card p-5">
+                <h3 className="mb-4 text-base font-semibold">Order Process</h3>
+                <div className="space-y-3">
                   {/* Step 1: Order Submitted */}
-                  <div className={`p-3 rounded-lg border bg-card ${isSubmitted ? "border-emerald-200" : ""}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      {isSubmitted ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      ) : (
-                        <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                          <span className="text-[10px] text-white font-bold">1</span>
-                        </div>
-                      )}
-                      <span className="text-sm font-medium">Order Submitted</span>
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${isSubmitted
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
+                        >
+                          1
+                        </span>
+                        <span className="text-sm font-medium">Order Submitted</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{isSubmitted ? "Done" : "Pending"}</span>
                     </div>
-                    {isSubmitted ? (
-                      <p className="text-xs text-emerald-600">{order.samples.length} sample{order.samples.length !== 1 ? "s" : ""} submitted to facility</p>
+                    <p className="text-xs text-muted-foreground">
+                      {isSubmitted
+                        ? `${order.samples.length} sample${order.samples.length !== 1 ? "s" : ""} submitted to facility`
+                        : `${order.samples.length} sample${order.samples.length !== 1 ? "s" : ""} added`}
+                    </p>
+                  </div>
+
+                  {/* Step 2: Send Samples to Institutions */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${isSubmitted
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
+                        >
+                          2
+                        </span>
+                        <span className="text-sm font-medium">Send Samples to Institutions</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{shippingStatus}</span>
+                        {canMarkSamplesSent && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={handleMarkSamplesSent}
+                            disabled={updating}
+                          >
+                            {updating && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                            Mark sent
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {!isSubmitted ? (
+                      <p className="text-xs text-muted-foreground">Submit order first to unlock shipping instructions</p>
                     ) : (
-                      <p className="text-xs text-muted-foreground">{order.samples.length} sample{order.samples.length !== 1 ? "s" : ""} added</p>
-                    )}
-                    {isSubmitted && instructions && (
-                      <button
-                        onClick={() => setShowFullInstructions(!showFullInstructions)}
-                        className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        <Info className="h-3 w-3" />
-                        {showFullInstructions ? "Hide Instructions" : "View Instructions"}
-                      </button>
+                      <div className="mt-2 space-y-2">
+                        {samplesSentNote ? (
+                          <p className="text-xs text-muted-foreground">
+                            Marked as sent{samplesSentNote.user ? ` by ${samplesSentNote.user.firstName} ${samplesSentNote.user.lastName}` : ""} on {formatDateTime(samplesSentNote.createdAt)}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Use Mark sent once samples are shipped to the institution</p>
+                        )}
+
+                        {canShowShippingInstructions ? (
+                          <>
+                            <button
+                              onClick={() => setShowFullInstructions(!showFullInstructions)}
+                              className="text-xs font-medium text-primary hover:underline"
+                            >
+                              {showFullInstructions ? "Hide Instructions" : "Show Instructions"}
+                            </button>
+                            {showFullInstructions && (
+                              <div className="mt-3 rounded-lg border bg-card p-3">
+                                <div className="prose prose-sm max-w-none [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_p]:text-xs [&_li]:text-xs prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
+                                  <ReactMarkdown>{instructions ?? ""}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No shipping instructions configured yet</p>
+                        )}
+                      </div>
                     )}
                   </div>
 
-                  {/* Step 2: Files Assigned */}
-                  <div className={`p-3 rounded-lg border bg-card ${allSamplesHaveFiles ? "border-emerald-200" : ""}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      {allSamplesHaveFiles ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      ) : (
-                        <div className="h-4 w-4 rounded-full bg-muted-foreground flex items-center justify-center">
-                          <span className="text-[10px] text-white font-bold">2</span>
-                        </div>
-                      )}
-                      <span className="text-sm font-medium">Files Assigned</span>
+                  {/* Step 3: Waiting for Sequencing */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${allSamplesHaveFiles
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
+                        >
+                          3
+                        </span>
+                        <span className="text-sm font-medium">Waiting for Sequencing</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{sequencingStatus}</span>
                     </div>
                     {allSamplesHaveFiles ? (
-                      <p className="text-xs text-emerald-600">All samples have files</p>
+                      <p className="text-xs text-muted-foreground">Sequencing files received for all samples</p>
                     ) : samplesWithFiles > 0 ? (
-                      <p className="text-xs text-amber-600">{samplesWithFiles}/{order.samples.length} samples have files</p>
+                      <p className="text-xs text-muted-foreground">{samplesWithFiles}/{order.samples.length} samples have sequencing files</p>
                     ) : isSubmitted ? (
-                      <p className="text-xs text-amber-600">Waiting for files</p>
+                      <p className="text-xs text-muted-foreground">Waiting for sequencing files from the institution</p>
                     ) : (
                       <p className="text-xs text-muted-foreground">Submit order first</p>
                     )}
                   </div>
                 </div>
-
-                {/* Shipping Instructions */}
-                {isSubmitted && showFullInstructions && instructions && (
-                  <div className="mt-4 p-4 bg-card rounded-lg border">
-                    <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-li:text-foreground/80 prose-strong:text-foreground">
-                      <ReactMarkdown>{instructions}</ReactMarkdown>
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })()}
 
-          {/* Sequencing Parameters */}
+          {/* Order entry fields in the same group flow as new order */}
+          {groupedOverviewSections.map((section) => (
+            <div key={section.id} className="bg-card rounded-lg border overflow-hidden mb-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">{section.title}</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {section.rows.map(({ field, value }) => (
+                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground">{field.label}</span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatSchemaFieldValue(field, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {ungroupedOverviewRows.length > 0 && (
+            <div className="bg-card rounded-lg border overflow-hidden mb-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">Additional Details</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {ungroupedOverviewRows.map(({ field, value }) => (
+                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground">{field.label}</span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatSchemaFieldValue(field, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {fallbackCustomRows.length > 0 && (
+            <div className="bg-card rounded-lg border overflow-hidden mb-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">Additional Information</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {fallbackCustomRows.map(([key, value]) => (
+                  <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground capitalize flex items-center gap-2">
+                      {key === "_projects" && <FolderOpen className="h-4 w-4" />}
+                      {getFieldLabel(key)}
+                    </span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatCustomFieldValue(key, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isFacilityAdmin && fallbackAdminRows.length > 0 && (
+            <div className="bg-card rounded-lg border border-slate-200 overflow-hidden mb-4">
+              <div className="px-5 py-4 bg-slate-50/50">
+                <h2 className="text-sm font-semibold text-slate-700">Facility Fields</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {fallbackAdminRows.map(([key, value]) => (
+                  <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground capitalize">
+                      {getFieldLabel(key)}
+                    </span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatCustomFieldValue(key, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Samples */}
           <div className="bg-card rounded-lg border overflow-hidden mb-4">
             <div className="px-5 py-4">
-              <h2 className="text-sm font-semibold">Sequencing Parameters</h2>
+              <h2 className="text-sm font-semibold">Samples ({order.samples.length})</h2>
             </div>
-            <div className="divide-y divide-border border-t">
-              {[
-                { label: "Platform", value: order.platform },
-                { label: "Instrument", value: order.instrumentModel },
-                { label: "Strategy", value: order.libraryStrategy },
-                { label: "Source", value: order.librarySource },
-                { label: "Selection", value: order.librarySelection },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex justify-between px-5 py-3 text-sm">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="font-medium">{value || "Not specified"}</span>
+            {order.samples.length === 0 ? (
+              <div className="px-5 py-8 text-center text-sm text-muted-foreground border-t">
+                No samples added yet
+              </div>
+            ) : (
+              <div className="border-t">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 border-b">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
+                        <th className="px-3 py-2 text-left font-medium">Sample ID</th>
+                        {visibleSampleFields.map((field) => (
+                          <th key={field.id} className="px-3 py-2 text-left font-medium">
+                            {field.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {order.samples.map((sample, index) => (
+                        <tr key={sample.id}>
+                          <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
+                          <td className="px-3 py-2">
+                            <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                              {sample.sampleId}
+                            </code>
+                          </td>
+                          {visibleSampleFields.map((field) => {
+                            const rawValue = getSampleFieldRawValue(sample, field);
+                            const displayValue = formatSchemaFieldValue(field, rawValue);
+                            return (
+                              <td key={field.id} className="px-3 py-2 align-top">
+                                {displayValue === "Not specified" ? "-" : displayValue}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
-            </div>
+                {visibleSampleFields.length === 0 && (
+                  <div className="px-5 py-3 text-sm text-muted-foreground border-t">
+                    No per-sample fields are configured. Sample IDs are shown above.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          {/* Custom Fields */}
-          {order.customFields && (() => {
-            let customData: Record<string, unknown>;
-            try {
-              customData = JSON.parse(order.customFields);
-            } catch {
-              return null;
-            }
-            const allFields = Object.entries(customData).filter(
-              ([key]) => !key.startsWith("_mixs")
-            );
-            // Split into regular and admin-only fields
-            const regularFields = allFields.filter(([key]) => !adminOnlyFieldNames.has(key));
-            const adminFields = allFields.filter(([key]) => adminOnlyFieldNames.has(key));
-
-            return (
-              <>
-                {regularFields.length > 0 && (
-                  <div className="bg-card rounded-lg border overflow-hidden mb-4">
-                    <div className="px-5 py-4">
-                      <h2 className="text-sm font-semibold">Additional Information</h2>
-                    </div>
-                    <div className="divide-y divide-border border-t">
-                      {regularFields.map(([key, value]) => (
-                        <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
-                          <span className="text-muted-foreground capitalize flex items-center gap-2">
-                            {key === "_projects" && <FolderOpen className="h-4 w-4" />}
-                            {getFieldLabel(key)}
-                          </span>
-                          <span className="font-medium text-right max-w-[60%]">
-                            {formatCustomFieldValue(key, value)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Facility-only fields - visible only to admins */}
-                {isFacilityAdmin && adminFields.length > 0 && (
-                  <div className="bg-card rounded-lg border border-slate-200 overflow-hidden mb-4">
-                    <div className="px-5 py-4 bg-slate-50/50">
-                      <h2 className="text-sm font-semibold text-slate-700">Facility Fields</h2>
-                    </div>
-                    <div className="divide-y divide-border border-t">
-                      {adminFields.map(([key, value]) => (
-                        <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
-                          <span className="text-muted-foreground capitalize">
-                            {getFieldLabel(key)}
-                          </span>
-                          <span className="font-medium text-right max-w-[60%]">
-                            {formatCustomFieldValue(key, value)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            );
-          })()}
 
           {/* Status History */}
           {order.statusNotes.length > 0 && (
@@ -830,6 +1151,25 @@ export default function OrderDetailPage({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {canEditOrder && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Order Information</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Update the order details, contact, or metadata fields.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/orders/${order.id}/edit`}>
+                    <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                    Change Order Information
+                  </Link>
+                </Button>
               </div>
             </div>
           )}
@@ -927,11 +1267,18 @@ export default function OrderDetailPage({
                           </div>
                         </div>
                         {!hasFiles && (
-                          <span className="text-xs text-muted-foreground">No files</span>
+                          <span className="text-xs text-muted-foreground">No reads</span>
                         )}
                       </div>
 
                       {/* File details */}
+                      {!hasFiles && (
+                        <div className="ml-10 mt-2">
+                          <p className="text-xs text-muted-foreground">
+                            No reads found for this sample.
+                          </p>
+                        </div>
+                      )}
                       {hasFiles && (
                         <div className="ml-10 mt-2 space-y-1">
                           {sample.reads.filter(r => r.file1 || r.file2).map((read) => {
@@ -997,6 +1344,7 @@ export default function OrderDetailPage({
             )}
           </div>
         </TabsContent>
+      </PageContainer>
       </Tabs>
 
       {/* File Inspect Dialog */}
@@ -1324,6 +1672,6 @@ export default function OrderDetailPage({
         </DialogContent>
       </Dialog>
 
-    </PageContainer>
+    </>
   );
 }

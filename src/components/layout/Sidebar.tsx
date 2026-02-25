@@ -250,7 +250,7 @@ export function Sidebar({ user, version }: SidebarProps) {
       )}
     >
       {/* Header */}
-      <div className={cn("p-3 border-b border-border", collapsed && "px-2")}>
+      <div className={cn("p-3", collapsed && "px-2")}>
         <div className="flex items-center justify-between">
           {collapsed ? (
             <button
@@ -269,13 +269,10 @@ export function Sidebar({ user, version }: SidebarProps) {
                   SeqDesk
                 </span>
                 {version && (
-                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide self-start mt-0.5">
-                    V{version}
+                  <span className="text-[10px] leading-none text-muted-foreground font-geist-pixel">
+                    v{version}
                   </span>
                 )}
-                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                  {isFacilityAdmin ? "Facility" : "Portal"}
-                </span>
               </Link>
               <button
                 onClick={toggle}
@@ -461,8 +458,8 @@ export function Sidebar({ user, version }: SidebarProps) {
 
                   return (
                     <div className="mt-2 pt-2 border-t border-border">
-                      <p className="text-xs text-muted-foreground font-medium mb-1">Format:</p>
-                      <ul className="text-xs text-muted-foreground/70 space-y-0.5">
+                      <p className="text-[10px] text-muted-foreground font-medium mb-1 font-geist-pixel">Format:</p>
+                      <ul className="text-[10px] text-muted-foreground/70 space-y-0.5 font-geist-pixel">
                         {v.minLength && (
                           <li>Min length: {v.minLength} characters</li>
                         )}
