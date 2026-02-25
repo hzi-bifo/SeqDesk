@@ -45,6 +45,27 @@ curl -fsSL https://seqdesk.com/install.sh | \
   bash -s -- -y --config https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/setups/twincore/infrastructure-setup.json
 ```
 
+## Private Pipeline Add-ons
+
+Public SeqDesk releases intentionally exclude private pipeline packages (for example `metaxpath`).
+Install private packages after base installation on the SeqDesk server:
+
+```bash
+cd /path/to/seqdesk
+METAXPATH_PACKAGE_URL="https://private.example/metaxpath-0.1.0.tar.gz" \
+METAXPATH_PACKAGE_TOKEN="..." \
+scripts/install-private-metaxpath.sh
+```
+
+Optional checksum verification:
+
+```bash
+METAXPATH_PACKAGE_URL="https://private.example/metaxpath-0.1.0.tar.gz" \
+METAXPATH_PACKAGE_TOKEN="..." \
+METAXPATH_PACKAGE_SHA256="<sha256>" \
+scripts/install-private-metaxpath.sh
+```
+
 ## Manual Installation
 
 ### Prerequisites
