@@ -59,6 +59,16 @@ function extendDefaultConfigWithTechnologyAllowlist(
   };
 }
 
+function isLocalPipelineRef(pipelineRef: string | null | undefined): boolean {
+  if (!pipelineRef) return false;
+  const trimmed = pipelineRef.trim();
+  return (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../')
+  );
+}
+
 // GET - List all pipeline configurations
 export async function GET(request: NextRequest) {
   try {
@@ -95,11 +105,19 @@ export async function GET(request: NextRequest) {
       };
       const manifest = getPackageManifest(pipelineId);
       const downloadStatus = manifest
-        ? await getPipelineDownloadStatus(
-          pipelineId,
-          manifest.execution.pipeline,
-          manifest.execution.version
-        )
+        ? isLocalPipelineRef(manifest.execution.pipeline)
+          ? {
+            status: 'downloaded' as const,
+            version: manifest.execution.version,
+            expectedVersion: manifest.execution.version,
+            path: manifest.execution.pipeline,
+            detail: 'Bundled with pipeline package (no remote download required)',
+          }
+          : await getPipelineDownloadStatus(
+            pipelineId,
+            manifest.execution.pipeline,
+            manifest.execution.version
+          )
         : {
           status: 'unsupported' as const,
           detail: 'Missing pipeline manifest',

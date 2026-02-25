@@ -1,0 +1,153 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "metaxpath",
+    "name": "MetaxPath",
+    "version": "0.1.0",
+    "description": "Hosted Nextflow package for long-read pathogen profiling, virulence, and AMR detection.",
+    "website": "https://github.com/hzi-bifo/MetaxPath",
+    "provider": "hzi-bifo"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md"
+  },
+  "inputs": [
+    {
+      "id": "long_reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true,
+      "filters": {
+        "paired": false
+      }
+    },
+    {
+      "id": "sequencer",
+      "scope": "order",
+      "source": "order.platform",
+      "required": true,
+      "transform": {
+        "type": "map_value",
+        "mapping": {
+          "ont": "Nanopore",
+          "nanopore": "Nanopore",
+          "oxford_nanopore": "Nanopore",
+          "minion": "Nanopore",
+          "gridion": "Nanopore",
+          "promethion": "Nanopore",
+          "ont-minion": "Nanopore",
+          "ont-gridion": "Nanopore",
+          "ont-promethion": "Nanopore",
+          "pacbio": "PacBio",
+          "sequel": "PacBio",
+          "revio": "PacBio"
+        }
+      }
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "local",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {
+      "sequencer": "Nanopore",
+      "assemblers": "flye",
+      "threads": 20,
+      "topn": 50,
+      "skipSylph": false,
+      "skipVirulence": false,
+      "skipAmr": false,
+      "metaxDb": "",
+      "metaxDmpDir": "",
+      "kraken2Db": "",
+      "sylphDb": "",
+      "vfdbCore": "",
+      "refIndex": "",
+      "notificationEmails": ""
+    },
+    "paramMap": {
+      "sequencer": "--sequencer",
+      "assemblers": "--assemblers",
+      "threads": "--threads",
+      "topn": "--topn",
+      "skipSylph": "--skip_sylph",
+      "skipVirulence": "--skip_virulence",
+      "skipAmr": "--skip_amr",
+      "metaxDb": "--metax_db",
+      "metaxDmpDir": "--metax_dmp_dir",
+      "kraken2Db": "--kraken2_db",
+      "sylphDb": "--sylph_db",
+      "vfdbCore": "--vfdb_core",
+      "refIndex": "--ref_index",
+      "notificationEmails": "--notification_emails"
+    }
+  },
+  "outputs": [
+    {
+      "id": "sample_profile",
+      "scope": "sample",
+      "destination": "sample_metadata",
+      "type": "qc",
+      "fromStep": "merge_profiles",
+      "discovery": {
+        "pattern": "run_*/final/*/*.profile.with_vfs_amrs.txt",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "combined_report_html",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "report_html",
+      "discovery": {
+        "pattern": "run_*/final/*/metaxpath.combined_report.top50.html"
+      }
+    },
+    {
+      "id": "combined_readcount_stats",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "readcount_stats",
+      "discovery": {
+        "pattern": "run_*/final/metaxpath.combined_readcount_stats.txt"
+      }
+    },
+    {
+      "id": "dotplots",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "dotplot",
+      "discovery": {
+        "pattern": "run_*/final/*/metaxpath.combined_report*.dotplot.pdf"
+      }
+    },
+    {
+      "id": "run_logs",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "amr_virulence_prediction",
+      "discovery": {
+        "pattern": "run_*/logging/**"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Sample",
+      "Read",
+      "Study",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

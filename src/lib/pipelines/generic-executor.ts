@@ -61,6 +61,11 @@ export interface PrepareResult {
   errors: string[];
 }
 
+interface PipelineLaunchTarget {
+  target: string;
+  isLocal: boolean;
+}
+
 /**
  * Generate run number in format {PIPELINE_ID}-YYYYMMDD-NNN
  */
@@ -94,6 +99,25 @@ function buildNextflowRunName(runNumber: string, runId: string): string {
   const safeRunId = runId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 8);
   if (!safeRunId) return runNumber;
   return `${runNumber}-${safeRunId}`;
+}
+
+function resolvePipelineLaunchTarget(pkg: LoadedPackage): PipelineLaunchTarget {
+  const pipelineRef = pkg.manifest.execution.pipeline.trim();
+
+  if (
+    pipelineRef.startsWith('/') ||
+    pipelineRef.startsWith('./') ||
+    pipelineRef.startsWith('../')
+  ) {
+    return {
+      target: path.isAbsolute(pipelineRef)
+        ? pipelineRef
+        : path.resolve(pkg.basePath, pipelineRef),
+      isLocal: true,
+    };
+  }
+
+  return { target: pipelineRef, isLocal: false };
 }
 
 /**
@@ -431,6 +455,7 @@ function buildPipelineFlags(
  */
 function generateSlurmScript(
   pkg: LoadedPackage,
+  pipelineTarget: PipelineLaunchTarget,
   runFolder: string,
   samplesheetPath: string,
   outputDir: string,
@@ -453,8 +478,10 @@ function generateSlurmScript(
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
   const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
-  // Pin pipeline version from manifest
-  const revisionFlag = execution.version ? `-r ${execution.version}` : '';
+  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
+  const pipelineLabel = pipelineTarget.isLocal
+    ? `${execution.pipeline} (local)`
+    : `${execution.pipeline} v${execution.version}`;
 
   const nextflowArgs = [
     `--input ${samplesheetPath}`,
@@ -486,13 +513,13 @@ set -euo pipefail
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
 STDERR_LOG="${runFolder}/logs/pipeline.err"
 
-echo "Starting ${execution.pipeline} v${execution.version} pipeline at $(date)" > "$STDOUT_LOG"
+echo "Starting ${pipelineLabel} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
 
-# Run ${execution.pipeline} v${execution.version}
-"\${NEXTFLOW_RUNNER[@]}" run ${execution.pipeline} \\
+# Run ${pipelineLabel}
+"\${NEXTFLOW_RUNNER[@]}" run "${pipelineTarget.target}" \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
@@ -509,6 +536,7 @@ exit $EXIT_CODE
  */
 function generateLocalScript(
   pkg: LoadedPackage,
+  pipelineTarget: PipelineLaunchTarget,
   runFolder: string,
   samplesheetPath: string,
   outputDir: string,
@@ -531,8 +559,10 @@ function generateLocalScript(
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
   const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
-  // Pin pipeline version from manifest
-  const revisionFlag = execution.version ? `-r ${execution.version}` : '';
+  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
+  const pipelineLabel = pipelineTarget.isLocal
+    ? `${execution.pipeline} (local)`
+    : `${execution.pipeline} v${execution.version}`;
 
   const nextflowArgs = [
     `--input ${samplesheetPath}`,
@@ -555,13 +585,13 @@ set -euo pipefail
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
 STDERR_LOG="${runFolder}/logs/pipeline.err"
 
-echo "Starting ${execution.pipeline} v${execution.version} pipeline at $(date)" > "$STDOUT_LOG"
+echo "Starting ${pipelineLabel} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
 
-# Run ${execution.pipeline} v${execution.version}
-"\${NEXTFLOW_RUNNER[@]}" run ${execution.pipeline} \\
+# Run ${pipelineLabel}
+"\${NEXTFLOW_RUNNER[@]}" run "${pipelineTarget.target}" \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
@@ -621,6 +651,16 @@ export async function prepareGenericRun(
       return { success: false, runId, errors };
     }
 
+    const pipelineTarget = resolvePipelineLaunchTarget(pkg);
+    if (pipelineTarget.isLocal) {
+      try {
+        await fs.access(pipelineTarget.target);
+      } catch {
+        errors.push(`Local pipeline path not found: ${pipelineTarget.target}`);
+        return { success: false, runId, errors };
+      }
+    }
+
     // Generate samplesheet
     const samplesheet = await adapter.generateSamplesheet({
       studyId,
@@ -665,6 +705,7 @@ export async function prepareGenericRun(
     const script = executionSettings.useSlurm
       ? generateSlurmScript(
           pkg,
+          pipelineTarget,
           runFolder,
           samplesheetPath,
           outputDir,
@@ -676,6 +717,7 @@ export async function prepareGenericRun(
         )
       : generateLocalScript(
           pkg,
+          pipelineTarget,
           runFolder,
           samplesheetPath,
           outputDir,
