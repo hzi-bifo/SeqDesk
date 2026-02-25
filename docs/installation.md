@@ -81,10 +81,20 @@ environment variables still take precedence over values from the JSON file.
 Use `--reconfigure` (or `SEQDESK_RECONFIGURE=1`) to apply new JSON/env values
 to an existing installation directory in place.
 
+The installer does not run `sudo` commands automatically. If required system
+packages (for example Node.js) are missing, it prints the exact commands so you
+can run and review them manually.
+
 You can keep runtime values in `seqdesk.config.json` under `runtime` (for
 example `databaseUrl`, `nextAuthUrl`, `nextAuthSecret`, `anthropicApiKey`).
 These are loaded into process env at server startup when corresponding env vars
 are not already set.
+
+To install the private MetaxPath pipeline package during unattended setup, add
+`privatePipelines.metaxpath.packageUrl` and `privatePipelines.metaxpath.key`
+to your `--config` JSON. Optional checksum verification is supported via
+`privatePipelines.metaxpath.sha256`. If these fields are omitted (or left
+empty), MetaxPath install is skipped.
 
 ---
 
@@ -484,6 +494,12 @@ server {
 ```bash
 rm -rf node_modules package-lock.json
 npm install
+```
+
+**Error: "next: command not found"**
+```bash
+cd /path/to/seqdesk
+npm ci --omit=dev
 ```
 
 **Error: "EACCES permission denied"**

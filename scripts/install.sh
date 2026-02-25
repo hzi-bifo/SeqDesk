@@ -32,6 +32,12 @@
 #   SEQDESK_EXEC_NEXTFLOW_PROFILE=conda - Optional pipeline execution override
 #   SEQDESK_EXEC_WEBLOG_URL=http://host/api/pipelines/weblog - Optional override
 #   SEQDESK_EXEC_WEBLOG_SECRET=secret - Optional override
+#   SEQDESK_METAXPATH_PACKAGE_URL=https://... - Optional private MetaxPath package URL
+#   SEQDESK_METAXPATH_KEY=...       - Optional private MetaxPath access key/token
+#   SEQDESK_METAXPATH_SHA256=...    - Optional private MetaxPath tarball checksum
+#   METAXPATH_PACKAGE_URL=https://... - Alias for SEQDESK_METAXPATH_PACKAGE_URL
+#   METAXPATH_PACKAGE_TOKEN=...     - Alias for SEQDESK_METAXPATH_KEY
+#   METAXPATH_PACKAGE_SHA256=...    - Alias for SEQDESK_METAXPATH_SHA256
 #
 
 set -euo pipefail
@@ -74,6 +80,9 @@ SEQDESK_EXEC_CONDA_ENV="${SEQDESK_EXEC_CONDA_ENV:-}"
 SEQDESK_EXEC_NEXTFLOW_PROFILE="${SEQDESK_EXEC_NEXTFLOW_PROFILE:-}"
 SEQDESK_EXEC_WEBLOG_URL="${SEQDESK_EXEC_WEBLOG_URL:-}"
 SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
+SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
+SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
+SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
 
 TOTAL_STEPS=8
 CURRENT_STEP=0
@@ -197,7 +206,7 @@ Options:
   --branch <branch>            Git branch to install (source installer)
   --with-pipelines             Enable pipeline dependencies
   --without-pipelines          Disable pipeline dependencies
-  --skip-deps                  Skip dependency installation
+  --skip-deps                  Skip dependency preflight checks
   --port <port>                App port
   --data-path <path>           Sequencing data directory
   --run-dir <path>             Pipeline run directory
@@ -212,6 +221,56 @@ Examples:
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
   curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
 EOF
+}
+
+print_node_install_instructions() {
+    print_info "Install Node.js ${MIN_NODE_VERSION}+ manually and re-run this installer."
+    case "$OS:$DISTRO" in
+        macos:macos)
+            echo "  brew install node"
+            ;;
+        linux:debian)
+            echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+            echo "  sudo apt-get install -y nodejs"
+            ;;
+        linux:redhat)
+            echo "  curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
+            if command_exists dnf; then
+                echo "  sudo dnf install -y nodejs"
+            else
+                echo "  sudo yum install -y nodejs"
+            fi
+            ;;
+        *)
+            echo "  https://nodejs.org"
+            ;;
+    esac
+}
+
+print_git_install_instructions() {
+    print_info "Install Git manually and re-run this installer."
+    case "$OS:$DISTRO" in
+        macos:macos)
+            if command_exists brew; then
+                echo "  brew install git"
+            else
+                echo "  xcode-select --install"
+            fi
+            ;;
+        linux:debian)
+            echo "  sudo apt-get update && sudo apt-get install -y git"
+            ;;
+        linux:redhat)
+            if command_exists dnf; then
+                echo "  sudo dnf install -y git"
+            else
+                echo "  sudo yum install -y git"
+            fi
+            ;;
+        *)
+            echo "  https://git-scm.com/downloads"
+            ;;
+    esac
 }
 
 parse_args() {
@@ -443,6 +502,8 @@ const execution = toRecord(pipelines?.execution);
 const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
+const privatePipelines = toRecord(root.privatePipelines);
+const metaxpath = toRecord(privatePipelines?.metaxpath);
 
 const executionMode = toOptionalString(execution?.mode)?.toLowerCase();
 const explicitUseSlurm = toOptionalBoolean(
@@ -543,6 +604,20 @@ const values = {
   weblogSecret: toOptionalString(
     firstDefined(root.weblogSecret, execution?.weblogSecret, runtime?.weblogSecret)
   ),
+  metaxpathPackageUrl: toOptionalString(
+    firstDefined(
+      root.metaxpathPackageUrl,
+      root.metaxpathUrl,
+      metaxpath?.packageUrl,
+      metaxpath?.url
+    )
+  ),
+  metaxpathKey: toOptionalString(
+    firstDefined(root.metaxpathKey, root.metaxpathToken, metaxpath?.key, metaxpath?.token)
+  ),
+  metaxpathSha256: toOptionalString(
+    firstDefined(root.metaxpathSha256, root.metaxpathPackageSha256, metaxpath?.sha256)
+  ),
 };
 
 if (values.runDir === "/") {
@@ -562,6 +637,9 @@ if (withPipelines === undefined) {
     values.nextflowProfile,
     values.weblogUrl,
     values.weblogSecret,
+    values.metaxpathPackageUrl,
+    values.metaxpathKey,
+    values.metaxpathSha256,
   ];
   if (hints.some((value) => value !== undefined && value !== "")) {
     withPipelines = true;
@@ -599,6 +677,11 @@ if (values.nextflowProfile) {
 }
 if (values.weblogUrl) out.SEQDESK_CFG_EXEC_WEBLOG_URL = values.weblogUrl;
 if (values.weblogSecret) out.SEQDESK_CFG_EXEC_WEBLOG_SECRET = values.weblogSecret;
+if (values.metaxpathPackageUrl) {
+  out.SEQDESK_CFG_METAXPATH_PACKAGE_URL = values.metaxpathPackageUrl;
+}
+if (values.metaxpathKey) out.SEQDESK_CFG_METAXPATH_KEY = values.metaxpathKey;
+if (values.metaxpathSha256) out.SEQDESK_CFG_METAXPATH_SHA256 = values.metaxpathSha256;
 
 for (const [key, value] of Object.entries(out)) {
   console.log(`${key}="${escapeShell(value)}"`);
@@ -641,6 +724,9 @@ NODE
     apply_config_value SEQDESK_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE
     apply_config_value SEQDESK_EXEC_WEBLOG_URL SEQDESK_CFG_EXEC_WEBLOG_URL
     apply_config_value SEQDESK_EXEC_WEBLOG_SECRET SEQDESK_CFG_EXEC_WEBLOG_SECRET
+    apply_config_value SEQDESK_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_PACKAGE_URL
+    apply_config_value SEQDESK_METAXPATH_KEY SEQDESK_CFG_METAXPATH_KEY
+    apply_config_value SEQDESK_METAXPATH_SHA256 SEQDESK_CFG_METAXPATH_SHA256
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
@@ -652,6 +738,8 @@ NODE
     unset SEQDESK_CFG_EXEC_CONDA_PATH SEQDESK_CFG_EXEC_CONDA_ENV
     unset SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_WEBLOG_URL
     unset SEQDESK_CFG_EXEC_WEBLOG_SECRET
+    unset SEQDESK_CFG_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_KEY
+    unset SEQDESK_CFG_METAXPATH_SHA256
 }
 
 sed_inplace() {
@@ -736,6 +824,49 @@ ensure_seed_dependency() {
 
     print_warning "Could not install ${module_name}; seed may fail."
     return 1
+}
+
+install_private_metaxpath_if_configured() {
+    local has_metaxpath_config="false"
+    if [ -n "${SEQDESK_METAXPATH_PACKAGE_URL:-}" ] || [ -n "${SEQDESK_METAXPATH_KEY:-}" ] || [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
+        has_metaxpath_config="true"
+    fi
+
+    if [ "$has_metaxpath_config" != "true" ]; then
+        return 0
+    fi
+
+    if [ "$PIPELINES_ENABLED" != "true" ]; then
+        print_warning "MetaxPath package settings were provided, but pipelines are disabled. Skipping private MetaxPath install."
+        return 0
+    fi
+
+    if [ -z "${SEQDESK_METAXPATH_PACKAGE_URL:-}" ] || [ -z "${SEQDESK_METAXPATH_KEY:-}" ]; then
+        print_error "MetaxPath install requires both metaxpathPackageUrl and metaxpathKey in config (or matching SEQDESK_METAXPATH_* env vars)."
+        exit 1
+    fi
+
+    if [ ! -x "./scripts/install-private-metaxpath.sh" ]; then
+        print_error "Missing scripts/install-private-metaxpath.sh; cannot install private MetaxPath package."
+        exit 1
+    fi
+
+    print_info "Installing private MetaxPath pipeline package..."
+    local metaxpath_args=(
+        --url "${SEQDESK_METAXPATH_PACKAGE_URL}"
+        --token "${SEQDESK_METAXPATH_KEY}"
+        --dir "$(pwd)"
+    )
+    if [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
+        metaxpath_args+=(--sha256 "${SEQDESK_METAXPATH_SHA256}")
+    fi
+
+    if ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
+        print_success "Private MetaxPath pipeline installed"
+    else
+        print_error "Private MetaxPath pipeline installation failed."
+        exit 1
+    fi
 }
 
 write_config() {
@@ -1169,42 +1300,24 @@ else
 fi
 
 if [ ${#MISSING_DEPS[@]} -gt 0 ] && [ -z "$SEQDESK_SKIP_DEPS" ]; then
-    print_header "Installing missing dependencies"
+    print_header "Missing required dependencies"
+    print_warning "Automatic system package installation is disabled."
+    printed_node_instructions="false"
     for dep in "${MISSING_DEPS[@]}"; do
-        case $dep in
+        case "$dep" in
             node|npm)
-                print_info "Installing Node.js..."
-                if [[ "$OS" == "macos" ]]; then
-                    if command_exists brew; then
-                        brew install node
-                    else
-                        print_error "Please install Homebrew first: https://brew.sh"
-                        exit 1
-                    fi
-                elif [[ "$DISTRO" == "debian" ]]; then
-                    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-                    sudo apt-get install -y nodejs
-                elif [[ "$DISTRO" == "redhat" ]]; then
-                    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-                    sudo yum install -y nodejs
-                else
-                    print_error "Please install Node.js manually: https://nodejs.org"
-                    exit 1
+                if [ "$printed_node_instructions" != "true" ]; then
+                    print_node_install_instructions
+                    printed_node_instructions="true"
                 fi
                 ;;
             git)
-                print_info "Installing Git..."
-                if [[ "$OS" == "macos" ]]; then
-                    xcode-select --install 2>/dev/null || brew install git
-                elif [[ "$DISTRO" == "debian" ]]; then
-                    sudo apt-get update && sudo apt-get install -y git
-                elif [[ "$DISTRO" == "redhat" ]]; then
-                    sudo yum install -y git
-                fi
+                print_git_install_instructions
                 ;;
         esac
     done
-    print_success "Dependencies installed"
+    print_error "Install missing dependencies and re-run the installer."
+    exit 1
 fi
 
 if [ -n "$SEQDESK_CONFIG" ]; then
@@ -1304,6 +1417,12 @@ print_step "Installing Node dependencies"
 
 print_info "Running npm install..."
 npm install
+
+if [ ! -x "./node_modules/.bin/next" ]; then
+    print_error "next CLI is missing after npm install (node_modules/.bin/next)."
+    print_error "Run 'npm install' manually in $SEQDESK_DIR and retry."
+    exit 1
+fi
 
 print_success "Dependencies installed"
 
@@ -1440,6 +1559,8 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
 else
     print_info "Skipped pipeline environment setup"
 fi
+
+install_private_metaxpath_if_configured
 
 # Final instructions
 print_header "Installation Complete!"

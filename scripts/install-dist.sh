@@ -11,7 +11,7 @@
 #   SEQDESK_VERSION=x.x.x          - Specific version (default: latest)
 #   SEQDESK_WITH_PIPELINES=1       - Install pipeline dependencies (Conda + Nextflow)
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
-#   SEQDESK_SKIP_DEPS=1            - Skip dependency install (Node)
+#   SEQDESK_SKIP_DEPS=1            - Deprecated (ignored in distribution installer)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
@@ -36,6 +36,12 @@
 #   SEQDESK_EXEC_NEXTFLOW_PROFILE=conda - Optional pipeline execution override
 #   SEQDESK_EXEC_WEBLOG_URL=http://host/api/pipelines/weblog - Optional override
 #   SEQDESK_EXEC_WEBLOG_SECRET=secret - Optional override
+#   SEQDESK_METAXPATH_PACKAGE_URL=https://... - Optional private MetaxPath package URL
+#   SEQDESK_METAXPATH_KEY=...       - Optional private MetaxPath access key/token
+#   SEQDESK_METAXPATH_SHA256=...    - Optional private MetaxPath tarball checksum
+#   METAXPATH_PACKAGE_URL=https://... - Alias for SEQDESK_METAXPATH_PACKAGE_URL
+#   METAXPATH_PACKAGE_TOKEN=...     - Alias for SEQDESK_METAXPATH_KEY
+#   METAXPATH_PACKAGE_SHA256=...    - Alias for SEQDESK_METAXPATH_SHA256
 #
 
 set -euo pipefail
@@ -79,6 +85,9 @@ SEQDESK_EXEC_CONDA_ENV="${SEQDESK_EXEC_CONDA_ENV:-}"
 SEQDESK_EXEC_NEXTFLOW_PROFILE="${SEQDESK_EXEC_NEXTFLOW_PROFILE:-}"
 SEQDESK_EXEC_WEBLOG_URL="${SEQDESK_EXEC_WEBLOG_URL:-}"
 SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
+SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
+SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
+SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
 
 PM2_CONFIGURED="false"
 PM2_STARTUP_ENABLED="false"
@@ -87,7 +96,7 @@ PM2_PROCESS_EXISTS="false"
 MIN_NODE_VERSION=18
 INSTALL_START_TS=$(date +%s)
 INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
-TOTAL_STEPS=8
+TOTAL_STEPS=9
 CURRENT_STEP=0
 
 print_header() {
@@ -208,7 +217,7 @@ Options:
   --version <version>          Release version (default: latest)
   --with-pipelines             Enable pipeline dependencies
   --without-pipelines          Disable pipeline dependencies
-  --skip-deps                  Skip dependency installation
+  --skip-deps                  Deprecated (ignored in distribution installer)
   --port <port>                App port
   --data-path <path>           Sequencing data directory
   --run-dir <path>             Pipeline run directory
@@ -467,6 +476,8 @@ const execution = toRecord(pipelines?.execution);
 const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
+const privatePipelines = toRecord(root.privatePipelines);
+const metaxpath = toRecord(privatePipelines?.metaxpath);
 
 const executionMode = toOptionalString(execution?.mode)?.toLowerCase();
 const explicitUseSlurm = toOptionalBoolean(
@@ -567,6 +578,20 @@ const values = {
   weblogSecret: toOptionalString(
     firstDefined(root.weblogSecret, execution?.weblogSecret, runtime?.weblogSecret)
   ),
+  metaxpathPackageUrl: toOptionalString(
+    firstDefined(
+      root.metaxpathPackageUrl,
+      root.metaxpathUrl,
+      metaxpath?.packageUrl,
+      metaxpath?.url
+    )
+  ),
+  metaxpathKey: toOptionalString(
+    firstDefined(root.metaxpathKey, root.metaxpathToken, metaxpath?.key, metaxpath?.token)
+  ),
+  metaxpathSha256: toOptionalString(
+    firstDefined(root.metaxpathSha256, root.metaxpathPackageSha256, metaxpath?.sha256)
+  ),
 };
 
 if (values.runDir === "/") {
@@ -586,6 +611,9 @@ if (withPipelines === undefined) {
     values.nextflowProfile,
     values.weblogUrl,
     values.weblogSecret,
+    values.metaxpathPackageUrl,
+    values.metaxpathKey,
+    values.metaxpathSha256,
   ];
   if (hints.some((value) => value !== undefined && value !== "")) {
     withPipelines = true;
@@ -623,6 +651,11 @@ if (values.nextflowProfile) {
 }
 if (values.weblogUrl) out.SEQDESK_CFG_EXEC_WEBLOG_URL = values.weblogUrl;
 if (values.weblogSecret) out.SEQDESK_CFG_EXEC_WEBLOG_SECRET = values.weblogSecret;
+if (values.metaxpathPackageUrl) {
+  out.SEQDESK_CFG_METAXPATH_PACKAGE_URL = values.metaxpathPackageUrl;
+}
+if (values.metaxpathKey) out.SEQDESK_CFG_METAXPATH_KEY = values.metaxpathKey;
+if (values.metaxpathSha256) out.SEQDESK_CFG_METAXPATH_SHA256 = values.metaxpathSha256;
 
 for (const [key, value] of Object.entries(out)) {
   console.log(`${key}="${escapeShell(value)}"`);
@@ -665,6 +698,9 @@ NODE
     apply_config_value SEQDESK_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE
     apply_config_value SEQDESK_EXEC_WEBLOG_URL SEQDESK_CFG_EXEC_WEBLOG_URL
     apply_config_value SEQDESK_EXEC_WEBLOG_SECRET SEQDESK_CFG_EXEC_WEBLOG_SECRET
+    apply_config_value SEQDESK_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_PACKAGE_URL
+    apply_config_value SEQDESK_METAXPATH_KEY SEQDESK_CFG_METAXPATH_KEY
+    apply_config_value SEQDESK_METAXPATH_SHA256 SEQDESK_CFG_METAXPATH_SHA256
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
@@ -676,6 +712,8 @@ NODE
     unset SEQDESK_CFG_EXEC_CONDA_PATH SEQDESK_CFG_EXEC_CONDA_ENV
     unset SEQDESK_CFG_EXEC_NEXTFLOW_PROFILE SEQDESK_CFG_EXEC_WEBLOG_URL
     unset SEQDESK_CFG_EXEC_WEBLOG_SECRET
+    unset SEQDESK_CFG_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_KEY
+    unset SEQDESK_CFG_METAXPATH_SHA256
 }
 
 load_existing_install_values() {
@@ -962,51 +1000,52 @@ confirm_config() {
     esac
 }
 
-install_node() {
-    print_info "Installing Node.js 20..."
-    if [[ "$OS" == "macos" ]]; then
-        if command_exists brew; then
-            brew install node
-        else
-            print_error "Homebrew not found. Install Node.js manually: https://nodejs.org"
-            exit 1
-        fi
+print_node_install_instructions() {
+    print_warning "Automatic system package installation is disabled."
+    print_info "Install Node.js ${MIN_NODE_VERSION}+ manually, then re-run this installer."
+    case "$OS:$DISTRO" in
+        macos:macos)
+            echo "  brew install node"
+            ;;
+        linux:debian)
+            echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+            echo "  sudo apt-get install -y nodejs"
+            ;;
+        linux:redhat)
+            echo "  curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
+            if command_exists dnf; then
+                echo "  sudo dnf install -y nodejs"
+            else
+                echo "  sudo yum install -y nodejs"
+            fi
+            ;;
+        *)
+            echo "  https://nodejs.org"
+            ;;
+    esac
+}
+
+install_runtime_node_modules() {
+    if [ -x "./node_modules/.bin/next" ]; then
+        print_info "Runtime Node dependencies already available."
         return 0
     fi
 
-    if [ "$EUID" -ne 0 ] && ! command_exists sudo; then
-        print_error "sudo is required to install Node.js. Install it manually: https://nodejs.org"
+    if [ -f package-lock.json ]; then
+        print_info "Running npm ci --omit=dev..."
+        npm ci --omit=dev --no-audit --no-fund
+    else
+        print_warning "package-lock.json not found, falling back to npm install --omit=dev."
+        npm install --omit=dev --no-audit --no-fund
+    fi
+
+    if [ ! -x "./node_modules/.bin/next" ]; then
+        print_error "next CLI is missing after dependency install (node_modules/.bin/next)."
+        print_error "Run 'npm install --omit=dev' manually in $SEQDESK_DIR and retry."
         exit 1
     fi
 
-    if [[ "$DISTRO" == "debian" ]]; then
-        if [ "$EUID" -eq 0 ]; then
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-            apt-get install -y nodejs
-        else
-            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-            sudo apt-get install -y nodejs
-        fi
-    elif [[ "$DISTRO" == "redhat" ]]; then
-        if [ "$EUID" -eq 0 ]; then
-            curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-            if command_exists dnf; then
-                dnf install -y nodejs
-            else
-                yum install -y nodejs
-            fi
-        else
-            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-            if command_exists dnf; then
-                sudo dnf install -y nodejs
-            else
-                sudo yum install -y nodejs
-            fi
-        fi
-    else
-        print_error "Unsupported distro for auto-install. Install Node.js manually: https://nodejs.org"
-        exit 1
-    fi
+    print_success "Runtime Node dependencies installed"
 }
 
 sed_inplace() {
@@ -1091,6 +1130,49 @@ ensure_seed_dependency() {
 
     print_warning "Could not install ${module_name}; seed may fail."
     return 1
+}
+
+install_private_metaxpath_if_configured() {
+    local has_metaxpath_config="false"
+    if [ -n "${SEQDESK_METAXPATH_PACKAGE_URL:-}" ] || [ -n "${SEQDESK_METAXPATH_KEY:-}" ] || [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
+        has_metaxpath_config="true"
+    fi
+
+    if [ "$has_metaxpath_config" != "true" ]; then
+        return 0
+    fi
+
+    if [ "$PIPELINES_ENABLED" != "true" ]; then
+        print_warning "MetaxPath package settings were provided, but pipelines are disabled. Skipping private MetaxPath install."
+        return 0
+    fi
+
+    if [ -z "${SEQDESK_METAXPATH_PACKAGE_URL:-}" ] || [ -z "${SEQDESK_METAXPATH_KEY:-}" ]; then
+        print_error "MetaxPath install requires both metaxpathPackageUrl and metaxpathKey in config (or matching SEQDESK_METAXPATH_* env vars)."
+        exit 1
+    fi
+
+    if [ ! -x "./scripts/install-private-metaxpath.sh" ]; then
+        print_error "Missing scripts/install-private-metaxpath.sh; cannot install private MetaxPath package."
+        exit 1
+    fi
+
+    print_info "Installing private MetaxPath pipeline package..."
+    local metaxpath_args=(
+        --url "${SEQDESK_METAXPATH_PACKAGE_URL}"
+        --token "${SEQDESK_METAXPATH_KEY}"
+        --dir "$(pwd)"
+    )
+    if [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
+        metaxpath_args+=(--sha256 "${SEQDESK_METAXPATH_SHA256}")
+    fi
+
+    if ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
+        print_success "Private MetaxPath pipeline installed"
+    else
+        print_error "Private MetaxPath pipeline installation failed."
+        exit 1
+    fi
 }
 
 write_config() {
@@ -1413,7 +1495,7 @@ on_error() {
     else
         print_info "Tip: re-run with SEQDESK_LOG=/tmp/seqdesk-install.log"
     fi
-    print_info "Common fixes: check network access, sudo permissions, and disk space."
+    print_info "Common fixes: check network access, Node.js prerequisites, and disk space."
     exit $exit_code
 }
 
@@ -1493,32 +1575,17 @@ else
     fi
 fi
 
-if [ -n "$node_install_reason" ]; then
-    if is_truthy "$SEQDESK_SKIP_DEPS"; then
-        print_error "Node.js $MIN_NODE_VERSION+ is required but not installed."
-        print_error "Install Node.js from https://nodejs.org and re-run the installer."
-        exit 1
-    fi
-
-    if is_truthy "$SEQDESK_YES"; then
-        install_node
-    else
-        if [ "$node_install_reason" = "missing" ]; then
-            prompt_yes_no INSTALL_NODE "Node.js not found. Install Node.js 20 now? (requires sudo)" "y"
-        else
-            prompt_yes_no INSTALL_NODE "Node.js is too old. Upgrade to Node.js 20 now? (requires sudo)" "y"
-        fi
-        if [ "$INSTALL_NODE" = "true" ]; then
-            install_node
-        else
-            print_error "Node.js $MIN_NODE_VERSION+ is required to continue."
-            exit 1
-        fi
-    fi
+if is_truthy "$SEQDESK_SKIP_DEPS"; then
+    print_warning "--skip-deps is deprecated for the distribution installer and is ignored."
 fi
 
-if ! command_exists node; then
-    print_error "Node.js installation failed or is not on PATH."
+if [ -n "$node_install_reason" ]; then
+    if [ "$node_install_reason" = "missing" ]; then
+        print_error "Node.js $MIN_NODE_VERSION+ is required but was not found."
+    else
+        print_error "Node.js ${MIN_NODE_VERSION}+ is required (found v$NODE_VERSION)."
+    fi
+    print_node_install_instructions
     exit 1
 fi
 
@@ -1737,6 +1804,10 @@ if [ -z "$INSTALLED_VERSION" ]; then
     INSTALLED_VERSION="${SEQDESK_VERSION:-unknown}"
 fi
 
+# Install runtime dependencies
+print_step "Installing runtime Node dependencies"
+install_runtime_node_modules
+
 # Configure environment
 print_step "Configuring environment"
 
@@ -1870,6 +1941,8 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
 else
     print_info "Skipped pipeline environment setup"
 fi
+
+install_private_metaxpath_if_configured
 
 print_step "Process manager"
 
