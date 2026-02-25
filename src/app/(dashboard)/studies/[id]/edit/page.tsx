@@ -55,6 +55,7 @@ import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRenderer";
 import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { InlineFieldError } from "@/components/ui/inline-field-error";
 import { toast } from "sonner";
 
 // Per-sample field definition
@@ -1173,7 +1174,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   const getBorderClass = (field: string, isValid: boolean) => {
     if (!touched[field]) return "";
-    return isValid ? "border-green-500 focus:ring-green-500/20" : "border-amber-500 focus:ring-amber-500/20";
+    return isValid ? "border-green-500 focus:ring-green-500/20" : "input-error";
   };
 
   const nextStep = () => {
@@ -1534,10 +1535,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   const selectedSamples = availableSamples.filter(s => selectedSampleIds.includes(s.id));
 
   const ValidationIndicator = ({ isValid, touched: isTouched }: { isValid: boolean; touched: boolean }) => {
-    if (!isTouched) return null;
-    return isValid
-      ? <div className="absolute right-3 top-1/2 -translate-y-1/2"><CheckCircle2 className="h-4 w-4 text-green-500" /></div>
-      : <div className="absolute right-3 top-1/2 -translate-y-1/2"><AlertCircle className="h-4 w-4 text-amber-500" /></div>;
+    if (!isTouched || !isValid) return null;
+    return <div className="absolute right-3 top-1/2 -translate-y-1/2"><CheckCircle2 className="h-4 w-4 text-green-500" /></div>;
   };
 
   const renderStudyFieldInput = (field: FormFieldDefinition) => {
@@ -1602,7 +1601,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             disabled={isLoading}
             className={cn(
               "h-10 w-full rounded-md border border-input bg-background px-3 text-sm",
-              error && "border-destructive"
+              error && "input-error"
             )}
           >
             <option value="">Select...</option>
@@ -1612,8 +1611,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
               </option>
             ))}
           </select>
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1639,7 +1638,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             disabled={isLoading}
             className={cn(
               "min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
-              error && "border-destructive"
+              error && "input-error"
             )}
           >
             {(field.options || []).map((opt) => (
@@ -1648,8 +1647,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
               </option>
             ))}
           </select>
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1666,10 +1665,10 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             placeholder={field.placeholder}
             rows={3}
             disabled={isLoading}
-            className={cn(error && "border-destructive")}
+            className={cn(error && "input-error")}
           />
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1686,10 +1685,10 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           onBlur={() => handleStudyFieldBlur(field)}
           placeholder={field.placeholder}
           disabled={isLoading}
-          className={cn(error && "border-destructive")}
+          className={cn(error && "input-error")}
         />
+        {error && <InlineFieldError message={error} />}
         {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
     );
   };
@@ -1802,6 +1801,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
     switch (currentStepId) {
       case "details":
+        const titleError = touched.title && !isTitleValid ? "Required" : null;
         return (
           <div className="space-y-6">
             <div className="space-y-2">
@@ -1818,10 +1818,15 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                   onBlur={() => markTouched("title")}
                   placeholder={FIELD_DEFINITIONS.title.placeholder}
                   disabled={isLoading}
-                  className={cn("h-12 text-base pr-10 transition-colors", getBorderClass("title", isTitleValid))}
+                  className={cn(
+                    "h-12 text-base transition-colors",
+                    touched.title && isTitleValid && "pr-10",
+                    getBorderClass("title", isTitleValid)
+                  )}
                 />
                 <ValidationIndicator isValid={isTitleValid} touched={touched.title || false} />
               </div>
+              {titleError && <InlineFieldError message={titleError} />}
               <p className="text-sm text-muted-foreground">{FIELD_DEFINITIONS.title.helpText}</p>
             </div>
 

@@ -84,7 +84,6 @@ import type {
   SequencingKit,
   BarcodeSet,
 } from "@/types/sequencing-technology";
-import { toast } from "sonner";
 import { OrganismCell } from "@/lib/field-types/organism";
 import { BarcodeCell } from "@/lib/field-types/barcode/BarcodeCell";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
@@ -166,6 +165,15 @@ function navigateToCell(
   }
 }
 
+function focusFirstCellEditor(cell: HTMLElement) {
+  const editor = cell.querySelector<HTMLElement>(
+    "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])"
+  );
+  if (editor) {
+    editor.focus();
+  }
+}
+
 // Editable cell component for text/number/date fields
 function EditableCell({
   getValue,
@@ -196,7 +204,12 @@ function EditableCell({
     const validationError = validate(value);
     setError(validationError);
     if (value !== initialValue) {
-      table.options.meta?.updateData(row.index, column.id, value);
+      const rowIndex = row.index;
+      const columnId = column.id;
+      const nextValue = value;
+      requestAnimationFrame(() => {
+        table.options.meta?.updateData(rowIndex, columnId, nextValue);
+      });
     }
   };
 
@@ -234,7 +247,7 @@ function EditableCell({
   const inputType = field?.type === "number" ? "number" : field?.type === "date" ? "date" : "text";
 
   return (
-    <div className="relative">
+    <div className="relative h-full">
       {field?.type === "textarea" ? (
         <textarea
           value={value}
@@ -580,9 +593,13 @@ export default function NewOrderPage() {
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null);
 
   // Per-sample fields from form schema (for the samples table columns)
-  const perSampleFields = (formSchema?.fields || [])
-    .filter((f) => f.visible && f.perSample)
-    .sort((a, b) => a.order - b.order);
+  const perSampleFields = useMemo(
+    () =>
+      (formSchema?.fields || [])
+        .filter((f) => f.visible && f.perSample)
+        .sort((a, b) => a.order - b.order),
+    [formSchema?.fields]
+  );
 
   // Resolve barcode options from sequencing tech selection
   const barcodeOptions = useMemo(() => {
@@ -729,7 +746,6 @@ export default function NewOrderPage() {
           ...prevValues,
           numberOfSamples: newSamples.length,
         }));
-        toast.info(`Number of samples updated to ${newSamples.length}`);
       }
       return newSamples;
     });
@@ -744,7 +760,7 @@ export default function NewOrderPage() {
           : [...samples, ...importedSamples];
       const sampleIdError = validateSampleIds(newSamples);
       if (sampleIdError) {
-        toast.error(sampleIdError);
+        setError(sampleIdError);
         return;
       }
       setSamples(newSamples);
@@ -752,9 +768,7 @@ export default function NewOrderPage() {
         ...prev,
         numberOfSamples: newSamples.length,
       }));
-      toast.success(
-        `Imported ${importedSamples.length} sample${importedSamples.length !== 1 ? "s" : ""}`
-      );
+      setError("");
     },
     [samples, validateSampleIds]
   );
@@ -770,7 +784,6 @@ export default function NewOrderPage() {
           ...prevValues,
           numberOfSamples: newSamples.length,
         }));
-        toast.info(`Number of samples updated to ${newSamples.length}`);
       }
       return newSamples;
     });
@@ -795,7 +808,7 @@ export default function NewOrderPage() {
         sampleAlias: `Sample_${index + 1}`,
       }))
     );
-    toast.success(`Generated aliases for ${samples.length} sample${samples.length !== 1 ? "s" : ""}`);
+    setError("");
   };
 
   // Copy organism (taxId + scientificName) from first row to all rows
@@ -806,7 +819,7 @@ export default function NewOrderPage() {
     const scientificName = firstSample.scientificName || firstSample.scientific_name || "";
 
     if (!taxId && !scientificName) {
-      toast.error("First sample has no organism set");
+      setError("First sample has no organism set");
       return;
     }
 
@@ -822,7 +835,7 @@ export default function NewOrderPage() {
         };
       })
     );
-    toast.success(`Copied organism to ${samples.length - 1} sample${samples.length - 1 !== 1 ? "s" : ""}`);
+    setError("");
   };
 
   // Copy a specific field value from first row to all rows
@@ -832,7 +845,7 @@ export default function NewOrderPage() {
     const value = firstSample[fieldName];
 
     if (value === undefined || value === null || value === "") {
-      toast.error(`First sample has no ${fieldLabel.toLowerCase()} set`);
+      setError(`First sample has no ${fieldLabel.toLowerCase()} set`);
       return;
     }
 
@@ -842,7 +855,7 @@ export default function NewOrderPage() {
         return { ...s, [fieldName]: value };
       })
     );
-    toast.success(`Copied ${fieldLabel.toLowerCase()} to ${samples.length - 1} sample${samples.length - 1 !== 1 ? "s" : ""}`);
+    setError("");
   };
 
   const normalizeCoreSampleValue = (value: unknown) => {
@@ -941,12 +954,6 @@ export default function NewOrderPage() {
 
     fetchSchema();
   }, []);
-
-  // Show form-level errors immediately so submit failures are visible.
-  useEffect(() => {
-    if (!error) return;
-    toast.error(error);
-  }, [error]);
 
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
@@ -1139,6 +1146,35 @@ export default function NewOrderPage() {
       return true;
     })
     .sort((a, b) => a.order - b.order);
+
+  // New orders: auto-select dropdowns that have exactly one valid option.
+  useEffect(() => {
+    if (isEditMode || visibleFields.length === 0) return;
+    setFieldValues((prev) => {
+      let changed = false;
+      const nextValues = { ...prev };
+
+      for (const field of visibleFields) {
+        if (field.type !== "select" || !field.options || field.options.length !== 1) {
+          continue;
+        }
+        const [onlyOption] = field.options;
+        if (!onlyOption || onlyOption.value === "") continue;
+
+        const currentValue = prev[field.name];
+        const hasValue =
+          currentValue !== undefined &&
+          currentValue !== null &&
+          currentValue !== "";
+        if (hasValue) continue;
+
+        nextValues[field.name] = onlyOption.value;
+        changed = true;
+      }
+
+      return changed ? nextValues : prev;
+    });
+  }, [isEditMode, visibleFields]);
 
   // Admin-only fields shown in a separate section for admins
   const adminOnlyFields = isFacilityAdmin
@@ -1788,12 +1824,12 @@ export default function NewOrderPage() {
     // MIxS step - no required validation (checklist selection is optional)
     if (stepId === "mixs") {
       if (mixsFieldDef?.required && !selectedMixsChecklist) {
-        toast.error("Select a MIxS checklist");
+        setError("Select a MIxS checklist");
         return false;
       }
 
       if (selectedMixsChecklist && selectedMixsFields.length === 0) {
-        toast.error("Select at least one MIxS field to collect per sample");
+        setError("Select at least one MIxS field to collect per sample");
         return false;
       }
 
@@ -1805,7 +1841,7 @@ export default function NewOrderPage() {
             .map((field) => field.name);
           const missingRequired = requiredNames.filter((name) => !selectedMixsFields.includes(name));
           if (missingRequired.length > 0) {
-            toast.error(`MIxS requires selected fields: ${missingRequired.join(", ")}`);
+            setError(`MIxS requires selected fields: ${missingRequired.join(", ")}`);
             return false;
           }
         }
@@ -1817,7 +1853,7 @@ export default function NewOrderPage() {
     // Samples step - require at least one sample and validate required per-sample fields
     if (stepId === "samples") {
       if (samples.length === 0) {
-        toast.error("Please add at least one sample");
+        setError("Please add at least one sample");
         return false;
       }
 
@@ -1838,7 +1874,7 @@ export default function NewOrderPage() {
               value = sample[field.name];
             }
             if (isMissingRequiredValue(field, value)) {
-              toast.error(`Sample ${i + 1}: ${field.label} is required`);
+              setError(`Sample ${i + 1}: ${field.label} is required`);
               return false;
             }
           }
@@ -1855,7 +1891,7 @@ export default function NewOrderPage() {
           .map((alias) => alias.toLowerCase());
         const duplicates = aliases.filter((alias, index) => aliases.indexOf(alias) !== index);
         if (duplicates.length > 0) {
-          toast.error("Sample Alias values must be unique");
+          setError("Sample Alias values must be unique");
           return false;
         }
       }
@@ -1911,7 +1947,6 @@ export default function NewOrderPage() {
               newSamples.push(createNewSample());
             }
             setSamples(newSamples);
-            toast.success(`Pre-filled ${numberOfSamples} empty sample row${numberOfSamples > 1 ? "s" : ""}`);
           }
           setSamplesPrePopulated(true);
         }
@@ -2611,8 +2646,8 @@ export default function NewOrderPage() {
     f.name === "_sampleAlias" || f.name === "sample_alias" || f.name === "sampleAlias"
   );
 
-  // Samples Table Step Component
-  const SamplesTableStep = () => {
+  // Samples table renderer (kept as a plain function to avoid nested component remounts)
+  const renderSamplesTableStep = () => {
     return (
       <div className="space-y-4">
         {!canEditSamples && (
@@ -2704,15 +2739,28 @@ export default function NewOrderPage() {
                 ) : (
                   sampleTable.getRowModel().rows.map((row) => (
                     <tr key={row.id} className="hover:bg-muted/30">
-                      {row.getVisibleCells().map((cell) => (
-                        <td
-                          key={cell.id}
-                          style={{ width: cell.column.getSize() }}
-                          className="border-b border-r last:border-r-0 p-0"
-                        >
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
+                      {row.getVisibleCells().map((cell) => {
+                        const meta = cell.column.columnDef.meta as { field?: FormFieldDefinition; editable?: boolean } | undefined;
+                        const shouldFocusEditorOnCellMouseDown = Boolean(meta?.field) && meta?.editable !== false;
+
+                        return (
+                          <td
+                            key={cell.id}
+                            style={{ width: cell.column.getSize() }}
+                            className="border-b border-r last:border-r-0 p-0"
+                            onMouseDown={(event) => {
+                              if (!shouldFocusEditorOnCellMouseDown) return;
+
+                              const target = event.target as HTMLElement;
+                              if (target.closest("input, textarea, select, button")) return;
+
+                              focusFirstCellEditor(event.currentTarget);
+                            }}
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))
                 )}
@@ -2764,7 +2812,7 @@ export default function NewOrderPage() {
 
     // Samples step - TanStack Table for entering sample data
     if (stepId === "samples") {
-      return <SamplesTableStep />;
+      return renderSamplesTableStep();
     }
 
     // Review step
@@ -2846,7 +2894,7 @@ export default function NewOrderPage() {
                   </div>
                   <div>
                     <p className="mb-0.5 text-xs text-muted-foreground">Email</p>
-                    <p className="text-base font-medium break-all">
+                    <p className="text-sm font-medium break-all font-geist-pixel text-muted-foreground">
                       {userProfile?.email || session?.user?.email}
                     </p>
                   </div>
@@ -2945,18 +2993,6 @@ export default function NewOrderPage() {
                 <h3 className="text-base font-semibold">Samples</h3>
               </div>
               <div className="p-4">
-                <div className="mb-3 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <p className="mb-0.5 text-xs text-muted-foreground">Total Samples</p>
-                    <p className="text-base font-medium">{samples.length}</p>
-                  </div>
-                  {perSampleFields.length > 0 && (
-                    <div>
-                      <p className="mb-0.5 text-xs text-muted-foreground">Per-Sample Fields</p>
-                      <p className="text-base font-medium">{perSampleFields.length} fields</p>
-                    </div>
-                  )}
-                </div>
                 {samples.length > 0 && (
                   <div className="border rounded-lg overflow-hidden">
                     <table className="w-full text-sm">
@@ -3028,11 +3064,12 @@ export default function NewOrderPage() {
               ) : (
                 <div>
                   <p className="text-base font-semibold text-green-700 dark:text-green-400">
-                    Ready to submit
+                    {isEditMode ? "Ready to update" : "Ready to submit"}
                   </p>
                   <p className="mt-1 text-sm text-green-600 dark:text-green-500">
-                    Your order with {samples.length} sample{samples.length !== 1 ? "s" : ""} is ready.
-                    After submitting, you can edit samples and track progress from the order page.
+                    {isEditMode
+                      ? `Your changes to this order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} are ready to be saved.`
+                      : `Your order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} is ready. After submitting, you can edit samples and track progress from the order page.`}
                   </p>
                 </div>
               )}
@@ -3089,7 +3126,7 @@ export default function NewOrderPage() {
                 <div className="font-medium">
                   {userProfile?.firstName} {userProfile?.lastName}
                 </div>
-                <span className="text-muted-foreground">
+                <span className="text-muted-foreground font-geist-pixel text-xs">
                   {userProfile?.email || session?.user?.email}
                 </span>
                 {(userProfile?.institution || userProfile?.department) && (
@@ -3199,14 +3236,6 @@ export default function NewOrderPage() {
                   {error}
                 </div>
               )}
-              {currentStep === 0 && (
-                <div className="mt-3 p-2.5 rounded-lg bg-muted/50 border border-border">
-                  <p className="text-sm text-muted-foreground">
-                    Order ID: <code className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded text-xs">ORD-XXXXXXXX-XXXX</code>
-                    <span className="ml-2 text-xs">(auto-generated)</span>
-                  </p>
-                </div>
-              )}
             </div>
 
             {renderStepContent()}
@@ -3260,7 +3289,7 @@ export default function NewOrderPage() {
                     className="bg-amber-500 hover:bg-amber-600"
                   >
                     <AlertCircle className="h-4 w-4 mr-2" />
-                    Submit Anyway
+                    {isEditMode ? "Update Anyway" : "Submit Anyway"}
                   </Button>
                 );
               }
@@ -3268,7 +3297,7 @@ export default function NewOrderPage() {
               return (
                 <Button onClick={handleSubmit}>
                   <Check className="h-4 w-4 mr-2" />
-                  Submit for Sequencing
+                  {isEditMode ? "Update Order" : "Submit for Sequencing"}
                 </Button>
               );
             })()

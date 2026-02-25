@@ -53,6 +53,7 @@ import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRenderer";
 import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { InlineFieldError } from "@/components/ui/inline-field-error";
 import { toast } from "sonner";
 
 // Note: TanStack Table meta types are extended globally in orders/new/page.tsx
@@ -110,6 +111,15 @@ function navigateToCell(currentInput: HTMLInputElement | HTMLSelectElement | HTM
         input.select();
       }
     }
+  }
+}
+
+function focusFirstCellEditor(cell: HTMLElement) {
+  const editor = cell.querySelector<HTMLElement>(
+    "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])"
+  );
+  if (editor) {
+    editor.focus();
   }
 }
 
@@ -1264,7 +1274,7 @@ export default function NewStudyPage() {
   const getBorderClass = (field: string, isValid: boolean) => {
     if (!touched[field]) return "";
     if (isValid) return "border-green-500 focus:ring-green-500/20";
-    return "border-amber-500 focus:ring-amber-500/20";
+    return "input-error";
   };
 
   const nextStep = () => {
@@ -1707,19 +1717,10 @@ export default function NewStudyPage() {
 
   // Validation indicator component
   const ValidationIndicator = ({ isValid, touched: isTouched }: { isValid: boolean; touched: boolean }) => {
-    if (!isTouched) return null;
-
-    if (isValid) {
-      return (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-          <CheckCircle2 className="h-4 w-4 text-green-500" />
-        </div>
-      );
-    }
-
+    if (!isTouched || !isValid) return null;
     return (
       <div className="absolute right-3 top-1/2 -translate-y-1/2">
-        <AlertCircle className="h-4 w-4 text-amber-500" />
+        <CheckCircle2 className="h-4 w-4 text-green-500" />
       </div>
     );
   };
@@ -1786,7 +1787,7 @@ export default function NewStudyPage() {
             disabled={isLoading}
             className={cn(
               "h-10 w-full rounded-md border border-input bg-background px-3 text-sm",
-              error && "border-destructive"
+              error && "input-error"
             )}
           >
             <option value="">Select...</option>
@@ -1796,8 +1797,8 @@ export default function NewStudyPage() {
               </option>
             ))}
           </select>
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1823,7 +1824,7 @@ export default function NewStudyPage() {
             disabled={isLoading}
             className={cn(
               "min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
-              error && "border-destructive"
+              error && "input-error"
             )}
           >
             {(field.options || []).map((opt) => (
@@ -1832,8 +1833,8 @@ export default function NewStudyPage() {
               </option>
             ))}
           </select>
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1850,10 +1851,10 @@ export default function NewStudyPage() {
             placeholder={field.placeholder}
             rows={3}
             disabled={isLoading}
-            className={cn(error && "border-destructive")}
+            className={cn(error && "input-error")}
           />
+          {error && <InlineFieldError message={error} />}
           {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       );
     }
@@ -1870,10 +1871,10 @@ export default function NewStudyPage() {
           onBlur={() => handleStudyFieldBlur(field)}
           placeholder={field.placeholder}
           disabled={isLoading}
-          className={cn(error && "border-destructive")}
+          className={cn(error && "input-error")}
         />
+        {error && <InlineFieldError message={error} />}
         {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
     );
   };
@@ -1971,6 +1972,7 @@ export default function NewStudyPage() {
                         {row.getVisibleCells().map((cell) => {
                           const colMeta = cell.column.columnDef.meta as StudyColumnMeta | undefined;
                           const isMixs = colMeta?.isMixsField;
+                          const shouldFocusEditorOnCellMouseDown = Boolean(colMeta?.field) && colMeta?.editable !== false;
                           return (
                             <td
                               key={cell.id}
@@ -1979,6 +1981,14 @@ export default function NewStudyPage() {
                                 "border-b border-r last:border-r-0 h-8",
                                 isMixs && "bg-emerald-50/50"
                               )}
+                              onMouseDown={(event) => {
+                                if (!shouldFocusEditorOnCellMouseDown) return;
+
+                                const target = event.target as HTMLElement;
+                                if (target.closest("input, textarea, select, button")) return;
+
+                                focusFirstCellEditor(event.currentTarget);
+                              }}
                             >
                               {flexRender(cell.column.columnDef.cell, cell.getContext())}
                             </td>
@@ -2007,6 +2017,7 @@ export default function NewStudyPage() {
 
     switch (currentStepId) {
       case "details":
+        const titleError = touched.title && !isTitleValid ? "Required" : null;
         return (
           <div className="space-y-6">
             <div className="space-y-2">
@@ -2026,12 +2037,14 @@ export default function NewStudyPage() {
                   placeholder={FIELD_DEFINITIONS.title.placeholder}
                   disabled={isLoading}
                   className={cn(
-                    "h-12 text-base pr-10 transition-colors",
+                    "h-12 text-base transition-colors",
+                    touched.title && isTitleValid && "pr-10",
                     getBorderClass("title", isTitleValid)
                   )}
                 />
                 <ValidationIndicator isValid={isTitleValid} touched={touched.title || false} />
               </div>
+              {titleError && <InlineFieldError message={titleError} />}
               <p className="text-sm text-muted-foreground">
                 {FIELD_DEFINITIONS.title.helpText}
               </p>

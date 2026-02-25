@@ -215,6 +215,15 @@
   .font-signifier {
     font-family: Signifier, Georgia, serif;
   }
+
+  .font-ghost-pixel {
+    font-family: var(--font-ghost-pixel), var(--font-geist-mono), monospace;
+    letter-spacing: 0.02em;
+  }
+
+  .font-geist-pixel {
+    font-family: var(--font-geist-pixel-square), var(--font-geist-mono), monospace;
+  }
 }
 
 /* Card shadow utilities - warm tones */

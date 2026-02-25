@@ -17,7 +17,6 @@ import {
   FlowCell,
   SequencerDevice,
   SequencingKit,
-  SequencingSoftware,
   SequencingTechnology,
   SequencingTechSelection,
 } from "@/types/sequencing-technology";
@@ -33,9 +32,12 @@ interface TechResponse {
   devices: SequencerDevice[];
   flowCells: FlowCell[];
   kits: SequencingKit[];
-  software: SequencingSoftware[];
   barcodeSets: BarcodeSet[];
 }
+
+const TECHNOLOGY_IMAGE_FALLBACKS: Record<string, string> = {
+  "ont-minion": "/images/sequencers/devices/s1.png",
+};
 
 export function TechnologySelector({
   value,
@@ -46,7 +48,6 @@ export function TechnologySelector({
   const [devices, setDevices] = useState<SequencerDevice[]>([]);
   const [flowCells, setFlowCells] = useState<FlowCell[]>([]);
   const [kits, setKits] = useState<SequencingKit[]>([]);
-  const [software, setSoftware] = useState<SequencingSoftware[]>([]);
   const [barcodeSets, setBarcodeSets] = useState<BarcodeSet[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -77,7 +78,6 @@ export function TechnologySelector({
         setDevices(data.devices || []);
         setFlowCells(data.flowCells || []);
         setKits(data.kits || []);
-        setSoftware(data.software || []);
         setBarcodeSets(data.barcodeSets || []);
       } catch {
         console.error("Failed to load technologies");
@@ -111,11 +111,24 @@ export function TechnologySelector({
         (selectedDevice.compatibleKits || []).includes(kit.id)
       )
     : [];
-  const compatibleSoftware = selectedDevice
-    ? software.filter((tool) =>
-        (selectedDevice.compatibleSoftware || []).includes(tool.id)
-      )
-    : [];
+  const showDeviceStep = devices.length > 0;
+  const visibleTechnologies = useMemo(
+    () =>
+      showDeviceStep
+        ? technologies.filter((tech) =>
+            devices.some((device) => device.platformId === tech.id)
+          )
+        : technologies,
+    [devices, showDeviceStep, technologies]
+  );
+  const technologyPreviewImageById = useMemo(() => {
+    const previews = new Map<string, string>();
+    for (const device of devices) {
+      if (!device.image || previews.has(device.platformId)) continue;
+      previews.set(device.platformId, device.image);
+    }
+    return previews;
+  }, [devices]);
 
   const toggleExpanded = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -271,6 +284,7 @@ export function TechnologySelector({
   const autoDevice = availableDevices.length === 1 ? availableDevices[0] : null;
   const autoFlowCell = compatibleFlowCells.length === 1 ? compatibleFlowCells[0] : null;
   const autoKit = compatibleKits.length === 1 ? compatibleKits[0] : null;
+  const autoTechnology = visibleTechnologies.length === 1 ? visibleTechnologies[0] : null;
 
   // Resolve barcoding info for selected kit
   const selectedKit = selectedKitId
@@ -320,6 +334,11 @@ export function TechnologySelector({
   ]);
 
   useEffect(() => {
+    if (!autoTechnology || selection?.technologyId) return;
+    selectTechnology(autoTechnology);
+  }, [autoTechnology, selectTechnology, selection?.technologyId]);
+
+  useEffect(() => {
     if (!selectedTechnologyId || !autoDevice || selection?.deviceId) return;
     selectDevice(autoDevice, false);
   }, [autoDevice, selectDevice, selectedTechnologyId, selection?.deviceId]);
@@ -349,13 +368,6 @@ export function TechnologySelector({
       </div>
     );
   }
-
-  const showDeviceStep = devices.length > 0;
-  const visibleTechnologies = showDeviceStep
-    ? technologies.filter((tech) =>
-        devices.some((device) => device.platformId === tech.id)
-      )
-    : technologies;
 
   const byManufacturer = visibleTechnologies.reduce((acc, tech) => {
     const key = tech.manufacturer || "Other";
@@ -412,6 +424,9 @@ export function TechnologySelector({
               {techs.map((tech) => {
                 const isSelected = selection?.technologyId === tech.id;
                 const isExpanded = expandedId === tech.id;
+                const previewImage =
+                  technologyPreviewImageById.get(tech.id) ??
+                  TECHNOLOGY_IMAGE_FALLBACKS[tech.id];
 
                 return (
                   <GlassCard
@@ -427,17 +442,6 @@ export function TechnologySelector({
                   >
                     <div className="p-4">
                       <div className="flex items-start gap-3">
-                        <div
-                          className="h-10 w-10 rounded-lg flex items-center justify-center text-lg font-bold flex-shrink-0"
-                          style={{
-                            backgroundColor: tech.color
-                              ? `${tech.color}20`
-                              : "var(--primary-10)",
-                            color: tech.color || "var(--primary)",
-                          }}
-                        >
-                          {tech.name.charAt(0)}
-                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <h4 className="font-semibold">{tech.name}</h4>
@@ -453,15 +457,7 @@ export function TechnologySelector({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                        {tech.priceIndicator && (
-                          <span>Cost: {tech.priceIndicator}</span>
-                        )}
-                        {tech.turnaroundDays && (
-                          <span>
-                            {tech.turnaroundDays.min}-{tech.turnaroundDays.max} days
-                          </span>
-                        )}
+                      <div className="flex items-center mt-3 text-xs text-muted-foreground">
                         <button
                           type="button"
                           onClick={(e) => toggleExpanded(tech.id, e)}
@@ -613,14 +609,29 @@ export function TechnologySelector({
               No devices configured for this platform.
             </GlassCard>
           ) : autoDevice && availableDevices.length === 1 ? (
-            <GlassCard className="p-4">
-              <p className="text-xs text-muted-foreground">Auto-selected</p>
-              <p className="font-medium">{autoDevice.name}</p>
-              {autoDevice.shortDescription && (
-                <p className="text-sm text-muted-foreground">
-                  {autoDevice.shortDescription}
-                </p>
-              )}
+            <GlassCard className="!p-4">
+              <div className="flex items-center gap-4">
+                {autoDevice.image && (
+                  <div
+                    className="h-14 w-14 flex-shrink-0 flex items-center justify-center rounded-lg"
+                    style={{ backgroundColor: "#E1E1DD" }}
+                  >
+                    <img
+                      src={autoDevice.image}
+                      alt={autoDevice.name}
+                      className="h-10 w-10 object-contain"
+                    />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="font-medium">{autoDevice.name}</p>
+                  {autoDevice.shortDescription && (
+                    <p className="text-sm text-muted-foreground">
+                      {autoDevice.shortDescription}
+                    </p>
+                  )}
+                </div>
+              </div>
             </GlassCard>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
@@ -630,7 +641,7 @@ export function TechnologySelector({
                   <GlassCard
                     key={device.id}
                     className={cn(
-                      "cursor-pointer transition-all",
+                      "cursor-pointer transition-all !p-4",
                       isSelected
                         ? "ring-2 ring-primary bg-primary/5"
                         : "hover:bg-muted/50",
@@ -638,45 +649,36 @@ export function TechnologySelector({
                     )}
                     onClick={() => selectDevice(device)}
                   >
-                    <div className="p-4">
-                      <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-4">
+                      {device.image && (
                         <div
-                          className="h-10 w-10 rounded-lg flex items-center justify-center text-lg font-bold flex-shrink-0 overflow-hidden"
-                          style={{
-                            backgroundColor: device.color
-                              ? `${device.color}20`
-                              : "var(--primary-10)",
-                            color: device.color || "var(--primary)",
-                          }}
+                          className="h-14 w-14 flex-shrink-0 flex items-center justify-center rounded-lg"
+                          style={{ backgroundColor: "#E1E1DD" }}
                         >
-                          {device.image ? (
-                            <img
-                              src={device.image}
-                              alt={device.name}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            device.name.charAt(0)
+                          <img
+                            src={device.image}
+                            alt={device.name}
+                            className="h-10 w-10 object-contain"
+                          />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold">{device.name}</h4>
+                          {isSelected && (
+                            <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                              <Check className="h-3 w-3 text-primary-foreground" />
+                            </div>
                           )}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-semibold">{device.name}</h4>
-                            {isSelected && (
-                              <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
-                                <Check className="h-3 w-3 text-primary-foreground" />
-                              </div>
-                            )}
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {device.shortDescription || "No description"}
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {device.shortDescription || "No description"}
+                        </p>
+                        {device.connectivity && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Connectivity: {device.connectivity}
                           </p>
-                          {device.connectivity && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Connectivity: {device.connectivity}
-                            </p>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
                   </GlassCard>
@@ -701,7 +703,6 @@ export function TechnologySelector({
             </GlassCard>
           ) : autoFlowCell && compatibleFlowCells.length === 1 ? (
             <GlassCard className="p-4">
-              <p className="text-xs text-muted-foreground">Auto-selected</p>
               <p className="font-medium">{autoFlowCell.name}</p>
               <p className="text-sm text-muted-foreground">{autoFlowCell.sku}</p>
             </GlassCard>
@@ -723,9 +724,6 @@ export function TechnologySelector({
                   >
                     <div className="p-4">
                       <div className="flex items-start gap-3">
-                        <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold">
-                          {cell.category.toUpperCase().slice(0, 2)}
-                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <h4 className="font-semibold">{cell.name}</h4>
@@ -768,7 +766,6 @@ export function TechnologySelector({
             </GlassCard>
           ) : autoKit && compatibleKits.length === 1 ? (
             <GlassCard className="p-4">
-              <p className="text-xs text-muted-foreground">Auto-selected</p>
               <p className="font-medium">{autoKit.name}</p>
               <p className="text-sm text-muted-foreground">{autoKit.sku}</p>
             </GlassCard>
@@ -803,9 +800,6 @@ export function TechnologySelector({
                         >
                           <div className="p-4">
                             <div className="flex items-start gap-3">
-                              <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold">
-                                {kit.category.toUpperCase().slice(0, 2)}
-                              </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between">
                                   <h4 className="font-semibold">{kit.name}</h4>
@@ -904,9 +898,6 @@ export function TechnologySelector({
                   >
                     <div className="p-4">
                       <div className="flex items-start gap-3">
-                        <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold">
-                          BC
-                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <h4 className="font-semibold">{bKit.name}</h4>
@@ -945,27 +936,6 @@ export function TechnologySelector({
         </div>
       )}
 
-      {showDeviceStep && selectedDevice && compatibleSoftware.length > 0 && (
-        <GlassCard className="p-4 bg-muted/30">
-          <StepHeader
-            step={kitNeedsCompanion ? 6 : 5}
-            title="Software"
-            description="These tools are used for control and analysis"
-          />
-          <div className="mt-3 space-y-2">
-            {compatibleSoftware.map((tool) => (
-              <div key={tool.id} className="text-sm">
-                <p className="font-medium">{tool.name}</p>
-                {tool.description && (
-                  <p className="text-xs text-muted-foreground">
-                    {tool.description}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      )}
     </div>
   );
 }
