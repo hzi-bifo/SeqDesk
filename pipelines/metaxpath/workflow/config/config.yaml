@@ -1,0 +1,41 @@
+# MetaxPath pipeline configuration
+# Fill in paths below before running. Database paths must be absolute.
+# Data files shipped with the repo can use relative paths (resolved from pipeline dir).
+
+# --- Input ---
+barcode_table:       # Path to barcode table TSV
+sample_table:        # Path to sample table (alternative to barcode_table)
+
+# --- Output ---
+output_dir:          # Path to output directory
+
+# --- Reference genome ---
+ref_index:           # Path to human reference index for host depletion (minimap2 .mmi)
+
+# --- Sequencer ---
+sequencer: Nanopore  # Nanopore or PacBio
+
+# --- Assemblers ---
+# Available: flye, myloasm (or both: [flye, myloasm])
+assemblers:
+  - flye
+
+# --- Metax databases ---
+metax_db:            # Path to metax database (without .json suffix)
+metax_dmp_dir:       # Path to NCBI taxonomy dump directory
+
+# --- Other databases (absolute paths) ---
+kraken2_db:          # Path to Kraken2 database
+sylph_db:            # Path to sylph database(s), supports glob
+
+# --- Data files (relative to pipeline directory, or absolute) ---
+humanvirus: data/virus/human_virus_taxids.txt
+contamination_table: data/contamination/skin.contamination.taxa.txt
+VFDB_core: data/VFDB/VFDB_setA_nt.fa
+VFDB_full: data/VFDB/VFDB_full_nt.fa
+
+# --- Notification (optional) ---
+notification_emails: []
+
+# --- Resources ---
+threads: 20
