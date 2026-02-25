@@ -4,6 +4,7 @@ import { useModules } from "@/lib/modules";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -14,14 +15,10 @@ import {
   Plus,
   X,
   Shield,
-  FormInput,
-  CheckCircle2,
-  Lock,
-  Bell,
   ArrowRight,
   Receipt,
 } from "lucide-react";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   type AccountValidationSettings,
@@ -30,6 +27,10 @@ import {
   MODULE_CATEGORIES,
   DEFAULT_BILLING_SETTINGS,
 } from "@/lib/modules/types";
+import {
+  type FormFieldDefinition,
+  type FormFieldGroup,
+} from "@/types/form-config";
 
 const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }>> = {
   "mixs-metadata": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
@@ -39,6 +40,17 @@ const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }
   "ena-sample-fields": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
   "ai-validation": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
 };
+
+interface OrderFormConfigState {
+  fields: FormFieldDefinition[];
+  groups: FormFieldGroup[];
+  enabledMixsChecklists: string[];
+}
+
+interface StudyFormConfigState {
+  fields: FormFieldDefinition[];
+  groups: FormFieldGroup[];
+}
 
 export default function ModulesPage() {
   const {
@@ -65,6 +77,14 @@ export default function ModulesPage() {
     useState<BillingSettings>(DEFAULT_BILLING_SETTINGS);
   const [loadingBillingSettings, setLoadingBillingSettings] = useState(true);
   const [savingBillingSettings, setSavingBillingSettings] = useState(false);
+  const [orderFormConfig, setOrderFormConfig] =
+    useState<OrderFormConfigState | null>(null);
+  const [studyFormConfig, setStudyFormConfig] =
+    useState<StudyFormConfigState | null>(null);
+  const [loadingFormConfigs, setLoadingFormConfigs] = useState(true);
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] =
+    useState<ModuleCategory>("order-form");
 
   // Fetch account validation settings
   useEffect(() => {
@@ -102,6 +122,42 @@ export default function ModulesPage() {
     fetchBillingSettings();
   }, []);
 
+  useEffect(() => {
+    const fetchFormConfigs = async () => {
+      try {
+        const [orderRes, studyRes] = await Promise.all([
+          fetch("/api/admin/form-config"),
+          fetch("/api/admin/study-form-config"),
+        ]);
+
+        if (!orderRes.ok || !studyRes.ok) {
+          throw new Error("Failed to load form configurations");
+        }
+
+        const orderData = await orderRes.json();
+        const studyData = await studyRes.json();
+
+        setOrderFormConfig({
+          fields: Array.isArray(orderData.fields) ? orderData.fields : [],
+          groups: Array.isArray(orderData.groups) ? orderData.groups : [],
+          enabledMixsChecklists: Array.isArray(orderData.enabledMixsChecklists)
+            ? orderData.enabledMixsChecklists
+            : [],
+        });
+        setStudyFormConfig({
+          fields: Array.isArray(studyData.fields) ? studyData.fields : [],
+          groups: Array.isArray(studyData.groups) ? studyData.groups : [],
+        });
+      } catch {
+        toast.error("Failed to load form builder configuration");
+      } finally {
+        setLoadingFormConfigs(false);
+      }
+    };
+
+    fetchFormConfigs();
+  }, []);
+
   const handleToggle = async (moduleId: string, enabled: boolean) => {
     setUpdating(moduleId);
     try {
@@ -118,6 +174,267 @@ export default function ModulesPage() {
     const parsed = Number.parseInt(value, 10);
     return Number.isNaN(parsed) ? fallback : parsed;
   };
+
+  const persistOrderFormConfig = async (fields: FormFieldDefinition[]) => {
+    if (!orderFormConfig) {
+      throw new Error("Order form configuration not loaded");
+    }
+
+    const res = await fetch("/api/admin/form-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields,
+        groups: orderFormConfig.groups,
+        enabledMixsChecklists: orderFormConfig.enabledMixsChecklists,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to save order form configuration");
+    }
+
+    const data = await res.json();
+    setOrderFormConfig({
+      fields: Array.isArray(data.fields) ? data.fields : fields,
+      groups: Array.isArray(data.groups) ? data.groups : orderFormConfig.groups,
+      enabledMixsChecklists: Array.isArray(data.enabledMixsChecklists)
+        ? data.enabledMixsChecklists
+        : orderFormConfig.enabledMixsChecklists,
+    });
+  };
+
+  const persistStudyFormConfig = async (fields: FormFieldDefinition[]) => {
+    if (!studyFormConfig) {
+      throw new Error("Study form configuration not loaded");
+    }
+
+    const res = await fetch("/api/admin/study-form-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields,
+        groups: studyFormConfig.groups,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to save study form configuration");
+    }
+
+    setStudyFormConfig((prev) =>
+      prev ? { ...prev, fields } : prev
+    );
+  };
+
+  const runModuleAction = async (
+    actionId: string,
+    action: () => Promise<void>
+  ) => {
+    setRunningAction(actionId);
+    try {
+      await action();
+    } catch {
+      toast.error("Failed to update form configuration");
+    } finally {
+      setRunningAction(null);
+    }
+  };
+
+  const addStudyMixsField = async () => {
+    if (!studyFormConfig) return;
+    if (studyFormConfig.fields.some((f) => f.type === "mixs")) {
+      toast.message("MIxS field is already added to Study Form Builder");
+      return;
+    }
+
+    const metadataGroupId = studyFormConfig.groups.find((g) =>
+      g.name.toLowerCase().includes("metadata")
+    )?.id;
+
+    const newField: FormFieldDefinition = {
+      id: `field_mixs_${Date.now()}`,
+      type: "mixs",
+      label: "MIxS Metadata",
+      name: "_mixs",
+      required: false,
+      visible: true,
+      helpText: "Environment-specific metadata fields following MIxS standards",
+      order: studyFormConfig.fields.filter((f) => !f.perSample).length,
+      groupId: metadataGroupId,
+    };
+
+    await persistStudyFormConfig([...studyFormConfig.fields, newField]);
+    toast.success("Added MIxS field to Study Form Builder");
+  };
+
+  const addStudyFundingField = async () => {
+    if (!studyFormConfig) return;
+    if (studyFormConfig.fields.some((f) => f.type === "funding")) {
+      toast.message("Funding field is already added to Study Form Builder");
+      return;
+    }
+
+    const infoGroupId = studyFormConfig.groups.find((g) =>
+      g.name.toLowerCase().includes("info")
+    )?.id;
+
+    const newField: FormFieldDefinition = {
+      id: `field_funding_${Date.now()}`,
+      type: "funding",
+      label: "Funding Information",
+      name: "_funding",
+      required: false,
+      visible: true,
+      helpText: "Grant and funding source information for this study",
+      order: studyFormConfig.fields.filter((f) => !f.perSample).length,
+      groupId: infoGroupId,
+    };
+
+    await persistStudyFormConfig([...studyFormConfig.fields, newField]);
+    toast.success("Added Funding field to Study Form Builder");
+  };
+
+  const addSequencingTechField = async () => {
+    if (!orderFormConfig) return;
+    if (orderFormConfig.fields.some((f) => f.type === "sequencing-tech")) {
+      toast.message(
+        "Sequencing Technology field is already added to Order Form Builder"
+      );
+      return;
+    }
+
+    const newField: FormFieldDefinition = {
+      id: `field_seqtech_${Date.now()}`,
+      type: "sequencing-tech",
+      label: "Sequencing Technology",
+      name: "_sequencing_tech",
+      required: false,
+      visible: true,
+      helpText: "Select the sequencing technology for your samples",
+      order: orderFormConfig.fields.filter((f) => !f.perSample).length,
+      groupId: "group_sequencing",
+      moduleSource: "sequencing-tech",
+    };
+
+    await persistOrderFormConfig([...orderFormConfig.fields, newField]);
+    toast.success("Added Sequencing Technology field to Order Form Builder");
+  };
+
+  const addBarcodeField = async () => {
+    if (!orderFormConfig) return;
+    const hasSequencingTech = orderFormConfig.fields.some(
+      (f) => f.type === "sequencing-tech"
+    );
+    if (!hasSequencingTech) {
+      toast.error("Add Sequencing Technology first");
+      return;
+    }
+
+    if (
+      orderFormConfig.fields.some(
+        (f) => f.type === "barcode" || f.name === "_barcode"
+      )
+    ) {
+      toast.message("Barcode field is already added to Order Form Builder");
+      return;
+    }
+
+    const newField: FormFieldDefinition = {
+      id: `field_barcode_${Date.now()}`,
+      type: "barcode",
+      label: "Barcode",
+      name: "_barcode",
+      required: false,
+      visible: true,
+      perSample: true,
+      helpText:
+        "Assign a barcode to this sample. Available barcodes depend on the selected sequencing kit.",
+      order: orderFormConfig.fields.filter((f) => f.perSample).length,
+      moduleSource: "sequencing-tech",
+    };
+
+    await persistOrderFormConfig([...orderFormConfig.fields, newField]);
+    toast.success("Added Barcode field to Order Form Builder");
+  };
+
+  const addEnaSampleFields = async () => {
+    if (!orderFormConfig) return;
+    if (
+      orderFormConfig.fields.some(
+        (f) => f.type === "organism" || f.name === "_organism"
+      )
+    ) {
+      toast.message("ENA sample fields are already added to Order Form Builder");
+      return;
+    }
+
+    const perSampleCount = orderFormConfig.fields.filter((f) => f.perSample).length;
+    const now = Date.now();
+    const newFields: FormFieldDefinition[] = [
+      {
+        id: `field_organism_${now}`,
+        type: "organism",
+        label: "Organism",
+        name: "_organism",
+        required: true,
+        visible: true,
+        perSample: true,
+        helpText:
+          "The source organism or metagenome type. Examples: 'human gut metagenome', 'soil metagenome', 'Escherichia coli'. Start typing to search NCBI taxonomy.",
+        placeholder: "e.g., human gut metagenome",
+        order: perSampleCount,
+        moduleSource: "ena-sample-fields",
+      },
+      {
+        id: `field_sample_title_${now + 1}`,
+        type: "text",
+        label: "Sample Title",
+        name: "sample_title",
+        required: true,
+        visible: true,
+        perSample: true,
+        helpText:
+          "A short descriptive title for this sample. Required for ENA submission.",
+        placeholder: "e.g., Human gut sample from healthy adult",
+        order: perSampleCount + 1,
+        moduleSource: "ena-sample-fields",
+      },
+      {
+        id: `field_sample_alias_${now + 2}`,
+        type: "text",
+        label: "Sample Alias",
+        name: "sample_alias",
+        required: false,
+        visible: true,
+        perSample: true,
+        helpText:
+          "A unique identifier for this sample. If left empty, will be auto-generated.",
+        placeholder: "e.g., HG-001-A",
+        order: perSampleCount + 2,
+        moduleSource: "ena-sample-fields",
+      },
+    ];
+
+    await persistOrderFormConfig([...orderFormConfig.fields, ...newFields]);
+    toast.success("Added ENA sample fields to Order Form Builder");
+  };
+
+  const hasStudyMixsField = studyFormConfig?.fields.some(
+    (f) => f.type === "mixs"
+  ) ?? false;
+  const hasStudyFundingField = studyFormConfig?.fields.some(
+    (f) => f.type === "funding"
+  ) ?? false;
+  const hasSequencingTechField = orderFormConfig?.fields.some(
+    (f) => f.type === "sequencing-tech"
+  ) ?? false;
+  const hasBarcodeField = orderFormConfig?.fields.some(
+    (f) => f.type === "barcode" || f.name === "_barcode"
+  ) ?? false;
+  const hasEnaFields = orderFormConfig?.fields.some(
+    (f) => f.type === "organism" || f.name === "_organism"
+  ) ?? false;
 
   const handleAddDomain = () => {
     const domain = newDomain.trim().toLowerCase();
@@ -190,6 +507,16 @@ export default function ModulesPage() {
     }
   };
 
+  const categories = (Object.keys(MODULE_CATEGORIES) as ModuleCategory[]).filter(
+    (category) => availableModules.some((module) => module.category === category)
+  );
+
+  useEffect(() => {
+    if (categories.length > 0 && !categories.includes(activeCategory)) {
+      setActiveCategory(categories[0]);
+    }
+  }, [activeCategory, categories]);
+
   if (loading) {
     return (
       <PageContainer>
@@ -201,82 +528,56 @@ export default function ModulesPage() {
   }
 
   return (
-    <PageContainer>
-      <div className="space-y-8">
-        <div className="mb-4">
-          <h1 className="text-xl font-semibold">Modules</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Enable or disable features for your installation
-          </p>
-        </div>
+    <Tabs
+      value={activeCategory}
+      onValueChange={(value) => setActiveCategory(value as ModuleCategory)}
+      className="gap-0"
+    >
+      <div className="sticky top-0 z-30 border-b border-border bg-card">
+        <div className="flex h-[52px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+          <span className="text-sm font-medium whitespace-nowrap">Modules</span>
 
-        <div className="sticky top-16 z-30">
-          <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-muted-foreground">
-              Module toggles control feature availability and module-specific fields in the form builders.
+          <div className="flex flex-1 justify-center overflow-x-auto">
+            <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
+              {categories.map((category) => {
+                return (
+                  <TabsTrigger
+                    key={category}
+                    value={category}
+                    className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                  >
+                    {MODULE_CATEGORIES[category].label}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </div>
+        </div>
+      </div>
+
+      <PageContainer>
+        <div className="space-y-8">
+          <div className="mt-6 space-y-1">
+            <h1 className="text-xl font-semibold">Modules</h1>
+            <p className="text-sm text-muted-foreground">
+              Enable or disable features for your installation.
             </p>
-            <div className="flex items-center gap-2">
-              <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/form-builder">Order Form Builder</Link>
-              </Button>
-              <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/study-form-builder">Study Form Builder</Link>
-              </Button>
+          </div>
+
+          {globalDisabled && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Modules are globally disabled at installation level. Individual module toggles are paused until global modules are re-enabled.
             </div>
-          </div>
-        </div>
+          )}
 
-        {globalDisabled && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Modules are globally disabled at installation level. Individual module toggles are paused until global modules are re-enabled.
-          </div>
-        )}
-
-        {/* Category icon mapping */}
-        {(() => {
-          const categoryIcons: Record<ModuleCategory, ReactNode> = {
-            "order-form": <FormInput className="h-5 w-5" />,
-            validation: <CheckCircle2 className="h-5 w-5" />,
-            access: <Lock className="h-5 w-5" />,
-            communication: <Bell className="h-5 w-5" />,
-          };
-
-          const categoryColors: Record<ModuleCategory, string> = {
-            "order-form": "bg-emerald-500/10 text-emerald-600",
-            validation: "bg-violet-500/10 text-violet-600",
-            access: "bg-amber-500/10 text-amber-600",
-            communication: "bg-blue-500/10 text-blue-600",
-          };
-
-          // Group modules by category
-          const categories = Object.keys(MODULE_CATEGORIES) as ModuleCategory[];
-
-          return categories.map((category) => {
+          {categories.map((category) => {
             const categoryModules = availableModules.filter(
-              (m) => m.category === category
+              (module) => module.category === category
             );
             if (categoryModules.length === 0) return null;
 
-            const categoryInfo = MODULE_CATEGORIES[category];
-
             return (
-              <div key={category} className="space-y-4">
-                {/* Category Header */}
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`h-10 w-10 rounded-lg flex items-center justify-center ${categoryColors[category]}`}
-                  >
-                    {categoryIcons[category]}
-                  </div>
-                  <div>
-                    <h2 className="text-base font-semibold">{categoryInfo.label}</h2>
-                    <p className="text-sm text-muted-foreground">
-                      {categoryInfo.description}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Module Cards */}
+              <TabsContent key={category} value={category} className="m-0">
                 <div className="grid gap-3">
                   {categoryModules.map((module) => {
                     const isEnabled = moduleStates[module.id] ?? false;
@@ -337,6 +638,114 @@ export default function ModulesPage() {
                                 ))}
                               </div>
                             )}
+
+                            {(() => {
+                              const quickActions: Array<{
+                                key: string;
+                                label: string;
+                                disabled: boolean;
+                                onClick: () => Promise<void>;
+                              }> = [];
+
+                              if (module.id === "mixs-metadata") {
+                                quickActions.push({
+                                  key: "add-study-mixs",
+                                  label: hasStudyMixsField
+                                    ? "MIxS already added"
+                                    : "Add MIxS to Study Form",
+                                  disabled:
+                                    hasStudyMixsField || !studyFormConfig,
+                                  onClick: addStudyMixsField,
+                                });
+                              }
+
+                              if (module.id === "funding-info") {
+                                quickActions.push({
+                                  key: "add-study-funding",
+                                  label: hasStudyFundingField
+                                    ? "Funding already added"
+                                    : "Add Funding to Study Form",
+                                  disabled:
+                                    hasStudyFundingField || !studyFormConfig,
+                                  onClick: addStudyFundingField,
+                                });
+                              }
+
+                              if (module.id === "sequencing-tech") {
+                                quickActions.push({
+                                  key: "add-sequencing-tech",
+                                  label: hasSequencingTechField
+                                    ? "Sequencing tech already added"
+                                    : "Add Sequencing Tech to Order Form",
+                                  disabled:
+                                    hasSequencingTechField || !orderFormConfig,
+                                  onClick: addSequencingTechField,
+                                });
+                                quickActions.push({
+                                  key: "add-barcode",
+                                  label: hasBarcodeField
+                                    ? "Barcode already added"
+                                    : "Add Barcode to Order Form",
+                                  disabled:
+                                    hasBarcodeField ||
+                                    !orderFormConfig ||
+                                    !hasSequencingTechField,
+                                  onClick: addBarcodeField,
+                                });
+                              }
+
+                              if (module.id === "ena-sample-fields") {
+                                quickActions.push({
+                                  key: "add-ena-fields",
+                                  label: hasEnaFields
+                                    ? "ENA fields already added"
+                                    : "Add ENA Fields to Order Form",
+                                  disabled: hasEnaFields || !orderFormConfig,
+                                  onClick: addEnaSampleFields,
+                                });
+                              }
+
+                              if (quickActions.length === 0) {
+                                return null;
+                              }
+
+                              return (
+                                <div className="space-y-2 pt-1">
+                                  <p className="text-xs text-muted-foreground">
+                                    Quick add
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {quickActions.map((action) => {
+                                      const actionId = `${module.id}:${action.key}`;
+                                      const isRunning = runningAction === actionId;
+                                      return (
+                                        <Button
+                                          key={actionId}
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-7 px-2 text-xs bg-white"
+                                          disabled={
+                                            isRunning ||
+                                            loadingFormConfigs ||
+                                            !isEffectivelyEnabled ||
+                                            isComingSoon ||
+                                            action.disabled
+                                          }
+                                          onClick={() =>
+                                            runModuleAction(actionId, action.onClick)
+                                          }
+                                        >
+                                          {isRunning && (
+                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                          )}
+                                          {action.label}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           <div className="flex items-center gap-3 flex-shrink-0">
@@ -699,10 +1108,9 @@ export default function ModulesPage() {
                     );
                   })}
                 </div>
-              </div>
+              </TabsContent>
             );
-          });
-        })()}
+          })}
 
         {/* Info */}
         <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-4">
@@ -712,7 +1120,8 @@ export default function ModulesPage() {
             again when the module is re-enabled.
           </p>
         </div>
-      </div>
-    </PageContainer>
+        </div>
+      </PageContainer>
+    </Tabs>
   );
 }

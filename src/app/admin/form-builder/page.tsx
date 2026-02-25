@@ -15,6 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +26,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  FormInput,
   Plus,
   Pencil,
   Trash2,
@@ -36,7 +37,6 @@ import {
   ChevronDown,
   AlertTriangle,
   CheckCircle2,
-  Zap,
   Leaf,
   Rocket,
   ExternalLink,
@@ -48,6 +48,8 @@ import {
   Database,
   Settings2,
   Shield,
+  Download,
+  Upload,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
@@ -107,6 +109,30 @@ interface FieldTemplate {
   fields: Omit<FormFieldDefinition, "id" | "order">[];
 }
 
+type ImportableOrderSettings = {
+  postSubmissionInstructions?: string;
+  allowDeleteSubmittedOrders?: boolean;
+  allowUserAssemblyDownload?: boolean;
+};
+
+type ImportedOrderField = Omit<FormFieldDefinition, "id" | "order"> & {
+  id?: string;
+  order?: number;
+};
+
+type ImportedOrderGroup = Omit<FormFieldGroup, "id" | "order"> & {
+  id?: string;
+  order?: number;
+};
+
+type ImportedOrderConfig = {
+  version?: string;
+  exportedAt?: string;
+  fields?: ImportedOrderField[];
+  groups?: ImportedOrderGroup[];
+  settings?: ImportableOrderSettings;
+};
+
 export default function FormBuilderPage() {
   // Module states
   const { enabled: aiModuleEnabled } = useModule("ai-validation");
@@ -121,11 +147,10 @@ export default function FormBuilderPage() {
   const [groups, setGroups] = useState<FormFieldGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const [jumpTarget, setJumpTarget] = useState<string | undefined>(undefined);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveInitializedRef = useRef(false);
   const lastPersistedSnapshotRef = useRef("");
@@ -133,7 +158,7 @@ export default function FormBuilderPage() {
 
   // Integration service banner
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const [isNewSetup, setIsNewSetup] = useState(false);
+  const [, setIsNewSetup] = useState(false);
   const showIntegrationServiceBanner = process.env.NODE_ENV === "production";
 
   // Group dialog state
@@ -150,6 +175,15 @@ export default function FormBuilderPage() {
   // Field delete confirmation dialog
   const [deleteFieldDialogOpen, setDeleteFieldDialogOpen] = useState(false);
   const [fieldToDelete, setFieldToDelete] = useState<FormFieldDefinition | null>(null);
+
+  // Import config confirmation dialog
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{
+    fields: FormFieldDefinition[];
+    groups: FormFieldGroup[];
+    settings?: ImportableOrderSettings;
+  } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   // Field templates loaded from JSON files
   const [fieldTemplates, setFieldTemplates] = useState<FieldTemplate[]>([]);
@@ -672,9 +706,6 @@ export default function FormBuilderPage() {
       saveInFlightRef.current = true;
       setSaving(true);
       setError("");
-      if (manual) {
-        setSuccess("");
-      }
       setAutoSaveStatus("saving");
 
       try {
@@ -697,8 +728,8 @@ export default function FormBuilderPage() {
         setLastSavedAt(new Date());
 
         if (manual) {
-          setSuccess("Configuration saved successfully!");
-          setTimeout(() => setSuccess(""), 3000);
+          setJustSaved(true);
+          setTimeout(() => setJustSaved(false), 2000);
         }
 
         return true;
@@ -741,7 +772,6 @@ export default function FormBuilderPage() {
     }
 
     setAutoSaveStatus("dirty");
-    setSuccess("");
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
@@ -859,196 +889,6 @@ export default function FormBuilderPage() {
     );
   };
 
-  // Add MIxS metadata field
-  const addMixsField = () => {
-    // Check if MIxS field already exists
-    if (fields.some((f) => f.type === "mixs")) {
-      setError("A MIxS Metadata field already exists in the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const newField: FormFieldDefinition = {
-      id: `field_mixs_${Date.now()}`,
-      type: "mixs",
-      label: "Sample Metadata (MIxS)",
-      name: "_mixs",
-      required: false,
-      visible: true,
-      helpText: "Select the environment type for your samples to see MIxS standard metadata fields",
-      order: fields.filter((f) => !f.perSample).length,
-      mixsChecklists: mixsTemplates.map((t) => t.name), // Enable all by default
-    };
-
-    setFields([...fields, newField]);
-  };
-
-  // Add Funding field
-  const addFundingField = () => {
-    // Check if Funding field already exists
-    if (fields.some((f) => f.type === "funding")) {
-      setError("A Funding Information field already exists in the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const newField: FormFieldDefinition = {
-      id: `field_funding_${Date.now()}`,
-      type: "funding",
-      label: "Funding Information",
-      name: "_funding",
-      required: false,
-      visible: true,
-      helpText: "Add your grant or funding source information",
-      order: fields.filter((f) => !f.perSample).length,
-    };
-
-    setFields([...fields, newField]);
-  };
-
-  // Add Billing field
-  const addBillingField = () => {
-    // Check if Billing field already exists
-    if (fields.some((f) => f.type === "billing")) {
-      setError("A Billing Information field already exists in the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const newField: FormFieldDefinition = {
-      id: `field_billing_${Date.now()}`,
-      type: "billing",
-      label: "Billing Information",
-      name: "_billing",
-      required: false,
-      visible: true,
-      helpText: "Enter your internal billing codes for cost allocation",
-      order: fields.filter((f) => !f.perSample).length,
-    };
-
-    setFields([...fields, newField]);
-  };
-
-  // Add Sequencing Technology field
-  const addSequencingTechField = () => {
-    // Check if Sequencing Tech field already exists
-    if (fields.some((f) => f.type === "sequencing-tech")) {
-      setError("A Sequencing Technology field already exists in the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const newField: FormFieldDefinition = {
-      id: `field_seqtech_${Date.now()}`,
-      type: "sequencing-tech",
-      label: "Sequencing Technology",
-      name: "_sequencing_tech",
-      required: false,
-      visible: true,
-      helpText: "Select the sequencing technology for your samples",
-      order: fields.filter((f) => !f.perSample).length,
-      groupId: "group_sequencing",
-      moduleSource: "sequencing-tech",
-    };
-
-    setFields([...fields, newField]);
-  };
-
-  // Add Barcode per-sample field (part of Sequencing Technologies module)
-  const addBarcodeField = () => {
-    if (fields.some((f) => f.type === "barcode" || f.name === "_barcode")) {
-      setError("A Barcode field already exists in the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const currentPerSampleCount = fields.filter((f) => f.perSample).length;
-
-    const newField: FormFieldDefinition = {
-      id: `field_barcode_${Date.now()}`,
-      type: "barcode",
-      label: "Barcode",
-      name: "_barcode",
-      required: false,
-      visible: true,
-      perSample: true,
-      helpText:
-        "Assign a barcode to this sample. Available barcodes depend on the selected sequencing kit.",
-      order: currentPerSampleCount,
-      moduleSource: "sequencing-tech",
-    };
-
-    setFields([...fields, newField]);
-  };
-
-  const hasBarcodeField = fields.some(
-    (f) => f.type === "barcode" || f.name === "_barcode"
-  );
-
-  const hasSequencingTechField = fields.some(
-    (f) => f.type === "sequencing-tech"
-  );
-
-  // Add ENA Sample Fields - adds essential per-sample fields for ENA submission
-  const addEnaSampleFields = () => {
-    // Check if organism field already exists
-    if (fields.some((f) => f.type === "organism" || f.name === "_organism")) {
-      setError("ENA Sample Fields are already added to the form");
-      setTimeout(() => setError(""), 3000);
-      return;
-    }
-
-    const currentPerSampleCount = fields.filter((f) => f.perSample).length;
-
-    // Add three per-sample fields for ENA
-    const newFields: FormFieldDefinition[] = [
-      {
-        id: `field_organism_${Date.now()}`,
-        type: "organism",
-        label: "Organism",
-        name: "_organism",
-        required: true,
-        visible: true,
-        perSample: true,
-        helpText: "The source organism or metagenome type. Examples: 'human gut metagenome', 'soil metagenome', 'Escherichia coli'. Start typing to search NCBI taxonomy.",
-        placeholder: "e.g., human gut metagenome",
-        order: currentPerSampleCount,
-        moduleSource: "ena-sample-fields",
-      },
-      {
-        id: `field_sample_title_${Date.now() + 1}`,
-        type: "text",
-        label: "Sample Title",
-        name: "sample_title",
-        required: true,
-        visible: true,
-        perSample: true,
-        helpText: "A short descriptive title for this sample. Required for ENA submission.",
-        placeholder: "e.g., Human gut sample from healthy adult",
-        order: currentPerSampleCount + 1,
-        moduleSource: "ena-sample-fields",
-      },
-      {
-        id: `field_sample_alias_${Date.now() + 2}`,
-        type: "text",
-        label: "Sample Alias",
-        name: "sample_alias",
-        required: false,
-        visible: true,
-        perSample: true,
-        helpText: "A unique identifier for this sample. If left empty, will be auto-generated.",
-        placeholder: "e.g., HG-001-A",
-        order: currentPerSampleCount + 2,
-        moduleSource: "ena-sample-fields",
-      },
-    ];
-
-    setFields([...fields, ...newFields]);
-  };
-
-  // Check if ENA sample fields are added
-  const hasEnaSampleFields = fields.some((f) => f.type === "organism" || f.name === "_organism");
-
   const isFieldAvailableForModules = (field: FormFieldDefinition) => {
     if (field.type === "mixs" && !mixsModuleEnabled) return false;
     if (field.type === "funding" && !fundingModuleEnabled) return false;
@@ -1063,13 +903,10 @@ export default function FormBuilderPage() {
   const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
 
   const orderFields = visibleFields
-    .filter((f) => !f.perSample && !f.adminOnly)
+    .filter((f) => !f.perSample)
     .sort((a, b) => a.order - b.order);
   const perSampleFieldsList = visibleFields
-    .filter((f) => f.perSample && !f.adminOnly)
-    .sort((a, b) => a.order - b.order);
-  const adminOnlyFields = visibleFields
-    .filter((f) => f.adminOnly)
+    .filter((f) => f.perSample)
     .sort((a, b) => a.order - b.order);
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
 
@@ -1086,12 +923,114 @@ export default function FormBuilderPage() {
     return "All changes saved";
   })();
 
-  const handleJumpToSection = (sectionId: string) => {
-    setJumpTarget(undefined);
-    const section = document.getElementById(sectionId);
-    if (section) {
-      section.scrollIntoView({ behavior: "smooth", block: "start" });
+  const handleExportConfig = () => {
+    const config = {
+      version: "1.0",
+      exportedAt: new Date().toISOString(),
+      fields,
+      groups,
+      settings: {
+        postSubmissionInstructions,
+        allowDeleteSubmittedOrders,
+        allowUserAssemblyDownload,
+      },
+    };
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `seqdesk-form-config-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string) as ImportedOrderConfig;
+        if (!data.fields || !Array.isArray(data.fields)) {
+          setError("Invalid config file: missing fields array");
+          return;
+        }
+        if (!data.groups || !Array.isArray(data.groups)) {
+          setError("Invalid config file: missing groups array");
+          return;
+        }
+
+        const importTimestamp = Date.now();
+        const seenGroupIds = new Set<string>();
+        const importedGroups: FormFieldGroup[] = data.groups.map((group, index) => {
+          const incomingId = typeof group.id === "string" && group.id.trim() !== "" ? group.id : undefined;
+          const groupId = incomingId && !seenGroupIds.has(incomingId)
+            ? incomingId
+            : `imported-group-${importTimestamp}-${index}`;
+          seenGroupIds.add(groupId);
+          return {
+            ...group,
+            id: groupId,
+            order: typeof group.order === "number" ? group.order : index,
+          };
+        });
+
+        const validGroupIds = new Set(importedGroups.map((group) => group.id));
+        const seenFieldIds = new Set<string>();
+        const importedFields: FormFieldDefinition[] = data.fields.map((field, index) => {
+          const incomingId = typeof field.id === "string" && field.id.trim() !== "" ? field.id : undefined;
+          const fieldId = incomingId && !seenFieldIds.has(incomingId)
+            ? incomingId
+            : `imported-${importTimestamp}-${index}`;
+          seenFieldIds.add(fieldId);
+
+          const fieldGroupId = typeof field.groupId === "string" && validGroupIds.has(field.groupId)
+            ? field.groupId
+            : undefined;
+
+          return {
+            ...field,
+            id: fieldId,
+            order: typeof field.order === "number" ? field.order : index,
+            groupId: fieldGroupId,
+          };
+        });
+
+        setPendingImport({
+          fields: importedFields,
+          groups: importedGroups,
+          settings: data.settings,
+        });
+        setImportDialogOpen(true);
+      } catch {
+        setError("Failed to parse config file. Ensure it is valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset so the same file can be re-selected
+    e.target.value = "";
+  };
+
+  const handleConfirmImport = () => {
+    if (!pendingImport) return;
+    setFields(pendingImport.fields);
+    setGroups(pendingImport.groups);
+    if (pendingImport.settings) {
+      if (pendingImport.settings.postSubmissionInstructions !== undefined) {
+        setPostSubmissionInstructions(pendingImport.settings.postSubmissionInstructions);
+      }
+      if (pendingImport.settings.allowDeleteSubmittedOrders !== undefined) {
+        setAllowDeleteSubmittedOrders(pendingImport.settings.allowDeleteSubmittedOrders);
+      }
+      if (pendingImport.settings.allowUserAssemblyDownload !== undefined) {
+        setAllowUserAssemblyDownload(pendingImport.settings.allowUserAssemblyDownload);
+      }
     }
+    setImportDialogOpen(false);
+    setPendingImport(null);
+    setAutoSaveStatus("dirty");
   };
 
   const moduleFieldMeta: Record<
@@ -1134,11 +1073,12 @@ export default function FormBuilderPage() {
   }
 
   return (
-    <PageContainer>
-      <div className="sticky top-0 z-40 -mx-4 md:-mx-8 mb-6 border-y border-border bg-background/95 backdrop-blur">
-        <div className="px-4 md:px-8 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <Tabs defaultValue="fields">
+      {/* Sticky header bar — outside PageContainer, matching orders detail page */}
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="flex items-center h-[52px] px-6 lg:px-8">
           <div
-            className={`text-xs ${
+            className={`text-xs flex-shrink-0 ${
               autoSaveStatus === "error"
                 ? "text-destructive"
                 : autoSaveStatus === "dirty"
@@ -1148,24 +1088,45 @@ export default function FormBuilderPage() {
           >
             {autoSaveMessage}
           </div>
-          <div className="flex items-center gap-2">
-            <Select value={jumpTarget} onValueChange={handleJumpToSection}>
-              <SelectTrigger className="h-8 w-[200px] bg-white">
-                <SelectValue placeholder="Jump to section" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="order-groups-section">Form Groups</SelectItem>
-                <SelectItem value="order-fields-section">Order Fields</SelectItem>
-                <SelectItem value="order-per-sample-section">Per-Sample Fields</SelectItem>
-                <SelectItem value="order-facility-section">Facility-Only Fields</SelectItem>
-                <SelectItem value="order-modules-section">Module Forms</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button onClick={handleSave} disabled={saving} variant="outline" size="sm" className="bg-white">
+          <div className="flex-1 flex justify-center">
+            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+              <TabsTrigger
+                value="fields"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Per-Order Fields
+              </TabsTrigger>
+              <TabsTrigger
+                value="per-sample"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Per-Sample
+              </TabsTrigger>
+              <TabsTrigger
+                value="groups"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Groups
+              </TabsTrigger>
+              <TabsTrigger
+                value="settings"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                Settings
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button onClick={handleSave} disabled={saving || justSaved} variant="outline" size="sm" className="bg-white">
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Saving...
+                </>
+              ) : justSaved ? (
+                <>
+                  <Check className="h-4 w-4 mr-2 text-green-600" />
+                  Saved
                 </>
               ) : (
                 <>
@@ -1178,7 +1139,8 @@ export default function FormBuilderPage() {
         </div>
       </div>
 
-      <div className="mb-4">
+    <PageContainer>
+      <div className="mb-4 mt-6">
         <h1 className="text-xl font-semibold">Order Configuration</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Define what information users provide when creating sequencing orders
@@ -1191,11 +1153,7 @@ export default function FormBuilderPage() {
         </div>
       )}
 
-      {success && (
-        <div className="mb-6 p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600">
-          {success}
-        </div>
-      )}
+
 
       {hiddenByDisabledModulesCount > 0 && (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -1252,8 +1210,8 @@ export default function FormBuilderPage() {
         </div>
       )}
 
-      {/* Form Groups */}
-      <div id="order-groups-section" className="scroll-mt-28">
+      {/* ===== Tab: Groups ===== */}
+      <TabsContent value="groups">
         <GlassCard className="p-6 mb-6">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-base font-semibold">Form Groups (Steps)</h2>
@@ -1269,11 +1227,14 @@ export default function FormBuilderPage() {
 
           <div className="space-y-2">
             {orderedGroups.map((group, index) => {
-              const fieldCount = visibleFields.filter((f) => f.groupId === group.id).length;
+              const groupFields = visibleFields
+                .filter((field) => field.groupId === group.id)
+                .sort((a, b) => a.order - b.order);
+              const fieldCount = groupFields.length;
               return (
                 <div
                   key={group.id}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border"
+                  className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border"
                 >
                   <div className="flex flex-col gap-1">
                       <button
@@ -1306,6 +1267,35 @@ export default function FormBuilderPage() {
                     {group.description && (
                       <p className="text-sm text-muted-foreground">{group.description}</p>
                     )}
+                    {groupFields.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {groupFields.map((field) => (
+                          <span
+                            key={field.id}
+                            className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-xs"
+                          >
+                            <span>{field.label}</span>
+                            <span className="text-muted-foreground">
+                              {FIELD_TYPE_LABELS[field.type] || field.type}
+                            </span>
+                            {field.perSample && (
+                              <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                                per-sample
+                              </span>
+                            )}
+                            {field.adminOnly && (
+                              <span className="rounded bg-slate-200 px-1 py-0.5 text-[10px] text-slate-700">
+                                admin
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        No fields assigned to this group yet.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -1336,24 +1326,74 @@ export default function FormBuilderPage() {
             )}
           </div>
         </GlassCard>
-      </div>
 
-      {/* Order Fields - filled once per order */}
-      <div id="order-fields-section" className="scroll-mt-28">
+        {/* Unassigned fields */}
+        {(() => {
+          const unassignedFields = visibleFields.filter(
+            (f) => !f.groupId && !f.adminOnly
+          );
+          if (unassignedFields.length === 0 || groups.length === 0) return null;
+          return (
+            <GlassCard className="p-6">
+              <h2 className="text-base font-semibold mb-1">Fields Not Assigned to a Group</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                These fields won&apos;t appear in any step of the order form wizard. Assign them to a group so users can fill them in.
+              </p>
+              <div className="space-y-2">
+                {unassignedFields.map((field) => (
+                  <div
+                    key={field.id}
+                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border"
+                  >
+                    <div className="flex-1">
+                      <span className="font-medium text-sm">{field.label}</span>
+                      {field.perSample && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">per-sample</span>
+                      )}
+                    </div>
+                    <Select
+                      value=""
+                      onValueChange={(groupId) => {
+                        setFields(fields.map((f) =>
+                          f.id === field.id ? { ...f, groupId } : f
+                        ));
+                      }}
+                    >
+                      <SelectTrigger className="w-[180px] h-8 text-xs">
+                        <SelectValue placeholder="Assign to group..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {orderedGroups.map((g) => (
+                          <SelectItem key={g.id} value={g.id}>
+                            {g.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+          );
+        })()}
+      </TabsContent>
+
+      {/* ===== Tab: Per-Order Fields ===== */}
+      <TabsContent value="fields">
+      <HelpBox title="What are per-order fields?">
+        Per-order fields are filled once per order. They capture information that applies to the entire sequencing request,
+        such as the project name, sequencing parameters, or billing details. Module-provided fields (e.g. Sequencing Technology) are managed
+        through the Modules tab.
+      </HelpBox>
+
       <GlassCard className="p-6">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-base font-semibold">Order Fields</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold">Active Per-Order Fields</h2>
           <Button onClick={() => handleAddField(false)} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
-            Add Field
+            Add Custom Field
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          Fields filled <strong>once per order</strong>. Information that applies to the entire order, such as project name, sequencing parameters, or billing details.
-          <span className="block mt-1 text-xs text-muted-foreground">
-            Module-provided fields are marked with a colored badge.
-          </span>
-        </p>
 
         <div className="space-y-3">
           {orderFields.map((field) => {
@@ -1387,11 +1427,6 @@ export default function FormBuilderPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{field.label}</span>
-                  {!moduleFieldMeta[field.type] && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                      {FIELD_TYPE_LABELS[field.type] || field.type}
-                    </span>
-                  )}
                   {field.isSystem && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">
                       System
@@ -1435,24 +1470,24 @@ export default function FormBuilderPage() {
                         Module Off
                       </span>
                     )}
-                  {/* Group badge */}
-                  {field.groupId ? (
-                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                      {groups.find((g) => g.id === field.groupId)?.name || "Unknown Group"}
-                    </span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                      No group
-                    </span>
-                  )}
-                  {/* AI validation indicator */}
-                  {field.aiValidation?.enabled && aiModuleEnabled && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-600 font-medium">
-                      AI
-                    </span>
-                  )}
                 </div>
               </div>
+
+              {!field.isSystem && (
+                <button
+                  type="button"
+                  onClick={() => setFields(fields.map((f) => f.id === field.id ? { ...f, adminOnly: !f.adminOnly } : f))}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
+                    field.adminOnly
+                      ? "bg-slate-200 text-slate-700"
+                      : "bg-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted"
+                  }`}
+                  title={field.adminOnly ? "This field is facility-only. Click to make visible to researchers." : "Click to make this field facility-only"}
+                >
+                  <Shield className="h-3 w-3" />
+                  Facility only
+                </button>
+              )}
 
               <div className="flex items-center gap-1">
                 <Button
@@ -1482,7 +1517,6 @@ export default function FormBuilderPage() {
           )}
         </div>
       </GlassCard>
-      </div>
 
       {/* General Suggested Fields - for Order Fields */}
       {generalTemplates.length > 0 && (
@@ -1530,20 +1564,24 @@ export default function FormBuilderPage() {
           ))}
         </GlassCard>
       )}
+      </TabsContent>
 
-      {/* Per-Sample Fields - filled for each sample */}
-      <div id="order-per-sample-section" className="scroll-mt-28">
-      <GlassCard className="p-6 border-amber-200 bg-amber-50/30 mt-8">
-        <div className="flex items-center justify-between mb-2">
+      {/* ===== Tab: Per-Sample ===== */}
+      <TabsContent value="per-sample">
+      {/* Help banner */}
+      <HelpBox title="What are per-sample fields?">
+        Per-sample fields are filled for each sample in a table view. They capture data that varies between samples,
+        such as volume, concentration, storage conditions, or quality metrics. Facility-only fields are visible only to admins.
+      </HelpBox>
+
+      <GlassCard className="p-6">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">Per-Sample Fields</h2>
-          <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="border-amber-300 hover:bg-amber-100">
+          <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="bg-white">
             <Plus className="h-4 w-4 mr-2" />
-            Add Field
+            Add Custom Field
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          Fields filled <strong>for each sample</strong> in a table view. Use for sample-specific data like volume (ml), concentration, storage conditions, or quality control metrics.
-        </p>
 
         <div className="space-y-3">
           {perSampleFieldsList.map((field) => {
@@ -1551,14 +1589,14 @@ export default function FormBuilderPage() {
             return (
             <div
               key={field.id}
-              className="flex items-center gap-3 p-4 rounded-lg bg-amber-100/50 border border-amber-200"
+              className="flex items-center gap-3 p-4 rounded-lg bg-muted/30"
             >
               <div className="flex flex-col gap-1">
                 <button
                   type="button"
                   onClick={() => handleMoveField(field.id, true, "up")}
                   disabled={indexInSection === 0}
-                  className="p-1 hover:bg-amber-200 rounded disabled:opacity-30"
+                  className="p-1 hover:bg-muted rounded disabled:opacity-30"
                 >
                   <ChevronUp className="h-3 w-3" />
                 </button>
@@ -1566,31 +1604,17 @@ export default function FormBuilderPage() {
                   type="button"
                   onClick={() => handleMoveField(field.id, true, "down")}
                   disabled={indexInSection === perSampleFieldsList.length - 1}
-                  className="p-1 hover:bg-amber-200 rounded disabled:opacity-30"
+                  className="p-1 hover:bg-muted rounded disabled:opacity-30"
                 >
                   <ChevronDown className="h-3 w-3" />
                 </button>
               </div>
 
-              <GripVertical className="h-4 w-4 text-amber-400" />
+              <GripVertical className="h-4 w-4 text-muted-foreground" />
 
               <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{field.label}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                    {FIELD_TYPE_LABELS[field.type] || field.type}
-                  </span>
-                  {field.required && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600">
-                      Required
-                    </span>
-                  )}
-                  {/* AI validation indicator */}
-                  {field.aiValidation?.enabled && aiModuleEnabled && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-600 font-medium">
-                      AI
-                    </span>
-                  )}
                   {/* Module source indicator */}
                   {field.moduleSource === "ena-sample-fields" && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex items-center gap-1">
@@ -1603,6 +1627,20 @@ export default function FormBuilderPage() {
                   <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
                 )}
               </div>
+
+              <button
+                type="button"
+                onClick={() => setFields(fields.map((f) => f.id === field.id ? { ...f, adminOnly: !f.adminOnly } : f))}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
+                  field.adminOnly
+                    ? "bg-slate-200 text-slate-700"
+                    : "bg-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted"
+                }`}
+                title={field.adminOnly ? "This field is facility-only. Click to make visible to researchers." : "Click to make this field facility-only"}
+              >
+                <Shield className="h-3 w-3" />
+                Facility only
+              </button>
 
               <div className="flex items-center gap-1">
                 <Button
@@ -1626,19 +1664,18 @@ export default function FormBuilderPage() {
             </div>
           )})}
           {perSampleFieldsList.length === 0 && (
-            <div className="text-center py-6 text-amber-600/70 border border-dashed border-amber-300 rounded-lg bg-amber-50">
+            <div className="text-center py-6 text-muted-foreground border border-dashed rounded-lg">
               No per-sample fields defined. Add fields here for data that varies between samples.
             </div>
           )}
         </div>
       </GlassCard>
-      </div>
 
       {/* Suggested Per-Sample Fields */}
-      <GlassCard className="p-6 mt-4 border-amber-200 bg-amber-50/30">
+      <GlassCard className="p-6 mt-4">
         <div className="mb-4">
           <h3 className="text-sm font-medium flex items-center gap-2">
-            <Table className="h-4 w-4 text-amber-600" />
+            <Table className="h-4 w-4 text-muted-foreground" />
             Suggested Per-Sample Fields
           </h3>
           <p className="text-sm text-muted-foreground">
@@ -1668,13 +1705,13 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
                 <span>Sample Volume (µl)</span>
-                <span className="text-[10px] px-1 py-0.5 rounded bg-amber-200 text-amber-700 font-medium">0.1-1000</span>
+                <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">0.1-1000</span>
                 {alreadyAdded && <Check className="h-3 w-3 text-green-500" />}
               </button>
             );
@@ -1701,13 +1738,13 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
                 <span>DNA Concentration (ng/µl)</span>
-                <span className="text-[10px] px-1 py-0.5 rounded bg-amber-200 text-amber-700 font-medium">0-5000</span>
+                <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">0-5000</span>
                 {alreadyAdded && <Check className="h-3 w-3 text-green-500" />}
               </button>
             );
@@ -1738,13 +1775,13 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
                 <span>Storage Temperature</span>
-                <span className="text-[10px] px-1 py-0.5 rounded bg-amber-200 text-amber-700 font-medium">4 options</span>
+                <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">4 options</span>
                 {alreadyAdded && <Check className="h-3 w-3 text-green-500" />}
               </button>
             );
@@ -1770,8 +1807,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1801,8 +1838,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1832,8 +1869,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1863,8 +1900,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1900,8 +1937,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1937,8 +1974,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -1974,8 +2011,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2006,8 +2043,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2041,8 +2078,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2071,8 +2108,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2102,8 +2139,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2133,8 +2170,8 @@ export default function FormBuilderPage() {
                 disabled={alreadyAdded}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${
                   alreadyAdded
-                    ? "bg-amber-100/50 border-amber-200 text-amber-400 cursor-not-allowed"
-                    : "bg-amber-50 border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer text-amber-700"
+                    ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
+                    : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"
                 }`}
               >
                 <Plus className={`h-3 w-3 ${alreadyAdded ? "opacity-30" : ""}`} />
@@ -2144,322 +2181,200 @@ export default function FormBuilderPage() {
             );
           })()}
         </div>
+
+        {/* Sample Collection & Storage */}
+        <div className="mt-5 pt-4 border-t border-border">
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Sample Collection &amp; Storage</h4>
+          <div className="flex flex-wrap gap-2">
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Body Site", name: "body_site", required: false, visible: true, perSample: true,
+                helpText: "Body site or source from which the sample was collected",
+                placeholder: "e.g., Urine, BAL, Ascites, Blood",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Body Site</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Storage Box", name: "storage_box", required: false, visible: true, perSample: true,
+                helpText: "Box identifier for freezer storage (e.g., special for freezer -80°C)",
+                placeholder: "e.g., 391",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Storage Box</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Box Position", name: "box_position", required: false, visible: true, perSample: true,
+                helpText: "Position within the storage box (row + column)",
+                placeholder: "e.g., H9",
+                simpleValidation: { maxLength: 10 },
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Box Position</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Preservation Buffer", name: "preservation_buffer", required: false, visible: true, perSample: true,
+                helpText: "Buffer or medium used for sample preservation",
+                placeholder: "e.g., Shield buffer, RNAlater, PBS",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Preservation Buffer</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* DNA / RNA Extraction */}
+        <div className="mt-5 pt-4 border-t border-border">
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">DNA / RNA Extraction</h4>
+          <div className="flex flex-wrap gap-2">
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Patient ID", name: "patient_id", required: false, visible: true, perSample: true,
+                helpText: "Internal pseudonymized patient identifier",
+                placeholder: "e.g., I-01-21-041",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Patient ID</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "date", label: "Extraction Date", name: "extraction_date", required: false, visible: true, perSample: true,
+                helpText: "Date when DNA or RNA extraction was performed",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Extraction Date</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "text", label: "Extraction Method", name: "extraction_method_kit", required: false, visible: true, perSample: true,
+                helpText: "Commercial kit or method used for DNA/RNA extraction",
+                placeholder: "e.g., Zymo miniprep, Qiagen PowerSoil",
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Extraction Method / Kit</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "number", label: "DNA/RNA Concentration (ng/µl)", name: "nucleic_acid_concentration", required: false, visible: true, perSample: true,
+                helpText: "Measured concentration of extracted DNA or RNA in ng per microliter",
+                placeholder: "e.g., 15",
+                simpleValidation: { minValue: 0, maxValue: 10000 },
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>DNA/RNA Concentration (ng/µl)</span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">0-10000</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "number", label: "Total Volume (µl)", name: "total_volume_ul", required: false, visible: true, perSample: true,
+                helpText: "Total elution volume in microliters",
+                placeholder: "e.g., 50",
+                simpleValidation: { minValue: 0, maxValue: 5000 },
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Total Volume (µl)</span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">0-5000</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+            {(() => {
+              const f: Omit<FormFieldDefinition, "id" | "order"> = {
+                type: "select", label: "Concentration Measurement Device", name: "concentration_device", required: false, visible: true, perSample: true,
+                helpText: "Device used to measure nucleic acid concentration",
+                options: [
+                  { label: "NanoDrop", value: "nanodrop" },
+                  { label: "Qubit", value: "qubit" },
+                  { label: "TapeStation", value: "tapestation" },
+                  { label: "Bioanalyzer", value: "bioanalyzer" },
+                  { label: "Other", value: "other" },
+                ],
+              };
+              const added = fields.some((x) => x.name === f.name);
+              return (
+                <button type="button" onClick={() => !added && addSuggestedField(f)} disabled={added}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all ${added ? "bg-muted/50 border-border text-muted-foreground cursor-not-allowed" : "bg-background border-border hover:border-foreground/30 hover:bg-muted/50 cursor-pointer text-foreground"}`}>
+                  <Plus className={`h-3 w-3 ${added ? "opacity-30" : ""}`} />
+                  <span>Concentration Device</span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium">5 options</span>
+                  {added && <Check className="h-3 w-3 text-green-500" />}
+                </button>
+              );
+            })()}
+          </div>
+        </div>
       </GlassCard>
 
-      {/* Facility-Only Fields - visible only to admins */}
-      <div id="order-facility-section" className="scroll-mt-28">
-      <GlassCard className="p-6 border-slate-300 bg-slate-50/50 mt-8">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Shield className="h-4 w-4 text-slate-500" />
-            Facility-Only Fields
-          </h2>
-          <Button onClick={() => handleAddField(false, true)} variant="outline" size="sm" className="border-slate-300 hover:bg-slate-100">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Field
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          Fields visible <strong>only to facility admins</strong>. Researchers will not see these fields.
-          Use for internal tracking, QC notes, cost codes, or other facility-specific information.
-        </p>
+      </TabsContent>
 
-        <div className="space-y-3">
-          {adminOnlyFields.map((field) => {
-            const indexInSection = adminOnlyFields.findIndex(f => f.id === field.id);
-            return (
-            <div
-              key={field.id}
-              className="flex items-center gap-3 p-4 rounded-lg bg-slate-100/50 border border-slate-200"
-            >
-              <div className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleMoveField(field.id, !!field.perSample, "up")}
-                  disabled={indexInSection === 0}
-                  className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
-                >
-                  <ChevronUp className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMoveField(field.id, !!field.perSample, "down")}
-                  disabled={indexInSection === adminOnlyFields.length - 1}
-                  className="p-1 hover:bg-slate-200 rounded disabled:opacity-30"
-                >
-                  <ChevronDown className="h-3 w-3" />
-                </button>
-              </div>
 
-              <GripVertical className="h-4 w-4 text-slate-400" />
 
-              <div className="flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium">{field.label}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                    {FIELD_TYPE_LABELS[field.type] || field.type}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium flex items-center gap-1">
-                    <Shield className="h-2.5 w-2.5" />
-                    Admin only
-                  </span>
-                  {field.perSample && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
-                      Per-sample
-                    </span>
-                  )}
-                  {field.required && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600">
-                      Required
-                    </span>
-                  )}
-                </div>
-                {field.helpText && (
-                  <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleEditField(field)}
-                  title="Edit field"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => openDeleteFieldDialog(field)}
-                  className="text-destructive hover:text-destructive"
-                  title="Delete field"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )})}
-          {adminOnlyFields.length === 0 && (
-            <div className="text-center py-6 text-slate-500/70 border border-dashed border-slate-300 rounded-lg bg-slate-50">
-              No facility-only fields defined. Add fields here for internal tracking visible only to admins.
-            </div>
-          )}
-        </div>
-      </GlassCard>
-      </div>
-
-      {/* Module Forms Section */}
-      <div id="order-modules-section" className="mt-8 scroll-mt-28">
-        <h2 className="text-base font-semibold mb-2">Module Forms</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Modules extend SeqDesk with specialized form components. Enable modules in Configuration &rarr; Modules to unlock additional form features.
-          Each module adds domain-specific fields, validation, and workflows tailored to your needs.
-        </p>
-
-        <div className="space-y-4">
-          {/* Billing Information */}
-          <GlassCard className="p-6">
-            <ModuleGate moduleId="billing-info" adminView>
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-teal-500/10 flex items-center justify-center flex-shrink-0">
-                    <Receipt className="h-5 w-5 text-teal-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium">Billing Information</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Add a billing field to collect Cost Center and PSP Element (SAP project structure plan) for internal cost allocation.
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  onClick={addBillingField}
-                  disabled={fields.some((f) => f.type === "billing")}
-                  variant="outline"
-                  size="sm"
-                  className="bg-white"
-                >
-                  {fields.some((f) => f.type === "billing") ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" />
-                      Added
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add to Form
-                    </>
-                  )}
-                </Button>
-              </div>
-              {fields.some((f) => f.type === "billing") && (
-                <p className="text-sm text-teal-600 mt-3">
-                  Billing field added. Edit it in the Form Fields list above to configure the label and help text.
-                </p>
-              )}
-            </ModuleGate>
-          </GlassCard>
-
-          {/* Sequencing Technologies */}
-          <GlassCard className="p-6">
-            <ModuleGate moduleId="sequencing-tech" adminView>
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Dna className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium">Sequencing Technologies</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Add a technology selector with pre-configured information about sequencing platforms, specs, pros/cons, and best-use cases.
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  onClick={addSequencingTechField}
-                  disabled={fields.some((f) => f.type === "sequencing-tech")}
-                  variant="outline"
-                  size="sm"
-                  className="bg-white"
-                >
-                  {fields.some((f) => f.type === "sequencing-tech") ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" />
-                      Added
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add to Form
-                    </>
-                  )}
-                </Button>
-              </div>
-              {fields.some((f) => f.type === "sequencing-tech") && (
-                <p className="text-sm text-primary mt-3">
-                  Technology selector added. Configure available technologies in{" "}
-                  <a href="/admin/sequencing-tech" className="underline hover:text-primary/80">
-                    Configuration &gt; Sequencing Technologies
-                  </a>.
-                </p>
-              )}
-
-              {/* Barcode per-sample field (sub-feature of Sequencing Tech) */}
-              {hasSequencingTechField && (
-                <div className="mt-4 pt-4 border-t border-border/50">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-medium">Per-Sample Barcode Assignment</h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Adds a barcode dropdown to each sample. Options are automatically determined from the selected kit.
-                      </p>
-                    </div>
-                    <Button
-                      onClick={addBarcodeField}
-                      disabled={hasBarcodeField}
-                      variant="outline"
-                      size="sm"
-                      className="bg-white ml-4 flex-shrink-0"
-                    >
-                      {hasBarcodeField ? (
-                        <>
-                          <Check className="h-4 w-4 mr-2" />
-                          Added
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="h-4 w-4 mr-2" />
-                          Add to Samples
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  {hasBarcodeField && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      <strong>Added to Per-Sample Fields.</strong> The barcode dropdown will appear in the sample entry table when a barcoding-capable kit is selected.
-                    </p>
-                  )}
-                </div>
-              )}
-            </ModuleGate>
-          </GlassCard>
-
-          {/* ENA Sample Fields */}
-          <GlassCard className="p-6 border-emerald-200 bg-emerald-50/30">
-            <ModuleGate moduleId="ena-sample-fields" adminView>
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                    <Database className="h-5 w-5 text-emerald-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-emerald-800">ENA Sample Fields</h3>
-                    <p className="text-sm text-emerald-700/80">
-                      Essential per-sample fields for ENA (European Nucleotide Archive) submission.
-                      Includes <strong>Organism</strong> with NCBI taxonomy lookup, <strong>Sample Title</strong>, and <strong>Sample Alias</strong>.
-                    </p>
-                    <p className="text-xs text-emerald-600 mt-1">
-                      Strongly recommended if you plan to submit sequencing data to public repositories.
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  onClick={addEnaSampleFields}
-                  disabled={hasEnaSampleFields}
-                  variant="outline"
-                  size="sm"
-                  className="bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-100"
-                >
-                  {hasEnaSampleFields ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" />
-                      Added
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add to Form
-                    </>
-                  )}
-                </Button>
-              </div>
-              {hasEnaSampleFields && (
-                <div className="mt-3 p-3 rounded-lg bg-emerald-100/50 border border-emerald-300">
-                  <p className="text-sm text-emerald-700">
-                    <strong>Added to Per-Sample Fields:</strong> Organism (with taxonomy lookup), Sample Title, and Sample Alias.
-                    These fields appear in the sample entry table when users fill in sample data.
-                  </p>
-                </div>
-              )}
-            </ModuleGate>
-          </GlassCard>
-
-          {/* Custom Module Development CTA */}
-          <GlassCard className="p-6 border-dashed border-2 border-muted-foreground/20">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                <Plus className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div>
-                <h3 className="text-sm font-medium text-muted-foreground">Your Custom Module</h3>
-                <p className="text-sm text-muted-foreground">
-                  Need specialized fields for your workflow? We can develop a custom module tailored to your facility&apos;s specific requirements.{" "}
-                  <a
-                    href="mailto:hello@seqdesk.com?subject=Custom Module Development Inquiry&body=Hi,%0A%0AI'm interested in a custom module for SeqDesk.%0A%0AOur requirements:%0A-%20%0A%0APlease send me a quote.%0A%0AThank you!"
-                    className="text-primary hover:underline"
-                  >
-                    Contact us
-                  </a>
-                </p>
-              </div>
-            </div>
-          </GlassCard>
-        </div>
-      </div>
-
-      {/* Advanced Settings */}
-      <div className="mt-8">
+      {/* ===== Tab: Settings ===== */}
+      <TabsContent value="settings">
+      <div>
         <div className="flex items-center gap-3 mb-2">
           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
             <Settings2 className="h-4 w-4 text-muted-foreground" />
@@ -2567,6 +2482,51 @@ export default function FormBuilderPage() {
         </div>
       </div>
 
+      {/* Import / Export */}
+      <div className="mt-8">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+            <Download className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <h2 className="text-base font-semibold">Import / Export</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Export the current form configuration as a JSON file, or import a previously exported configuration.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <GlassCard className="p-6">
+            <h3 className="text-sm font-medium mb-2">Export Configuration</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Download the current field definitions, groups, and settings as a JSON file.
+            </p>
+            <Button onClick={handleExportConfig} variant="outline" size="sm">
+              <Download className="h-4 w-4 mr-2" />
+              Export Config
+            </Button>
+          </GlassCard>
+
+          <GlassCard className="p-6">
+            <h3 className="text-sm font-medium mb-2">Import Configuration</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Upload a JSON config file to replace the current fields, groups, and settings.
+            </p>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".json"
+              onChange={handleImportFile}
+              className="hidden"
+            />
+            <Button onClick={() => importFileRef.current?.click()} variant="outline" size="sm">
+              <Upload className="h-4 w-4 mr-2" />
+              Import Config
+            </Button>
+          </GlassCard>
+        </div>
+      </div>
+      </TabsContent>
+
       {/* Field Editor Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className={(fieldType === "mixs" || fieldType === "funding" || fieldType === "billing") ? "!w-[90vw] !max-w-[800px] max-h-[90vh] overflow-y-auto" : "!w-[90vw] !max-w-[1200px] max-h-[90vh] overflow-y-auto"}>
@@ -2670,7 +2630,7 @@ export default function FormBuilderPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(FIELD_TYPE_LABELS) as FieldType[]).filter(t => t !== "mixs").map(
+                        {(Object.keys(FIELD_TYPE_LABELS) as FieldType[]).map(
                           (type) => (
                             <SelectItem key={type} value={type}>
                               {FIELD_TYPE_LABELS[type]}
@@ -2731,7 +2691,7 @@ export default function FormBuilderPage() {
                       />
                       <span className="text-sm flex items-center gap-1">
                         <Shield className="h-3 w-3 text-slate-500" />
-                        Admin only
+                        Facility only
                       </span>
                     </label>
                   </div>
@@ -3257,6 +3217,50 @@ Example: A project code in format PROJ-XXXX where XXXX is a 4-digit number. Shou
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Import Confirmation Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={(open) => {
+        setImportDialogOpen(open);
+        if (!open) setPendingImport(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Configuration</DialogTitle>
+            <DialogDescription>
+              This will replace the current configuration with the imported data:
+            </DialogDescription>
+          </DialogHeader>
+          {pendingImport && (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{pendingImport.fields.length}</span> fields
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{pendingImport.groups.length}</span> groups
+              </div>
+              {pendingImport.settings && (
+                <div className="text-muted-foreground">Settings will also be updated.</div>
+              )}
+              <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                This will overwrite all existing fields, groups, and settings. Make sure to export your current configuration first if you want to keep a backup.
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setImportDialogOpen(false);
+              setPendingImport(null);
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmImport}>
+              <Upload className="h-4 w-4 mr-2" />
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
+    </Tabs>
   );
 }

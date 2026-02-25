@@ -24,8 +24,6 @@ import {
   AlertCircle,
   XCircle,
   FlaskConical,
-  ArrowRight,
-  ClipboardList,
   Send,
   Clock,
   ExternalLink,
@@ -705,104 +703,161 @@ export default function StudyDetailPage({
 
         {/* Overview Tab */}
         <TabsContent value="overview">
-          {/* Workflow Progress - only for drafts that still have steps to complete */}
-          {!study.submitted && !study.readyForSubmission && (
-            <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-violet-500/10 p-5">
-              <h3 className="font-semibold mb-4 flex items-center gap-2">
-                <ClipboardList className="h-5 w-5" />
-                Next Steps
-              </h3>
-              <div className="grid grid-cols-4 gap-3">
-                {/* Step 1: Create Study */}
-                <div className="p-3 rounded-lg bg-card border">
-                  <div className="flex items-center gap-2 mb-1">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="text-sm font-medium">Create Study</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Done</p>
-                </div>
+          {/* Study Process */}
+          {!study.submitted && (() => {
+            const hasSamples = totalSamples > 0;
+            const metadataStepStatus = !hasSamples
+              ? "Blocked"
+              : allMetadataComplete
+                ? "Done"
+                : "In Progress";
+            const readyStepStatus = study.readyForSubmission
+              ? "Done"
+              : allMetadataComplete
+                ? "Ready"
+                : "Blocked";
+            const canPromptMarkReady = isOwner && allMetadataComplete && !study.readyForSubmission;
 
-                {/* Step 2: Associate Samples */}
-                <div className="p-3 rounded-lg bg-card border">
-                  <div className="flex items-center gap-2 mb-1">
-                    {totalSamples > 0 ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">2</span>
+            return (
+              <div className="mb-4 rounded-lg border bg-card p-5">
+                <h3 className="mb-4 text-base font-semibold">Study Process</h3>
+                <div className="space-y-3">
+                  {/* Step 1: Study Created */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-foreground bg-foreground text-xs font-semibold text-background">
+                          1
+                        </span>
+                        <span className="text-sm font-medium">Create Study</span>
                       </div>
-                    )}
-                    <span className="text-sm font-medium">Add Samples</span>
+                      <span className="text-xs text-muted-foreground">Done</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Study created and available for sample assignment.
+                    </p>
                   </div>
-                  {totalSamples > 0 ? (
-                    <p className="text-xs text-muted-foreground">{totalSamples} sample{totalSamples !== 1 ? 's' : ''}</p>
-                  ) : (
-                    <>
-                      <p className="text-xs text-muted-foreground">No samples yet</p>
-                      {isOwner && (
-                        <Link
-                          href={`/studies/${id}/edit`}
-                          className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+
+                  {/* Step 2: Add Samples */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
                         >
-                          Add Samples <ArrowRight className="h-3 w-3" />
-                        </Link>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Step 3: Enter Metadata */}
-                <div className="p-3 rounded-lg bg-card border">
-                  <div className="flex items-center gap-2 mb-1">
-                    {allMetadataComplete ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          2
+                        </span>
+                        <span className="text-sm font-medium">Add Samples</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{hasSamples ? "Done" : "Pending"}</span>
+                    </div>
+                    {hasSamples ? (
+                      <p className="text-xs text-muted-foreground">
+                        {totalSamples} sample{totalSamples !== 1 ? "s" : ""} linked to this study.
+                      </p>
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">3</span>
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          No samples are linked yet.
+                        </p>
+                        {isOwner && (
+                          <Link
+                            href={`/studies/${id}/edit`}
+                            className="text-xs font-medium text-primary hover:underline"
+                          >
+                            Add samples
+                          </Link>
+                        )}
                       </div>
                     )}
-                    <span className="text-sm font-medium">Metadata</span>
                   </div>
-                  {allMetadataComplete ? (
-                    <p className="text-xs text-muted-foreground">Complete</p>
-                  ) : totalSamples > 0 ? (
-                    <>
-                      <p className="text-xs text-muted-foreground">{samplesWithMetadata}/{totalSamples} complete</p>
-                      {isOwner && (
-                        <Link
-                          href={`/studies/${id}/edit`}
-                          className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+
+                  {/* Step 3: Complete Metadata */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
                         >
-                          Edit <ArrowRight className="h-3 w-3" />
-                        </Link>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Add samples first</p>
-                  )}
-                </div>
-
-                {/* Step 4: Mark as Ready */}
-                <div className="p-3 rounded-lg bg-card border">
-                  <div className="flex items-center gap-2 mb-1">
-                    {allMetadataComplete ? (
-                      <Clock className="h-4 w-4 text-muted-foreground" />
+                          3
+                        </span>
+                        <span className="text-sm font-medium">Complete Metadata</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{metadataStepStatus}</span>
+                    </div>
+                    {!hasSamples ? (
+                      <p className="text-xs text-muted-foreground">Add samples first to unlock metadata completion.</p>
+                    ) : allMetadataComplete ? (
+                      <p className="text-xs text-muted-foreground">
+                        Metadata complete for all {totalSamples} sample{totalSamples !== 1 ? "s" : ""}.
+                      </p>
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">4</span>
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          {samplesWithMetadata}/{totalSamples} sample{totalSamples !== 1 ? "s" : ""} complete.
+                        </p>
+                        {isOwner && (
+                          <Link
+                            href={`/studies/${id}/edit`}
+                            className="text-xs font-medium text-primary hover:underline"
+                          >
+                            Edit metadata
+                          </Link>
+                        )}
                       </div>
                     )}
-                    <span className="text-sm font-medium">Mark as Ready</span>
                   </div>
-                  {allMetadataComplete ? (
-                    <p className="text-xs text-muted-foreground">Ready to submit</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Complete metadata</p>
-                  )}
+
+                  {/* Step 4: Mark as Ready */}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${(study.readyForSubmission || allMetadataComplete)
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-muted-foreground/40 text-muted-foreground"
+                          }`}
+                        >
+                          4
+                        </span>
+                        <span className="text-sm font-medium">Mark as Ready</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{readyStepStatus}</span>
+                        {canPromptMarkReady && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={() => setMarkReadyDialogOpen(true)}
+                          >
+                            Mark ready
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {study.readyForSubmission ? (
+                      <p className="text-xs text-muted-foreground">
+                        Study marked ready{study.readyAt ? ` on ${formatDate(study.readyAt)}` : ""}. Facility can now proceed with ENA submission.
+                      </p>
+                    ) : allMetadataComplete ? (
+                      <p className="text-xs text-muted-foreground">
+                        All prerequisites are complete. Mark study as ready to notify the sequencing facility.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Complete metadata for all samples first.</p>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Submitted Study Status */}
           {study.submitted && (

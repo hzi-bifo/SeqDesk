@@ -798,33 +798,36 @@ export default function OrderDetailPage({
 
           {/* Tabs - centered */}
           <div className="flex-1 flex justify-center">
-            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-0">
+            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
               <TabsTrigger
                 value="overview"
-                className="relative h-[52px] rounded-none border-b-2 border-transparent px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
               >
                 Overview
               </TabsTrigger>
               <TabsTrigger
                 value="reads"
-                className="relative h-[52px] rounded-none border-b-2 border-transparent px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
               >
                 Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
               </TabsTrigger>
+              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+                <TabsTrigger
+                  value="manage-files"
+                  asChild
+                  className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                >
+                  <Link href={`/orders/${order.id}/files`}>
+                    Manage Files
+                  </Link>
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0">
             {(isOwner || isFacilityAdmin) && (
               <>
-                {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
-                    <Link href={`/orders/${order.id}/files`}>
-                      <HardDrive className="h-3.5 w-3.5 mr-1.5" />
-                      Manage Files
-                    </Link>
-                  </Button>
-                )}
                 {(order.status === "DRAFT" || isFacilityAdmin) && (
                   <Button
                     variant="ghost"
@@ -1177,45 +1180,13 @@ export default function OrderDetailPage({
 
         {/* Read Files Tab */}
         <TabsContent value="reads">
-          {/* Admin: Simulate Reads button */}
-          {isFacilityAdmin && order.samples.length > 0 && (
-            <div className="flex items-center justify-between mb-4 p-4 bg-card rounded-lg border">
-              <div>
-                <p className="text-sm font-medium">Simulate Read Files</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Create simulated FASTQ files for testing
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleSimulateReadsClick}
-                disabled={simulatingReads || order.samples.length === 0}
-              >
-                {simulatingReads ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <FileCode className="h-4 w-4 mr-2" />
-                )}
-                Simulate Reads
-              </Button>
-            </div>
-          )}
-
           {/* Samples with file info */}
           <div className="bg-card rounded-lg border overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4">
+            <div className="px-5 py-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <HardDrive className="h-4 w-4" />
                 Samples ({order._count.samples})
               </h2>
-              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={`/orders/${order.id}/files`}>
-                    Manage Files
-                  </Link>
-                </Button>
-              )}
             </div>
 
             {order.samples.length === 0 ? (

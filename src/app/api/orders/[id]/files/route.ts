@@ -116,6 +116,7 @@ export async function GET(
 
     return NextResponse.json({
       orderId: order.id,
+      orderName: order.name,
       orderStatus: order.status,
       canAssign,
       dataBasePath: dataBasePath || null,
