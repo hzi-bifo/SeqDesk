@@ -74,12 +74,33 @@ curl -fsSL https://seqdesk.com/install.sh | \
 # Repeatable config rollout on an existing install (no re-download/extract)
 curl -fsSL https://seqdesk.com/install.sh | \
   bash -s -- -y --reconfigure --config ./infrastructure-setup.json
+
+# Reconfigure + explicitly run DB push/seed (opt-in)
+curl -fsSL https://seqdesk.com/install.sh | \
+  bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+```
+
+Important: install path is based on where you run the command.
+- Default target is `./seqdesk` relative to your current directory.
+- If you run the installer from `/tmp`, it installs to `/tmp/seqdesk`.
+- For predictable deployments, always pass an explicit absolute path with `--dir`.
+
+```bash
+# Recommended: explicit install location
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --dir /opt/seqdesk
 ```
 
 `--config` can be a local file path or HTTPS URL. CLI flags and explicit
 environment variables still take precedence over values from the JSON file.
 Use `--reconfigure` (or `SEQDESK_RECONFIGURE=1`) to apply new JSON/env values
 to an existing installation directory in place.
+In reconfigure mode, database push/seed is skipped by default to avoid
+touching existing data. Use `--reseed-db` (or `SEQDESK_RESEED_DB=1`) only when
+you explicitly want DB push + seed.
+
+When pipeline support is enabled, `condaPath` from JSON (or
+`SEQDESK_EXEC_CONDA_PATH`) is used for Conda detection/setup. If Conda is
+missing, Miniconda is installed at that path.
 
 The installer does not run `sudo` commands automatically. If required system
 packages (for example Node.js) are missing, it prints the exact commands so you
@@ -423,6 +444,14 @@ pm2 startup
 pm2 save
 ```
 
+If global PM2 install fails with npm permissions, use local PM2 (no sudo):
+```bash
+cd /opt/seqdesk
+npm install --no-save pm2
+./node_modules/.bin/pm2 start ./start.sh --name seqdesk
+./node_modules/.bin/pm2 save
+```
+
 Note: The in-app updater can only auto-restart when SeqDesk is managed by PM2 or systemd.
 If you use the release tarball, start it with PM2 using `pm2 start ./start.sh --name seqdesk`.
 
@@ -452,6 +481,14 @@ Enable and start:
 ```bash
 sudo systemctl enable seqdesk
 sudo systemctl start seqdesk
+```
+
+No-sudo alternative (user service):
+```bash
+mkdir -p ~/.config/systemd/user
+# place seqdesk.service in ~/.config/systemd/user/seqdesk.service
+systemctl --user daemon-reload
+systemctl --user enable --now seqdesk
 ```
 
 ### Reverse Proxy (nginx)
