@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, use, useRef } from "react";
+import { useState, useEffect, useCallback, use, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -37,6 +37,7 @@ import {
   Save,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
+import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 
 interface Sample {
   id: string;
@@ -101,6 +102,17 @@ interface Study {
     lastName: string | null;
     email: string;
   };
+}
+
+const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
+  { id: "group_study_info", name: "Study Information", order: 0 },
+  { id: "group_metadata", name: "Metadata", order: 1 },
+];
+
+interface StudyFormSchemaResponse {
+  fields?: FormFieldDefinition[];
+  studyFields?: FormFieldDefinition[];
+  groups?: FormFieldGroup[];
 }
 
 // Helper to check if sample has metadata
@@ -183,6 +195,127 @@ function formatRelativeTime(dateInput: string | Date) {
   return date.toLocaleDateString();
 }
 
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore parse errors and use empty object fallback.
+  }
+  return {};
+}
+
+function hasDisplayValue(value: unknown): boolean {
+  return !(
+    value === undefined ||
+    value === null ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function getFieldLabel(key: string): string {
+  const labels: Record<string, string> = {
+    _mixsChecklist: "MIxS Checklist",
+    _mixsFields: "Selected MIxS Fields",
+  };
+  return labels[key] || key.replace(/_/g, " ");
+}
+
+function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): string {
+  if (!hasDisplayValue(value)) return "Not specified";
+
+  if (field.type === "select" && field.options) {
+    const option = field.options.find((o) => o.value === value);
+    return option?.label || String(value);
+  }
+
+  if (field.type === "multiselect" && Array.isArray(value) && field.options) {
+    return value
+      .map((v) => field.options?.find((o) => o.value === v)?.label || String(v))
+      .join(", ");
+  }
+
+  if (field.type === "checkbox") {
+    return value === true ? "Yes" : "No";
+  }
+
+  if (field.type === "funding") {
+    const fundingValue = value as {
+      entries?: Array<{
+        agencyId: string;
+        agencyOther?: string;
+        grantNumber: string;
+        isPrimary?: boolean;
+      }>;
+    };
+    if (!fundingValue?.entries || fundingValue.entries.length === 0) {
+      return "No funding sources";
+    }
+    return fundingValue.entries
+      .map((entry) => {
+        const agencyName = entry.agencyId === "other"
+          ? (entry.agencyOther || "Other")
+          : entry.agencyId.toUpperCase();
+        return `${agencyName}: ${entry.grantNumber}${entry.isPrimary ? " (Primary)" : ""}`;
+      })
+      .join("; ");
+  }
+
+  if (field.type === "billing") {
+    const billingValue = value as { costCenter?: string; pspElement?: string } | null;
+    if (!billingValue) return "Not specified";
+    const parts: string[] = [];
+    if (billingValue.costCenter) parts.push(`Cost Center: ${billingValue.costCenter}`);
+    if (billingValue.pspElement) parts.push(`PSP: ${billingValue.pspElement}`);
+    return parts.length > 0 ? parts.join(", ") : "Not specified";
+  }
+
+  if (field.type === "sequencing-tech" && typeof value === "object" && value !== null) {
+    const selection = value as {
+      technologyId?: string;
+      technologyName?: string;
+      deviceId?: string;
+      deviceName?: string;
+      flowCellId?: string;
+      flowCellSku?: string;
+      kitId?: string;
+      kitSku?: string;
+    };
+    const parts: string[] = [];
+    const platform = selection.technologyName || selection.technologyId;
+    const device = selection.deviceName || selection.deviceId;
+    const flowCell = selection.flowCellSku || selection.flowCellId;
+    const kit = selection.kitSku || selection.kitId;
+    if (platform) parts.push(`Platform: ${platform}`);
+    if (device) parts.push(`Device: ${device}`);
+    if (flowCell) parts.push(`Flow Cell: ${flowCell}`);
+    if (kit) parts.push(`Kit: ${kit}`);
+    return parts.length > 0 ? parts.join(" | ") : "Not selected";
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function formatUnknownFieldValue(value: unknown): string {
+  if (!hasDisplayValue(value)) return "Not specified";
+  if (Array.isArray(value)) return value.map((item) => String(item)).join(", ");
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
 export default function StudyDetailPage({
   params,
 }: {
@@ -199,6 +332,8 @@ export default function StudyDetailPage({
   const [markingReady, setMarkingReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [studyFormFields, setStudyFormFields] = useState<FormFieldDefinition[]>([]);
+  const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(DEFAULT_STUDY_GROUPS);
 
   // Notes state
   const [notesContent, setNotesContent] = useState("");
@@ -283,6 +418,24 @@ export default function StudyDetailPage({
   useEffect(() => {
     void fetchStudy();
   }, [fetchStudy]);
+
+  useEffect(() => {
+    fetch("/api/study-form-schema")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: StudyFormSchemaResponse | null) => {
+        const schemaStudyFields = (data?.studyFields ?? data?.fields ?? [])
+          .filter((field) => !field.perSample && field.name !== "_sample_association" && field.visible);
+        const groups = (data?.groups && data.groups.length > 0 ? data.groups : DEFAULT_STUDY_GROUPS)
+          .slice()
+          .sort((a, b) => a.order - b.order);
+        setStudyFormFields(schemaStudyFields);
+        setStudyFormGroups(groups);
+      })
+      .catch(() => {
+        setStudyFormFields([]);
+        setStudyFormGroups(DEFAULT_STUDY_GROUPS);
+      });
+  }, []);
 
   // Sync notes content when server notes change, but do not clobber local unsaved edits.
   useEffect(() => {
@@ -528,6 +681,63 @@ export default function StudyDetailPage({
     });
   };
 
+  const parsedStudyMetadata = useMemo(
+    () => parseJsonObject(study?.studyMetadata),
+    [study?.studyMetadata]
+  );
+
+  const visibleStudyFields = useMemo(
+    () => studyFormFields
+      .filter((field) => isAdmin || !field.adminOnly)
+      .slice()
+      .sort((a, b) => a.order - b.order),
+    [studyFormFields, isAdmin]
+  );
+
+  const knownStudyFieldNames = useMemo(
+    () => new Set(studyFormFields.map((field) => field.name)),
+    [studyFormFields]
+  );
+
+  const groupedStudyMetadataSections = useMemo(
+    () => studyFormGroups
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .flatMap((group) => {
+        const rows = visibleStudyFields
+          .filter((field) => field.groupId === group.id)
+          .slice()
+          .sort((a, b) => a.order - b.order)
+          .map((field) => ({ field, value: parsedStudyMetadata[field.name] }))
+          .filter(({ value }) => hasDisplayValue(value));
+        return rows.length > 0 ? [{ id: group.id, title: group.name, rows }] : [];
+      }),
+    [studyFormGroups, visibleStudyFields, parsedStudyMetadata]
+  );
+
+  const ungroupedStudyMetadataRows = useMemo(
+    () => visibleStudyFields
+      .filter((field) => !field.groupId)
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .map((field) => ({ field, value: parsedStudyMetadata[field.name] }))
+      .filter(({ value }) => hasDisplayValue(value)),
+    [visibleStudyFields, parsedStudyMetadata]
+  );
+
+  const fallbackStudyMetadataRows = useMemo(
+    () => {
+      if (!isAdmin) return [];
+      return Object.entries(parsedStudyMetadata).filter(
+        ([key, value]) =>
+          !key.startsWith("_mixs") &&
+          !knownStudyFieldNames.has(key) &&
+          hasDisplayValue(value)
+      );
+    },
+    [parsedStudyMetadata, knownStudyFieldNames, isAdmin]
+  );
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -563,115 +773,90 @@ export default function StudyDetailPage({
   const samplesWithMetadata = study.samples.filter(sampleHasMetadata).length;
   const totalSamples = study.samples.length;
   const allMetadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
+  const metadataCompletionPercent = totalSamples > 0
+    ? Math.round((samplesWithMetadata / totalSamples) * 100)
+    : 0;
+  const ownerDisplayName = study.user.firstName && study.user.lastName
+    ? `${study.user.firstName} ${study.user.lastName}`
+    : study.user.email;
   const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
 
-  return (
-    <PageContainer>
-      {/* Header */}
-      <div className="mb-4">
-        <Button variant="ghost" size="sm" asChild className="mb-2">
-          <Link href="/studies">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Studies
-          </Link>
-        </Button>
+  const tabTriggerClass = "relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-3 text-xs font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground";
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-semibold">{study.title}</h1>
-              {study.submitted ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Submitted
-                </span>
-              ) : study.testRegisteredAt ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  Test Registered
-                </span>
-              ) : study.studyAccessionId ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  Study Registered
-                </span>
-              ) : study.readyForSubmission ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-foreground" />
-                  Ready
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                  Draft
-                </span>
+  return (
+    <>
+      <Tabs defaultValue="overview">
+      {/* Sticky header bar */}
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="flex items-center h-[52px] px-6 lg:px-8">
+          <Link
+            href="/studies"
+            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </Link>
+          <span className="text-sm font-medium truncate flex-shrink-0">{study.title}</span>
+
+          {/* Tabs - centered */}
+          <div className="flex-1 flex justify-center">
+            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+              <TabsTrigger value="overview" className={tabTriggerClass}>Overview</TabsTrigger>
+              <TabsTrigger value="samples" className={tabTriggerClass}>Samples</TabsTrigger>
+              <TabsTrigger value="reads" className={tabTriggerClass}>
+                Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
+              </TabsTrigger>
+              {isAdmin && totalSamples > 0 && (
+                <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
               )}
-            </div>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {[
-                study.checklistType && study.checklistType.replace(/-/g, " "),
-                study.studyAccessionId,
-                `Created ${formatDate(study.createdAt)}`,
-              ].filter(Boolean).join(" · ")}
-            </p>
-            {study.description && study.description !== study.title && (
-              <p className="text-sm text-muted-foreground mt-1 max-w-3xl">{study.description}</p>
-            )}
+              <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
+              <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
+            </TabsList>
           </div>
 
           {/* Action buttons */}
-          {(isOwner || isAdmin) && (
-            <div className="flex items-center gap-2">
-              {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setUnmarkReadyDialogOpen(true)}
-                  disabled={markingReady}
-                >
-                  {markingReady ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
-                  Back to Draft
-                </Button>
-              )}
-              {!study.submitted && !study.readyForSubmission && isOwner && (
-                <>
-                  {allMetadataComplete && (
-                    <Button
-                      size="sm"
-                      onClick={() => setMarkReadyDialogOpen(true)}
-                      disabled={markingReady}
-                    >
-                      {markingReady ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : null}
-                      Mark as Ready
-                    </Button>
-                  )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {(isOwner || isAdmin) && (
+              <>
+                {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setDeleteDialogOpen(true)}
-                    disabled={deleting}
+                    className="h-7 text-xs"
+                    onClick={() => setUnmarkReadyDialogOpen(true)}
+                    disabled={markingReady}
                   >
-                    Delete
+                    {markingReady ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Back to Draft
                   </Button>
-                </>
-              )}
-              {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/studies/${id}/edit`}>
-                    Edit
-                  </Link>
-                </Button>
-              )}
-            </div>
-          )}
+                )}
+                {!study.submitted && !study.readyForSubmission && isOwner && (
+                  <>
+                    {allMetadataComplete && (
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setMarkReadyDialogOpen(true)}
+                        disabled={markingReady}
+                      >
+                        {markingReady ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : null}
+                        Mark as Ready
+                      </Button>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
+      <PageContainer>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
           <AlertCircle className="h-5 w-5" />
@@ -686,21 +871,6 @@ export default function StudyDetailPage({
         </div>
       )}
 
-      {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList className="w-full justify-start mb-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="samples">Samples ({totalSamples})</TabsTrigger>
-          <TabsTrigger value="reads">
-            Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
-          </TabsTrigger>
-          {isAdmin && totalSamples > 0 && (
-            <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
-          )}
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="ena">ENA</TabsTrigger>
-        </TabsList>
-
         {/* Overview Tab */}
         <TabsContent value="overview">
           {/* Study Process */}
@@ -711,13 +881,6 @@ export default function StudyDetailPage({
               : allMetadataComplete
                 ? "Done"
                 : "In Progress";
-            const readyStepStatus = study.readyForSubmission
-              ? "Done"
-              : allMetadataComplete
-                ? "Ready"
-                : "Blocked";
-            const canPromptMarkReady = isOwner && allMetadataComplete && !study.readyForSubmission;
-
             return (
               <div className="mb-4 rounded-lg border bg-card p-5">
                 <h3 className="mb-4 text-base font-semibold">Study Process</h3>
@@ -814,46 +977,6 @@ export default function StudyDetailPage({
                     )}
                   </div>
 
-                  {/* Step 4: Mark as Ready */}
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${(study.readyForSubmission || allMetadataComplete)
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-muted-foreground/40 text-muted-foreground"
-                          }`}
-                        >
-                          4
-                        </span>
-                        <span className="text-sm font-medium">Mark as Ready</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{readyStepStatus}</span>
-                        {canPromptMarkReady && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs"
-                            onClick={() => setMarkReadyDialogOpen(true)}
-                          >
-                            Mark ready
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    {study.readyForSubmission ? (
-                      <p className="text-xs text-muted-foreground">
-                        Study marked ready{study.readyAt ? ` on ${formatDate(study.readyAt)}` : ""}. Facility can now proceed with ENA submission.
-                      </p>
-                    ) : allMetadataComplete ? (
-                      <p className="text-xs text-muted-foreground">
-                        All prerequisites are complete. Mark study as ready to notify the sequencing facility.
-                      </p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">Complete metadata for all samples first.</p>
-                    )}
-                  </div>
                 </div>
               </div>
             );
@@ -899,25 +1022,202 @@ export default function StudyDetailPage({
             </div>
           )}
 
-          {/* Study summary */}
-          <div className="grid grid-cols-3 gap-4 mt-4">
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Samples</p>
-              <p className="text-2xl font-semibold mt-1">{totalSamples}</p>
+          {/* Status History */}
+          <div className="bg-card rounded-lg border overflow-hidden mt-4">
+            <div className="px-5 py-4">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Status History
+              </h2>
             </div>
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Metadata</p>
-              <p className="text-2xl font-semibold mt-1">{samplesWithMetadata}<span className="text-sm font-normal text-muted-foreground"> / {totalSamples}</span></p>
-            </div>
-            <div className="bg-card rounded-lg border p-4">
-              <p className="text-sm text-muted-foreground">Owner</p>
-              <p className="text-sm font-medium mt-1 truncate">
-                {study.user.firstName && study.user.lastName
-                  ? `${study.user.firstName} ${study.user.lastName}`
-                  : study.user.email}
-              </p>
+            <div className="divide-y divide-border border-t">
+              {/* Created */}
+              <div className="flex items-start gap-3 px-5 py-3">
+                <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <BookOpen className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Study Created</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatDate(study.createdAt)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Marked as Ready */}
+              {study.readyAt && (
+                <div className="flex items-start gap-3 px-5 py-3">
+                  <div className="h-7 w-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
+                    <Send className="h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Marked as Ready</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(study.readyAt)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Submitted to ENA */}
+              {study.submittedAt && (
+                <div className="flex items-start gap-3 px-5 py-3">
+                  <div className="h-7 w-7 rounded-md bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Submitted to ENA</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(study.submittedAt)}
+                      {study.studyAccessionId && (
+                        <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                          {study.studyAccessionId}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Study summary */}
+          <div className="mt-4 rounded-lg border bg-card overflow-hidden">
+            <div className="px-5 py-4">
+              <h2 className="text-sm font-semibold">Study Snapshot</h2>
+            </div>
+            <div className="border-t">
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-border">
+                  <tr>
+                    <td className="px-5 py-3 text-muted-foreground">Samples</td>
+                    <td className="px-5 py-3 text-right font-medium">{totalSamples}</td>
+                  </tr>
+                  <tr>
+                    <td className="px-5 py-3 text-muted-foreground">Metadata</td>
+                    <td className="px-5 py-3 text-right font-medium">
+                      {samplesWithMetadata} / {totalSamples}
+                      <span className="ml-2 text-xs text-muted-foreground">({metadataCompletionPercent}%)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-5 py-3 text-muted-foreground">Owner</td>
+                    <td className="px-5 py-3 text-right font-medium">{ownerDisplayName}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-card rounded-lg border overflow-hidden mt-4">
+            <div className="px-5 py-4">
+              <h2 className="text-sm font-semibold">Filled Study Information</h2>
+            </div>
+            <div className="divide-y divide-border border-t">
+              <div className="flex justify-between items-start px-5 py-3 text-sm">
+                <span className="text-muted-foreground">Study Title</span>
+                <span className="font-medium text-right max-w-[60%] break-words">
+                  {study.title}
+                </span>
+              </div>
+              {hasDisplayValue(study.description) && (
+                <div className="flex justify-between items-start px-5 py-3 text-sm">
+                  <span className="text-muted-foreground">Description</span>
+                  <span className="font-medium text-right max-w-[60%] break-words">
+                    {study.description}
+                  </span>
+                </div>
+              )}
+              {hasDisplayValue(study.alias) && (
+                <div className="flex justify-between items-start px-5 py-3 text-sm">
+                  <span className="text-muted-foreground">Alias</span>
+                  <span className="font-medium text-right max-w-[60%] break-words">
+                    {study.alias}
+                  </span>
+                </div>
+              )}
+              {hasDisplayValue(study.checklistType) && (
+                <div className="flex justify-between items-start px-5 py-3 text-sm">
+                  <span className="text-muted-foreground">Environment Type</span>
+                  <span className="font-medium text-right max-w-[60%] break-words">
+                    {study.checklistType}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {groupedStudyMetadataSections.map((section) => (
+            <div key={section.id} className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">{section.title}</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {section.rows.map(({ field, value }) => (
+                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground">{field.label}</span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatSchemaFieldValue(field, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {ungroupedStudyMetadataRows.length > 0 && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">Additional Details</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {ungroupedStudyMetadataRows.map(({ field, value }) => (
+                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground">{field.label}</span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatSchemaFieldValue(field, value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {fallbackStudyMetadataRows.length > 0 && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4">
+                <h2 className="text-sm font-semibold">Additional Information</h2>
+              </div>
+              <div className="divide-y divide-border border-t">
+                {fallbackStudyMetadataRows.map(([key, value]) => (
+                  <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
+                    <span className="text-muted-foreground capitalize">{getFieldLabel(key)}</span>
+                    <span className="font-medium text-right max-w-[60%] break-words">
+                      {formatUnknownFieldValue(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Study Information</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Update the study details, samples, or metadata fields.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/studies/${id}/edit`}>
+                    Change Study Information
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* Samples Tab */}
@@ -1314,66 +1614,7 @@ export default function StudyDetailPage({
             );
           })()}
 
-          {/* Status History */}
-          <div className={`bg-card rounded-lg border overflow-hidden ${isAdmin && !study.submitted ? "mt-4" : ""}`}>
-            <div className="px-5 py-4">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                Status History
-              </h2>
-            </div>
-            <div className="divide-y divide-border border-t">
-              {/* Created */}
-              <div className="flex items-start gap-3 px-5 py-3">
-                <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <BookOpen className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Study Created</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDate(study.createdAt)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Marked as Ready */}
-              {study.readyAt && (
-                <div className="flex items-start gap-3 px-5 py-3">
-                  <div className="h-7 w-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
-                    <Send className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Marked as Ready</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(study.readyAt)}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Submitted to ENA */}
-              {study.submittedAt && (
-                <div className="flex items-start gap-3 px-5 py-3">
-                  <div className="h-7 w-7 rounded-md bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Submitted to ENA</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(study.submittedAt)}
-                      {study.studyAccessionId && (
-                        <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                          {study.studyAccessionId}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
         </TabsContent>
-      </Tabs>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -1604,6 +1845,8 @@ export default function StudyDetailPage({
         </DialogContent>
       </Dialog>
 
-    </PageContainer>
+      </PageContainer>
+      </Tabs>
+    </>
   );
 }
