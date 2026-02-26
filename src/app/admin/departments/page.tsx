@@ -15,7 +15,6 @@ import {
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
   Building2,
-  Plus,
   Pencil,
   Trash2,
   Check,
@@ -433,8 +432,7 @@ export default function DepartmentsPage() {
             <Download className="h-4 w-4 mr-1.5" />
             AI Import
           </Button>
-          <Button size="sm" onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
+          <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
             Add Department
           </Button>
         </div>
@@ -462,8 +460,7 @@ export default function DepartmentsPage() {
               <Download className="h-4 w-4 mr-1.5" />
               AI Import
             </Button>
-            <Button size="sm" onClick={() => setShowForm(true)}>
-              <Plus className="h-4 w-4 mr-1.5" />
+            <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
               Add Department
             </Button>
           </div>

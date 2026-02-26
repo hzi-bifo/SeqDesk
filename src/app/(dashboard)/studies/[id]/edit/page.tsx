@@ -25,7 +25,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  BookOpen,
   X,
   Loader2,
   Check,
@@ -1061,23 +1060,43 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   }, [formConfig, mixsTemplate, selectedMixsFields.size, [...selectedMixsFields].join(',')]);
 
   const STEPS: Step[] = useMemo(() => {
-    const steps: Step[] = [
-      { id: "details", title: "Study Details", description: "Basic information about your study", icon: FileText },
-    ];
-
-    if (formConfig?.modules.mixs) {
-      steps.push({ id: "environment", title: "Environment Type", description: "Select the MIxS checklist", icon: Leaf });
-    }
+    const steps: Step[] = [];
 
     if (formConfig?.modules.sampleAssociation) {
-      steps.push({ id: "samples", title: "Select Samples", description: "Choose samples from your orders", icon: FlaskConical });
+      steps.push({
+        id: "samples",
+        title: "Select Samples",
+        description: "Choose samples from your orders",
+        icon: FlaskConical,
+      });
+    }
+
+    steps.push({
+      id: "details",
+      title: "Study Details",
+      description: "Basic information about your study",
+      icon: FileText,
+    });
+
+    if (formConfig?.modules.mixs) {
+      steps.push({
+        id: "environment",
+        title: "Environment Type",
+        description: "Select the MIxS checklist for your samples",
+        icon: Leaf,
+      });
     }
 
     if (formConfig?.modules.sampleAssociation && hasPerSampleFields) {
       steps.push({ id: "metadata", title: "Sample Metadata", description: "Enter metadata for each sample", icon: TableIcon });
     }
 
-    steps.push({ id: "review", title: "Review & Save", description: "Review and save your changes", icon: CheckCircle2 });
+    steps.push({
+      id: "review",
+      title: "Review",
+      description: "Review and save your changes",
+      icon: CheckCircle2,
+    });
 
     return steps;
   }, [formConfig, hasPerSampleFields]);
@@ -2272,25 +2291,22 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
       </Dialog>
 
       <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <BookOpen className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold">Edit Study</h1>
-            <p className="text-muted-foreground">Step {currentStep + 1} of {STEPS.length}</p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-semibold">Edit Study</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Step {currentStep + 1} of {STEPS.length}
+          </p>
         </div>
-        <Button variant="ghost" size="icon" asChild>
-          <Link href={`/studies/${activeStudyId}`}><X className="h-5 w-5" /></Link>
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/studies/${activeStudyId}`}>Cancel</Link>
         </Button>
       </div>
 
       <div>
         <div className="mb-6">
-          <div className="relative h-8 bg-muted rounded-lg overflow-hidden">
+          <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
             <div
-              className="absolute inset-y-0 left-0 bg-primary transition-all duration-300 ease-out"
+              className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
               style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
             />
             <div className="relative h-full flex items-center">
@@ -2300,24 +2316,30 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                 const isClickable = isCompleted;
                 const isInFilledArea = index <= currentStep;
 
-                let stepValid = true;
-                if (step.id === "details") stepValid = isTitleValid;
-                if (step.id === "environment") stepValid = isChecklistValid;
-                if (step.id === "samples") stepValid = isSamplesValid;
-
                 return (
                   <button
-                    key={step.id} type="button"
-                    onClick={() => { if (isClickable) { setError(""); setCurrentStep(index); } }}
+                    key={step.id}
+                    type="button"
+                    onClick={() => {
+                      if (isClickable) {
+                        setError("");
+                        setCurrentStep(index);
+                      }
+                    }}
                     disabled={!isClickable}
                     style={{ width: `${100 / STEPS.length}%` }}
-                    className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1 ${
-                      isInFilledArea ? "text-primary-foreground" : "text-muted-foreground"
-                    } ${isClickable ? "hover:bg-black/10 cursor-pointer" : ""} ${isCurrent ? "font-semibold" : ""}`}
+                    className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
+                      isInFilledArea
+                        ? "text-background"
+                        : "text-muted-foreground"
+                    } ${
+                      isClickable ? "hover:bg-white/10 cursor-pointer" : ""
+                    } ${
+                      isCurrent ? "font-semibold" : ""
+                    }`}
                     title={isClickable ? `Go back to ${step.title}` : step.title}
                   >
-                    {isCompleted && stepValid && <Check className="h-3 w-3 flex-shrink-0" />}
-                    {isCompleted && !stepValid && <AlertCircle className="h-3 w-3 flex-shrink-0 text-amber-300" />}
+                    {isCompleted && <Check className="h-3 w-3 flex-shrink-0" />}
                     <span className="truncate">{step.title}</span>
                   </button>
                 );
@@ -2327,8 +2349,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         </div>
 
         {error && (
-          <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 flex-shrink-0" />
+          <div className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
             {error}
           </div>
         )}
@@ -2350,8 +2371,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
           {currentStep === STEPS.length - 1 ? (
             <Button
-              onClick={() => void handleSubmit()}
-              disabled={isLoading || !isTitleValid || !isChecklistValid || !isSamplesValid}
+              onClick={() => handleSubmit()}
+              disabled={isLoading}
               className={cn(isTitleValid && isChecklistValid && isSamplesValid ? "" : "bg-amber-500 hover:bg-amber-600")}
             >
               {isLoading ? (

@@ -16,7 +16,6 @@ import {
   Lightbulb,
   X,
   MessageSquare,
-  HardDrive,
   Send,
   FlaskConical,
   AlertTriangle,
@@ -306,18 +305,6 @@ export function Sidebar({ user, version }: SidebarProps) {
             </span>
           )}
         </Link>
-        {/* Sequencing Files - Admin only */}
-        {isFacilityAdmin && (
-          <Link href="/files" className={navItemClass("/files")} title="Sequencing Files">
-            <HardDrive className={navIconClass} />
-            {!collapsed && "Files"}
-            {!collapsed && counts.files > 0 && (
-              <span className="flex items-center justify-center text-xs font-medium text-muted-foreground bg-secondary rounded-full ml-auto h-5 min-w-5 px-1.5">
-                {counts.files > 99 ? "99+" : counts.files}
-              </span>
-            )}
-          </Link>
-        )}
 
         {/* ENA Submissions - Admin only */}
         {isFacilityAdmin && (

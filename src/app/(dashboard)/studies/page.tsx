@@ -13,7 +13,17 @@ import {
   ArrowUpDown,
   ChevronDown,
   X,
+  Trash2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface Study {
@@ -55,6 +65,10 @@ export default function StudiesPage() {
   const [userFilter, setUserFilter] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("created");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingStudy, setDeletingStudy] = useState<Study | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -163,6 +177,27 @@ export default function StudiesPage() {
     setSearchQuery("");
     setStatusFilter("");
     setUserFilter("");
+  };
+
+  const handleDeleteStudy = async () => {
+    if (!deletingStudy) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/studies/${deletingStudy.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Failed to delete study");
+        return;
+      }
+      setStudies((prev) => prev.filter((s) => s.id !== deletingStudy.id));
+      toast.success("Study deleted");
+    } catch {
+      toast.error("Failed to delete study");
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+      setDeletingStudy(null);
+    }
   };
 
   const hasActiveFilters = searchQuery || statusFilter || userFilter;
@@ -313,7 +348,7 @@ export default function StudiesPage() {
           <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("title")}
-              className={`${isFacilityAdmin ? "col-span-3" : "col-span-5"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
             >
               Study
               {sortField === "title" && <ArrowUpDown className="h-3 w-3" />}
@@ -325,18 +360,17 @@ export default function StudiesPage() {
               Status
               {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            <div className={isFacilityAdmin ? "col-span-2" : "col-span-2"}>Environment</div>
             {isFacilityAdmin && <div className="col-span-2">Researcher</div>}
             <button
               onClick={() => handleSort("samples")}
-              className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} flex items-center gap-1 hover:text-foreground transition-colors justify-end`}
+              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "samples" && <ArrowUpDown className="h-3 w-3" />}
               Samples
             </button>
             <button
               onClick={() => handleSort("created")}
-              className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Created
               {sortField === "created" && <ArrowUpDown className="h-3 w-3" />}
@@ -364,7 +398,7 @@ export default function StudiesPage() {
                           {study.title}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {study.checklistType?.replace(/-/g, " ") || "No type"} · {study._count.samples} samples · {formatDate(study.createdAt)}
+                          {study._count.samples} samples · {formatDate(study.createdAt)}
                         </p>
                         {study.studyAccessionId && (
                           <p className="text-xs text-emerald-600 font-mono mt-0.5">
@@ -390,7 +424,7 @@ export default function StudiesPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Study Info */}
-                    <div className={`${isFacilityAdmin ? "col-span-3" : "col-span-5"} min-w-0`}>
+                    <div className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} min-w-0`}>
                       <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                         {study.title}
                       </p>
@@ -411,13 +445,6 @@ export default function StudiesPage() {
                       </div>
                     </div>
 
-                    {/* Environment Type */}
-                    <div className="col-span-2 min-w-0">
-                      <p className="text-sm text-muted-foreground truncate capitalize">
-                        {study.checklistType?.replace(/-/g, " ") || "Not set"}
-                      </p>
-                    </div>
-
                     {/* Researcher (Admin only) */}
                     {isFacilityAdmin && (
                       <div className="col-span-2 min-w-0">
@@ -427,22 +454,36 @@ export default function StudiesPage() {
                       </div>
                     )}
 
-                    {/* Samples / Reads */}
-                    <div className={`${isFacilityAdmin ? "col-span-1" : "col-span-1"} text-right`}>
+                    {/* Samples */}
+                    <div className="col-span-1 text-right">
                       <span className="text-sm tabular-nums text-muted-foreground">
                         {study._count.samples}
                       </span>
                     </div>
 
                     {/* Date */}
-                    <div className={isFacilityAdmin ? "col-span-1" : "col-span-1"}>
+                    <div className="col-span-1">
                       <span className="text-sm text-muted-foreground tabular-nums">
                         {formatDate(study.createdAt)}
                       </span>
                     </div>
 
-                    {/* Arrow */}
-                    <div className="col-span-1 flex justify-end">
+                    {/* Actions */}
+                    <div className="col-span-1 flex items-center justify-end gap-1">
+                      {!study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin) && (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeletingStudy(study);
+                            setDeleteDialogOpen(true);
+                          }}
+                          className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Delete study"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                     </div>
                   </div>
@@ -464,6 +505,31 @@ export default function StudiesPage() {
           )}
         </div>
       )}
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+        if (!deleting) {
+          setDeleteDialogOpen(open);
+          if (!open) setDeletingStudy(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Study</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{deletingStudy?.title}&quot;? Samples will be unassigned but not deleted. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDeleteDialogOpen(false); setDeletingStudy(null); }} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteStudy} disabled={deleting}>
+              {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Delete Study
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }
