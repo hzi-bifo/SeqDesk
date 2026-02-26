@@ -11,6 +11,74 @@ function isMissingColumnError(error: unknown): boolean {
   return /no such column|unknown column/i.test(message);
 }
 
+const studyUserSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+} as const;
+
+const studySampleSelect = {
+  id: true,
+  sampleId: true,
+  sampleAlias: true,
+  sampleTitle: true,
+  sampleAccessionNumber: true,
+  taxId: true,
+  scientificName: true,
+  checklistData: true,
+  customFields: true,
+  orderId: true,
+  reads: true,
+} as const;
+
+const studyBaseSelect = {
+  id: true,
+  title: true,
+  alias: true,
+  description: true,
+  checklistType: true,
+  studyMetadata: true,
+  readyForSubmission: true,
+  readyAt: true,
+  studyAccessionId: true,
+  submitted: true,
+  submittedAt: true,
+  testRegisteredAt: true,
+  createdAt: true,
+  updatedAt: true,
+  userId: true,
+  user: {
+    select: studyUserSelect,
+  },
+  samples: {
+    select: studySampleSelect,
+    orderBy: { createdAt: "asc" as const },
+  },
+} as const;
+
+async function fetchStudyWithNotes(studyId: string) {
+  return db.study.findUnique({
+    where: { id: studyId },
+    select: {
+      ...studyBaseSelect,
+      notes: true,
+      notesEditedAt: true,
+      notesEditedById: true,
+      notesEditedBy: {
+        select: studyUserSelect,
+      },
+    },
+  });
+}
+
+async function fetchStudyWithoutNotes(studyId: string) {
+  return db.study.findUnique({
+    where: { id: studyId },
+    select: studyBaseSelect,
+  });
+}
+
 async function resolveStudyId(idOrAliasOrOrderId: string): Promise<string | null> {
   const byId = await db.study.findUnique({
     where: { id: idOrAliasOrOrderId },
@@ -65,60 +133,21 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
     return null;
   }
 
-  const study = await db.study.findUnique({
-    where: { id: resolvedStudyId },
-    select: {
-      id: true,
-      title: true,
-      alias: true,
-      description: true,
-      checklistType: true,
-      studyMetadata: true,
-      readyForSubmission: true,
-      readyAt: true,
-      submitted: true,
-      submittedAt: true,
-      testRegisteredAt: true,
-      notes: true,
-      notesEditedAt: true,
-      notesEditedById: true,
-      notesEditedBy: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-        },
-      },
-      createdAt: true,
-      updatedAt: true,
-      userId: true,
-      user: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-        },
-      },
-      samples: {
-        select: {
-          id: true,
-          sampleId: true,
-          sampleAlias: true,
-          sampleTitle: true,
-          sampleAccessionNumber: true,
-          taxId: true,
-          scientificName: true,
-          checklistData: true,
-          customFields: true,
-          orderId: true,
-          reads: true,
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
-  });
+  let notesSupported = true;
+  let study:
+    | NonNullable<Awaited<ReturnType<typeof fetchStudyWithNotes>>>
+    | NonNullable<Awaited<ReturnType<typeof fetchStudyWithoutNotes>>>
+    | null;
+
+  try {
+    study = await fetchStudyWithNotes(resolvedStudyId);
+  } catch (error) {
+    if (!isMissingColumnError(error)) {
+      throw error;
+    }
+    notesSupported = false;
+    study = await fetchStudyWithoutNotes(resolvedStudyId);
+  }
 
   if (!study) {
     return null;
@@ -268,8 +297,18 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
 
   const orderById = new Map(orders.map((order) => [order.id, order]));
 
+  const notes = "notes" in study ? study.notes ?? null : null;
+  const notesEditedAt = "notesEditedAt" in study ? study.notesEditedAt ?? null : null;
+  const notesEditedById = "notesEditedById" in study ? study.notesEditedById ?? null : null;
+  const notesEditedBy = "notesEditedBy" in study ? study.notesEditedBy ?? null : null;
+
   return {
     ...study,
+    notes,
+    notesEditedAt,
+    notesEditedById,
+    notesEditedBy,
+    notesSupported,
     user:
       study.user ??
       ({
@@ -414,10 +453,37 @@ export async function PUT(
       updateData.notesEditedById = session.user.id;
     }
 
-    await db.study.update({
-      where: { id: resolvedStudyId },
-      data: updateData,
-    });
+    try {
+      await db.study.update({
+        where: { id: resolvedStudyId },
+        data: updateData,
+      });
+    } catch (error) {
+      if (!isMissingColumnError(error)) {
+        throw error;
+      }
+
+      const hadNotesFields =
+        "notes" in updateData ||
+        "notesEditedAt" in updateData ||
+        "notesEditedById" in updateData;
+
+      if (!hadNotesFields) {
+        throw error;
+      }
+
+      const updateDataWithoutNotes: Record<string, unknown> = { ...updateData };
+      delete updateDataWithoutNotes.notes;
+      delete updateDataWithoutNotes.notesEditedAt;
+      delete updateDataWithoutNotes.notesEditedById;
+
+      if (Object.keys(updateDataWithoutNotes).length > 0) {
+        await db.study.update({
+          where: { id: resolvedStudyId },
+          data: updateDataWithoutNotes,
+        });
+      }
+    }
 
     const study = await getStudyWithResolvedOrders(resolvedStudyId);
     if (!study) {

@@ -94,6 +94,7 @@ interface Study {
     lastName: string | null;
     email: string;
   } | null;
+  notesSupported?: boolean;
   createdAt: string;
   samples: Sample[];
   user: {
@@ -451,7 +452,7 @@ export default function StudyDetailPage({
   }, [study, notesContent]);
 
   const handleSaveNotes = async () => {
-    if (!study) return;
+    if (!study || study.notesSupported === false) return;
     setNotesSaving(true);
     try {
       const res = await fetch(`/api/studies/${apiStudyId}`, {
@@ -780,6 +781,7 @@ export default function StudyDetailPage({
     ? `${study.user.firstName} ${study.user.lastName}`
     : study.user.email;
   const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
+  const notesSupported = study.notesSupported !== false;
 
   const tabTriggerClass = "relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-3 text-xs font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground";
 
@@ -808,7 +810,9 @@ export default function StudyDetailPage({
               {isAdmin && totalSamples > 0 && (
                 <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
               )}
-              <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
+              {notesSupported && (
+                <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
+              )}
               <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
             </TabsList>
           </div>
@@ -1415,54 +1419,56 @@ export default function StudyDetailPage({
         )}
 
         {/* Notes Tab */}
-        <TabsContent value="notes">
-          <div className="bg-card rounded-lg border p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Study Notes
-              </h2>
-              {(isOwner || isAdmin) && (
-                <Button
-                  size="sm"
-                  onClick={handleSaveNotes}
-                  disabled={notesSaving || notesContent === (study.notes ?? "")}
-                >
-                  {notesSaving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Save
-                </Button>
+        {notesSupported && (
+          <TabsContent value="notes">
+            <div className="bg-card rounded-lg border p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Study Notes
+                </h2>
+                {(isOwner || isAdmin) && (
+                  <Button
+                    size="sm"
+                    onClick={handleSaveNotes}
+                    disabled={notesSaving || notesContent === (study.notes ?? "")}
+                  >
+                    {notesSaving ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    Save
+                  </Button>
+                )}
+              </div>
+
+              {(isOwner || isAdmin) ? (
+                <Textarea
+                  value={notesContent}
+                  onChange={(e) => setNotesContent(e.target.value)}
+                  placeholder="Add notes about this study..."
+                  className="min-h-[200px] font-mono text-sm"
+                />
+              ) : (
+                <div className="min-h-[100px] rounded-lg border bg-muted/50 p-3 text-sm whitespace-pre-wrap">
+                  {study.notes || <span className="text-muted-foreground">No notes yet.</span>}
+                </div>
+              )}
+
+              {study.notesEditedBy && study.notesEditedAt && (
+                <p className="text-xs text-muted-foreground mt-3">
+                  Last edited by{" "}
+                  {study.notesEditedBy.firstName && study.notesEditedBy.lastName
+                    ? `${study.notesEditedBy.firstName} ${study.notesEditedBy.lastName}`
+                    : study.notesEditedBy.email}
+                  {" · "}
+                  {formatRelativeTime(study.notesEditedAt)}
+                </p>
               )}
             </div>
-
-            {(isOwner || isAdmin) ? (
-              <Textarea
-                value={notesContent}
-                onChange={(e) => setNotesContent(e.target.value)}
-                placeholder="Add notes about this study..."
-                className="min-h-[200px] font-mono text-sm"
-              />
-            ) : (
-              <div className="min-h-[100px] rounded-lg border bg-muted/50 p-3 text-sm whitespace-pre-wrap">
-                {study.notes || <span className="text-muted-foreground">No notes yet.</span>}
-              </div>
-            )}
-
-            {study.notesEditedBy && study.notesEditedAt && (
-              <p className="text-xs text-muted-foreground mt-3">
-                Last edited by{" "}
-                {study.notesEditedBy.firstName && study.notesEditedBy.lastName
-                  ? `${study.notesEditedBy.firstName} ${study.notesEditedBy.lastName}`
-                  : study.notesEditedBy.email}
-                {" · "}
-                {formatRelativeTime(study.notesEditedAt)}
-              </p>
-            )}
-          </div>
-        </TabsContent>
+          </TabsContent>
+        )}
 
         {/* ENA Tab */}
         <TabsContent value="ena">

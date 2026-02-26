@@ -17,7 +17,15 @@ export async function GET() {
     const studies = await db.study.findMany({
       where: isFacilityAdmin ? {} : { userId: session.user.id },
       orderBy: { createdAt: "desc" },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        checklistType: true,
+        submitted: true,
+        submittedAt: true,
+        studyAccessionId: true,
+        createdAt: true,
         user: {
           select: {
             id: true,
