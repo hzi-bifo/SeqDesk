@@ -39,8 +39,9 @@ export function parseDagContent(content: string): NextflowDag {
   const nodes = new Map<string, DagNode>();
   const edges: DagEdge[] = [];
 
-  // Parse node definitions: p0 [label="FASTQC"];
-  const nodeRegex = /(\w+)\s*\[([^\]]+)\]/g;
+  // Parse node definitions line-by-line so edge attributes do not get
+  // misinterpreted as node definitions (e.g. "a -> b [label=\"reads\"]").
+  const nodeRegex = /^\s*(\w+)\s*\[([^\]]+)\]\s*;?\s*$/gm;
   let match;
 
   while ((match = nodeRegex.exec(content)) !== null) {
@@ -64,8 +65,8 @@ export function parseDagContent(content: string): NextflowDag {
     nodes.set(id, { id, label, process, type });
   }
 
-  // Parse edge definitions: p0 -> p1 [label="reads"];
-  const edgeRegex = /(\w+)\s*->\s*(\w+)(?:\s*\[([^\]]*)\])?/g;
+  // Parse edge definitions line-by-line.
+  const edgeRegex = /^\s*(\w+)\s*->\s*(\w+)(?:\s*\[([^\]]*)\])?\s*;?\s*$/gm;
 
   while ((match = edgeRegex.exec(content)) !== null) {
     const from = match[1];
