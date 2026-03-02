@@ -1,14 +1,12 @@
 # MetaxPath Pipeline Package
 
-This package integrates MetaxPath into SeqDesk and **hosts the workflow source locally**.
+This package integrates MetaxPath into SeqDesk. The workflow source lives in a separate private repository and is pulled by Nextflow at runtime.
 
 ## Hosting Model
 
+- Workflow source: `github.com/hzi-bifo/MetaxPath` (branch `Nextflow`)
 - SeqDesk package path: `pipelines/metaxpath/`
-- Nextflow entrypoint used by SeqDesk: `pipelines/metaxpath/workflow/main.nf`
-- Manifest execution reference: `./workflow`
-
-This means SeqDesk does not need to pull `hzi-bifo/MetaxPath` at runtime for this pipeline.
+- Nextflow pulls the code at runtime via: `nextflow run hzi-bifo/MetaxPath -r Nextflow`
 
 ## Package Contents
 
@@ -16,17 +14,19 @@ This means SeqDesk does not need to pull `hzi-bifo/MetaxPath` at runtime for thi
 - `definition.json`: DAG/process mapping for UI progress
 - `registry.json`: UI form schema and defaults
 - `samplesheet.yaml`: samplesheet generation rules
-- `workflow/`: vendored Nextflow workflow source (config, scripts, bundled reference assets)
 
-## Notes
+## Server Requirements
 
-- The bundled workflow is an initial Nextflow port of the original Snakemake implementation.
-- Runtime still requires external databases/tools configured in pipeline settings (Metax/Kraken2/Sylph, etc.).
-- If upstream MetaxPath logic changes, sync changes into `workflow/` and update package versioning in the store.
+Since `hzi-bifo/MetaxPath` is a private repository, the server running SeqDesk needs GitHub access for Nextflow to clone the workflow at runtime. This requires one of:
+
+- An SSH key (`~/.ssh/id_*`) with read access to the repo
+- A GitHub personal access token configured via `SCM_FILE` or `~/.nextflow/scm` (see [Nextflow docs](https://www.nextflow.io/docs/latest/sharing.html#scm-configuration))
+
+Runtime also requires external databases/tools configured in pipeline settings (Metax, Kraken2, Sylph, etc.).
 
 ## Pipeline Store Publishing
 
-Keep this package as source of truth, then publish metadata in SeqDesk.com:
+Keep this package as source of truth for SeqDesk integration, then publish metadata in SeqDesk.com:
 
 - `src/data/registry/index.json`
 - `src/data/registry/pipelines/metaxpath.json`
