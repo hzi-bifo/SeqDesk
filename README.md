@@ -1,5 +1,7 @@
 # SeqDesk
 
+[![codecov](https://codecov.io/gh/hzi-bifo/SeqDesk/branch/main/graph/badge.svg)](https://codecov.io/gh/hzi-bifo/SeqDesk)
+
 A modern sequencing facility management system built with Next.js for managing sequencing orders, samples, and data submissions to the European Nucleotide Archive (ENA).
 
 ## Features
@@ -213,6 +215,26 @@ See the `docs/` folder for detailed documentation:
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines and code conventions.
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Run tests once
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with coverage report
+npm run test:coverage
+```
+
+Test files are co-located with source files using the `*.test.ts` convention.
+Coverage reports are generated in the `coverage/` directory.
+
+Tests run automatically on every push and pull request via GitHub Actions.
 
 ## License
 

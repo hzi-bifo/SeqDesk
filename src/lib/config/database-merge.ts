@@ -112,6 +112,11 @@ function deepMergeWithTracking(
           fullPath
         );
       }
+      // If value only comes from defaults, database should override defaults
+      else if (existingSource === 'default' && dbValue !== undefined) {
+        result[key] = dbValue;
+        sources[fullPath] = 'database';
+      }
       // Prefer file value, fall back to database
       else if (fileValue !== undefined) {
         result[key] = fileValue;
@@ -172,7 +177,7 @@ export async function saveConfigToDatabase(
     updateData.dataBasePath = updates.site.dataBasePath;
   }
   if (updates.site?.contactEmail !== undefined) {
-    updateData.facilityEmail = updates.site.contactEmail;
+    updateData.contactEmail = updates.site.contactEmail;
   }
 
   // ENA settings
@@ -188,7 +193,10 @@ export async function saveConfigToDatabase(
 
   // Auth settings
   if (updates.auth?.allowRegistration !== undefined) {
-    updateData.allowRegistration = updates.auth.allowRegistration;
+    extraSettings.auth = {
+      ...extraSettings.auth,
+      allowRegistration: updates.auth.allowRegistration,
+    };
   }
 
   // Pipeline settings go into extraSettings
