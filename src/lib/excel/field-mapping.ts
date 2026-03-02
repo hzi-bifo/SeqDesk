@@ -227,7 +227,11 @@ export function convertToExcelValue(
     case "multiselect":
       return Array.isArray(value) ? value.join("; ") : String(value);
     case "number":
-      return typeof value === "number" ? value : Number(value) || "";
+      if (typeof value === "number") {
+        return Number.isNaN(value) ? "" : value;
+      }
+      const parsed = Number(value);
+      return Number.isNaN(parsed) ? "" : parsed;
     case "date": {
       if (value instanceof Date) return value;
       const str = String(value);

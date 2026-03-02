@@ -168,6 +168,29 @@ export function parseReceiptXml(receiptXml: string): {
   samples: Array<{ alias: string; accession: string; biosample?: string }>;
   errors: string[];
 } {
+  const extractElementSection = (
+    xml: string,
+    startIndex: number,
+    closingTag: string
+  ): string => {
+    const openTagEnd = xml.indexOf(">", startIndex);
+    if (openTagEnd === -1) {
+      return "";
+    }
+
+    const openingTag = xml.slice(startIndex, openTagEnd + 1);
+    if (openingTag.endsWith("/>")) {
+      return openingTag;
+    }
+
+    const closeTagIndex = xml.indexOf(closingTag, openTagEnd + 1);
+    if (closeTagIndex === -1) {
+      return openingTag;
+    }
+
+    return xml.slice(startIndex, closeTagIndex + closingTag.length);
+  };
+
   const result = {
     success: false,
     receiptDate: undefined as string | undefined,
@@ -204,12 +227,12 @@ export function parseReceiptXml(receiptXml: string): {
         const alias = aliasMatch?.[1] || "";
         const accession = accessionMatch[1];
 
-        // Look for EXT_ID within this project
-        const extIdRegex = new RegExp(
-          `<PROJECT[^>]*>[\\s\\S]*?<EXT_ID[^>]*accession="([^"]*)"`,
-          "i"
+        const projectSection = extractElementSection(
+          receiptXml,
+          projectTagMatch.index,
+          "</PROJECT>"
         );
-        const extIdMatch = receiptXml.match(extIdRegex);
+        const extIdMatch = projectSection.match(/<EXT_ID[^>]*accession="([^"]*)"/i);
 
         result.projects.push({
           alias,
@@ -232,13 +255,11 @@ export function parseReceiptXml(receiptXml: string): {
         const alias = aliasMatch?.[1] || "";
         const accession = accessionMatch[1];
 
-        // Look for EXT_ID (biosample) within this sample
-        // Find the sample section and look for EXT_ID
-        const sampleSectionRegex = new RegExp(
-          `<SAMPLE[^>]*alias="${alias}"[^>]*>[\\s\\S]*?(?:<\\/SAMPLE>|<SAMPLE[^>]*alias)`,
-          "i"
+        const sampleSection = extractElementSection(
+          receiptXml,
+          sampleTagMatch.index,
+          "</SAMPLE>"
         );
-        const sampleSection = receiptXml.match(sampleSectionRegex)?.[0] || "";
         const biosampleMatch = sampleSection.match(/<EXT_ID[^>]*accession="([^"]*)"/i);
 
         result.samples.push({
