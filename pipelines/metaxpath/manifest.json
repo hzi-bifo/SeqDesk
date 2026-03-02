@@ -50,8 +50,8 @@
   ],
   "execution": {
     "type": "nextflow",
-    "pipeline": "./workflow",
-    "version": "local",
+    "pipeline": "hzi-bifo/MetaxPath",
+    "version": "Nextflow",
     "profiles": [
       "conda"
     ],
