@@ -1,0 +1,279 @@
+import fs from "fs/promises";
+import os from "os";
+import path from "path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PipelineAdapter } from "./adapters/types";
+
+const mocks = vi.hoisted(() => ({
+  db: {
+    pipelineRun: {
+      findMany: vi.fn(),
+      update: vi.fn(),
+    },
+  },
+  packageLoader: {
+    getPackage: vi.fn(),
+  },
+  adapters: {
+    getAdapter: vi.fn(),
+    registerAdapter: vi.fn(),
+  },
+  genericAdapter: {
+    createGenericAdapter: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/db", () => ({
+  db: mocks.db,
+}));
+
+vi.mock("./package-loader", () => ({
+  getPackage: mocks.packageLoader.getPackage,
+}));
+
+vi.mock("./adapters/types", () => ({
+  getAdapter: mocks.adapters.getAdapter,
+  registerAdapter: mocks.adapters.registerAdapter,
+}));
+
+vi.mock("./generic-adapter", () => ({
+  createGenericAdapter: mocks.genericAdapter.createGenericAdapter,
+}));
+
+import { prepareGenericRun } from "./generic-executor";
+
+function createAdapter(overrides?: Partial<PipelineAdapter>): PipelineAdapter {
+  return {
+    pipelineId: "mag",
+    validateInputs: vi.fn().mockResolvedValue({ valid: true, issues: [] }),
+    generateSamplesheet: vi
+      .fn()
+      .mockResolvedValue({ content: "sample_id\nSAMPLE-1", sampleCount: 1, errors: [] }),
+    discoverOutputs: vi
+      .fn()
+      .mockResolvedValue({
+        files: [],
+        errors: [],
+        summary: {
+          assembliesFound: 0,
+          binsFound: 0,
+          artifactsFound: 0,
+          reportsFound: 0,
+        },
+      }),
+    ...(overrides || {}),
+  };
+}
+
+function baseExecutionSettings(pipelineRunDir: string) {
+  return {
+    useSlurm: false,
+    slurmQueue: "cpu",
+    slurmCores: 4,
+    slurmMemory: "8GB",
+    slurmTimeLimit: 2,
+    pipelineRunDir,
+    dataBasePath: pipelineRunDir,
+    nextflowProfile: "conda",
+    runtimeMode: "conda" as const,
+    condaEnv: "seqdesk-test",
+  };
+}
+
+describe("generic-executor", () => {
+  let tempDir = "";
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-generic-executor-"));
+    vi.clearAllMocks();
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("returns error when pipeline package cannot be found", async () => {
+    mocks.packageLoader.getPackage.mockReturnValue(undefined);
+
+    const result = await prepareGenericRun({
+      runId: "run-1",
+      pipelineId: "missing-pipe",
+      studyId: "study-1",
+      sampleIds: ["sample-1"],
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      runId: "run-1",
+      errors: ["Pipeline package not found: missing-pipe"],
+    });
+  });
+
+  it("returns error when a local pipeline target does not exist", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(undefined);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "./missing.nf",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: path.join(tempDir, "pipelines"),
+    } as never);
+
+    const accessSpy = vi.spyOn(fs, "access").mockRejectedValue(new Error("not found"));
+
+    const result = await prepareGenericRun({
+      runId: "run-1",
+      pipelineId: "mag",
+      studyId: "study-1",
+      sampleIds: ["sample-1"],
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual([
+      `Local pipeline path not found: ${path.join(tempDir, "pipelines", "missing.nf")}`,
+    ]);
+    expect(accessSpy).toHaveBeenCalledWith(path.join(tempDir, "pipelines", "missing.nf"));
+    expect(adapter.generateSamplesheet).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+  });
+
+  it("returns validation errors when samplesheet generation has no valid samples", async () => {
+    const adapter = createAdapter({
+      generateSamplesheet: vi
+        .fn()
+        .mockResolvedValue({ content: "", sampleCount: 0, errors: ["No samples selected"] }),
+    });
+    mocks.adapters.getAdapter.mockReturnValue(undefined);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-1",
+      pipelineId: "mag",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("No valid samples for samplesheet");
+    expect(result.errors).toContain("No samples selected");
+    expect(adapter.generateSamplesheet).toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+  });
+
+  it("prepares a local run script using existing adapter and writes runtime artifacts", async () => {
+    const adapter = createAdapter({
+      generateSamplesheet: vi.fn().mockResolvedValue({
+        content: "sample_id\nSAMPLE-1\nSAMPLE-2",
+        sampleCount: 2,
+        errors: [],
+      }),
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {
+            project: "demo",
+          },
+          paramMap: {
+            threads: "--threads",
+            runType: "",
+          },
+          paramRules: [
+            {
+              when: { runType: "full" },
+              add: ["--full-mode", { flag: "--limit", value: 10 }],
+            },
+          ],
+        },
+      },
+      basePath: tempDir,
+    } as never);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([{ runNumber: "MAG-20260303-007" }]);
+
+    const result = await prepareGenericRun({
+      runId: "run-1",
+      pipelineId: "mag",
+      studyId: "study-1",
+      config: {
+        threads: 8,
+        runType: "full",
+        customValue: "abc",
+        verbose: true,
+        blank: "   ",
+        falseValue: false,
+        _internal: "ignore",
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.runFolder).toContain(tempDir);
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data.runNumber).toMatch(/^MAG-\d{8}-008$/);
+    expect(result.runFolder).toContain(updateCall.data.runNumber);
+    expect(mocks.genericAdapter.createGenericAdapter).not.toHaveBeenCalled();
+
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("--threads 8");
+    expect(script).toContain("--project demo");
+    expect(script).toContain("--customValue abc");
+    expect(script).toContain("--verbose");
+    expect(script).not.toContain("--runType");
+    expect(script).not.toContain("--blank");
+    expect(script).not.toContain("--falseValue");
+    expect(script).toContain("--full-mode");
+    expect(script).toContain("--limit 10");
+
+    const nextflowConfig = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(nextflowConfig).toContain("conda {");
+
+    const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
+    expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");
+
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        runNumber: expect.stringMatching(/^MAG-\d{8}-008$/),
+        runFolder: result.runFolder,
+      }),
+    });
+  });
+});

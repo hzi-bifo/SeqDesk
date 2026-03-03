@@ -167,6 +167,35 @@ describe("parser-runtime", () => {
     });
   });
 
+  it("parses integer values and fills missing columns with null", async () => {
+    const filePath = path.join(tempDir, "results", "counts.tsv");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, ["id\tcount", "bin1\t7"].join("\n"));
+
+    const parser = createParserConfig({
+      id: "counts",
+      type: "tsv",
+      filePattern: "**/counts.tsv",
+      columns: [
+        { name: "id", index: 0 },
+        { name: "count", index: 1, type: "int" },
+        { name: "missing", index: 2, type: "string" },
+      ],
+    });
+    mocks.getPackage.mockReturnValue({
+      parsers: new Map([["counts", parser]]),
+    });
+
+    const result = await runParser("mag", "counts", tempDir);
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows.get("bin1")).toEqual({
+      id: "bin1",
+      count: 7,
+      missing: null,
+    });
+  });
+
   it("parses JSON array payloads", async () => {
     const filePath = path.join(tempDir, "results", "taxonomy.json");
     await fs.mkdir(path.dirname(filePath), { recursive: true });

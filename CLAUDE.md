@@ -152,3 +152,15 @@ When making a new release:
 4. Run `scripts/release.sh` to upload and publish (or `node scripts/upload-release.js <version>`)
 5. Add the release entry to `SeqDesk.com/src/data/releases.json`
 6. Commit and push the SeqDesk.com repo to deploy the landing page update
+
+## Repository Boundaries (Nextflow Work)
+
+- Main app: `/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk`
+  - Contains core pipeline orchestration, registry/runtime code, and runtime APIs.
+  - Main touch points: `src/lib/pipelines`, `src/app/api/pipelines/...`, and `pipelines/metaxpath`.
+- Landing/API/website: `/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk.com`
+  - Holds marketing pages and release/version API surfaces (`src/app/page.tsx`, `src/app/api/version/route.ts`, `src/data/releases.json`).
+- Pipeline implementation: `/Users/pmu15/Documents/github.com/hzi-bifo/MetaxPath`
+  - Canonical `metaxpath` workflow source (`main.nf`, `nextflow.config`, `workflow/`, `assets/`, `scripts/`).
+
+For work requested as “nextflow branch work”, keep code changes scoped to `/Users/pmu15/Documents/github.com/hzi-bifo/SeqDesk` unless explicitly asked to touch other repos.

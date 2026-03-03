@@ -106,6 +106,18 @@ describe("runtime-platform", () => {
     });
   });
 
+  it("falls back to node runtime for unsupported conda subdir formats", async () => {
+    const condaPath = await makeTempDir("seqdesk-conda-");
+    await createFakeConda(condaPath, '{"subdir":"x86_64"}');
+
+    const platform = await detectRuntimePlatform(condaPath);
+
+    expect(platform.source).toBe("node");
+    expect(platform.os).toBe(process.platform);
+    expect(platform.arch).toBe(process.arch);
+    expect(platform.raw).toBe(`${process.platform}-${process.arch}`);
+  });
+
   it("falls back to node runtime when conda JSON is invalid", async () => {
     const condaPath = await makeTempDir("seqdesk-conda-");
     await createFakeConda(condaPath, "{bad-json");
