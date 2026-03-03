@@ -283,11 +283,12 @@ export async function resolveOutputs(
         name: file.name,
         fromStep: file.fromStep || 'unknown',
       });
-      if (artifactResult.success) {
-        result.artifactsCreated++;
-      } else if (artifactResult.error) {
-        result.warnings.push(artifactResult.error);
-      }
+    if (artifactResult.success) {
+      result.artifactsCreated++;
+    }
+    if (artifactResult.error) {
+      result.warnings.push(artifactResult.error);
+    }
       continue;
     }
 
@@ -316,7 +317,8 @@ export async function resolveOutputs(
         default:
           result.artifactsCreated++;
       }
-    } else if (handlerResult.error) {
+    }
+    if (handlerResult.error) {
       result.errors.push(handlerResult.error);
     }
   }

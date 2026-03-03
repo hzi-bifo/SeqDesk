@@ -132,7 +132,7 @@ async function writeDownloadStatusIndex(
   await fs.promises.writeFile(statusPath, JSON.stringify(index, null, 2));
 }
 
-async function getPathSize(targetPath?: string): Promise<number | undefined> {
+export async function getPathSize(targetPath?: string): Promise<number | undefined> {
   if (!targetPath) return undefined;
   try {
     const stats = await fs.promises.stat(targetPath);

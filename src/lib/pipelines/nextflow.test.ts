@@ -42,6 +42,12 @@ describe("nextflow", () => {
     expect(missing).toBeNull();
   });
 
+  it("findTraceFile returns null when run folder exists but contains no trace file", async () => {
+    const found = await findTraceFile(tempDir);
+
+    expect(found).toBeNull();
+  });
+
   it("parseTraceFile returns empty result for too-short content", async () => {
     const tracePath = await writeFile("short-trace.txt", "process\tstatus");
 
@@ -79,6 +85,38 @@ describe("nextflow", () => {
     expect(result.completedAt?.getTime()).toBe(new Date("2024-01-01T10:09:00").getTime());
   });
 
+  it("parseTraceFile handles invalid and missing timestamp values", async () => {
+    const content = [
+      "process\tstatus\tsubmit\tstart\tcomplete\texit",
+      "SAMPLE\tCOMPLETED\tnot-a-time\tnot-a-time\tnot-a-time\t0",
+      "EMPTY\tFAILED\t2024-01-01 12:00:00\t\t\t1",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-invalid-dates.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.overallProgress).toBe(50);
+    expect(result.startedAt?.getTime()).toBe(new Date("2024-01-01T12:00:00").getTime());
+    expect(result.completedAt).toBeUndefined();
+    expect(result.tasks).toHaveLength(2);
+  });
+
+  it("treats unknown status with non-zero exit as failed", async () => {
+    const content = [
+      "process\tstatus\texit\tsubmit",
+      "UNKNOWN\tQUEUED\t13\t2024-01-01 10:00:00",
+      "READY\tcompleted\t0\t2024-01-01 10:01:00",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-failed-exit.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.processes.get("UNKNOWN")?.status).toBe("failed");
+    expect(result.processes.get("READY")?.status).toBe("completed");
+    expect(result.processes.get("UNKNOWN")?.totalTasks).toBe(1);
+    expect(result.overallProgress).toBe(50);
+  });
+
   it("parseTraceFile supports alternate column names (name/state)", async () => {
     const content = [
       "name\tstate\texit\tstart\tcomplete",
@@ -92,6 +130,55 @@ describe("nextflow", () => {
     expect(result.tasks[0].process).toBe("ASSEMBLY");
     expect(result.tasks[0].status).toBe("SUCCESS");
     expect(result.tasks[0].exit).toBeUndefined();
+    expect(result.overallProgress).toBe(100);
+  });
+
+  it("parseTraceFile treats unknown status without exit as pending", async () => {
+    const content = [
+      "process\tstatus\texit",
+      "FASTQC\tQUEUED\t-",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-pending.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.processes.get("FASTQC")?.status).toBe("pending");
+  });
+
+  it("parseTraceFile skips rows without process identifiers", async () => {
+    const content = [
+      "process\tstatus\texit",
+      "\tDONE\t0",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-empty-process.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.tasks).toEqual([]);
+    expect(result.processes.size).toBe(0);
+    expect(result.overallProgress).toBe(0);
+    expect(result.startedAt).toBeUndefined();
+    expect(result.completedAt).toBeUndefined();
+  });
+
+  it("parseTraceFile falls back to unknown status when no status columns are present", async () => {
+    const content = ["process\texit", "SAMPLE\t0"].join("\n");
+
+    const tracePath = await writeFile("trace-no-status.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.processes.get("SAMPLE")?.status).toBe("pending");
+    expect(result.overallProgress).toBe(0);
+  });
+
+  it("parseTraceFile treats blank date strings as missing", async () => {
+    const content = ["process\tstatus\tsubmit\tstart\tcomplete", "BLANK\tDONE\t\t \t \t"].join("\n");
+
+    const tracePath = await writeFile("trace-blank-dates.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.startedAt).toBeUndefined();
+    expect(result.completedAt).toBeUndefined();
     expect(result.overallProgress).toBe(100);
   });
 
