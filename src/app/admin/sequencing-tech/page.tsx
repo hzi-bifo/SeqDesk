@@ -55,30 +55,55 @@ type UpdateNotice = {
   message: string;
 };
 
-const FLOW_CELL_CATEGORIES: FlowCell["category"][] = [
+const FLOW_CELL_CATEGORIES: string[] = [
   "standard",
   "rna",
   "flongle",
+  "smrt-cell",
+  "sequencing-plate",
+  "miseq",
+  "miseq-dx",
+  "nextseq",
+  "novaseq-x",
+  "iseq",
+  "promethion",
+  "promethion-rna",
+  "generic",
   "other",
 ];
 
-const KIT_CATEGORIES: SequencingKit["category"][] = [
+const KIT_CATEGORIES: string[] = [
   "ligation",
   "rapid",
   "barcoding",
   "pcr",
   "cdna",
   "direct-rna",
+  "tagmentation",
   "amplicon",
   "other",
 ];
 
-const SOFTWARE_CATEGORIES: SequencingSoftware["category"][] = [
+const SOFTWARE_CATEGORIES: string[] = [
   "control",
   "basecalling",
   "analysis",
   "other",
 ];
+
+function categoryOptions(
+  baseOptions: readonly string[],
+  extraOptions: Array<string | undefined | null>
+): string[] {
+  const values = [
+    ...baseOptions,
+    ...extraOptions
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0),
+  ];
+
+  return Array.from(new Set(values));
+}
 
 type SequencingTechTab = "platforms" | "devices" | "accessories";
 
@@ -152,6 +177,18 @@ export default function SequencingTechPage() {
   const flowCells = config?.flowCells ?? [];
   const kits = config?.kits ?? [];
   const software = config?.software ?? [];
+  const flowCellCategoryOptions = categoryOptions(FLOW_CELL_CATEGORIES, [
+    ...flowCells.map((cell) => cell.category),
+    flowCellForm.category,
+  ]);
+  const kitCategoryOptions = categoryOptions(KIT_CATEGORIES, [
+    ...kits.map((kit) => kit.category),
+    kitForm.category,
+  ]);
+  const softwareCategoryOptions = categoryOptions(SOFTWARE_CATEGORIES, [
+    ...software.map((tool) => tool.category),
+    softwareForm.category,
+  ]);
 
   const flowCellById = new Map(flowCells.map((cell) => [cell.id, cell]));
   const kitById = new Map(kits.map((kit) => [kit.id, kit]));
@@ -2077,12 +2114,12 @@ export default function SequencingTechPage() {
                   onChange={(e) =>
                     setFlowCellForm({
                       ...flowCellForm,
-                      category: e.target.value as FlowCell["category"],
+                      category: e.target.value,
                     })
                   }
                   className="w-full h-10 rounded-md border border-input bg-background px-3"
                 >
-                  {FLOW_CELL_CATEGORIES.map((category) => (
+                  {flowCellCategoryOptions.map((category) => (
                     <option key={category} value={category}>
                       {category}
                     </option>
@@ -2258,12 +2295,12 @@ export default function SequencingTechPage() {
                   onChange={(e) =>
                     setKitForm({
                       ...kitForm,
-                      category: e.target.value as SequencingKit["category"],
+                      category: e.target.value,
                     })
                   }
                   className="w-full h-10 rounded-md border border-input bg-background px-3"
                 >
-                  {KIT_CATEGORIES.map((category) => (
+                  {kitCategoryOptions.map((category) => (
                     <option key={category} value={category}>
                       {category}
                     </option>
@@ -2506,12 +2543,12 @@ export default function SequencingTechPage() {
                   onChange={(e) =>
                     setSoftwareForm({
                       ...softwareForm,
-                      category: e.target.value as SequencingSoftware["category"],
+                      category: e.target.value,
                     })
                   }
                   className="w-full h-10 rounded-md border border-input bg-background px-3"
                 >
-                  {SOFTWARE_CATEGORIES.map((category) => (
+                  {softwareCategoryOptions.map((category) => (
                     <option key={category} value={category}>
                       {category}
                     </option>
