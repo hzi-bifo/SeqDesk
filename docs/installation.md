@@ -111,11 +111,20 @@ example `databaseUrl`, `nextAuthUrl`, `nextAuthSecret`, `anthropicApiKey`).
 These are loaded into process env at server startup when corresponding env vars
 are not already set.
 
-To install the private MetaxPath pipeline package during unattended setup, add
-`privatePipelines.metaxpath.packageUrl` and `privatePipelines.metaxpath.key`
-to your `--config` JSON. Optional checksum verification is supported via
-`privatePipelines.metaxpath.sha256`. If these fields are omitted (or left
-empty), MetaxPath install is skipped.
+MetaxPath is now added from the UI after installation:
+
+1. Open **Admin → Settings → Pipelines**
+2. Click **Add MetaxPath from GitHub**
+3. Enter ref (default `Nextflow`) and paste a GitHub token with read access
+
+SeqDesk uses the token only for the import call and does not store it.
+Imported runs execute from a local workflow snapshot (`./workflow`), so runtime
+GitHub credentials are not required.
+
+Legacy unattended fallback (deprecated): installer config keys
+`privatePipelines.metaxpath.packageUrl`, `privatePipelines.metaxpath.key`, and
+optional `privatePipelines.metaxpath.sha256` are still supported for one
+release cycle.
 
 ---
 

@@ -56,3 +56,5 @@ pipelines/
 - `manifest.json` is the source of truth for inputs, outputs, and destinations.
 - Output resolution is handled by `src/lib/pipelines/output-resolver.ts`.
 - Avoid adding legacy definitions under `data/pipeline-definitions` (no longer used).
+- MetaxPath descriptors are maintained in the MetaxPath repo at
+  `.seqdesk/pipelines/metaxpath` and imported through the admin GitHub flow.

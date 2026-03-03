@@ -50,21 +50,21 @@ curl -fsSL https://seqdesk.com/install.sh | \
 ## Private Pipeline Add-ons
 
 Public SeqDesk releases intentionally exclude private pipeline packages (for example `metaxpath`).
-Install private packages after base installation on the SeqDesk server:
+Add MetaxPath after base installation from the admin UI:
+
+1. Open **Admin → Settings → Pipelines**
+2. Click **Add MetaxPath from GitHub**
+3. Keep ref `Nextflow` (or choose another ref)
+4. Paste a GitHub token with read access to `hzi-bifo/MetaxPath`
+
+The token is used only for import/sync and is not stored by SeqDesk. Imported runs use a local workflow snapshot (`./workflow`) and do not require runtime GitHub credentials.
+
+Legacy fallback (deprecated, one release cycle):
 
 ```bash
 cd /path/to/seqdesk
 METAXPATH_PACKAGE_URL="https://private.example/metaxpath-0.1.0.tar.gz" \
 METAXPATH_PACKAGE_TOKEN="..." \
-scripts/install-private-metaxpath.sh
-```
-
-Optional checksum verification:
-
-```bash
-METAXPATH_PACKAGE_URL="https://private.example/metaxpath-0.1.0.tar.gz" \
-METAXPATH_PACKAGE_TOKEN="..." \
-METAXPATH_PACKAGE_SHA256="<sha256>" \
 scripts/install-private-metaxpath.sh
 ```
 
