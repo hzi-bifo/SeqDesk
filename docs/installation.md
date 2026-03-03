@@ -64,6 +64,10 @@ Open http://localhost:3000 and log in with:
 # Interactive installer
 curl -fsSL https://seqdesk.com/install.sh | bash
 
+# NPM launcher (same installer)
+npm i -g seqdesk
+seqdesk
+
 # Fully unattended install (accept defaults)
 curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
 
@@ -78,6 +82,9 @@ curl -fsSL https://seqdesk.com/install.sh | \
 # Reconfigure + explicitly run DB push/seed (opt-in)
 curl -fsSL https://seqdesk.com/install.sh | \
   bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+
+# Same flags via npm launcher
+seqdesk -y --dir /opt/seqdesk --config ./infrastructure-setup.json
 ```
 
 Important: install path is based on where you run the command.
