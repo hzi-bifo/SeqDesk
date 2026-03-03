@@ -126,4 +126,110 @@ describe("nextflow dag parser", () => {
 
     expect(order).toEqual(["QC", "ASSEMBLY", "REPORT"]);
   });
+
+  it("parseDagContent tolerates malformed attributes", () => {
+    const content = [
+      "digraph {",
+      '  p0 [bad attr]',
+      '  p1 [label="B"]',
+      "  p0 -> p1",
+      "}",
+    ].join("\n");
+
+    const dag = parseDagContent(content);
+
+    expect(dag.nodes.get("p0")?.label).toBe("p0");
+    expect(dag.processEdges).toContainEqual({ from: "p0", to: "B" });
+  });
+
+  it("parseDagContent ignores edges to missing nodes while preserving known process edges", () => {
+    const content = [
+      "digraph {",
+      '  p0 [label="A"]',
+      '  p1 [label="B"]',
+      "  p0 -> p2",
+      "  p1 -> p0",
+      "}",
+    ].join("\n");
+
+    const dag = parseDagContent(content);
+
+    expect(dag.processNodes.sort()).toEqual(["A", "B"]);
+    expect(dag.processEdges).toContainEqual({ from: "B", to: "A" });
+    expect(dag.processEdges).not.toContainEqual({ from: "A", to: "p2" });
+  });
+
+  it("extracts process name from labels with trailing separators", () => {
+    const content = [
+      "digraph {",
+      '  p0 [label="NFCORE_MAG:"]',
+      "  p1 [label=\"FASTQC\"]",
+      "  p0 -> p1",
+      "}",
+    ].join("\n");
+
+    const dag = parseDagContent(content);
+
+    expect(dag.nodes.get("p0")?.process).toBe("NFCORE_MAG:");
+    expect(dag.processEdges).toContainEqual({ from: "NFCORE_MAG:", to: "FASTQC" });
+  });
+
+  it("getTopologicalOrder handles fan-in edges with delayed readiness", () => {
+    const dag = {
+      nodes: new Map(),
+      edges: [],
+      processNodes: ["A", "B", "C", "D"],
+      processEdges: [
+        { from: "A", to: "B" },
+        { from: "A", to: "C" },
+        { from: "B", to: "D" },
+        { from: "C", to: "D" },
+      ],
+    };
+
+    const order = getTopologicalOrder(dag);
+    const dIndex = order.indexOf("D");
+    const bIndex = order.indexOf("B");
+    const cIndex = order.indexOf("C");
+
+    expect(order).toHaveLength(4);
+    expect(dIndex).toBeGreaterThan(bIndex);
+    expect(dIndex).toBeGreaterThan(cIndex);
+  });
+
+  it("getTopologicalOrder handles edges to missing process nodes", () => {
+    const dag = {
+      nodes: new Map(),
+      edges: [],
+      processNodes: ["A", "B"],
+      processEdges: [{ from: "A", to: "MISSING" }],
+    };
+
+    const order = getTopologicalOrder(dag);
+
+    expect(order).toEqual(["A", "B", "MISSING"]);
+  });
+
+  it("getTopologicalOrder handles unstable process edge targets by treating them as ready", () => {
+    let sequence = 0;
+    const unstableEdge = {} as { from: string; to: string };
+    Object.defineProperty(unstableEdge, "from", { value: "A", enumerable: true });
+    Object.defineProperty(unstableEdge, "to", {
+      enumerable: true,
+      get() {
+        return `MISSING-${sequence++}`;
+      },
+    });
+
+    const dag = {
+      nodes: new Map(),
+      edges: [],
+      processNodes: ["A"],
+      processEdges: [unstableEdge],
+    };
+
+    const order = getTopologicalOrder(dag as unknown as Parameters<typeof getTopologicalOrder>[0]);
+
+    expect(order).toEqual(["A", "MISSING-0"]);
+  });
 });

@@ -62,7 +62,11 @@ export async function parseTraceFile(tracePath: string): Promise<TraceParseResul
  * Parse trace file content (useful for testing or when content is already loaded)
  */
 export function parseTraceContent(content: string): TraceParseResult {
-  const lines = content.trim().split('\n');
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
   if (lines.length === 0) {
     return {
       tasks: [],
@@ -184,7 +188,6 @@ function aggregateByProcess(tasks: NextflowTask[]): Map<string, ProcessSummary> 
         summary.completedTasks++;
         break;
       case 'RUNNING':
-      case 'SUBMITTED':
         summary.runningTasks++;
         break;
       case 'FAILED':
@@ -273,7 +276,7 @@ function parseBytesOrNull(val: string | undefined): number | null {
   if (!val || val === '-') return null;
 
   // Handle formats like "1.2 GB", "500 MB", "1024 KB", "2048 B"
-  const match = val.match(/^([\d.]+)\s*([KMGT]?B)?$/i);
+  const match = val.match(/^([\d.]+)\s*([KMGTP]?B)?$/i);
   if (!match) return null;
 
   const num = parseFloat(match[1]);
