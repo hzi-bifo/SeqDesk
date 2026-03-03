@@ -32,6 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/insta
 
 This will download SeqDesk, install dependencies, and set up the database.
 
+NPM global install (same installer flow):
+```bash
+npm i -g seqdesk
+seqdesk
+```
+
 Options:
 ```bash
 # Fully non-interactive install (accept defaults)
@@ -46,6 +52,9 @@ SEQDESK_WITH_CONDA=1 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDe
 # Unattended install with infrastructure JSON (same format as admin import JSON)
 curl -fsSL https://seqdesk.com/install.sh | \
   bash -s -- -y --config https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/setups/twincore/infrastructure-setup.json
+
+# Same options through npm launcher
+seqdesk -y --dir /opt/seqdesk
 ```
 
 ## Private Pipeline Add-ons
