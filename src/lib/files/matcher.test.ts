@@ -3,6 +3,7 @@ import {
   matchPairedEndFiles,
   validateFilePair,
   findFilesForSample,
+  findFilesForSamples,
 } from "./matcher";
 import type { FileInfo } from "./scanner";
 
@@ -83,6 +84,19 @@ describe("validateFilePair", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("flags read2 file that looks like a read 1 assignment", () => {
+    const result = validateFilePair(
+      "/data/s_R1.fq.gz",
+      "/data/s_R1.fq.gz",
+      true
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((entry) => entry.includes("Read 2 file appears to be a Read 1"))).toBe(
+      true
+    );
+  });
+
   it("returns error when neither file provided", () => {
     const result = validateFilePair(null, null, true);
     expect(result.valid).toBe(false);
@@ -157,5 +171,58 @@ describe("findFilesForSample", () => {
     );
     expect(result.status).toBe("exact");
     expect(result.matchedBy).toBe("sampleAlias");
+  });
+
+  it("returns partial for weak matches when confidence is below exact threshold", () => {
+    const files = [makeFile("A-VERYLONGID-READ1_R1.fastq.gz")];
+
+    const result = findFilesForSample(
+      { sampleId: "A" },
+      files,
+      true
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.confidence).toBeLessThan(0.7);
+    expect(result.read1?.filename).toBe("A-VERYLONGID-READ1_R1.fastq.gz");
+    expect(result.alternatives).toHaveLength(1);
+  });
+
+  it("returns ambiguous when multiple high-confidence matches are found", () => {
+    const files = [
+      makeFile("SAMPLE_ALPHA_R1.fastq.gz"),
+      makeFile("SAMPLE_BETA_R1.fastq.gz"),
+    ];
+
+    const result = findFilesForSample(
+      { sampleId: "SAMPLE" },
+      files
+    );
+
+    expect(result.status).toBe("ambiguous");
+    expect(result.read1).toBeNull();
+    expect(result.alternatives).toHaveLength(2);
+    expect(result.alternatives.map((entry) => entry.identifier).sort()).toEqual([
+      "SAMPLE_ALPHA",
+      "SAMPLE_BETA",
+    ]);
+  });
+
+  it("matches multiple samples in one pass", () => {
+    const files = [
+      makeFile("SAMPLE_ALPHA_R1.fastq.gz"),
+      makeFile("SAMPLE_BETA_R1.fastq.gz"),
+    ];
+
+    const results = findFilesForSamples(
+      [
+        { sampleId: "SAMPLE_ALPHA" },
+        { sampleId: "SAMPLE_BETA" },
+      ],
+      files
+    );
+
+    expect(results.get("SAMPLE_ALPHA")?.status).toBe("exact");
+    expect(results.get("SAMPLE_BETA")?.status).toBe("exact");
   });
 });

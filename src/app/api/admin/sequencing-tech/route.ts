@@ -14,7 +14,7 @@ import {
 const SETTINGS_KEY = "sequencingTechConfig";
 
 // External API URL for syncing technologies
-const SEQDESK_API_URL =
+const DEFAULT_SEQDESK_API_URL =
   process.env.SEQDESK_API_URL ||
   "https://www.seqdesk.com/api/registry/sequencing-tech";
 const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
@@ -143,8 +143,32 @@ const normalizeRemoteConfig = (raw: SequencingTechConfig): SequencingTechConfig 
   };
 };
 
-const fetchRemoteConfig = async (): Promise<SequencingTechConfig> => {
-  const response = await fetch(SEQDESK_API_URL, {
+const normalizeSyncUrl = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const resolveSyncUrl = (
+  config?: SequencingTechConfig | null,
+  override?: unknown
+): string =>
+  normalizeSyncUrl(override) ||
+  normalizeSyncUrl(config?.syncUrl) ||
+  DEFAULT_SEQDESK_API_URL;
+
+const fetchRemoteConfig = async (syncUrl: string): Promise<SequencingTechConfig> => {
+  const response = await fetch(syncUrl, {
     headers: {
       Accept: "application/json",
     },
@@ -165,7 +189,7 @@ const fetchRemoteConfig = async (): Promise<SequencingTechConfig> => {
   return {
     ...normalized,
     lastSyncedAt: new Date().toISOString(),
-    syncUrl: SEQDESK_API_URL,
+    syncUrl,
   };
 };
 
@@ -198,7 +222,7 @@ export async function GET() {
 
     if (!storedConfig) {
       try {
-        const remoteConfig = await fetchRemoteConfig();
+        const remoteConfig = await fetchRemoteConfig(DEFAULT_SEQDESK_API_URL);
         extraSettings[SETTINGS_KEY] = JSON.stringify(remoteConfig);
 
         await db.siteSettings.upsert({
@@ -218,7 +242,11 @@ export async function GET() {
       }
     }
 
-    const config = parseTechConfig(storedConfig);
+    const parsedConfig = parseTechConfig(storedConfig);
+    const config: SequencingTechConfig = {
+      ...parsedConfig,
+      syncUrl: resolveSyncUrl(parsedConfig),
+    };
     return NextResponse.json({ config });
   } catch (error) {
     console.error("Error fetching sequencing tech config:", error);
@@ -256,6 +284,14 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    const normalizedSyncUrl = normalizeSyncUrl(config.syncUrl);
+    if (config.syncUrl && !normalizedSyncUrl) {
+      return NextResponse.json(
+        { error: "syncUrl must be a valid http(s) URL" },
+        { status: 400 }
+      );
+    }
+
     // Get current extra settings
     const currentSettings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
@@ -283,6 +319,7 @@ export async function PUT(request: NextRequest) {
       software: config.software ?? [],
       barcodeSchemes: config.barcodeSchemes ?? [],
       barcodeSets: config.barcodeSets ?? [],
+      syncUrl: normalizedSyncUrl || DEFAULT_SEQDESK_API_URL,
       version: config.version ?? 1,
     };
     extraSettings[SETTINGS_KEY] = JSON.stringify(updatedConfig);
@@ -319,14 +356,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { action } = body as { action: string };
+    const { action, syncUrl } = body as { action: string; syncUrl?: string };
+    if (syncUrl && !normalizeSyncUrl(syncUrl)) {
+      return NextResponse.json(
+        { error: "syncUrl must be a valid http(s) URL" },
+        { status: 400 }
+      );
+    }
 
     if (action === "reset") {
-      // Reset to defaults (local file or remote registry)
-      const defaults = USE_LOCAL_DEFAULTS
-        ? loadDefaultTechConfig()
-        : await fetchRemoteConfig();
-
       // Get current extra settings
       const currentSettings = await db.siteSettings.findUnique({
         where: { id: "singleton" },
@@ -344,6 +382,14 @@ export async function POST(request: NextRequest) {
           // ignore
         }
       }
+
+      const currentConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+      const effectiveSyncUrl = resolveSyncUrl(currentConfig, syncUrl);
+
+      // Reset to defaults (local file or remote registry)
+      const defaults = USE_LOCAL_DEFAULTS
+        ? { ...loadDefaultTechConfig(), syncUrl: effectiveSyncUrl }
+        : await fetchRemoteConfig(effectiveSyncUrl);
 
       // Reset config to defaults
       extraSettings[SETTINGS_KEY] = JSON.stringify(defaults);
@@ -369,25 +415,6 @@ export async function POST(request: NextRequest) {
 
     if (action === "check-updates") {
       try {
-        // Fetch latest technologies from SeqDesk API
-        const response = await fetch(SEQDESK_API_URL, {
-          headers: {
-            "Accept": "application/json",
-          },
-          next: { revalidate: 0 }, // Don't cache this request
-        });
-
-        if (!response.ok) {
-          throw new Error(`API returned ${response.status}`);
-        }
-
-        const remoteData = await response.json();
-        const remoteConfig: SequencingTechConfig =
-          remoteData?.config && typeof remoteData.config === "object"
-            ? remoteData.config
-            : remoteData;
-        const normalizedRemoteConfig = normalizeRemoteConfig(remoteConfig);
-
         // Get current config
         const currentSettings = await db.siteSettings.findUnique({
           where: { id: "singleton" },
@@ -407,8 +434,30 @@ export async function POST(request: NextRequest) {
         }
 
         const currentConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+        const effectiveSyncUrl = resolveSyncUrl(currentConfig, syncUrl);
+
+        // Fetch latest technologies from configured registry API
+        const response = await fetch(effectiveSyncUrl, {
+          headers: {
+            "Accept": "application/json",
+          },
+          next: { revalidate: 0 }, // Don't cache this request
+        });
+
+        if (!response.ok) {
+          throw new Error(`API returned ${response.status}`);
+        }
+
+        const remoteData = await response.json();
+        const remoteConfig: SequencingTechConfig =
+          remoteData?.config && typeof remoteData.config === "object"
+            ? remoteData.config
+            : remoteData;
+        const normalizedRemoteConfig = normalizeRemoteConfig(remoteConfig);
         const currentVersion = currentConfig.version || 0;
         const remoteVersion = parseInt(String(normalizedRemoteConfig.version || 0)) || 0;
+        const syncUrlChanged =
+          normalizeSyncUrl(currentConfig.syncUrl) !== effectiveSyncUrl;
 
         const hasMissingRemoteCoreItems =
           hasMissingRemoteItems(
@@ -448,7 +497,7 @@ export async function POST(request: NextRequest) {
             barcodeSets: mergeItems(currentConfig.barcodeSets || [], remoteBarcodeSets),
             version: remoteVersion,
             lastSyncedAt: new Date().toISOString(),
-            syncUrl: SEQDESK_API_URL,
+            syncUrl: effectiveSyncUrl,
           };
 
           // Save merged config
@@ -478,6 +527,34 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        if (syncUrlChanged) {
+          const configWithUpdatedSyncUrl: SequencingTechConfig = {
+            ...currentConfig,
+            syncUrl: effectiveSyncUrl,
+            lastSyncedAt: new Date().toISOString(),
+          };
+
+          extraSettings[SETTINGS_KEY] = JSON.stringify(configWithUpdatedSyncUrl);
+          await db.siteSettings.upsert({
+            where: { id: "singleton" },
+            update: {
+              extraSettings: JSON.stringify(extraSettings),
+            },
+            create: {
+              id: "singleton",
+              extraSettings: JSON.stringify(extraSettings),
+            },
+          });
+
+          return NextResponse.json({
+            hasUpdates: false,
+            currentVersion,
+            remoteVersion,
+            message: "Registry source updated. Your technologies are up to date.",
+            config: configWithUpdatedSyncUrl,
+          });
+        }
+
         return NextResponse.json({
           hasUpdates: false,
           currentVersion,
@@ -489,7 +566,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           hasUpdates: false,
           error: true,
-          message: `Failed to check for updates. Make sure ${SEQDESK_API_URL} is accessible.`,
+          message: "Failed to check for updates. Verify the registry sync URL is accessible.",
         });
       }
     }

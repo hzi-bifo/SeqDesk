@@ -180,6 +180,71 @@ describe("generateSampleTemplate", () => {
     expect(codeDv.error).toContain("Maximum 5 characters");
   });
 
+  it("supports decimal number validation", async () => {
+    const fields = [
+      makeField({
+        type: "number",
+        label: "Ratio",
+        name: "ratio",
+        simpleValidation: {
+          minValue: 0.5,
+          maxValue: 2.5,
+        },
+      }),
+    ];
+
+    const blob = await generateSampleTemplate(fields, []);
+    const workbook = await loadWorkbookFromBlob(blob);
+    const samples = workbook.getWorksheet("Samples");
+
+    const ratioDv = samples?.getCell("B2").dataValidation;
+    expect(ratioDv.type).toBe("decimal");
+    expect(ratioDv.operator).toBe("between");
+    expect(String(ratioDv.formulae?.[0] || "")).toBe("0.5");
+    expect(String(ratioDv.formulae?.[1] || "")).toBe("2.5");
+    expect(ratioDv.error).toContain("between 0.5 and 2.5");
+  });
+
+  it("supports number validation with only a minimum bound", async () => {
+    const fields = [
+      makeField({
+        type: "number",
+        label: "Count",
+        name: "count",
+        simpleValidation: {
+          minValue: 1,
+        },
+      }),
+    ];
+
+    const blob = await generateSampleTemplate(fields, []);
+    const workbook = await loadWorkbookFromBlob(blob);
+    const samples = workbook.getWorksheet("Samples");
+
+    const countDv = samples?.getCell("B2").dataValidation;
+    expect(countDv.type).toBe("whole");
+    expect(countDv.operator).toBe("greaterThanOrEqual");
+    expect(String(countDv.formulae?.[0] || "")).toBe("1");
+    expect(countDv.error).toContain(">= 1");
+  });
+
+  it("supports optional select fields without options", async () => {
+    const fields = [
+      makeField({
+        type: "select",
+        label: "Optional",
+        name: "optional",
+        options: [],
+      }),
+    ];
+
+    const blob = await generateSampleTemplate(fields, []);
+    const workbook = await loadWorkbookFromBlob(blob);
+    const samples = workbook.getWorksheet("Samples");
+
+    expect(samples?.getCell("B2").dataValidation).toBeUndefined();
+  });
+
   it("supports validation columns beyond Z", async () => {
     const fields: FormFieldDefinition[] = Array.from({ length: 27 }, (_, i) =>
       makeField({

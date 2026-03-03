@@ -224,10 +224,14 @@ export default function SequencingTechPage() {
     setResetDialogOpen(false);
     setResetting(true);
     try {
+      const syncUrl = config?.syncUrl?.trim();
       const res = await fetch("/api/admin/sequencing-tech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset" }),
+        body: JSON.stringify({
+          action: "reset",
+          ...(syncUrl ? { syncUrl } : {}),
+        }),
       });
       if (!res.ok) throw new Error("Failed to reset");
       const data = await res.json();
@@ -244,17 +248,24 @@ export default function SequencingTechPage() {
     setUpdateNotice(null);
     setCheckingUpdates(true);
     try {
+      const syncUrl = config?.syncUrl?.trim();
       const res = await fetch("/api/admin/sequencing-tech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "check-updates" }),
+        body: JSON.stringify({
+          action: "check-updates",
+          ...(syncUrl ? { syncUrl } : {}),
+        }),
       });
       if (!res.ok) throw new Error("Failed to check");
       const data = await res.json();
 
-      // Update local config if updates were found and merged
-      if (data.hasUpdates && data.config) {
+      if (data.config) {
         setConfig(data.config);
+      }
+
+      // Update local notice based on update result
+      if (data.hasUpdates) {
         setUpdateNotice({ tone: "success", message: data.message });
       } else if (data.error) {
         setUpdateNotice({ tone: "error", message: data.message });
@@ -652,6 +663,13 @@ export default function SequencingTechPage() {
   const getSoftwareUsage = (id: string) =>
     devices.filter((device) => device.compatibleSoftware?.includes(id));
 
+  const formatLastSyncedAt = (value?: string) => {
+    if (!value) return "Never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  };
+
   if (moduleLoading || loading) {
     return (
       <PageContainer>
@@ -780,6 +798,31 @@ export default function SequencingTechPage() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
+          )}
+
+          {config && (
+            <GlassCard className="p-4">
+              <div className="space-y-2">
+                <Label htmlFor="registry-sync-url">Registry Sync URL</Label>
+                <Input
+                  id="registry-sync-url"
+                  value={config.syncUrl || ""}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      syncUrl: e.target.value,
+                    })
+                  }
+                  placeholder="https://www.seqdesk.com/api/registry/sequencing-tech"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used for &quot;Check for Updates&quot; and registry reset. Save changes to persist it.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Last synced: {formatLastSyncedAt(config.lastSyncedAt)}
+                </p>
+              </div>
+            </GlassCard>
           )}
 
           <TabsContent value="platforms" className="m-0 space-y-3">
