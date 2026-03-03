@@ -98,7 +98,8 @@ export interface FlowCell {
   chemistry?: string;
   poreCount?: number;
   maxOutput?: string;
-  category: "standard" | "rna" | "flongle" | "other";
+  // Registry-backed categories evolve (e.g. "smrt-cell", "novaseq-x"), so keep this open.
+  category: string;
   image?: string;
   available: boolean;
   order: number;
@@ -138,15 +139,8 @@ export interface SequencingKit {
   name: string;
   sku: string;
   description?: string;
-  category:
-    | "ligation"
-    | "rapid"
-    | "barcoding"
-    | "pcr"
-    | "cdna"
-    | "direct-rna"
-    | "amplicon"
-    | "other";
+  // Registry-backed categories evolve (e.g. "tagmentation"), so keep this open.
+  category: string;
   inputType?: "dna" | "rna" | "both";
   multiplexing?: boolean;
   barcodeCount?: number;
@@ -164,7 +158,7 @@ export interface SequencingSoftware {
   id: string;
   name: string;
   description?: string;
-  category: "control" | "basecalling" | "analysis" | "other";
+  category: string;
   version?: string;
   downloadUrl?: string;
   available: boolean;

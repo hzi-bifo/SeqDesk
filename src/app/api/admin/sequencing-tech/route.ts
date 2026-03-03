@@ -16,7 +16,7 @@ const SETTINGS_KEY = "sequencingTechConfig";
 // External API URL for syncing technologies
 const SEQDESK_API_URL =
   process.env.SEQDESK_API_URL ||
-  "https://seqdesk.com/api/registry/sequencing-tech";
+  "https://www.seqdesk.com/api/registry/sequencing-tech";
 const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
 
 type MergeableItem = { id: string; available?: boolean; localOverrides?: boolean };
