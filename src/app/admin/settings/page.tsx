@@ -847,12 +847,12 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   See{" "}
                   <a
-                    href="https://github.com/hzi-bifo/SeqDesk/blob/main/docs/configuration.md"
+                    href="https://www.seqdesk.com/docs"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
                   >
-                    docs/configuration.md
+                    seqdesk.com/docs
                   </a>{" "}
                   for all configuration options.
                 </p>

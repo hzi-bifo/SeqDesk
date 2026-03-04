@@ -94,6 +94,11 @@ export interface AuthConfig {
   sessionTimeout?: number;
 }
 
+export interface AppConfig {
+  /** App listen port for generated start scripts */
+  port?: number;
+}
+
 export interface RuntimeConfig {
   /** Runtime database URL (maps to DATABASE_URL) */
   databaseUrl?: string;
@@ -115,6 +120,7 @@ export interface RuntimeConfig {
  * Complete SeqDesk configuration schema
  */
 export interface SeqDeskConfig {
+  app?: AppConfig;
   site?: SiteConfig;
   pipelines?: PipelinesConfig;
   ena?: EnaConfig;

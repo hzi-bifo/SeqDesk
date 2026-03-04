@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { db } from '../src/lib/db';
 import { parseTraceFile, findTraceFile, readTail } from '../src/lib/pipelines/nextflow';
 import { findStepByProcess, getStepsForPipeline } from '../src/lib/pipelines/definitions';
