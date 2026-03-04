@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   generateStudyXml,
   generateSampleXml,
@@ -208,6 +208,20 @@ describe("parseReceiptXml", () => {
     expect(result.projects[1].extId).toBe("EXT2");
   });
 
+  it("keeps project accession when closing PROJECT tag is missing", () => {
+    const xml = `<RECEIPT success="true">
+      <PROJECT alias="project-1" accession="PRJ1">
+        <EXT_ID accession="EXT1"/>
+    </RECEIPT>`;
+    const result = parseReceiptXml(xml);
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0]).toEqual({
+      alias: "project-1",
+      accession: "PRJ1",
+      extId: undefined,
+    });
+  });
+
   it("handles sample aliases containing regex metacharacters", () => {
     const xml = `<RECEIPT success="true">
       <SAMPLE alias="sample(1" accession="ERS1">
@@ -238,5 +252,13 @@ describe("parseReceiptXml", () => {
     expect(result.success).toBe(false);
     expect(result.projects).toHaveLength(0);
     expect(result.samples).toHaveLength(0);
+  });
+
+  it("returns a parser error for non-string receipt input", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = parseReceiptXml(null as unknown as string);
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Failed to parse ENA receipt XML");
+    expect(errorSpy).toHaveBeenCalledOnce();
   });
 });

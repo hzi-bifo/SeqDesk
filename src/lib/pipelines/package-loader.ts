@@ -46,6 +46,7 @@ export interface PackageInput {
   transform?: {
     type: string;
     mapping?: Record<string, string>;
+    strict?: boolean;
     [key: string]: unknown;
   };
 }
@@ -121,6 +122,7 @@ export interface SamplesheetColumn {
     type: string;
     base?: string;
     mapping?: Record<string, string>;
+    strict?: boolean;
   };
 }
 

@@ -11,9 +11,15 @@
     "pipeline:validate": "tsx scripts/validate-pipeline-package.ts",
     "pipeline:monitor": "tsx scripts/pipeline-monitor.ts",
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test": "SEQDESK_TEST_TIER=fast vitest run",
+    "test:fast": "SEQDESK_TEST_TIER=fast vitest run",
+    "test:risk": "SEQDESK_TEST_TIER=risk vitest run",
+    "test:live": "SEQDESK_TEST_TIER=live vitest run",
+    "test:all": "SEQDESK_TEST_TIER=all vitest run",
+    "test:watch": "SEQDESK_TEST_TIER=fast vitest",
+    "test:coverage": "SEQDESK_TEST_TIER=fast vitest run --coverage",
+    "test:coverage:risk": "SEQDESK_TEST_TIER=risk vitest run --coverage",
+    "test:coverage:all": "SEQDESK_TEST_TIER=all vitest run --coverage"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

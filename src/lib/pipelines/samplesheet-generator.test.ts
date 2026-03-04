@@ -218,6 +218,60 @@ describe("samplesheet-generator", () => {
     expect(result.content).toContain("ONT");
   });
 
+  it("fails required strict map_value columns when platform is unmapped", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue({
+      samplesheet: {
+        format: "csv",
+        filename: "samplesheet.csv",
+        rows: { scope: "sample" },
+        columns: [
+          {
+            name: "sample",
+            source: "sample.sampleId",
+            required: true,
+          },
+          {
+            name: "sequencer",
+            source: "order.platform",
+            required: true,
+            transform: {
+              type: "map_value",
+              strict: true,
+              mapping: {
+                nanopore: "Nanopore",
+                pacbio: "PacBio",
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        sampleId: "S1",
+        reads: [{ file1: "reads/S1_R1.fastq.gz", file2: null }],
+        order: { id: "order-1", platform: "Sequel II/IIe", customFields: null },
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("metaxpath");
+    const result = await generator.generate({
+      studyId: "study-1",
+      dataBasePath: "/db",
+    });
+
+    expect(result.sampleCount).toBe(0);
+    expect(result.errors).toContain(
+      "Sample S1: Missing required value for column 'sequencer'"
+    );
+    expect(result.errors).toContain("No samples with valid data for samplesheet");
+  });
+
   it("skips invalid samples on required-column errors and fails if all are invalid", async () => {
     mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
     mocks.db.sample.findMany.mockResolvedValue([

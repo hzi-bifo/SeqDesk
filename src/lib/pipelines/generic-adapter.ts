@@ -87,6 +87,21 @@ function hasNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function resolveMappedValue(
+  value: string,
+  mapping: Record<string, string>
+): string | null {
+  const candidate = value.trim();
+  if (!candidate) return null;
+
+  const mapped =
+    mapping[candidate] ??
+    mapping[candidate.toLowerCase()] ??
+    mapping[candidate.toUpperCase()];
+
+  return mapped ?? null;
+}
+
 function hasChecklistData(value: string | null): boolean {
   if (!hasNonEmptyString(value)) {
     return false;
@@ -410,10 +425,34 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
 
         if (input.scope === 'order' && input.source === 'order.platform') {
           for (const sample of samples) {
-            if (!resolveOrderPlatform(sample.order)) {
+            const platform = resolveOrderPlatform(sample.order);
+            if (!platform) {
               issues.push(
                 `Sample ${sample.sampleId}: Sequencing platform is required (set Order platform or Sequencing Technologies selection)`
               );
+              continue;
+            }
+
+            const transform = input.transform;
+            const strictMapTransform =
+              transform?.type === 'map_value' &&
+              transform.strict === true &&
+              !!transform.mapping;
+
+            if (strictMapTransform) {
+              const mapping = transform.mapping;
+              if (!mapping) {
+                continue;
+              }
+              const mappedPlatform = resolveMappedValue(platform, mapping);
+              if (!mappedPlatform) {
+                const allowedTargets = Array.from(
+                  new Set(Object.values(mapping))
+                ).join(', ');
+                issues.push(
+                  `Sample ${sample.sampleId}: Unsupported sequencing platform "${platform}" for this pipeline${allowedTargets ? ` (expected mapping to: ${allowedTargets})` : ''}`
+                );
+              }
             }
           }
         }

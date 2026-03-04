@@ -17,7 +17,7 @@ A modern sequencing facility management system built with Next.js for managing s
 
 ## Tech Stack
 
-- **Framework**: Next.js 14+ with App Router
+- **Framework**: Next.js 16+ with App Router
 - **Language**: TypeScript
 - **Database**: Prisma ORM with SQLite
 - **Authentication**: NextAuth.js
@@ -27,15 +27,14 @@ A modern sequencing facility management system built with Next.js for managing s
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+curl -fsSL https://seqdesk.com/install.sh | bash
 ```
 
 This will download SeqDesk, install dependencies, and set up the database.
 
 NPM global install (same installer flow):
 ```bash
-npm i -g seqdesk
-seqdesk
+npm i -g seqdesk && seqdesk
 ```
 
 Options:
@@ -44,10 +43,10 @@ Options:
 curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
 
 # Custom install directory
-SEQDESK_DIR=/opt/seqdesk curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+SEQDESK_DIR=/opt/seqdesk curl -fsSL https://seqdesk.com/install.sh | bash
 
 # Include Conda for pipeline support
-SEQDESK_WITH_CONDA=1 curl -fsSL https://raw.githubusercontent.com/hzi-bifo/SeqDesk/main/scripts/install.sh | bash
+SEQDESK_WITH_CONDA=1 curl -fsSL https://seqdesk.com/install.sh | bash
 
 # Unattended install with infrastructure JSON (same format as admin import JSON)
 curl -fsSL https://seqdesk.com/install.sh | \
@@ -214,6 +213,8 @@ See [docs/configuration.md](docs/configuration.md) for the complete configuratio
 
 ## Documentation
 
+Official docs: [https://www.seqdesk.com/docs](https://www.seqdesk.com/docs)
+
 See the `docs/` folder for detailed documentation:
 - [Installation Guide](docs/installation.md) - Complete setup including Conda for pipelines
 - [Configuration](docs/configuration.md) - Configuration file and environment variables
@@ -221,10 +222,6 @@ See the `docs/` folder for detailed documentation:
 - [Backend Features](docs/backend-features.md) - Pipeline system architecture
 - [ENA Integration](docs/ena-integration-plan.md) - ENA submission workflow
 - [Sequencing Files](docs/sequencing-files-plan.md) - File discovery and assignment
-
-## Development
-
-See [CLAUDE.md](CLAUDE.md) for development guidelines and code conventions.
 
 ## Testing
 

@@ -170,6 +170,19 @@ describe("validateLicense", () => {
     expect(result.valid).toBe(false);
   });
 
+  it("rejects token when header decoding/parsing fails", async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        ...makeLicense(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+    ).toString("base64url");
+
+    const result = await validateLicense(`%%%.${payload}.sig`);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe("Invalid license signature");
+  });
+
   it("accepts a valid token and marks trial licenses as trial", async () => {
     const token = createJwtToken({
       id: "test-license",

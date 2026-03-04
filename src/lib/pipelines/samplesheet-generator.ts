@@ -122,7 +122,17 @@ function applyTransform(
   switch (transform.type) {
     case 'map_value': {
       const mapping = transform.mapping || {};
-      return mapping[value] ?? mapping[value.toLowerCase()] ?? mapping[value.toUpperCase()] ?? value;
+      const candidate = value.trim();
+      const mapped =
+        mapping[candidate] ??
+        mapping[candidate.toLowerCase()] ??
+        mapping[candidate.toUpperCase()];
+      if (mapped !== undefined) {
+        return mapped;
+      }
+
+      const strict = transform.strict === true;
+      return strict ? null : value;
     }
     case 'to_upper':
       return value.toUpperCase();
