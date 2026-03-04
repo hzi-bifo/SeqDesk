@@ -107,11 +107,6 @@ cp -R "${ROOT_DIR}/.next/standalone/." "$RELEASE_DIR/"
 rm -rf "${RELEASE_DIR}"/seqdesk-*/
 rm -f "${RELEASE_DIR}"/seqdesk-*.tar.gz
 
-for file in .env .env.local .env.production .env.development .env.test; do
-  if [[ -f "${RELEASE_DIR}/${file}" ]]; then
-    rm -f "${RELEASE_DIR}/${file}"
-  fi
-done
 rm -f "${RELEASE_DIR}/dev.db" "${RELEASE_DIR}/seqdesk.config.json"
 
 if [[ -d "${ROOT_DIR}/node_modules/@prisma/client" ]]; then
@@ -133,7 +128,7 @@ mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"
 
 echo "Copying runtime assets..."
-for item in public prisma pipelines seqdesk.config.example.json package-lock.json next.config.ts .env.example; do
+for item in public prisma pipelines seqdesk.config.example.json package-lock.json next.config.ts; do
   if [[ -e "${ROOT_DIR}/${item}" ]]; then
     cp -R "${ROOT_DIR}/${item}" "$RELEASE_DIR/"
   fi
@@ -175,15 +170,58 @@ mkdir -p "${RELEASE_DIR}/data"
 cat > "${RELEASE_DIR}/start.sh" <<'EOF'
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source ./.env
-  set +a
-fi
 if [[ -n "${1:-}" ]]; then
   export PORT="$1"
-elif [[ -z "${PORT:-}" ]]; then
+fi
+if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
+  CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
+const fs = require("fs");
+
+function toOptionalPort(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const intValue = Math.trunc(value);
+    if (intValue > 0 && intValue <= 65535) return String(intValue);
+    return "";
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return "";
+    const intValue = Math.trunc(parsed);
+    if (intValue > 0 && intValue <= 65535) return String(intValue);
+  }
+  return "";
+}
+
+try {
+  const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+  const appPort = toOptionalPort(parsed?.app?.port);
+  if (appPort) {
+    process.stdout.write(appPort);
+    process.exit(0);
+  }
+  const nextAuthUrl = parsed?.runtime?.nextAuthUrl;
+  if (typeof nextAuthUrl === "string" && nextAuthUrl.trim()) {
+    try {
+      const parsedUrl = new URL(nextAuthUrl);
+      if (parsedUrl.port) {
+        process.stdout.write(parsedUrl.port);
+      }
+    } catch {
+      // Ignore invalid URL.
+    }
+  }
+} catch {
+  // Ignore invalid/missing config.
+}
+NODE
+)
+  if [[ -n "$CONFIG_PORT" ]]; then
+    export PORT="$CONFIG_PORT"
+  fi
+fi
+if [[ -z "${PORT:-}" ]]; then
   export PORT=3000
 fi
 APP_VERSION=""

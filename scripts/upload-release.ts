@@ -15,7 +15,7 @@
  *   npx tsx scripts/upload-release.ts 0.1.5 --title "Update System" --notes "Bug fixes and improvements"
  *   npx tsx scripts/upload-release.ts 0.1.5 --changelog "Added feature X" "Fixed bug Y" "Improved Z"
  *
- * Requires in .env:
+ * Requires in process environment or seqdesk.config.json runtime:
  *   BLOB_READ_WRITE_TOKEN - Vercel Blob token
  *   ADMIN_SECRET - Admin secret for publishing
  */
@@ -24,20 +24,6 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync } from "child_process";
-
-// Load .env file if exists
-function loadEnv() {
-  const envPath = path.join(process.cwd(), ".env");
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, "utf-8");
-    for (const line of content.split("\n")) {
-      const match = line.match(/^([^#=]+)=["']?(.+?)["']?$/);
-      if (match && !process.env[match[1]]) {
-        process.env[match[1]] = match[2];
-      }
-    }
-  }
-}
 
 function loadRuntimeConfigEnvFallback() {
   const configPath = path.join(process.cwd(), "seqdesk.config.json");
@@ -199,7 +185,6 @@ async function publishRelease(
 }
 
 async function main() {
-  loadEnv();
   loadRuntimeConfigEnvFallback();
 
   const options = parseArgs();
@@ -222,14 +207,14 @@ async function main() {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) {
     console.error("Error: BLOB_READ_WRITE_TOKEN not found");
-    console.error("Add it to your .env file or set it as an environment variable");
+    console.error("Set it in seqdesk.config.json runtime.blobReadWriteToken or as an environment variable");
     process.exit(1);
   }
 
   const adminSecret = process.env.ADMIN_SECRET;
   if (!adminSecret) {
     console.error("Error: ADMIN_SECRET not found");
-    console.error("Add it to your .env file for publishing to seqdesk.com");
+    console.error("Set it in seqdesk.config.json runtime.adminSecret or as an environment variable");
     process.exit(1);
   }
 

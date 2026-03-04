@@ -30,9 +30,8 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
-!.env.example
 
 # vercel
 .vercel
@@ -78,6 +77,13 @@ pipelines/.pipeline-download-logs/
 
 # internal notes
 agents.md
+
+# private docs
+docs/
+
+# local AI tooling state
+.claude/
+.codex/
 
 # config file (may contain sensitive paths)
 seqdesk.config.json

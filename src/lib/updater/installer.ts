@@ -19,7 +19,6 @@ import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import dotenv from 'dotenv';
 import type { ReleaseInfo, UpdateProgress } from './types';
 import { releaseUpdateLock } from './status';
 
@@ -48,15 +47,6 @@ function isTruthy(value?: string | null): boolean {
 async function loadDatabaseUrl(): Promise<string | null> {
   if (process.env.DATABASE_URL) {
     return process.env.DATABASE_URL;
-  }
-
-  try {
-    const envPath = path.join(INSTALL_DIR, '.env');
-    const envContents = await fs.readFile(envPath, 'utf-8');
-    const parsed = dotenv.parse(envContents);
-    return parsed.DATABASE_URL ?? null;
-  } catch {
-    // Fall through to runtime config file lookup.
   }
 
   try {
@@ -339,7 +329,7 @@ async function createBackup(): Promise<void> {
   }
 
   // Backup key files
-  const filesToBackup = ['package.json', '.env', 'seqdesk.config.json'];
+  const filesToBackup = ['package.json', 'seqdesk.config.json'];
 
   for (const file of filesToBackup) {
     const srcPath = path.join(INSTALL_DIR, file);
@@ -360,8 +350,8 @@ async function createBackup(): Promise<void> {
 async function applyUpdate(): Promise<void> {
   const extractDir = path.join(TEMP_DIR, 'extracted');
 
-  // Copy new files, preserving .env and config
-  const preserveFiles = ['.env', 'seqdesk.config.json'];
+  // Copy new files, preserving runtime config
+  const preserveFiles = ['seqdesk.config.json'];
 
   // Backup preserved files
   const preserved: Record<string, Buffer> = {};

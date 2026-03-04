@@ -1,6 +1,9 @@
 {
-  "$schema": "./docs/seqdesk-config-schema.json",
   "_comment": "Copy this file to seqdesk.config.json and adjust values for your environment",
+
+  "app": {
+    "port": 3000
+  },
 
   "site": {
     "name": "My Sequencing Facility",

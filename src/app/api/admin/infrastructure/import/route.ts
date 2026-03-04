@@ -207,42 +207,49 @@ function parseImportValues(config: unknown): InfrastructureImportValues {
   return values;
 }
 
-async function upsertPortInEnvFile(port: number): Promise<string> {
-  let target: ".env" | ".env.local" = ".env";
-  let current = "";
+function updateUrlPort(urlValue: string, port: number): string | undefined {
   try {
-    current = await fs.readFile(".env", "utf8");
-    target = ".env";
+    const parsed = new URL(urlValue);
+    parsed.port = String(port);
+    const next = parsed.toString();
+    return next.endsWith("/") ? next.slice(0, -1) : next;
   } catch {
-    try {
-      current = await fs.readFile(".env.local", "utf8");
-      target = ".env.local";
-    } catch {
-      current = "";
-      target = ".env";
+    return undefined;
+  }
+}
+
+async function upsertPortInConfigFile(port: number): Promise<string> {
+  const target = "seqdesk.config.json";
+  let current: JsonRecord = {};
+
+  try {
+    const raw = await fs.readFile(target, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (isRecord(parsed)) {
+      current = parsed;
     }
+  } catch {
+    current = {};
   }
 
-  const nextLine = `PORT=${port}`;
-  const hasTrailingNewline = current.endsWith("\n");
-  let nextContent: string;
+  const next = { ...current } as JsonRecord;
+  const app = toRecord(next.app) ?? {};
+  app.port = port;
+  next.app = app;
 
-  if (/^PORT=.*$/m.test(current)) {
-    nextContent = current.replace(/^PORT=.*$/m, nextLine);
-  } else if (current.length === 0) {
-    nextContent = `${nextLine}\n`;
+  const runtime = toRecord(next.runtime) ?? {};
+  const existingNextAuthUrl = toOptionalString(runtime.nextAuthUrl);
+  if (existingNextAuthUrl) {
+    const updated = updateUrlPort(existingNextAuthUrl, port);
+    if (updated) {
+      runtime.nextAuthUrl = updated;
+    }
   } else {
-    nextContent = `${current}${hasTrailingNewline ? "" : "\n"}${nextLine}\n`;
+    runtime.nextAuthUrl = `http://localhost:${port}`;
   }
+  next.runtime = runtime;
 
-  if (nextContent !== current) {
-    if (target === ".env") {
-      await fs.writeFile(".env", nextContent, "utf8");
-    } else {
-      await fs.writeFile(".env.local", nextContent, "utf8");
-    }
-  }
-
+  await fs.writeFile(target, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return target;
 }
 
@@ -348,7 +355,7 @@ export async function POST(request: NextRequest) {
     if (dryRun) {
       const warnings: string[] = [];
       if (values.port !== undefined) {
-        warnings.push("Saving will update PORT in .env/.env.local and requires a restart.");
+        warnings.push("Saving will update app.port in seqdesk.config.json and requires a restart.");
       }
       return NextResponse.json({
         success: true,
@@ -380,16 +387,16 @@ export async function POST(request: NextRequest) {
     });
 
     const warnings: string[] = [];
-    let updatedEnvFile: string | undefined;
+    let updatedConfigFile: string | undefined;
     if (values.port !== undefined) {
       try {
-        updatedEnvFile = await upsertPortInEnvFile(values.port);
+        updatedConfigFile = await upsertPortInConfigFile(values.port);
         warnings.push(
-          `Updated PORT in ${updatedEnvFile}. Restart SeqDesk to apply the new port.`
+          `Updated app.port in ${updatedConfigFile}. Restart SeqDesk to apply the new port.`
         );
       } catch (error) {
         warnings.push(
-          `Could not update PORT automatically: ${
+          `Could not update app.port automatically: ${
             error instanceof Error ? error.message : "unknown error"
           }`
         );
@@ -401,7 +408,8 @@ export async function POST(request: NextRequest) {
       message: "Infrastructure settings imported.",
       applied,
       warnings,
-      updatedEnvFile,
+      updatedConfigFile,
+      updatedEnvFile: updatedConfigFile,
     });
   } catch (error) {
     console.error("[Infrastructure Import] Error:", error);

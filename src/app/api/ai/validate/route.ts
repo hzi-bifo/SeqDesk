@@ -227,6 +227,6 @@ export async function GET() {
     moduleDisabled: false,
     message: getAnthropicApiKey()
       ? "AI validation is configured"
-      : "Add ANTHROPIC_API_KEY to seqdesk.config.json (runtime.anthropicApiKey) or .env to enable AI validation",
+      : "Add ANTHROPIC_API_KEY to seqdesk.config.json (runtime.anthropicApiKey) to enable AI validation",
   });
 }

@@ -17,6 +17,7 @@
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
+#   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
 #   SEQDESK_DATABASE_URL=postgres  - Optional database URL
 #   SEQDESK_ANTHROPIC_API_KEY=...  - Optional Anthropic API key
 #   SEQDESK_ADMIN_SECRET=...       - Optional admin secret
@@ -67,6 +68,7 @@ SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
+SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
@@ -265,6 +267,7 @@ Options:
   --data-path <path>           Sequencing data directory
   --run-dir <path>             Pipeline run directory
   --nextauth-url <url>         NEXTAUTH_URL override
+  --nextauth-secret <secret>   NEXTAUTH_SECRET override
   --database-url <url>         DATABASE_URL override
   --anthropic-api-key <key>    ANTHROPIC_API_KEY override
   --admin-secret <secret>      ADMIN_SECRET override
@@ -353,6 +356,14 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_NEXTAUTH_URL="$2"
+                shift
+                ;;
+            --nextauth-secret)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --nextauth-secret"
+                    exit 1
+                fi
+                SEQDESK_NEXTAUTH_SECRET="$2"
                 shift
                 ;;
             --database-url)
@@ -566,6 +577,14 @@ const values = {
       runtime?.nextAuthUrl
     )
   ),
+  nextAuthSecret: toOptionalString(
+    firstDefined(
+      root.nextAuthSecret,
+      root.nextauthSecret,
+      app?.nextAuthSecret,
+      runtime?.nextAuthSecret
+    )
+  ),
   databaseUrl: toOptionalString(
     firstDefined(root.databaseUrl, app?.databaseUrl, runtime?.databaseUrl)
   ),
@@ -673,6 +692,7 @@ if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(
 if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
 if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
+if (values.nextAuthSecret) out.SEQDESK_CFG_NEXTAUTH_SECRET = values.nextAuthSecret;
 if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
 if (values.anthropicApiKey) out.SEQDESK_CFG_ANTHROPIC_API_KEY = values.anthropicApiKey;
 if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
@@ -729,6 +749,7 @@ NODE
     apply_config_value SEQDESK_DATA_PATH SEQDESK_CFG_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
+    apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_CFG_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
     apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
     apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
@@ -751,7 +772,8 @@ NODE
     apply_config_value SEQDESK_METAXPATH_SHA256 SEQDESK_CFG_METAXPATH_SHA256
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
-    unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
+    unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_SECRET
+    unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
@@ -801,29 +823,7 @@ function trimString(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function parseEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return {};
-  const parsed = {};
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (const line of lines) {
-    if (!line || line.trim().startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    parsed[match[1]] = value;
-  }
-  return parsed;
-}
-
-const envPath = path.join(installDir, ".env");
 const configPath = path.join(installDir, "seqdesk.config.json");
-const envValues = parseEnvFile(envPath);
 
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -837,12 +837,36 @@ if (fs.existsSync(configPath)) {
   }
 }
 
-const port = trimString(envValues.PORT);
 const runtime = config && typeof config.runtime === "object" ? config.runtime : {};
-const nextAuthUrl =
-  trimString(runtime.nextAuthUrl) || trimString(envValues.NEXTAUTH_URL);
-const databaseUrl =
-  trimString(runtime.databaseUrl) || trimString(envValues.DATABASE_URL);
+const nextAuthUrl = trimString(runtime.nextAuthUrl);
+const databaseUrl = trimString(runtime.databaseUrl);
+const app = config && typeof config.app === "object" ? config.app : {};
+
+let port;
+if (typeof app.port === "number" && Number.isFinite(app.port)) {
+  const intValue = Math.trunc(app.port);
+  if (intValue > 0 && intValue <= 65535) {
+    port = String(intValue);
+  }
+} else if (typeof app.port === "string") {
+  const parsed = Number(app.port.trim());
+  if (Number.isFinite(parsed)) {
+    const intValue = Math.trunc(parsed);
+    if (intValue > 0 && intValue <= 65535) {
+      port = String(intValue);
+    }
+  }
+}
+if (!port && nextAuthUrl) {
+  try {
+    const parsed = new URL(nextAuthUrl);
+    if (parsed.port) {
+      port = parsed.port;
+    }
+  } catch {
+    // Ignore invalid URL.
+  }
+}
 const dataPath = trimString(config?.site?.dataBasePath);
 const runDir = trimString(config?.pipelines?.execution?.runDirectory);
 
@@ -1004,11 +1028,7 @@ print_preflight_summary() {
 }
 
 print_config_summary() {
-    local env_status="will create"
     local config_status="will create"
-    if [ -f ".env" ]; then
-        env_status="exists (will update)"
-    fi
     if [ -f "seqdesk.config.json" ]; then
         config_status="exists (will update)"
     fi
@@ -1029,7 +1049,6 @@ print_config_summary() {
     print_kv "Port" "${SEQDESK_PORT:-8000}"
     print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
     print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-default sqlite}"
-    print_kv ".env" "$env_status"
     print_kv "seqdesk.config.json" "$config_status"
 }
 
@@ -1096,16 +1115,6 @@ install_runtime_node_modules() {
     print_success "Runtime Node dependencies installed"
 }
 
-sed_inplace() {
-    local expr="$1"
-    local file="$2"
-    if [[ "${OS:-}" == "macos" ]]; then
-        sed -i '' "$expr" "$file"
-    else
-        sed -i "$expr" "$file"
-    fi
-}
-
 run_wizard() {
     if ! command_exists node; then
         return 1
@@ -1137,20 +1146,6 @@ run_wizard() {
     source "$wizard_out"
     rm -f "$wizard_out"
     return 0
-}
-
-set_env_var() {
-    local key="$1"
-    local value="$2"
-    if [ -z "$value" ]; then
-        return 0
-    fi
-
-    if grep -q "^${key}=" .env; then
-        sed_inplace "s|^${key}=.*|${key}=\"${value}\"|" .env
-    else
-        echo "${key}=\"${value}\"" >> .env
-    fi
 }
 
 ensure_seed_dependency() {
@@ -1237,7 +1232,12 @@ write_config() {
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
     SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
+    SEQDESK_INSTALL_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}" \
     SEQDESK_INSTALL_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
+    SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
+    SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
+    SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
+    SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
 const fs = require('fs');
 
@@ -1245,7 +1245,12 @@ const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
 const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
+const nextAuthSecret = process.env.SEQDESK_INSTALL_NEXTAUTH_SECRET || '';
 const databaseUrl = process.env.SEQDESK_INSTALL_DATABASE_URL || '';
+const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
+const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
+const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
+const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -1257,34 +1262,23 @@ function readJson(filePath) {
   }
 }
 
-function readDotEnv(filePath) {
-  if (!fs.existsSync(filePath)) return {};
-  const parsed = {};
-  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
-  for (const line of lines) {
-    if (!line || line.trim().startsWith('#')) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    parsed[match[1]] = value;
-  }
-  return parsed;
-}
-
 function toOptionalString(value) {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function toOptionalPort(value) {
+  const text = toOptionalString(value);
+  if (!text) return undefined;
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) return undefined;
+  const intValue = Math.trunc(parsed);
+  if (intValue <= 0 || intValue > 65535) return undefined;
+  return intValue;
+}
+
 const config = readJson('seqdesk.config.json') || {};
-if (!config.$schema) config.$schema = './docs/seqdesk-config-schema.json';
 
 config.site = config.site || {};
 if (dataPath) config.site.dataBasePath = dataPath;
@@ -1298,11 +1292,11 @@ if (runDir) {
   config.pipelines.execution.runDirectory = runDir;
 }
 
-const envValues = readDotEnv('.env');
-const nextAuthSecret = toOptionalString(envValues.NEXTAUTH_SECRET);
-const anthropicApiKey = toOptionalString(envValues.ANTHROPIC_API_KEY);
-const adminSecret = toOptionalString(envValues.ADMIN_SECRET);
-const blobReadWriteToken = toOptionalString(envValues.BLOB_READ_WRITE_TOKEN);
+const appPort = toOptionalPort(appPortRaw);
+if (appPort !== undefined) {
+  config.app = config.app && typeof config.app === 'object' ? config.app : {};
+  config.app.port = appPort;
+}
 
 const runtime = config.runtime && typeof config.runtime === 'object' ? config.runtime : {};
 if (nextAuthUrl) runtime.nextAuthUrl = nextAuthUrl;
@@ -1384,28 +1378,22 @@ function trimOrUndefined(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function loadEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (const line of lines) {
-    if (!line || line.startsWith("#")) continue;
-    const equals = line.indexOf("=");
-    if (equals < 1) continue;
-    const key = line.slice(0, equals).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let value = line.slice(equals + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
+function loadDatabaseUrlFromConfig() {
+  try {
+    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const parsed = JSON.parse(raw);
+    const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
+    if (!runtime || typeof runtime !== "object") return undefined;
+    const value = runtime.databaseUrl;
+    return trimOrUndefined(value);
+  } catch {
+    return undefined;
   }
 }
 
 async function main() {
-  loadEnvFile(".env");
-  loadEnvFile(".env.local");
   if (!process.env.DATABASE_URL) {
-    process.env.DATABASE_URL = "file:./dev.db";
+    process.env.DATABASE_URL = loadDatabaseUrlFromConfig() || "file:./dev.db";
   }
 
   const { PrismaClient } = require("@prisma/client");
@@ -1947,34 +1935,14 @@ fi
 print_config_summary
 confirm_config
 
-if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        cp .env.example .env
-    else
-        cat > .env <<'EOF'
-NEXTAUTH_SECRET=""
-NEXTAUTH_URL=""
-DATABASE_URL=""
-PORT=8000
-EOF
-    fi
-    SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
-    if grep -q "^NEXTAUTH_SECRET=" .env; then
-        sed_inplace "s|^NEXTAUTH_SECRET=.*|NEXTAUTH_SECRET=\"${SECRET}\"|" .env
-    else
-        echo "NEXTAUTH_SECRET=\"${SECRET}\"" >> .env
-    fi
-    print_success "Created .env with generated secret"
-else
-    print_info ".env already exists, skipping"
+if [ -z "$SEQDESK_DATABASE_URL" ]; then
+    SEQDESK_DATABASE_URL="file:./dev.db"
 fi
 
-set_env_var "NEXTAUTH_URL" "$SEQDESK_NEXTAUTH_URL"
-set_env_var "DATABASE_URL" "$SEQDESK_DATABASE_URL"
-set_env_var "ANTHROPIC_API_KEY" "$SEQDESK_ANTHROPIC_API_KEY"
-set_env_var "ADMIN_SECRET" "$SEQDESK_ADMIN_SECRET"
-set_env_var "BLOB_READ_WRITE_TOKEN" "$SEQDESK_BLOB_READ_WRITE_TOKEN"
-set_env_var "PORT" "$SEQDESK_PORT"
+if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
+    SEQDESK_NEXTAUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
+    print_info "Generated runtime.nextAuthSecret for seqdesk.config.json"
+fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 
@@ -2179,9 +2147,6 @@ if [ -n "$SEQDESK_DATA_PATH" ]; then
 fi
 if [ -n "$SEQDESK_RUN_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
     echo "Run directory: $SEQDESK_RUN_DIR"
-fi
-if [ -f "$SEQDESK_DIR/.env" ]; then
-    echo "Env file: $SEQDESK_DIR/.env"
 fi
 if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
     echo "Config file: $SEQDESK_DIR/seqdesk.config.json"
