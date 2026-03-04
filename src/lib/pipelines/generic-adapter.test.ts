@@ -279,6 +279,50 @@ describe("generic-adapter", () => {
     );
   });
 
+  it("rejects unsupported platform values for strict map_value transforms", async () => {
+    const pkg = makePackageIdOnly("metaxpath", [
+      {
+        id: "sequencer",
+        scope: "order",
+        source: "order.platform",
+        required: true,
+        transform: {
+          type: "map_value",
+          strict: true,
+          mapping: {
+            nanopore: "Nanopore",
+            pacbio: "PacBio",
+          },
+        },
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: {
+          platform: "Sequel II/IIe",
+          customFields: null,
+        },
+      },
+    ]);
+    mocks.resolveOrderPlatform.mockReturnValue("Sequel II/IIe");
+
+    const adapter = createGenericAdapter("metaxpath");
+    const result = await adapter!.validateInputs("study-1");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain(
+      'Sample SAMPLE-1: Unsupported sequencing platform "Sequel II/IIe" for this pipeline (expected mapping to: Nanopore, PacBio)'
+    );
+  });
+
   it("generates a samplesheet when generator returns content", async () => {
     const pkg = makePackageIdOnly("test");
     mocks.getPackage.mockReturnValue(pkg);
