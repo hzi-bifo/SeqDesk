@@ -1,0 +1,250 @@
+name: Install Smoke (Ubuntu)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  public-installer-ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8787" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-public" >> "$GITHUB_ENV"
+          echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-public.json" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/public-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/public-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/public-providers.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-seqdesk.config.json" >> "$GITHUB_ENV"
+
+      - name: Create infrastructure JSON
+        run: |
+          cat > "$INFRA_CONFIG" <<EOF
+          {
+            "port": $PORT,
+            "pipelinesEnabled": false,
+            "nextAuthUrl": "http://127.0.0.1:$PORT",
+            "databaseUrl": "file:./dev.db"
+          }
+          EOF
+
+      - name: Run public installer (headless)
+        run: |
+          set -euo pipefail
+          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
+            bash -s -- -y --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+
+      - name: Verify install artifacts
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+
+      - name: Validate installed config values
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const filePath = process.argv[1];
+            const expectedPort = Number(process.argv[2]);
+            const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+            if (config?.pipelines?.enabled !== false) {
+              console.error("Expected pipelines.enabled to be false");
+              process.exit(1);
+            }
+
+            const actualPort = Number(config?.app?.port);
+            if (actualPort !== expectedPort) {
+              console.error(`Expected app.port=${expectedPort}, got ${String(config?.app?.port)}`);
+              process.exit(1);
+            }
+          ' "$INSTALL_DIR/seqdesk.config.json" "$PORT"
+
+      - name: Start app and wait for auth providers endpoint
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+
+          PORT="$PORT" ./start.sh >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 90); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+
+      - name: Assert credentials provider exists
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+
+      - name: Upload install smoke artifacts (public installer)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-public-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  source-installer-ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8788" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-source" >> "$GITHUB_ENV"
+          echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-source.json" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/source-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/source-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/source-providers.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/source-seqdesk.config.json" >> "$GITHUB_ENV"
+
+      - name: Create infrastructure JSON
+        run: |
+          cat > "$INFRA_CONFIG" <<EOF
+          {
+            "port": $PORT,
+            "pipelinesEnabled": false,
+            "nextAuthUrl": "http://127.0.0.1:$PORT",
+            "databaseUrl": "file:./dev.db"
+          }
+          EOF
+
+      - name: Run source installer (headless)
+        run: |
+          set -euo pipefail
+          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
+            -y --without-pipelines --branch main --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+
+      - name: Verify install artifacts
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+
+      - name: Validate installed config values
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const filePath = process.argv[1];
+            const expectedPort = Number(process.argv[2]);
+            const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+            if (config?.pipelines?.enabled !== false) {
+              console.error("Expected pipelines.enabled to be false");
+              process.exit(1);
+            }
+
+            const actualPort = Number(config?.app?.port);
+            if (actualPort !== expectedPort) {
+              console.error(`Expected app.port=${expectedPort}, got ${String(config?.app?.port)}`);
+              process.exit(1);
+            }
+          ' "$INSTALL_DIR/seqdesk.config.json" "$PORT"
+
+      - name: Start app and wait for auth providers endpoint
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+
+          PORT="$PORT" npm run dev >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+
+      - name: Assert credentials provider exists
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+
+      - name: Upload install smoke artifacts (source installer)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-source-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
