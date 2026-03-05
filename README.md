@@ -82,3 +82,8 @@ npm test
 
 - Main docs: [https://www.seqdesk.com/docs](https://www.seqdesk.com/docs)
 - Releases and update info: [https://www.seqdesk.com](https://www.seqdesk.com)
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0.
+See the [LICENSE](./LICENSE) file for the full license text.
