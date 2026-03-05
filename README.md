@@ -1,6 +1,7 @@
 # SeqDesk
 
 [![CI](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml)
+[![Install Smoke (Ubuntu)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-smoke-ubuntu.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-smoke-ubuntu.yml)
 [![codecov](https://codecov.io/gh/hzi-bifo/SeqDesk/branch/main/graph/badge.svg?token=SMQXMDYACH)](https://codecov.io/gh/hzi-bifo/SeqDesk)
 
 SeqDesk is a sequencing facility management system for handling orders, samples, studies, sequencing files, and pipeline execution.
