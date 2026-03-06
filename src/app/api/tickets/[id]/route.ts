@@ -29,6 +29,19 @@ export async function GET(
             email: true,
           },
         },
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            name: true,
+          },
+        },
+        study: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
         messages: {
           orderBy: { createdAt: "asc" },
           include: {

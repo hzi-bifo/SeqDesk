@@ -1,12 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import {
@@ -17,12 +24,71 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+interface OrderOption {
+  id: string;
+  orderNumber: string;
+  name: string | null;
+}
+
+interface StudyOption {
+  id: string;
+  title: string;
+}
+
+type ReferenceValue = "none" | `order:${string}` | `study:${string}`;
+
 export default function NewMessagePage() {
   const router = useRouter();
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState("NORMAL");
+  const [orders, setOrders] = useState<OrderOption[]>([]);
+  const [studies, setStudies] = useState<StudyOption[]>([]);
+  const [reference, setReference] = useState<ReferenceValue>("none");
+  const [loadingReferences, setLoadingReferences] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const fetchReferences = async () => {
+      try {
+        const [ordersRes, studiesRes] = await Promise.all([
+          fetch("/api/orders"),
+          fetch("/api/studies"),
+        ]);
+
+        if (!ordersRes.ok || !studiesRes.ok) {
+          throw new Error("Failed to fetch references");
+        }
+
+        const ordersData = await ordersRes.json();
+        const studiesData = await studiesRes.json();
+
+        setOrders(ordersData.orders || []);
+        setStudies(studiesData || []);
+      } catch {
+        toast.error("Failed to load orders and studies");
+      } finally {
+        setLoadingReferences(false);
+      }
+    };
+
+    fetchReferences();
+  }, []);
+
+  const referenceOptions = useMemo(
+    () => [
+      { value: "none" as const, label: "No reference" },
+      ...orders.map((order) => ({
+        value: `order:${order.id}` as const,
+        label: `Order: ${order.orderNumber}${order.name ? ` · ${order.name}` : ""}`,
+      })),
+      ...studies.map((study) => ({
+        value: `study:${study.id}` as const,
+        label: `Study: ${study.title}`,
+      })),
+    ],
+    [orders, studies]
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,10 +101,13 @@ export default function NewMessagePage() {
     setSubmitting(true);
 
     try {
+      const orderId = reference.startsWith("order:") ? reference.slice("order:".length) : undefined;
+      const studyId = reference.startsWith("study:") ? reference.slice("study:".length) : undefined;
+
       const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, message, priority }),
+        body: JSON.stringify({ subject, message, priority, orderId, studyId }),
       });
 
       if (!res.ok) {
@@ -125,6 +194,29 @@ export default function NewMessagePage() {
             </div>
             <p className="text-xs text-muted-foreground">
               Use High or Urgent only for time-sensitive issues
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="reference">Related order or study</Label>
+            <Select
+              value={reference}
+              onValueChange={(value) => setReference(value as ReferenceValue)}
+              disabled={submitting || loadingReferences}
+            >
+              <SelectTrigger id="reference">
+                <SelectValue placeholder="Select an order or study (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {referenceOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Optional. Link this conversation to a specific order or study.
             </p>
           </div>
 

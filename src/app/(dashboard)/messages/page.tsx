@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   MessageSquare,
   Plus,
@@ -31,6 +32,15 @@ interface Ticket {
     lastName: string;
     email: string;
   };
+  order: {
+    id: string;
+    orderNumber: string;
+    name: string | null;
+  } | null;
+  study: {
+    id: string;
+    title: string;
+  } | null;
   _count: {
     messages: number;
   };
@@ -119,6 +129,9 @@ export default function MessagesPage() {
         const query = searchQuery.toLowerCase();
         const matchesSearch =
           ticket.subject.toLowerCase().includes(query) ||
+          ticket.order?.orderNumber.toLowerCase().includes(query) ||
+          ticket.order?.name?.toLowerCase().includes(query) ||
+          ticket.study?.title.toLowerCase().includes(query) ||
           ticket.user.firstName.toLowerCase().includes(query) ||
           ticket.user.lastName.toLowerCase().includes(query) ||
           ticket.user.email.toLowerCase().includes(query);
@@ -205,6 +218,11 @@ export default function MessagesPage() {
           </Button>
         )}
       </div>
+
+      <HelpBox title="What are messages?">
+        Use messages to contact the sequencing center with questions or requests.
+        Your messages will be sent to the sequencing center, and their answers will appear here in the conversation.
+      </HelpBox>
 
       {error && <ErrorBanner message={error} />}
 
@@ -373,6 +391,13 @@ export default function MessagesPage() {
                           {ticket._count.messages} {ticket._count.messages === 1 ? "message" : "messages"} · {formatDate(ticket.updatedAt)}
                           {isAdmin && ` · ${ticket.user.firstName} ${ticket.user.lastName}`}
                         </p>
+                        {(ticket.order || ticket.study) && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                            {ticket.order && `Order: ${ticket.order.orderNumber}`}
+                            {ticket.order && ticket.study && " · "}
+                            {ticket.study && `Study: ${ticket.study.title}`}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />

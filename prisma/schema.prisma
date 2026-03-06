@@ -67,6 +67,7 @@ model Order {
   samples          Sample[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
+  tickets          Ticket[]     @relation("TicketOrder")
 }
 
 model Study {
@@ -92,6 +93,7 @@ model Study {
   pipelineRuns       PipelineRun[]
   user               User          @relation("StudyOwner", fields: [userId], references: [id])
   notesEditedBy      User?         @relation("StudyNotesEditor", fields: [notesEditedById], references: [id])
+  tickets            Ticket[]      @relation("TicketStudy")
 }
 
 model Sampleset {
@@ -389,7 +391,11 @@ model Ticket {
   updatedAt          DateTime        @updatedAt
   closedAt           DateTime?
   userId             String
+  orderId            String?
+  studyId            String?
   user               User            @relation(fields: [userId], references: [id])
+  order              Order?          @relation("TicketOrder", fields: [orderId], references: [id])
+  study              Study?          @relation("TicketStudy", fields: [studyId], references: [id])
   messages           TicketMessage[]
 }
 
