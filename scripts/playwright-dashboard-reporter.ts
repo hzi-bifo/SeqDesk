@@ -19,8 +19,8 @@ import {
   type DashboardStatus,
   type DashboardTestCase,
   type DashboardTier,
-} from "../src/lib/testing/dashboard.ts";
-import { writeDashboardStatus } from "../src/lib/testing/dashboard-status.ts";
+} from "../src/lib/testing/dashboard";
+import { writeDashboardStatus } from "../src/lib/testing/dashboard-status";
 
 function getErrorMessage(error: TestError | undefined): string | null {
   if (!error) {
