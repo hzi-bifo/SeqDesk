@@ -13,6 +13,9 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
+    extraHTTPHeaders: {
+      "x-seqdesk-e2e": "playwright",
+    },
   },
   webServer: {
     command: "npm run dev",
@@ -32,6 +35,16 @@ export default defineConfig({
         storageState: "playwright/.auth/researcher.json",
       },
       dependencies: ["setup"],
+      testIgnore: /.*admin\.spec\.ts/,
+    },
+    {
+      name: "chromium-admin",
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "playwright/.auth/admin.json",
+      },
+      dependencies: ["setup"],
+      testMatch: /.*admin\.spec\.ts/,
     },
   ],
 });

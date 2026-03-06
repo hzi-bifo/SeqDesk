@@ -47,6 +47,7 @@ model Order {
   id               String       @id @default(cuid())
   orderNumber      String       @unique
   name             String?
+  generatedByE2E   Boolean      @default(false)
   status           String       @default("DRAFT")
   statusUpdatedAt  DateTime     @default(now())
   numberOfSamples  Int?
@@ -75,6 +76,7 @@ model Study {
   title              String
   alias              String?
   description        String?
+  generatedByE2E     Boolean       @default(false)
   checklistType      String?
   studyMetadata      String?
   readyForSubmission Boolean       @default(false)
