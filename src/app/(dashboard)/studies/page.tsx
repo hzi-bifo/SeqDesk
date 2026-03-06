@@ -7,12 +7,19 @@ import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Loader2,
   ChevronRight,
   Search,
   ArrowUpDown,
   ChevronDown,
   X,
+  MoreHorizontal,
   Trash2,
 } from "lucide-react";
 import {
@@ -69,6 +76,8 @@ export default function StudiesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingStudy, setDeletingStudy] = useState<Study | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedStudyIds, setSelectedStudyIds] = useState<Set<string>>(new Set());
+  const [bulkEditMode, setBulkEditMode] = useState(false);
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -179,18 +188,74 @@ export default function StudiesPage() {
     setUserFilter("");
   };
 
+  const deletableStudies = useMemo(
+    () =>
+      studies.filter(
+        (study) => !study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin)
+      ),
+    [studies, session?.user?.id, isFacilityAdmin]
+  );
+  const selectedStudies = useMemo(
+    () => deletableStudies.filter((study) => selectedStudyIds.has(study.id)),
+    [deletableStudies, selectedStudyIds]
+  );
+  const toggleStudySelection = (studyId: string, checked: boolean) => {
+    setSelectedStudyIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(studyId);
+      } else {
+        next.delete(studyId);
+      }
+      return next;
+    });
+  };
+
+  const exitBulkEditMode = () => {
+    setBulkEditMode(false);
+    setSelectedStudyIds(new Set());
+  };
+
   const handleDeleteStudy = async () => {
-    if (!deletingStudy) return;
+    const targetStudies = deletingStudy ? [deletingStudy] : selectedStudies;
+    if (targetStudies.length === 0) return;
+
     setDeleting(true);
     try {
-      const res = await fetch(`/api/studies/${deletingStudy.id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Failed to delete study");
+      const results = await Promise.all(
+        targetStudies.map(async (study) => {
+          const res = await fetch(`/api/studies/${study.id}`, { method: "DELETE" });
+          if (res.ok) {
+            return { id: study.id, ok: true as const };
+          }
+
+          const data = await res.json().catch(() => ({}));
+          return {
+            id: study.id,
+            ok: false as const,
+            error: data.error || `Failed to delete ${study.title}`,
+          };
+        })
+      );
+
+      const deletedIds = results.filter((result) => result.ok).map((result) => result.id);
+      const failed = results.filter((result) => !result.ok);
+
+      if (deletedIds.length > 0) {
+        setStudies((prev) => prev.filter((study) => !deletedIds.includes(study.id)));
+        setSelectedStudyIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+
+      if (failed.length > 0) {
+        toast.error(failed[0].error || "Failed to delete some studies");
         return;
       }
-      setStudies((prev) => prev.filter((s) => s.id !== deletingStudy.id));
-      toast.success("Study deleted");
+
+      toast.success(targetStudies.length === 1 ? "Study deleted" : "Studies deleted");
     } catch {
       toast.error("Failed to delete study");
     } finally {
@@ -223,6 +288,17 @@ export default function StudiesPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+          {isFacilityAdmin && (
+            bulkEditMode ? (
+              <Button size="sm" variant="outline" onClick={exitBulkEditMode}>
+                Done
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setBulkEditMode(true)}>
+                Edit Multiple
+              </Button>
+            )
+          )}
           {canCreateStudy && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/studies/new">
@@ -263,6 +339,24 @@ export default function StudiesPage() {
         </div>
       ) : (
         <div className="bg-card rounded-xl overflow-hidden border border-border">
+          {isFacilityAdmin && bulkEditMode && selectedStudies.length > 0 && (
+            <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3">
+              <p className="text-sm text-muted-foreground">
+                {selectedStudies.length} stud{selectedStudies.length !== 1 ? "ies" : "y"} selected
+              </p>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  setDeletingStudy(null);
+                  setDeleteDialogOpen(true);
+                }}
+              >
+                Delete Selected
+              </Button>
+            </div>
+          )}
+
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-border">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -383,40 +477,108 @@ export default function StudiesPage() {
             {filteredStudies.map((study) => {
               const status = study.submitted ? "published" : "draft";
               const statusConfig = STATUS_CONFIG[status];
+              const canDeleteStudy = !study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin);
+              const isSelected = selectedStudyIds.has(study.id);
 
               return (
-                <Link
+                <div
                   key={study.id}
-                  href={`/studies/${study.id}`}
-                  className="block px-4 py-3 hover:bg-secondary/80 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center"
+                  className={`block px-4 py-3 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center ${
+                    bulkEditMode && canDeleteStudy
+                      ? `${isSelected ? "bg-primary/10 ring-1 ring-inset ring-primary/30" : "hover:bg-secondary/80"} cursor-pointer`
+                      : "hover:bg-secondary/80"
+                  }`}
+                  onClick={
+                    bulkEditMode && canDeleteStudy
+                      ? () => toggleStudySelection(study.id, !isSelected)
+                      : undefined
+                  }
                 >
                   {/* Mobile layout */}
                   <div className="md:hidden">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
-                          {study.title}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {study._count.samples} samples · {formatDate(study.createdAt)}
-                        </p>
-                        {study.studyAccessionId && (
-                          <p className="text-xs text-emerald-600 font-mono mt-0.5">
-                            {study.studyAccessionId}
+                      {bulkEditMode ? (
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {study.title}
                           </p>
-                        )}
-                        {isFacilityAdmin && (
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {study.user.firstName} {study.user.lastName}
+                            {study._count.samples} samples · {formatDate(study.createdAt)}
                           </p>
+                          {study.studyAccessionId && (
+                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                              {study.studyAccessionId}
+                            </p>
+                          )}
+                          {isFacilityAdmin && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {study.user.firstName} {study.user.lastName}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <Link href={`/studies/${study.id}`} className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {study.title}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {study._count.samples} samples · {formatDate(study.createdAt)}
+                          </p>
+                          {study.studyAccessionId && (
+                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                              {study.studyAccessionId}
+                            </p>
+                          )}
+                          {isFacilityAdmin && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {study.user.firstName} {study.user.lastName}
+                            </p>
+                          )}
+                        </Link>
+                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {bulkEditMode ? (
+                          <div className="flex items-center gap-2">
+                            <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                            <span className={`text-xs font-medium ${statusConfig.color}`}>
+                              {statusConfig.label}
+                            </span>
+                          </div>
+                        ) : (
+                          <Link href={`/studies/${study.id}`} className="flex items-center gap-2">
+                            <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                            <span className={`text-xs font-medium ${statusConfig.color}`}>
+                              {statusConfig.label}
+                            </span>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                          </Link>
                         )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                        <span className={`text-xs font-medium ${statusConfig.color}`}>
-                          {statusConfig.label}
-                        </span>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                        {canDeleteStudy && !bulkEditMode && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={`Options for ${study.title}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  setDeletingStudy(study);
+                                  setDeleteDialogOpen(true);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete study
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -425,13 +587,28 @@ export default function StudiesPage() {
                   <div className="hidden md:contents">
                     {/* Study Info */}
                     <div className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} min-w-0`}>
-                      <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
-                        {study.title}
-                      </p>
-                      {study.studyAccessionId && (
-                        <p className="text-xs text-emerald-600 font-mono mt-0.5">
-                          {study.studyAccessionId}
-                        </p>
+                      {bulkEditMode ? (
+                        <>
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {study.title}
+                          </p>
+                          {study.studyAccessionId && (
+                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                              {study.studyAccessionId}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <Link href={`/studies/${study.id}`}>
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {study.title}
+                          </p>
+                          {study.studyAccessionId && (
+                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                              {study.studyAccessionId}
+                            </p>
+                          )}
+                        </Link>
                       )}
                     </div>
 
@@ -457,7 +634,7 @@ export default function StudiesPage() {
                     {/* Samples */}
                     <div className="col-span-1 text-right">
                       <span className="text-sm tabular-nums text-muted-foreground">
-                        {study._count.samples}
+                        {study._count.samples} {study._count.samples === 1 ? "sample" : "samples"}
                       </span>
                     </div>
 
@@ -468,26 +645,48 @@ export default function StudiesPage() {
                       </span>
                     </div>
 
-                    {/* Actions */}
-                    <div className="col-span-1 flex items-center justify-end gap-1">
-                      {!study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin) && (
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDeletingStudy(study);
-                            setDeleteDialogOpen(true);
-                          }}
-                          className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                          title="Delete study"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                    <div className="col-span-1 flex items-center justify-end">
+                      {canDeleteStudy ? (
+                        bulkEditMode ? (
+                          <div className="h-8 w-8" />
+                        ) : (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={`Options for ${study.title}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  setDeletingStudy(study);
+                                  setDeleteDialogOpen(true);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete study
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )
+                      ) : (
+                        <div>
+                          {!bulkEditMode && (
+                            <Link href={`/studies/${study.id}`}>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+                            </Link>
+                          )}
+                        </div>
                       )}
-                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                     </div>
                   </div>
-                </Link>
+                </div>
               );
             })}
           </div>
@@ -516,7 +715,9 @@ export default function StudiesPage() {
           <DialogHeader>
             <DialogTitle>Delete Study</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &quot;{deletingStudy?.title}&quot;? Samples will be unassigned but not deleted. This action cannot be undone.
+              {deletingStudy
+                ? `Are you sure you want to delete "${deletingStudy.title}"? Samples will be unassigned but not deleted. This action cannot be undone.`
+                : `Are you sure you want to delete ${selectedStudies.length} selected studies? Samples will be unassigned but not deleted. This action cannot be undone.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
