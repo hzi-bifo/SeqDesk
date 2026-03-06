@@ -5,6 +5,7 @@
 # CLI usage: curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
 #
 # Options (environment variables):
+#   SEQDESK_REPO=https://github.com/... - Source repository override (advanced/CI)
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
 #   SEQDESK_BRANCH=main            - Git branch to install (default: main)
 #   SEQDESK_SKIP_DEPS=1            - Skip dependency checks
@@ -51,7 +52,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-SEQDESK_REPO="https://github.com/hzi-bifo/SeqDesk.git"
+SEQDESK_REPO="${SEQDESK_REPO:-https://github.com/hzi-bifo/SeqDesk.git}"
 SEQDESK_DIR="${SEQDESK_DIR:-./seqdesk}"
 SEQDESK_BRANCH="${SEQDESK_BRANCH:-main}"
 MIN_NODE_VERSION=18
@@ -274,6 +275,18 @@ print_git_install_instructions() {
             echo "  https://git-scm.com/downloads"
             ;;
     esac
+}
+
+resolve_absolute_dir() {
+    local target="$1"
+    local parent
+    local base
+    parent="$(dirname "$target")"
+    if base="$(cd "$parent" 2>/dev/null && pwd)"; then
+        printf '%s/%s' "$base" "$(basename "$target")"
+    else
+        printf '%s/%s' "$PWD" "$(basename "$target")"
+    fi
 }
 
 parse_args() {
@@ -797,6 +810,16 @@ run_wizard() {
     return 0
 }
 
+install_source_node_modules() {
+    if [ -f package-lock.json ]; then
+        print_info "Running npm ci..."
+        npm ci --no-audit --no-fund
+    else
+        print_warning "package-lock.json not found, falling back to npm install."
+        npm install --no-audit --no-fund
+    fi
+}
+
 ensure_seed_dependency() {
     local module_name="$1"
 
@@ -822,6 +845,91 @@ ensure_seed_dependency() {
 
     print_warning "Could not install ${module_name}; seed may fail."
     return 1
+}
+
+write_start_script() {
+    cat > start.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+if [[ -n "${1:-}" ]]; then
+  export PORT="$1"
+fi
+
+if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
+  CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
+const fs = require("fs");
+
+function toOptionalPort(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const intValue = Math.trunc(value);
+    if (intValue > 0 && intValue <= 65535) return String(intValue);
+    return "";
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return "";
+    const intValue = Math.trunc(parsed);
+    if (intValue > 0 && intValue <= 65535) return String(intValue);
+  }
+  return "";
+}
+
+try {
+  const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+  const appPort = toOptionalPort(parsed?.app?.port);
+  if (appPort) {
+    process.stdout.write(appPort);
+    process.exit(0);
+  }
+  const nextAuthUrl = parsed?.runtime?.nextAuthUrl;
+  if (typeof nextAuthUrl === "string" && nextAuthUrl.trim()) {
+    try {
+      const parsedUrl = new URL(nextAuthUrl);
+      if (parsedUrl.port) {
+        process.stdout.write(parsedUrl.port);
+      }
+    } catch {
+      // Ignore invalid URL.
+    }
+  }
+} catch {
+  // Ignore invalid or missing config.
+}
+NODE
+)
+  if [[ -n "$CONFIG_PORT" ]]; then
+    export PORT="$CONFIG_PORT"
+  fi
+fi
+
+if [[ -z "${PORT:-}" ]]; then
+  export PORT=3000
+fi
+
+export NEXT_TELEMETRY_DISABLED="${NEXT_TELEMETRY_DISABLED:-1}"
+export NODE_ENV=production
+
+if [[ ! -f ".next/BUILD_ID" ]]; then
+  echo "Next.js build output not found. Building SeqDesk..."
+  npm run build
+fi
+
+APP_VERSION=""
+if [[ -f package.json ]]; then
+  APP_VERSION=$(node -p "try { require('./package.json').version || '' } catch (e) { '' }" 2>/dev/null || true)
+fi
+if [[ -n "$APP_VERSION" ]]; then
+  echo "SeqDesk version: v${APP_VERSION}"
+fi
+
+exec npm run start
+EOF
+    chmod +x start.sh
 }
 
 install_private_metaxpath_if_configured() {
@@ -1179,6 +1287,8 @@ on_error() {
 }
 
 parse_args "$@"
+SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
+SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
 
 trap on_error ERR
 
@@ -1443,18 +1553,21 @@ fi
 # Clone repository
 print_step "Downloading SeqDesk"
 
-if [ -d "$SEQDESK_DIR" ]; then
+EXISTING_BACKUP_PATH=""
+if [ -e "$SEQDESK_DIR" ]; then
     if is_truthy "$SEQDESK_YES"; then
-        print_error "Directory $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
+        print_error "Target path $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
         exit 1
     fi
-    print_warning "Directory $SEQDESK_DIR already exists"
-    overwrite_reply=$(read_input "Overwrite? (y/N) ")
+    print_warning "Target path already exists: $SEQDESK_DIR"
+    overwrite_reply=$(read_input "Backup and replace? (y/N) ")
     if [[ ! "$overwrite_reply" =~ ^[Yy]$ ]]; then
         print_error "Installation cancelled"
         exit 1
     fi
-    rm -rf "$SEQDESK_DIR"
+    EXISTING_BACKUP_PATH="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+    mv "$SEQDESK_DIR" "$EXISTING_BACKUP_PATH"
+    print_success "Moved existing install to $EXISTING_BACKUP_PATH"
 fi
 
 print_info "Cloning repository..."
@@ -1471,12 +1584,11 @@ fi
 # Install npm dependencies
 print_step "Installing Node dependencies"
 
-print_info "Running npm install..."
-npm install
+install_source_node_modules
 
 if [ ! -x "./node_modules/.bin/next" ]; then
-    print_error "next CLI is missing after npm install (node_modules/.bin/next)."
-    print_error "Run 'npm install' manually in $SEQDESK_DIR and retry."
+    print_error "next CLI is missing after dependency install (node_modules/.bin/next)."
+    print_error "Run 'npm ci' manually in $SEQDESK_DIR and retry."
     exit 1
 fi
 
@@ -1514,7 +1626,21 @@ if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
     print_info "Generated runtime.nextAuthSecret for seqdesk.config.json"
 fi
 
+export NEXTAUTH_URL="$SEQDESK_NEXTAUTH_URL"
+export NEXTAUTH_SECRET="$SEQDESK_NEXTAUTH_SECRET"
+export DATABASE_URL="$SEQDESK_DATABASE_URL"
+if [ -n "$SEQDESK_ANTHROPIC_API_KEY" ]; then
+    export ANTHROPIC_API_KEY="$SEQDESK_ANTHROPIC_API_KEY"
+fi
+if [ -n "$SEQDESK_ADMIN_SECRET" ]; then
+    export ADMIN_SECRET="$SEQDESK_ADMIN_SECRET"
+fi
+if [ -n "$SEQDESK_BLOB_READ_WRITE_TOKEN" ]; then
+    export BLOB_READ_WRITE_TOKEN="$SEQDESK_BLOB_READ_WRITE_TOKEN"
+fi
+
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
+write_start_script
 
 # Setup database
 print_step "Initializing database"
@@ -1610,6 +1736,9 @@ if [ -n "$INSTALLED_VERSION" ]; then
     echo "Installed version: v$INSTALLED_VERSION"
 fi
 echo "App directory: $SEQDESK_DIR"
+if [ -n "$EXISTING_BACKUP_PATH" ]; then
+    echo "Previous install backup: $EXISTING_BACKUP_PATH"
+fi
 if [ -n "$NODE_VERSION" ]; then
     echo "Node: v$NODE_VERSION"
 fi
@@ -1632,9 +1761,12 @@ echo ""
 echo "To start the application:"
 echo ""
 echo -e "  ${BLUE}cd $SEQDESK_DIR${NC}"
-echo -e "  ${BLUE}PORT=${SEQDESK_PORT:-8000} npm run dev${NC}"
+echo -e "  ${BLUE}./start.sh${NC}"
 echo ""
 echo "Then open http://localhost:${SEQDESK_PORT:-8000} in your browser."
+echo ""
+echo "For live source development:"
+echo -e "  ${BLUE}PORT=${SEQDESK_PORT:-8000} npm run dev${NC}"
 echo ""
 echo "Default login credentials:"
 echo "  Admin:      admin@example.com / admin"
