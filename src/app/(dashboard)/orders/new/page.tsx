@@ -250,6 +250,7 @@ function EditableCell({
     <div className="relative h-full">
       {field?.type === "textarea" ? (
         <textarea
+          data-testid={`sample-cell-${row.index}-${column.id}`}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onBlur={onBlur}
@@ -266,6 +267,7 @@ function EditableCell({
       ) : (
         <input
           ref={inputRef}
+          data-testid={`sample-cell-${row.index}-${column.id}`}
           type={inputType}
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -337,6 +339,7 @@ function SelectCell({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          data-testid={`sample-cell-${row.index}-${column.id}`}
           onClick={onFocus}
           disabled={!isEditable}
           className={cn(
@@ -2119,6 +2122,7 @@ export default function NewOrderPage() {
             <div className="relative">
               <Input
                 id={field.id}
+                data-testid={`order-field-${field.name}`}
                 value={value as string}
                 onChange={(e) => setFieldValue(field.name, e.target.value)}
                 onFocus={() => setFocusedField(field)}
@@ -2156,6 +2160,7 @@ export default function NewOrderPage() {
             <div className="relative">
               <textarea
                 id={field.id}
+                data-testid={`order-field-${field.name}`}
                 value={value as string}
                 onChange={(e) => setFieldValue(field.name, e.target.value)}
                 onFocus={() => setFocusedField(field)}
@@ -2210,6 +2215,7 @@ export default function NewOrderPage() {
             </Label>
             <Input
               id={field.id}
+              data-testid={`order-field-${field.name}`}
               type="number"
               value={value as string}
               onChange={(e) => setFieldValue(field.name, e.target.value)}
@@ -2235,6 +2241,7 @@ export default function NewOrderPage() {
             </Label>
             <Input
               id={field.id}
+              data-testid={`order-field-${field.name}`}
               type="date"
               value={value as string}
               onChange={(e) => setFieldValue(field.name, e.target.value)}
@@ -2252,6 +2259,7 @@ export default function NewOrderPage() {
             <input
               type="checkbox"
               id={field.id}
+              data-testid={`order-field-${field.name}`}
               checked={value as boolean}
               onChange={(e) => setFieldValue(field.name, e.target.checked)}
               onFocus={() => setFocusedField(field)}
@@ -2277,7 +2285,10 @@ export default function NewOrderPage() {
               disabled={saving}
               onOpenChange={(open) => { if (open) setFocusedField(field); }}
             >
-              <SelectTrigger className={largeStyle ? "max-w-md h-12" : "max-w-md"}>
+              <SelectTrigger
+                data-testid={`order-field-${field.name}`}
+                className={largeStyle ? "max-w-md h-12" : "max-w-md"}
+              >
                 <SelectValue placeholder={field.placeholder || `Select ${field.label.toLowerCase()}`} />
               </SelectTrigger>
               <SelectContent>
@@ -2696,7 +2707,12 @@ export default function NewOrderPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <Button onClick={handleAddSample} size="sm" disabled={saving || !canEditSamples}>
+            <Button
+              onClick={handleAddSample}
+              size="sm"
+              disabled={saving || !canEditSamples}
+              data-testid="add-sample-button"
+            >
               <Plus className="h-4 w-4 mr-1" />
               Add Sample
             </Button>
@@ -2768,7 +2784,13 @@ export default function NewOrderPage() {
             </table>
           </div>
           <div className="bg-muted/30 px-3 py-2 border-t flex items-center justify-between">
-            <Button variant="ghost" size="sm" onClick={handleAddSample} disabled={saving || !canEditSamples}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleAddSample}
+              disabled={saving || !canEditSamples}
+              data-testid="add-row-button"
+            >
               <Plus className="h-4 w-4 mr-1" />
               Add Row
             </Button>
@@ -3295,14 +3317,14 @@ export default function NewOrderPage() {
               }
 
               return (
-                <Button onClick={handleSubmit}>
+                <Button onClick={handleSubmit} data-testid="submit-order-button">
                   <Check className="h-4 w-4 mr-2" />
                   {isEditMode ? "Update Order" : "Submit for Sequencing"}
                 </Button>
               );
             })()
           ) : (
-            <Button onClick={nextStep} disabled={saving}>
+            <Button onClick={nextStep} disabled={saving} data-testid="next-step-button">
               Next
               <ChevronRight className="h-4 w-4 ml-2" />
             </Button>

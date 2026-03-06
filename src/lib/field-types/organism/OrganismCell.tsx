@@ -282,6 +282,7 @@ export function OrganismCell<T extends SampleRow>({
         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none z-10" />
         <input
           ref={inputRef}
+          data-testid={`sample-cell-${row.index}-${column.id}`}
           value={inputValue}
           onChange={(e) => {
             setInputValue(e.target.value);
