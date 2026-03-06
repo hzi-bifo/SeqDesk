@@ -2594,6 +2594,7 @@ export default function NewOrderPage() {
           type="button"
           onClick={() => handleRemoveSample(row.original.id)}
           disabled={saving || !canEditSamples}
+          data-testid={`remove-sample-button-${row.index}`}
           className="w-full h-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
         >
           <Trash2 className="h-4 w-4" />
@@ -2688,19 +2689,30 @@ export default function NewOrderPage() {
             {samples.length > 0 && (hasSampleAliasField || hasOrganismField) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={saving || !canEditSamples}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={saving || !canEditSamples}
+                    data-testid="sample-quick-actions-button"
+                  >
                     <ChevronDown className="h-4 w-4 mr-1" />
                     Quick Actions
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {hasSampleAliasField && (
-                    <DropdownMenuItem onClick={handleAutoGenerateAliases}>
+                    <DropdownMenuItem
+                      onClick={handleAutoGenerateAliases}
+                      data-testid="sample-quick-action-autogenerate-aliases"
+                    >
                       Auto-generate sample aliases
                     </DropdownMenuItem>
                   )}
                   {hasOrganismField && samples.length > 1 && (
-                    <DropdownMenuItem onClick={handleCopyOrganismToAll}>
+                    <DropdownMenuItem
+                      onClick={handleCopyOrganismToAll}
+                      data-testid="sample-quick-action-copy-organism"
+                    >
                       Copy organism to all samples
                     </DropdownMenuItem>
                   )}

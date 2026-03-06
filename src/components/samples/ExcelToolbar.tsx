@@ -148,6 +148,7 @@ export function ExcelToolbar({
         size="sm"
         onClick={handleDownload}
         disabled={disabled || downloading}
+        data-testid="sample-excel-template-button"
       >
         <Download className="h-4 w-4 mr-1" />
         {downloading ? "Generating..." : "Excel Template"}
@@ -157,12 +158,14 @@ export function ExcelToolbar({
         size="sm"
         onClick={handleUploadClick}
         disabled={disabled || uploading}
+        data-testid="sample-excel-upload-button"
       >
         <Upload className="h-4 w-4 mr-1" />
         {uploading ? "Reading..." : "Upload Excel"}
       </Button>
       <input
         ref={fileInputRef}
+        data-testid="sample-excel-file-input"
         type="file"
         accept=".xlsx,.xls"
         className="hidden"

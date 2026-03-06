@@ -35,7 +35,10 @@ export function UploadValidationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+      <DialogContent
+        className="max-w-2xl max-h-[80vh] flex flex-col"
+        data-testid="sample-excel-validation-dialog"
+      >
         <DialogHeader>
           <DialogTitle>Import Excel Data</DialogTitle>
           <DialogDescription>
@@ -159,6 +162,7 @@ export function UploadValidationDialog({
             <Button
               variant="outline"
               onClick={() => onImport("valid-only", "replace")}
+              data-testid="sample-excel-import-valid-button"
             >
               Import Valid Only ({validCount})
             </Button>
@@ -167,6 +171,7 @@ export function UploadValidationDialog({
             <Button
               onClick={() => onImport("all", "replace")}
               variant={hasErrors ? "outline" : "default"}
+              data-testid="sample-excel-import-all-button"
             >
               Import {hasErrors ? "All" : ""} ({totalRows} row{totalRows !== 1 ? "s" : ""})
             </Button>

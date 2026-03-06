@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, type ComponentType } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
@@ -134,6 +135,7 @@ type ImportedOrderConfig = {
 };
 
 export default function FormBuilderPage() {
+  const searchParams = useSearchParams();
   // Module states
   const { enabled: aiModuleEnabled } = useModule("ai-validation");
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
@@ -242,6 +244,7 @@ export default function FormBuilderPage() {
   const [instructionsSaving, setInstructionsSaving] = useState(false);
   const [allowDeleteSubmittedOrders, setAllowDeleteSubmittedOrders] = useState(false);
   const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
+  const initialTab = searchParams.get("tab") === "settings" ? "settings" : "fields";
 
   // Fetch form configuration
   useEffect(() => {
@@ -1073,7 +1076,7 @@ export default function FormBuilderPage() {
   }
 
   return (
-    <Tabs defaultValue="fields">
+    <Tabs defaultValue={initialTab}>
       {/* Sticky header bar — outside PageContainer, matching orders detail page */}
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="flex items-center h-[52px] px-6 lg:px-8">
@@ -1117,7 +1120,14 @@ export default function FormBuilderPage() {
             </TabsList>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Button onClick={handleSave} disabled={saving || justSaved} variant="outline" size="sm" className="bg-white">
+            <Button
+              onClick={handleSave}
+              disabled={saving || justSaved}
+              variant="outline"
+              size="sm"
+              className="bg-white"
+              data-testid="form-builder-save-config-button"
+            >
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1389,7 +1399,13 @@ export default function FormBuilderPage() {
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">Active Per-Order Fields</h2>
-          <Button onClick={() => handleAddField(false)} variant="outline" size="sm" className="bg-white">
+          <Button
+            onClick={() => handleAddField(false)}
+            variant="outline"
+            size="sm"
+            className="bg-white"
+            data-testid="form-builder-order-add-field-button"
+          >
             <Plus className="h-4 w-4 mr-2" />
             Add Custom Field
           </Button>
@@ -1577,7 +1593,13 @@ export default function FormBuilderPage() {
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">Per-Sample Fields</h2>
-          <Button onClick={() => handleAddField(true)} variant="outline" size="sm" className="bg-white">
+          <Button
+            onClick={() => handleAddField(true)}
+            variant="outline"
+            size="sm"
+            className="bg-white"
+            data-testid="form-builder-sample-add-field-button"
+          >
             <Plus className="h-4 w-4 mr-2" />
             Add Custom Field
           </Button>
@@ -2431,7 +2453,7 @@ export default function FormBuilderPage() {
           </GlassCard>
 
           {/* Data Handling */}
-          <GlassCard className="p-6">
+          <GlassCard id="data-handling" className="p-6">
             <div className="flex items-start gap-3">
               <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
                 <Database className="h-5 w-5 text-muted-foreground" />
@@ -2597,6 +2619,7 @@ export default function FormBuilderPage() {
                   </Label>
                   <Input
                     id="fieldLabel"
+                    data-testid="form-builder-field-label"
                     value={fieldLabel}
                     onChange={(e) => {
                       setFieldLabel(e.target.value);
@@ -2612,6 +2635,7 @@ export default function FormBuilderPage() {
                   <Label htmlFor="fieldName">Field Key</Label>
                   <Input
                     id="fieldName"
+                    data-testid="form-builder-field-name"
                     value={fieldName}
                     onChange={(e) => setFieldName(e.target.value)}
                     placeholder="e.g., sample_type"
@@ -2626,7 +2650,7 @@ export default function FormBuilderPage() {
                       value={fieldType}
                       onValueChange={(v) => setFieldType(v as FieldType)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="form-builder-field-type">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -2647,7 +2671,7 @@ export default function FormBuilderPage() {
                       value={fieldGroupId || "none"}
                       onValueChange={(v) => setFieldGroupId(v === "none" ? "" : v)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="form-builder-field-group">
                         <SelectValue placeholder="Select group..." />
                       </SelectTrigger>
                       <SelectContent>
@@ -2670,6 +2694,7 @@ export default function FormBuilderPage() {
                         checked={fieldVisible}
                         onChange={(e) => setFieldVisible(e.target.checked)}
                         className="rounded border-input h-4 w-4"
+                        data-testid="form-builder-field-visible"
                       />
                       <span className="text-sm">Visible</span>
                     </label>
@@ -2679,6 +2704,7 @@ export default function FormBuilderPage() {
                         checked={fieldRequired}
                         onChange={(e) => setFieldRequired(e.target.checked)}
                         className="rounded border-input h-4 w-4"
+                        data-testid="form-builder-field-required"
                       />
                       <span className="text-sm">Required</span>
                     </label>
@@ -2688,6 +2714,7 @@ export default function FormBuilderPage() {
                         checked={fieldAdminOnly}
                         onChange={(e) => setFieldAdminOnly(e.target.checked)}
                         className="rounded border-input h-4 w-4"
+                        data-testid="form-builder-field-admin-only"
                       />
                       <span className="text-sm flex items-center gap-1">
                         <Shield className="h-3 w-3 text-slate-500" />
@@ -3071,7 +3098,11 @@ Example: A project code in format PROJ-XXXX where XXXX is a 4-digit number. Shou
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveField} disabled={fieldType === "mixs" && fieldMixsChecklists.length === 0}>
+            <Button
+              onClick={handleSaveField}
+              disabled={fieldType === "mixs" && fieldMixsChecklists.length === 0}
+              data-testid="form-builder-save-field-button"
+            >
               {editingField ? "Update" : "Add"} Field
             </Button>
           </DialogFooter>
