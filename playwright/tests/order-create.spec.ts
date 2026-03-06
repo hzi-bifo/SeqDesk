@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import {
   continueToReviewFromDetailPage,
+  createDraftOrder,
   createAndSubmitOrder,
+  deleteCurrentOrder,
   getOrderSampleIds,
 } from "./helpers";
 
@@ -49,6 +51,23 @@ test("researcher can create an order with multiple samples", async ({ page }) =>
   await expect(page.getByRole("cell", { name: "15", exact: true })).toBeVisible();
 });
 
+test("researcher can delete a draft order from the detail page", async ({ page }) => {
+  const orderName = `Playwright Draft Delete ${Date.now()}`;
+  const { orderPath } = await createDraftOrder(page, orderName, 1);
+
+  await page.goto(orderPath);
+  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByText(orderName).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Samples (0)" })).toBeVisible();
+
+  await deleteCurrentOrder(page);
+
+  await expect(page).toHaveURL("/orders");
+  const searchInput = page.getByPlaceholder("Search orders...");
+  await searchInput.fill(orderName);
+  await expect(page.getByText("No orders match your filters")).toBeVisible();
+});
+
 test("researcher can edit submitted order information", async ({ page }) => {
   const originalName = `Playwright Editable ${Date.now()}`;
   const updatedName = `${originalName} Updated`;
@@ -69,7 +88,8 @@ test("researcher can edit submitted order information", async ({ page }) => {
   await expect(page.getByText("Ready to update")).toBeVisible();
   await page.getByRole("button", { name: /update order/i }).click();
 
-  await expect(page).toHaveURL(/\/orders\/.+/);
+  await expect(page).toHaveURL(/\/orders\/[^/]+$/);
+  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByText(updatedName)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (1)" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "55", exact: true })).toBeVisible();

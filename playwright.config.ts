@@ -29,13 +29,22 @@ export default defineConfig({
       testMatch: /.*\.setup\.ts/,
     },
     {
+      name: "chromium-config-admin",
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "playwright/.auth/admin.json",
+      },
+      dependencies: ["setup"],
+      testMatch: /.*form-config-roundtrip\.spec\.ts/,
+    },
+    {
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
         storageState: "playwright/.auth/researcher.json",
       },
-      dependencies: ["setup"],
-      testIgnore: /.*admin\.spec\.ts/,
+      dependencies: ["setup", "chromium-config-admin"],
+      testIgnore: [/.*admin\.spec\.ts/, /.*form-config-roundtrip\.spec\.ts/],
     },
     {
       name: "chromium-admin",
@@ -43,7 +52,7 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         storageState: "playwright/.auth/admin.json",
       },
-      dependencies: ["setup"],
+      dependencies: ["setup", "chromium-config-admin"],
       testMatch: /.*admin\.spec\.ts/,
     },
   ],
