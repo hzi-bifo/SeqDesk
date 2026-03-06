@@ -165,7 +165,7 @@ export default function HelpPage() {
       </section>
 
       <section>
-        <div className="rounded-lg border bg-muted/30 p-5">
+        <div className="rounded-lg border bg-card p-5">
           <h2 className="text-base font-semibold">Need Help?</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Contact your sequencing facility team for project-specific support and submission policy questions.
