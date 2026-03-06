@@ -56,6 +56,15 @@ interface Ticket {
     lastName: string;
     email: string;
   };
+  order: {
+    id: string;
+    orderNumber: string;
+    name: string | null;
+  } | null;
+  study: {
+    id: string;
+    title: string;
+  } | null;
   messages: Message[];
 }
 
@@ -242,6 +251,21 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 </>
               )}
             </div>
+            {(ticket.order || ticket.study) && (
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-sm text-muted-foreground">
+                <span>Related to</span>
+                {ticket.order && (
+                  <Link href={`/orders/${ticket.order.id}`} className="text-primary hover:underline">
+                    {ticket.order.orderNumber}
+                  </Link>
+                )}
+                {ticket.study && (
+                  <Link href={`/studies/${ticket.study.id}`} className="text-primary hover:underline">
+                    {ticket.study.title}
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
