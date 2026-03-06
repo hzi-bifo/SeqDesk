@@ -20,86 +20,84 @@ export async function GET(
 
   try {
     const supportsReferences = await ticketReferencesSupported();
-    const ticket = await db.ticket.findUnique(
-      supportsReferences
-        ? {
-            where: { id },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                },
+    const ticket = supportsReferences
+      ? await db.ticket.findUnique({
+          where: { id },
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
               },
-              order: {
-                select: {
-                  id: true,
-                  orderNumber: true,
-                  name: true,
-                },
+            },
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                name: true,
               },
-              study: {
-                select: {
-                  id: true,
-                  title: true,
-                },
+            },
+            study: {
+              select: {
+                id: true,
+                title: true,
               },
-              messages: {
-                orderBy: { createdAt: "asc" },
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      firstName: true,
-                      lastName: true,
-                      role: true,
-                    },
+            },
+            messages: {
+              orderBy: { createdAt: "asc" },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    role: true,
                   },
                 },
               },
             },
-          }
-        : {
-            where: { id },
-            select: {
-              id: true,
-              subject: true,
-              status: true,
-              priority: true,
-              lastUserMessageAt: true,
-              lastAdminMessageAt: true,
-              userReadAt: true,
-              adminReadAt: true,
-              createdAt: true,
-              updatedAt: true,
-              closedAt: true,
-              userId: true,
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                },
+          },
+        })
+      : await db.ticket.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            subject: true,
+            status: true,
+            priority: true,
+            lastUserMessageAt: true,
+            lastAdminMessageAt: true,
+            userReadAt: true,
+            adminReadAt: true,
+            createdAt: true,
+            updatedAt: true,
+            closedAt: true,
+            userId: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
               },
-              messages: {
-                orderBy: { createdAt: "asc" },
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      firstName: true,
-                      lastName: true,
-                      role: true,
-                    },
+            },
+            messages: {
+              orderBy: { createdAt: "asc" },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    role: true,
                   },
                 },
               },
             },
-          }
-    );
+          },
+        });
 
     if (!ticket) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });

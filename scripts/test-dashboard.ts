@@ -25,13 +25,13 @@ import {
   type DashboardStatus,
   type DashboardTestCase,
   type DashboardTier,
-} from "../src/lib/testing/dashboard.ts";
+} from "../src/lib/testing/dashboard";
 import {
   clearDashboardStatus,
   getDashboardStatusFilePath,
   readDashboardStatus,
   writeDashboardStatus,
-} from "../src/lib/testing/dashboard-status.ts";
+} from "../src/lib/testing/dashboard-status";
 
 interface CliOptions {
   tier: DashboardTier;
@@ -160,7 +160,7 @@ function getCaseState(testCase: TestCase, stateOverride?: DashboardCaseState): D
   return "pending";
 }
 
-function mapModuleState(state: TestModule["state"] extends () => infer Result ? Result : string): DashboardModuleState {
+function mapModuleState(state: string): DashboardModuleState {
   if (
     state === "queued" ||
     state === "pending" ||
@@ -582,9 +582,9 @@ class LiveDashboardReporter implements Reporter {
     const hasFailedModule = Array.from(this.modules.values()).some(
       (moduleEntry) => moduleEntry.state === "failed" || moduleEntry.counts.failed > 0
     );
-    if (reason === "keyboard-input") {
+    if (reason === "interrupted") {
       this.runState = "cancelled";
-      this.note = "Run cancelled from the keyboard.";
+      this.note = "Run interrupted before completion.";
     } else if (hasFailedModule || unhandledErrors.length > 0) {
       this.runState = "failed";
     } else {
@@ -1617,14 +1617,14 @@ async function listen(server: http.Server, host: string, port: number): Promise<
 }
 
 function openBrowser(url: string): void {
-  const command =
+  const [command, args]: [string, string[]] =
     process.platform === "darwin"
       ? ["open", [url]]
       : process.platform === "win32"
         ? ["cmd", ["/c", "start", "", url]]
         : ["xdg-open", [url]];
 
-  const child = spawn(command[0], command[1], {
+  const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
   });

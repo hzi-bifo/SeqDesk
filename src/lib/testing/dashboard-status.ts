@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import type { DashboardStatus } from "./dashboard.ts";
+import type { DashboardStatus } from "./dashboard";
 
 const DASHBOARD_DIR = path.join(process.cwd(), ".test-dashboard");
 

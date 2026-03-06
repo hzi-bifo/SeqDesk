@@ -1,9 +1,10 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { AlertCircle, X } from "lucide-react";
 
 interface ErrorBannerProps {
-  message: string;
+  message: ReactNode;
   onDismiss?: () => void;
   className?: string;
 }

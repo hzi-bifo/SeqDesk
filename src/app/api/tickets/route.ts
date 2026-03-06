@@ -147,68 +147,66 @@ export async function GET() {
     const supportsReferences = await ticketReferencesSupported();
     let tickets;
     try {
-      tickets = await db.ticket.findMany(
-        supportsReferences
-          ? {
-              where: isAdmin ? {} : { userId: session.user.id },
-              orderBy: { updatedAt: "desc" },
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-                _count: {
-                  select: { messages: true },
-                },
-                order: {
-                  select: {
-                    id: true,
-                    orderNumber: true,
-                    name: true,
-                  },
-                },
-                study: {
-                  select: {
-                    id: true,
-                    title: true,
-                  },
+      tickets = supportsReferences
+        ? await db.ticket.findMany({
+            where: isAdmin ? {} : { userId: session.user.id },
+            orderBy: { updatedAt: "desc" },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
                 },
               },
-            }
-          : {
-              where: isAdmin ? {} : { userId: session.user.id },
-              orderBy: { updatedAt: "desc" },
-              select: {
-                id: true,
-                subject: true,
-                status: true,
-                priority: true,
-                lastUserMessageAt: true,
-                lastAdminMessageAt: true,
-                userReadAt: true,
-                adminReadAt: true,
-                createdAt: true,
-                updatedAt: true,
-                closedAt: true,
-                userId: true,
-                user: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-                _count: {
-                  select: { messages: true },
+              _count: {
+                select: { messages: true },
+              },
+              order: {
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  name: true,
                 },
               },
-            }
-      );
+              study: {
+                select: {
+                  id: true,
+                  title: true,
+                },
+              },
+            },
+          })
+        : await db.ticket.findMany({
+            where: isAdmin ? {} : { userId: session.user.id },
+            orderBy: { updatedAt: "desc" },
+            select: {
+              id: true,
+              subject: true,
+              status: true,
+              priority: true,
+              lastUserMessageAt: true,
+              lastAdminMessageAt: true,
+              userReadAt: true,
+              adminReadAt: true,
+              createdAt: true,
+              updatedAt: true,
+              closedAt: true,
+              userId: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+              _count: {
+                select: { messages: true },
+              },
+            },
+          });
     } catch {
       tickets = await getLegacyTickets(session.user.id, isAdmin);
     }
@@ -294,49 +292,49 @@ export async function POST(request: NextRequest) {
 
     // Create ticket with initial message in a transaction
     const ticket = await db.$transaction(async (tx) => {
-      const newTicket = await tx.ticket.create({
-        data: {
-          subject,
-          priority: priority || "NORMAL",
-          userId: session.user.id,
-          ...(supportsReferences
-            ? {
-                orderId: orderId || null,
-                studyId: studyId || null,
-              }
-            : {}),
-          lastUserMessageAt: new Date(),
-        },
-        ...(supportsReferences
-          ? {
-              include: {
-                order: {
-                  select: {
-                    id: true,
-                    orderNumber: true,
-                    name: true,
-                  },
-                },
-                study: {
-                  select: {
-                    id: true,
-                    title: true,
-                  },
+      const newTicket = supportsReferences
+        ? await tx.ticket.create({
+            data: {
+              subject,
+              priority: priority || "NORMAL",
+              userId: session.user.id,
+              orderId: orderId || null,
+              studyId: studyId || null,
+              lastUserMessageAt: new Date(),
+            },
+            include: {
+              order: {
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  name: true,
                 },
               },
-            }
-          : {
-              select: {
-                id: true,
-                subject: true,
-                status: true,
-                priority: true,
-                createdAt: true,
-                updatedAt: true,
-                userId: true,
+              study: {
+                select: {
+                  id: true,
+                  title: true,
+                },
               },
-            }),
-      });
+            },
+          })
+        : await tx.ticket.create({
+            data: {
+              subject,
+              priority: priority || "NORMAL",
+              userId: session.user.id,
+              lastUserMessageAt: new Date(),
+            },
+            select: {
+              id: true,
+              subject: true,
+              status: true,
+              priority: true,
+              createdAt: true,
+              updatedAt: true,
+              userId: true,
+            },
+          });
 
       await tx.ticketMessage.create({
         data: {
