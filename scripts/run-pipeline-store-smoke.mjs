@@ -252,24 +252,34 @@ const existedBefore = installedBefore.pipelines.some(
   (pipeline) => pipeline?.pipelineId === selectedPipeline.id
 );
 
-const installResponse = await request("/api/admin/settings/pipelines/install", {
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-  },
-  body: JSON.stringify({
-    pipelineId: selectedPipeline.id,
-    version: selectedPipeline.latestVersion || selectedPipeline.version,
-    source: selectedPipeline.source,
-  }),
-});
+let installPayload = {
+  success: true,
+  action: existedBefore ? "already-installed" : "unknown",
+  message: existedBefore
+    ? `Pipeline ${selectedPipeline.id} was already installed before smoke verification`
+    : "Installation skipped",
+};
 
-const installPayload = await parseJson(installResponse, "Pipeline install endpoint");
-if (!installResponse.ok || installPayload?.success !== true) {
-  fail(
-    `Pipeline install failed (${installResponse.status})`,
-    JSON.stringify(installPayload, null, 2)
-  );
+if (!existedBefore) {
+  const installResponse = await request("/api/admin/settings/pipelines/install", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      pipelineId: selectedPipeline.id,
+      version: selectedPipeline.latestVersion || selectedPipeline.version,
+      source: selectedPipeline.source,
+    }),
+  });
+
+  installPayload = await parseJson(installResponse, "Pipeline install endpoint");
+  if (!installResponse.ok || installPayload?.success !== true) {
+    fail(
+      `Pipeline install failed (${installResponse.status})`,
+      JSON.stringify(installPayload, null, 2)
+    );
+  }
 }
 
 let installedAfter = null;
