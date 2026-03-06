@@ -12,6 +12,9 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -20,12 +23,15 @@ jobs:
       - name: Configure paths
         run: |
           echo "PORT=8787" >> "$GITHUB_ENV"
+          echo "RECONFIG_PORT=8789" >> "$GITHUB_ENV"
           echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-public" >> "$GITHUB_ENV"
           echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-public.json" >> "$GITHUB_ENV"
+          echo "RECONFIG_CONFIG=$RUNNER_TEMP/infrastructure-public-reconfigure.json" >> "$GITHUB_ENV"
           echo "INSTALL_LOG=$RUNNER_TEMP/public-install.log" >> "$GITHUB_ENV"
           echo "SERVER_LOG=$RUNNER_TEMP/public-server.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/public-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/public-store-smoke.json" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -34,6 +40,14 @@ jobs:
             "port": $PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$PORT",
+            "databaseUrl": "file:./dev.db"
+          }
+          EOF
+          cat > "$RECONFIG_CONFIG" <<EOF
+          {
+            "port": $RECONFIG_PORT,
+            "pipelinesEnabled": false,
+            "nextAuthUrl": "http://127.0.0.1:$RECONFIG_PORT",
             "databaseUrl": "file:./dev.db"
           }
           EOF
@@ -49,35 +63,36 @@ jobs:
           set -euo pipefail
           test -f "$INSTALL_DIR/package.json"
           test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
           cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
 
-      - name: Validate installed config values
+      - name: Validate initial config values
         run: |
           set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const filePath = process.argv[1];
-            const expectedPort = Number(process.argv[2]);
-            const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
 
-            if (config?.pipelines?.enabled !== false) {
-              console.error("Expected pipelines.enabled to be false");
-              process.exit(1);
-            }
+      - name: Reconfigure public install in place
+        run: |
+          set -euo pipefail
+          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
+            bash -s -- -y --reconfigure --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$RECONFIG_CONFIG"
 
-            const actualPort = Number(config?.app?.port);
-            if (actualPort !== expectedPort) {
-              console.error(`Expected app.port=${expectedPort}, got ${String(config?.app?.port)}`);
-              process.exit(1);
-            }
-          ' "$INSTALL_DIR/seqdesk.config.json" "$PORT"
+      - name: Validate reconfigured config values
+        run: |
+          set -euo pipefail
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$RECONFIG_PORT"
 
       - name: Start app and wait for auth providers endpoint
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
 
-          PORT="$PORT" ./start.sh >"$SERVER_LOG" 2>&1 &
+          ./start.sh "$RECONFIG_PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
 
           cleanup() {
@@ -88,7 +103,7 @@ jobs:
 
           READY=0
           for _ in $(seq 1 90); do
-            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+            if curl -fsS "http://127.0.0.1:${RECONFIG_PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
               READY=1
               break
             fi
@@ -113,6 +128,14 @@ jobs:
             }
           ' "$PROVIDERS_JSON"
 
+      - name: Install public registry pipeline and verify loader exposure
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
+            --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
+            --pipeline-ids "mag,submg" \
+            --result-file "$STORE_SMOKE_JSON"
+
       - name: Upload install smoke artifacts (public installer)
         if: always()
         uses: actions/upload-artifact@v4
@@ -123,6 +146,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
+            ${{ env.STORE_SMOKE_JSON }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -164,43 +188,30 @@ jobs:
       - name: Run source installer (headless)
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
-            -y --without-pipelines --branch main --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+          SEQDESK_REPO="file://$GITHUB_WORKSPACE" SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
+            -y --without-pipelines --branch "$GITHUB_REF_NAME" --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
         run: |
           set -euo pipefail
           test -f "$INSTALL_DIR/package.json"
           test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
           cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
 
       - name: Validate installed config values
         run: |
           set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const filePath = process.argv[1];
-            const expectedPort = Number(process.argv[2]);
-            const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
-
-            if (config?.pipelines?.enabled !== false) {
-              console.error("Expected pipelines.enabled to be false");
-              process.exit(1);
-            }
-
-            const actualPort = Number(config?.app?.port);
-            if (actualPort !== expectedPort) {
-              console.error(`Expected app.port=${expectedPort}, got ${String(config?.app?.port)}`);
-              process.exit(1);
-            }
-          ' "$INSTALL_DIR/seqdesk.config.json" "$PORT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
 
       - name: Start app and wait for auth providers endpoint
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
 
-          PORT="$PORT" npm run dev >"$SERVER_LOG" 2>&1 &
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
 
           cleanup() {
@@ -210,7 +221,7 @@ jobs:
           trap cleanup EXIT
 
           READY=0
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 180); do
             if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
               READY=1
               break
@@ -248,3 +259,135 @@ jobs:
             ${{ env.PROVIDERS_JSON }}
           if-no-files-found: warn
           retention-days: 14
+
+  public-installer-ubuntu-pm2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8790" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-public-pm2" >> "$GITHUB_ENV"
+          echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-public-pm2.json" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/public-pm2-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/public-pm2-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/public-pm2-providers.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-pm2-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "PM2_INFO=$RUNNER_TEMP/public-pm2-info.txt" >> "$GITHUB_ENV"
+          echo "PM2_HOME=$RUNNER_TEMP/public-pm2-home" >> "$GITHUB_ENV"
+
+      - name: Create infrastructure JSON
+        run: |
+          cat > "$INFRA_CONFIG" <<EOF
+          {
+            "port": $PORT,
+            "pipelinesEnabled": false,
+            "nextAuthUrl": "http://127.0.0.1:$PORT",
+            "databaseUrl": "file:./dev.db"
+          }
+          EOF
+
+      - name: Run public installer with PM2
+        run: |
+          set -euo pipefail
+          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
+            bash -s -- -y --without-pipelines --use-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+
+      - name: Verify install artifacts
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+
+      - name: Validate installed config values
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
+
+      - name: Verify PM2 process exists
+        run: |
+          set -euo pipefail
+          if command -v pm2 >/dev/null 2>&1; then
+            PM2_BIN="$(command -v pm2)"
+          elif [ -x "$INSTALL_DIR/node_modules/.bin/pm2" ]; then
+            PM2_BIN="$INSTALL_DIR/node_modules/.bin/pm2"
+          else
+            echo "PM2 binary not found"
+            exit 1
+          fi
+          echo "PM2_BIN=$PM2_BIN" >> "$GITHUB_ENV"
+          "$PM2_BIN" describe seqdesk >"$PM2_INFO"
+
+      - name: Wait for PM2-managed app
+        run: |
+          set -euo pipefail
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            "${PM2_BIN}" logs seqdesk --nostream --lines 200 || true
+            exit 1
+          fi
+
+      - name: Assert credentials provider exists
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+
+      - name: Capture PM2 logs
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${PM2_BIN:-}" ]; then
+            "${PM2_BIN}" logs seqdesk --nostream --lines 200 >"$SERVER_LOG" 2>&1 || true
+          fi
+
+      - name: Upload install smoke artifacts (public installer PM2)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-public-ubuntu-pm2
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.PM2_INFO }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup PM2 process
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${PM2_BIN:-}" ]; then
+            "${PM2_BIN}" delete seqdesk >/dev/null 2>&1 || true
+          fi
