@@ -72,6 +72,7 @@ seqdesk-*/
 .update-lock
 .update-temp/
 .update-backup/
+.test-dashboard/
 
 # pipeline download status
 pipelines/.pipeline-downloads.json
