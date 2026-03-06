@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+    const generatedByE2E = request.headers.get("x-seqdesk-e2e") === "playwright";
     const { title, description, checklistType, studyMetadata } = body;
 
     if (!title || title.trim() === "") {
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
         description: description?.trim() || null,
         checklistType: sanitizedChecklist || null,
         userId: session.user.id,
+        generatedByE2E,
         studyMetadata: studyMetadata !== undefined
           ? (typeof studyMetadata === "string" ? studyMetadata : JSON.stringify(studyMetadata))
           : null,

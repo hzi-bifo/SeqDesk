@@ -119,6 +119,19 @@ export async function GET() {
         _count: {
           select: { samples: true },
         },
+        statusNotes: {
+          where: {
+            noteType: "SAMPLES_SENT",
+          },
+          select: {
+            id: true,
+            createdAt: true,
+          },
+          take: 1,
+          orderBy: {
+            createdAt: "desc",
+          },
+        },
       },
     });
 
@@ -145,6 +158,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+    const generatedByE2E = request.headers.get("x-seqdesk-e2e") === "playwright";
     const {
       name,
       platform,
@@ -188,6 +202,7 @@ export async function POST(request: NextRequest) {
         // Custom fields from form builder
         customFields: customFields ? JSON.stringify(customFields) : null,
         userId: session.user.id,
+        generatedByE2E,
         status: "DRAFT",
       },
     });

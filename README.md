@@ -13,6 +13,8 @@ Full user and operator documentation is published at:
 
 ## Quick Install
 
+Recommended for regular installs and upgrades:
+
 ```bash
 curl -fsSL https://seqdesk.com/install.sh | bash
 ```
@@ -24,6 +26,22 @@ npm i -g seqdesk
 seqdesk
 ```
 
+Common flags:
+
+```bash
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config ./infrastructure-setup.json
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
+seqdesk -y --use-pm2 --dir /opt/seqdesk
+```
+
+## Source Installer
+
+Use the source installer for advanced/dev checkouts rather than the recommended production path above:
+
+```bash
+bash scripts/install.sh -y --dir ./seqdesk-source
+```
+
 ## Local Development
 
 ### 1. Clone and install
@@ -31,7 +49,7 @@ seqdesk
 ```bash
 git clone https://github.com/hzi-bifo/SeqDesk.git
 cd SeqDesk
-npm install
+npm ci
 ```
 
 ### 2. Configure runtime values
@@ -78,6 +96,23 @@ npm run dev
 npm run build
 npm run start
 npm test
+```
+
+## UI E2E Coverage
+
+Local Playwright coverage is tracked separately from the Codecov percentage shown above.
+Current local UI E2E coverage includes:
+
+| Area | Covered Flows |
+| --- | --- |
+| Orders | order creation, multi-sample orders, order editing, mark sent |
+| Studies | study creation from order samples |
+| Admin | admin order creation, cross-user order visibility, submitted-order deletion blocked/allowed by Data Handling settings |
+
+Run locally with:
+
+```bash
+npm run test:e2e
 ```
 
 ## Public Docs
