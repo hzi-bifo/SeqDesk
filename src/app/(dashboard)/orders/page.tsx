@@ -1,11 +1,26 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Loader2,
   ChevronRight,
@@ -13,6 +28,8 @@ import {
   ArrowUpDown,
   ChevronDown,
   X,
+  MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
@@ -30,6 +47,10 @@ interface Order {
     lastName: string;
     email: string;
   };
+  statusNotes: Array<{
+    id: string;
+    createdAt: string;
+  }>;
   _count: {
     samples: number;
   };
@@ -45,6 +66,23 @@ type SortField = "created" | "name" | "status" | "samples";
 type SortDirection = "asc" | "desc";
 
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
+const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
+
+function renderOrderDeleteError(message: string): ReactNode {
+  if (message !== "Deletion of submitted orders is disabled. Enable it in Settings > Data Handling.") {
+    return message;
+  }
+
+  return (
+    <>
+      Deletion of submitted orders is disabled. Enable it in{" "}
+      <Link href={DATA_HANDLING_SETTINGS_HREF} className="underline underline-offset-2 text-white">
+        Settings &gt; Data Handling
+      </Link>
+      .
+    </>
+  );
+}
 
 export default function OrdersPage() {
   const { data: session } = useSession();
@@ -57,6 +95,12 @@ export default function OrdersPage() {
   const [sortField, setSortField] = useState<SortField>("created");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [sharingMode, setSharingMode] = useState<"personal" | "department" | "all">("personal");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState(false);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const [bulkEditMode, setBulkEditMode] = useState(false);
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -105,6 +149,27 @@ export default function OrdersPage() {
     if (diffDays < 7) return `${diffDays}d ago`;
     if (diffWeeks < 5) return `${diffWeeks}w ago`;
     return `${diffMonths}mo ago`;
+  };
+
+  const getStatusDisplay = (order: Order) => {
+    const baseStatus = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
+    const samplesSent = order.statusNotes.length > 0;
+
+    if (order.status === "SUBMITTED") {
+      return {
+        ...baseStatus,
+        label: samplesSent ? "Submitted · Samples sent" : "Submitted · Awaiting shipment",
+      };
+    }
+
+    if (order.status === "COMPLETED" && samplesSent) {
+      return {
+        ...baseStatus,
+        label: "Completed · Samples sent",
+      };
+    }
+
+    return baseStatus;
   };
 
   // Get unique users for filter dropdown
@@ -183,6 +248,102 @@ export default function OrdersPage() {
     setUserFilter("");
   };
 
+  const handleDeleteClick = (order: Order) => {
+    setOrderToDelete(order);
+    setDeleteConfirmText("");
+    setDeleteDialogOpen(true);
+  };
+
+  const selectedOrders = useMemo(
+    () => orders.filter((order) => selectedOrderIds.has(order.id)),
+    [orders, selectedOrderIds]
+  );
+  const hasSubmittedSelection = selectedOrders.some((order) => order.status !== "DRAFT");
+
+  const toggleOrderSelection = (orderId: string, checked: boolean) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(orderId);
+      } else {
+        next.delete(orderId);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDeleteClick = () => {
+    if (selectedOrders.length === 0) return;
+    setOrderToDelete(null);
+    setDeleteConfirmText("");
+    setDeleteDialogOpen(true);
+  };
+
+  const exitBulkEditMode = () => {
+    setBulkEditMode(false);
+    setSelectedOrderIds(new Set());
+  };
+
+  const handleDeleteConfirm = async () => {
+    const targetOrders = orderToDelete ? [orderToDelete] : selectedOrders;
+    if (targetOrders.length === 0) return;
+
+    const isSubmitted = targetOrders.some((order) => order.status !== "DRAFT");
+    if (isSubmitted && deleteConfirmText !== "DELETE") {
+      setError("You must type DELETE to confirm deletion of submitted orders.");
+      return;
+    }
+
+    setDeletingOrder(true);
+    setError("");
+
+    try {
+      const results = await Promise.all(
+        targetOrders.map(async (order) => {
+          const res = await fetch(`/api/orders/${order.id}`, {
+            method: "DELETE",
+          });
+
+          if (res.ok) {
+            return { id: order.id, ok: true as const };
+          }
+
+          const data = await res.json().catch(() => ({}));
+          return {
+            id: order.id,
+            ok: false as const,
+            error: data.error || `Failed to delete ${order.orderNumber}`,
+          };
+        })
+      );
+
+      const deletedIds = results.filter((result) => result.ok).map((result) => result.id);
+      const failed = results.filter((result) => !result.ok);
+
+      if (deletedIds.length > 0) {
+        setOrders((prev) => prev.filter((order) => !deletedIds.includes(order.id)));
+        setSelectedOrderIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+
+      if (failed.length > 0) {
+        setError(failed[0].error || "Failed to delete some orders");
+        return;
+      }
+
+      setDeleteDialogOpen(false);
+      setOrderToDelete(null);
+      setDeleteConfirmText("");
+    } catch {
+      setError("Failed to delete order");
+    } finally {
+      setDeletingOrder(false);
+    }
+  };
+
   const hasActiveFilters = searchQuery || statusFilter || userFilter;
 
   if (loading) {
@@ -207,11 +368,24 @@ export default function OrdersPage() {
           </p>
         </div>
         {canCreateOrder && (
-          <Button size="sm" variant="outline" asChild>
-            <Link href="/orders/new">
-              New Order
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {isFacilityAdmin && (
+              bulkEditMode ? (
+                <Button size="sm" variant="outline" onClick={exitBulkEditMode}>
+                  Done
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => setBulkEditMode(true)}>
+                  Edit Multiple
+                </Button>
+              )
+            )}
+            <Button size="sm" variant="outline" asChild>
+              <Link href="/orders/new">
+                New Order
+              </Link>
+            </Button>
+          </div>
         )}
       </div>
 
@@ -220,7 +394,7 @@ export default function OrdersPage() {
         It contains sample information, sequencing parameters, and tracks the progress from submission through to data delivery.
       </HelpBox>
 
-      {error && <ErrorBanner message={error} />}
+      {error && <ErrorBanner message={renderOrderDeleteError(error)} />}
 
       {orders.length === 0 ? (
         <div className="bg-card rounded-xl p-12 text-center border border-border">
@@ -240,6 +414,17 @@ export default function OrdersPage() {
         </div>
       ) : (
         <div className="bg-card rounded-xl overflow-hidden border border-border">
+          {isFacilityAdmin && bulkEditMode && selectedOrders.length > 0 && (
+            <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3">
+              <p className="text-sm text-muted-foreground">
+                {selectedOrders.length} order{selectedOrders.length !== 1 ? "s" : ""} selected
+              </p>
+              <Button size="sm" variant="destructive" onClick={handleBulkDeleteClick}>
+                Delete Selected
+              </Button>
+            </div>
+          )}
+
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-border">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -367,41 +552,101 @@ export default function OrdersPage() {
           {/* Orders List */}
           <div className="divide-y divide-border">
             {filteredOrders.map((order) => {
-              const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
+              const statusConfig = getStatusDisplay(order);
+              const isSelected = selectedOrderIds.has(order.id);
 
               return (
-                <Link
+                <div
                   key={order.id}
-                  href={`/orders/${order.id}`}
-                  className="block px-4 py-3 hover:bg-secondary/80 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center"
+                  className={`px-4 py-3 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center ${
+                    bulkEditMode
+                      ? `${isSelected ? "bg-primary/10 ring-1 ring-inset ring-primary/30" : "hover:bg-secondary/80"} cursor-pointer`
+                      : "hover:bg-secondary/80"
+                  }`}
+                  onClick={bulkEditMode ? () => toggleOrderSelection(order.id, !isSelected) : undefined}
                 >
                   {/* Mobile layout */}
                   <div className="md:hidden">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
-                          {order.name || order.orderNumber}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
-                        </p>
-                        {isFacilityAdmin && (
+                      {bulkEditMode ? (
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {order.name || order.orderNumber}
+                          </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {order.user.firstName} {order.user.lastName}
+                            {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
                           </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                        <div className="text-right">
-                          <span className={`text-xs font-medium ${statusConfig.color}`}>
-                            {statusConfig.label}
-                          </span>
-                          <p className="text-[10px] text-muted-foreground">
-                            {formatTimeAgo(order.statusUpdatedAt)}
-                          </p>
+                          {isFacilityAdmin && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {order.user.firstName} {order.user.lastName}
+                            </p>
+                          )}
                         </div>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                      ) : (
+                        <Link href={`/orders/${order.id}`} className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {order.name || order.orderNumber}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
+                          </p>
+                          {isFacilityAdmin && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {order.user.firstName} {order.user.lastName}
+                            </p>
+                          )}
+                        </Link>
+                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {bulkEditMode ? (
+                          <div className="flex items-center gap-2">
+                            <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                            <div className="text-right">
+                              <span className={`text-xs font-medium ${statusConfig.color}`}>
+                                {statusConfig.label}
+                              </span>
+                              <p className="text-[10px] text-muted-foreground">
+                                {formatTimeAgo(order.statusUpdatedAt)}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <Link href={`/orders/${order.id}`} className="flex items-center gap-2">
+                            <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
+                            <div className="text-right">
+                              <span className={`text-xs font-medium ${statusConfig.color}`}>
+                                {statusConfig.label}
+                              </span>
+                              <p className="text-[10px] text-muted-foreground">
+                                {formatTimeAgo(order.statusUpdatedAt)}
+                              </p>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                          </Link>
+                        )}
+                        {isFacilityAdmin && !bulkEditMode && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={`Options for ${order.name || order.orderNumber}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => handleDeleteClick(order)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete order
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -410,12 +655,25 @@ export default function OrdersPage() {
                   <div className="hidden md:contents">
                     {/* Order Info */}
                     <div className="col-span-4 min-w-0">
-                      <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
-                        {order.name || order.orderNumber}
-                      </p>
-                      <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                        {order.orderNumber}
-                      </p>
+                      {bulkEditMode ? (
+                        <>
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {order.name || order.orderNumber}
+                          </p>
+                          <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                            {order.orderNumber}
+                          </p>
+                        </>
+                      ) : (
+                        <Link href={`/orders/${order.id}`}>
+                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                            {order.name || order.orderNumber}
+                          </p>
+                          <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                            {order.orderNumber}
+                          </p>
+                        </Link>
+                      )}
                     </div>
 
                     {/* Status */}
@@ -454,12 +712,45 @@ export default function OrdersPage() {
                       </span>
                     </div>
 
-                    {/* Arrow */}
-                    <div className="col-span-1 flex justify-end">
-                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
-                    </div>
+                    {isFacilityAdmin ? (
+                      <div className="col-span-1 flex justify-end">
+                        {bulkEditMode ? (
+                          <div className="h-8 w-8" />
+                        ) : (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label={`Options for ${order.name || order.orderNumber}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => handleDeleteClick(order)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete order
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="col-span-1 flex justify-end">
+                        {!bulkEditMode && (
+                          <Link href={`/orders/${order.id}`}>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+                          </Link>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </Link>
+                </div>
               );
             })}
           </div>
@@ -477,6 +768,83 @@ export default function OrdersPage() {
           )}
         </div>
       )}
+
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) {
+            setOrderToDelete(null);
+            setDeleteConfirmText("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Delete Order</DialogTitle>
+            <DialogDescription asChild>
+              <div>
+                {(orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) ? (
+                  <>
+                    <p className="mb-2">
+                      <strong>Warning:</strong> {orderToDelete
+                        ? `This order has been submitted (status: ${orderToDelete.status}).`
+                        : "One or more selected orders have already been submitted."}
+                    </p>
+                    <p className="mb-2">Deleting will permanently remove:</p>
+                    <ul className="mb-4 list-inside list-disc text-sm">
+                      <li>
+                        {orderToDelete
+                          ? orderToDelete._count.samples || 0
+                          : selectedOrders.reduce((sum, order) => sum + order._count.samples, 0)}{" "}
+                        samples
+                      </li>
+                      <li>All associated sequencing data</li>
+                      <li>Status history</li>
+                    </ul>
+                    <p className="mb-2">
+                      This cannot be undone. Type <strong>DELETE</strong> to confirm.
+                    </p>
+                    <Input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Type DELETE to confirm"
+                      className="mt-2"
+                    />
+                  </>
+                ) : (
+                  <p>
+                    Are you sure you want to delete{" "}
+                    {orderToDelete ? "this order" : `${selectedOrders.length} selected orders`}?
+                    This cannot be undone.
+                  </p>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setOrderToDelete(null);
+                setDeleteConfirmText("");
+              }}
+              disabled={deletingOrder}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteConfirm}
+              disabled={deletingOrder || ((orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) && deleteConfirmText !== "DELETE")}
+            >
+              {deletingOrder ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Delete Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }

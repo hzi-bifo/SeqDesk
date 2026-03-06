@@ -20,6 +20,11 @@ export async function POST(
   try {
     const ticket = await db.ticket.findUnique({
       where: { id },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+      },
     });
 
     if (!ticket) {
@@ -89,6 +94,7 @@ export async function POST(
                 status: ticket.status === "RESOLVED" ? "OPEN" : ticket.status,
               }),
         },
+        select: { id: true },
       });
 
       return newMessage;

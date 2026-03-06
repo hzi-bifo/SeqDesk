@@ -1,7 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
+
+type LegacyTicketRow = {
+  id: string;
+  subject: string;
+  status: string;
+  priority: string;
+  lastUserMessageAt: string | null;
+  lastAdminMessageAt: string | null;
+  userReadAt: string | null;
+  adminReadAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  userId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  messageCount: number | null;
+};
 
 async function isDepartmentSharingEnabled(): Promise<boolean> {
   try {
@@ -51,6 +72,67 @@ async function canAccessOrder(orderId: string, userId: string, isAdmin: boolean)
   return !!user?.departmentId && user.departmentId === order.user.departmentId;
 }
 
+async function getLegacyTickets(userId: string, isAdmin: boolean) {
+  const whereClause = isAdmin
+    ? Prisma.sql``
+    : Prisma.sql`WHERE t."userId" = ${userId}`;
+
+  const rows = await db.$queryRaw<LegacyTicketRow[]>(Prisma.sql`
+    SELECT
+      t."id",
+      t."subject",
+      t."status",
+      t."priority",
+      t."lastUserMessageAt",
+      t."lastAdminMessageAt",
+      t."userReadAt",
+      t."adminReadAt",
+      t."createdAt",
+      t."updatedAt",
+      t."closedAt",
+      t."userId",
+      u."firstName",
+      u."lastName",
+      u."email",
+      COALESCE(tm."messageCount", 0) AS "messageCount"
+    FROM "Ticket" t
+    INNER JOIN "User" u ON u."id" = t."userId"
+    LEFT JOIN (
+      SELECT "ticketId", COUNT(*) AS "messageCount"
+      FROM "TicketMessage"
+      GROUP BY "ticketId"
+    ) tm ON tm."ticketId" = t."id"
+    ${whereClause}
+    ORDER BY t."updatedAt" DESC
+  `);
+
+  return rows.map((row) => ({
+    id: row.id,
+    subject: row.subject,
+    status: row.status,
+    priority: row.priority,
+    lastUserMessageAt: row.lastUserMessageAt,
+    lastAdminMessageAt: row.lastAdminMessageAt,
+    userReadAt: row.userReadAt,
+    adminReadAt: row.adminReadAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    closedAt: row.closedAt,
+    userId: row.userId,
+    user: {
+      id: row.userId,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      email: row.email,
+    },
+    _count: {
+      messages: Number(row.messageCount || 0),
+    },
+    order: null,
+    study: null,
+  }));
+}
+
 // GET /api/tickets - List tickets
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -62,36 +144,74 @@ export async function GET() {
   const isAdmin = session.user.role === "FACILITY_ADMIN";
 
   try {
-    const tickets = await db.ticket.findMany({
-      where: isAdmin ? {} : { userId: session.user.id },
-      orderBy: { updatedAt: "desc" },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        _count: {
-          select: { messages: true },
-        },
-        order: {
-          select: {
-            id: true,
-            orderNumber: true,
-            name: true,
-          },
-        },
-        study: {
-          select: {
-            id: true,
-            title: true,
-          },
-        },
-      },
-    });
+    const supportsReferences = await ticketReferencesSupported();
+    let tickets;
+    try {
+      tickets = await db.ticket.findMany(
+        supportsReferences
+          ? {
+              where: isAdmin ? {} : { userId: session.user.id },
+              orderBy: { updatedAt: "desc" },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                  },
+                },
+                _count: {
+                  select: { messages: true },
+                },
+                order: {
+                  select: {
+                    id: true,
+                    orderNumber: true,
+                    name: true,
+                  },
+                },
+                study: {
+                  select: {
+                    id: true,
+                    title: true,
+                  },
+                },
+              },
+            }
+          : {
+              where: isAdmin ? {} : { userId: session.user.id },
+              orderBy: { updatedAt: "desc" },
+              select: {
+                id: true,
+                subject: true,
+                status: true,
+                priority: true,
+                lastUserMessageAt: true,
+                lastAdminMessageAt: true,
+                userReadAt: true,
+                adminReadAt: true,
+                createdAt: true,
+                updatedAt: true,
+                closedAt: true,
+                userId: true,
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                  },
+                },
+                _count: {
+                  select: { messages: true },
+                },
+              },
+            }
+      );
+    } catch {
+      tickets = await getLegacyTickets(session.user.id, isAdmin);
+    }
 
     // Calculate unread status for each ticket
     const ticketsWithUnread = tickets.map((ticket) => {
@@ -130,6 +250,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const { subject, message, priority, orderId, studyId } = await request.json();
+    const supportsReferences = await ticketReferencesSupported();
 
     if (!subject || !message) {
       return NextResponse.json(
@@ -138,7 +259,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (orderId && studyId) {
+    if (supportsReferences && orderId && studyId) {
       return NextResponse.json(
         { error: "Please select either an order or a study" },
         { status: 400 }
@@ -147,7 +268,7 @@ export async function POST(request: NextRequest) {
 
     const isAdmin = session.user.role === "FACILITY_ADMIN";
 
-    if (orderId) {
+    if (supportsReferences && orderId) {
       const canAccess = await canAccessOrder(orderId, session.user.id, isAdmin);
       if (!canAccess) {
         return NextResponse.json(
@@ -157,7 +278,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (studyId) {
+    if (supportsReferences && studyId) {
       const study = await db.study.findUnique({
         where: { id: studyId },
         select: { id: true, userId: true },
@@ -178,25 +299,43 @@ export async function POST(request: NextRequest) {
           subject,
           priority: priority || "NORMAL",
           userId: session.user.id,
-          orderId: orderId || null,
-          studyId: studyId || null,
+          ...(supportsReferences
+            ? {
+                orderId: orderId || null,
+                studyId: studyId || null,
+              }
+            : {}),
           lastUserMessageAt: new Date(),
         },
-        include: {
-          order: {
-            select: {
-              id: true,
-              orderNumber: true,
-              name: true,
-            },
-          },
-          study: {
-            select: {
-              id: true,
-              title: true,
-            },
-          },
-        },
+        ...(supportsReferences
+          ? {
+              include: {
+                order: {
+                  select: {
+                    id: true,
+                    orderNumber: true,
+                    name: true,
+                  },
+                },
+                study: {
+                  select: {
+                    id: true,
+                    title: true,
+                  },
+                },
+              },
+            }
+          : {
+              select: {
+                id: true,
+                subject: true,
+                status: true,
+                priority: true,
+                createdAt: true,
+                updatedAt: true,
+                userId: true,
+              },
+            }),
       });
 
       await tx.ticketMessage.create({

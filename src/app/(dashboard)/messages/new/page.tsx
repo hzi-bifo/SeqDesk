@@ -37,6 +37,12 @@ interface StudyOption {
 
 type ReferenceValue = "none" | `order:${string}` | `study:${string}`;
 
+interface ReferenceOptionsResponse {
+  enabled: boolean;
+  orders: OrderOption[];
+  studies: StudyOption[];
+}
+
 export default function NewMessagePage() {
   const router = useRouter();
   const [subject, setSubject] = useState("");
@@ -45,28 +51,24 @@ export default function NewMessagePage() {
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [studies, setStudies] = useState<StudyOption[]>([]);
   const [reference, setReference] = useState<ReferenceValue>("none");
+  const [referencesEnabled, setReferencesEnabled] = useState(false);
   const [loadingReferences, setLoadingReferences] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchReferences = async () => {
       try {
-        const [ordersRes, studiesRes] = await Promise.all([
-          fetch("/api/orders"),
-          fetch("/api/studies"),
-        ]);
-
-        if (!ordersRes.ok || !studiesRes.ok) {
+        const res = await fetch("/api/tickets/reference-options");
+        if (!res.ok) {
           throw new Error("Failed to fetch references");
         }
 
-        const ordersData = await ordersRes.json();
-        const studiesData = await studiesRes.json();
-
-        setOrders(ordersData.orders || []);
-        setStudies(studiesData || []);
+        const data = (await res.json()) as ReferenceOptionsResponse;
+        setReferencesEnabled(data.enabled);
+        setOrders(data.orders || []);
+        setStudies(data.studies || []);
       } catch {
-        toast.error("Failed to load orders and studies");
+        toast.error("Failed to load related orders and studies");
       } finally {
         setLoadingReferences(false);
       }
@@ -197,28 +199,30 @@ export default function NewMessagePage() {
             </p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="reference">Related order or study</Label>
-            <Select
-              value={reference}
-              onValueChange={(value) => setReference(value as ReferenceValue)}
-              disabled={submitting || loadingReferences}
-            >
-              <SelectTrigger id="reference">
-                <SelectValue placeholder="Select an order or study (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {referenceOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Optional. Link this conversation to a specific order or study.
-            </p>
-          </div>
+          {referencesEnabled && (
+            <div className="space-y-2">
+              <Label htmlFor="reference">Related order or study</Label>
+              <Select
+                value={reference}
+                onValueChange={(value) => setReference(value as ReferenceValue)}
+                disabled={submitting || loadingReferences}
+              >
+                <SelectTrigger id="reference">
+                  <SelectValue placeholder="Select an order or study (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {referenceOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Optional. Link this conversation to a specific order or study.
+              </p>
+            </div>
+          )}
 
           {/* Message */}
           <div className="space-y-2">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
 
 // GET /api/tickets/[id] - Get single ticket with messages
 export async function GET(
@@ -18,45 +19,87 @@ export async function GET(
   const isAdmin = session.user.role === "FACILITY_ADMIN";
 
   try {
-    const ticket = await db.ticket.findUnique({
-      where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        order: {
-          select: {
-            id: true,
-            orderNumber: true,
-            name: true,
-          },
-        },
-        study: {
-          select: {
-            id: true,
-            title: true,
-          },
-        },
-        messages: {
-          orderBy: { createdAt: "asc" },
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                role: true,
+    const supportsReferences = await ticketReferencesSupported();
+    const ticket = await db.ticket.findUnique(
+      supportsReferences
+        ? {
+            where: { id },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+              order: {
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  name: true,
+                },
+              },
+              study: {
+                select: {
+                  id: true,
+                  title: true,
+                },
+              },
+              messages: {
+                orderBy: { createdAt: "asc" },
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                      role: true,
+                    },
+                  },
+                },
               },
             },
-          },
-        },
-      },
-    });
+          }
+        : {
+            where: { id },
+            select: {
+              id: true,
+              subject: true,
+              status: true,
+              priority: true,
+              lastUserMessageAt: true,
+              lastAdminMessageAt: true,
+              userReadAt: true,
+              adminReadAt: true,
+              createdAt: true,
+              updatedAt: true,
+              closedAt: true,
+              userId: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+              messages: {
+                orderBy: { createdAt: "asc" },
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                      role: true,
+                    },
+                  },
+                },
+              },
+            },
+          }
+    );
 
     if (!ticket) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
@@ -72,6 +115,7 @@ export async function GET(
     await db.ticket.update({
       where: { id },
       data: isAdmin ? { adminReadAt: now } : { userReadAt: now },
+      select: { id: true },
     });
 
     return NextResponse.json(ticket);
@@ -101,6 +145,11 @@ export async function PATCH(
   try {
     const ticket = await db.ticket.findUnique({
       where: { id },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+      },
     });
 
     if (!ticket) {
@@ -136,7 +185,15 @@ export async function PATCH(
     const updatedTicket = await db.ticket.update({
       where: { id },
       data: updateData,
-      include: {
+      select: {
+        id: true,
+        subject: true,
+        status: true,
+        priority: true,
+        createdAt: true,
+        updatedAt: true,
+        closedAt: true,
+        userId: true,
         user: {
           select: {
             id: true,
