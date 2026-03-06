@@ -6,17 +6,17 @@ import {
   SequencingTechConfig,
 } from "@/types/sequencing-technology";
 import {
+  getDefaultTechSyncUrl,
   loadDefaultTechConfig,
   parseTechConfig,
+  withResolvedTechAssetUrls,
 } from "@/lib/sequencing-tech/config";
 
 // Storage key in SiteSettings.extraSettings
 const SETTINGS_KEY = "sequencingTechConfig";
 
 // External API URL for syncing technologies
-const DEFAULT_SEQDESK_API_URL =
-  process.env.SEQDESK_API_URL ||
-  "https://www.seqdesk.com/api/registry/sequencing-tech";
+const DEFAULT_SEQDESK_API_URL = getDefaultTechSyncUrl();
 const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
 
 type MergeableItem = { id: string; available?: boolean; localOverrides?: boolean };
@@ -236,7 +236,9 @@ export async function GET() {
           },
         });
 
-        return NextResponse.json({ config: remoteConfig });
+        return NextResponse.json({
+          config: withResolvedTechAssetUrls(remoteConfig, DEFAULT_SEQDESK_API_URL),
+        });
       } catch (error) {
         console.error("Error auto-syncing sequencing tech config:", error);
       }
@@ -247,7 +249,9 @@ export async function GET() {
       ...parsedConfig,
       syncUrl: resolveSyncUrl(parsedConfig),
     };
-    return NextResponse.json({ config });
+    return NextResponse.json({
+      config: withResolvedTechAssetUrls(config, DEFAULT_SEQDESK_API_URL),
+    });
   } catch (error) {
     console.error("Error fetching sequencing tech config:", error);
     return NextResponse.json(
@@ -336,7 +340,9 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ config: updatedConfig });
+    return NextResponse.json({
+      config: withResolvedTechAssetUrls(updatedConfig, DEFAULT_SEQDESK_API_URL),
+    });
   } catch (error) {
     console.error("Error updating sequencing tech config:", error);
     return NextResponse.json(
@@ -406,7 +412,7 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({
-        config: defaults,
+        config: withResolvedTechAssetUrls(defaults, DEFAULT_SEQDESK_API_URL),
         message: USE_LOCAL_DEFAULTS
           ? "Reset to defaults"
           : "Reset to registry defaults",
@@ -523,7 +529,10 @@ export async function POST(request: NextRequest) {
             ),
             updatedVersion: remoteVersion,
             message: `Updated to version ${remoteVersion}.`,
-            config: mergedConfig,
+            config: withResolvedTechAssetUrls(
+              mergedConfig,
+              DEFAULT_SEQDESK_API_URL
+            ),
           });
         }
 
@@ -551,7 +560,10 @@ export async function POST(request: NextRequest) {
             currentVersion,
             remoteVersion,
             message: "Registry source updated. Your technologies are up to date.",
-            config: configWithUpdatedSyncUrl,
+            config: withResolvedTechAssetUrls(
+              configWithUpdatedSyncUrl,
+              DEFAULT_SEQDESK_API_URL
+            ),
           });
         }
 
