@@ -10,6 +10,9 @@ import {
   SequencingTechConfig,
 } from "@/types/sequencing-technology";
 
+const DEFAULT_REMOTE_TECH_SYNC_URL =
+  process.env.SEQDESK_API_URL ||
+  "https://www.seqdesk.com/api/registry/sequencing-tech";
 const DEFAULTS_PATH = path.join(
   process.cwd(),
   "data",
@@ -108,6 +111,59 @@ export function normalizeTechConfig(
       : defaults.barcodeSets || [],
     categories: config.categories ?? defaults.categories,
     version: config.version ?? defaults.version,
+  };
+}
+
+function resolveRegistryAssetUrl(
+  assetPath: string | undefined,
+  syncUrl: string
+): string | undefined {
+  if (!assetPath) return assetPath;
+
+  try {
+    return new URL(assetPath).toString();
+  } catch {
+    // Non-absolute paths are resolved against the registry origin below.
+  }
+
+  try {
+    const origin = new URL(syncUrl).origin;
+    return new URL(assetPath, origin).toString();
+  } catch {
+    return assetPath;
+  }
+}
+
+export function getDefaultTechSyncUrl(): string {
+  return DEFAULT_REMOTE_TECH_SYNC_URL;
+}
+
+export function withResolvedTechAssetUrls(
+  config: SequencingTechConfig,
+  fallbackSyncUrl: string = DEFAULT_REMOTE_TECH_SYNC_URL
+): SequencingTechConfig {
+  const normalizedConfig = normalizeTechConfig(config);
+  const syncUrl = normalizedConfig.syncUrl || fallbackSyncUrl;
+
+  return {
+    ...normalizedConfig,
+    syncUrl,
+    technologies: normalizedConfig.technologies.map((technology) => ({
+      ...technology,
+      icon: resolveRegistryAssetUrl(technology.icon, syncUrl),
+    })),
+    devices: (normalizedConfig.devices || []).map((device) => ({
+      ...device,
+      image: resolveRegistryAssetUrl(device.image, syncUrl),
+    })),
+    flowCells: (normalizedConfig.flowCells || []).map((flowCell) => ({
+      ...flowCell,
+      image: resolveRegistryAssetUrl(flowCell.image, syncUrl),
+    })),
+    kits: (normalizedConfig.kits || []).map((kit) => ({
+      ...kit,
+      image: resolveRegistryAssetUrl(kit.image, syncUrl),
+    })),
   };
 }
 

@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { parseTechConfig } from "@/lib/sequencing-tech/config";
+import {
+  getDefaultTechSyncUrl,
+  parseTechConfig,
+  withResolvedTechAssetUrls,
+} from "@/lib/sequencing-tech/config";
 
 // Storage key in SiteSettings.extraSettings
 const SETTINGS_KEY = "sequencingTechConfig";
+const DEFAULT_SEQDESK_API_URL = getDefaultTechSyncUrl();
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -29,7 +34,14 @@ export async function GET() {
       }
     }
 
-    const config = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+    const parsedConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+    const config = withResolvedTechAssetUrls(
+      {
+        ...parsedConfig,
+        syncUrl: parsedConfig.syncUrl || DEFAULT_SEQDESK_API_URL,
+      },
+      DEFAULT_SEQDESK_API_URL
+    );
 
     // Filter to only available technologies and sort by order
     const availableTechnologies = config.technologies
