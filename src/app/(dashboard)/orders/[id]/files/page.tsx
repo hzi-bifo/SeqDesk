@@ -42,6 +42,7 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -158,6 +159,15 @@ export default function OrderFilesPage({
   } | null>(null);
 
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+
+  if (session?.user?.isDemo) {
+    return (
+      <DemoFeatureNotice
+        title="File management is disabled in the public demo"
+        description="The hosted demo does not connect to local sequencing storage or filesystem scanners. You can still browse orders and studies, but file assignment and inspection stay disabled here."
+      />
+    );
+  }
 
   useEffect(() => {
     const fetchData = async () => {

@@ -42,9 +42,7 @@ import { PipelineDagViewer, DagNode, DagEdge, PipelineInfo } from "@/components/
 import { PipelineIntegrationDetails } from "@/components/pipelines/PipelineIntegrationDetails";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-const METAXPATH_PIPELINE_ID = "metaxpath";
-const METAXPATH_REPOSITORY = "hzi-bifo/MetaxPath";
-const DEFAULT_METAXPATH_REF = "Nextflow";
+const DEFAULT_GITHUB_REF = "main";
 
 interface PipelineInput {
   id: string;
@@ -191,10 +189,19 @@ interface StorePipeline {
   icon?: string;
   isPrivate?: boolean;
   licenseRequired?: boolean;
-  privateInstall?: {
-    requiresKey?: boolean;
+  source: {
+    kind: "registry" | "privateRegistry" | "github";
+    sourceId: string;
+    label: string;
+    registryUrl?: string;
+    browseUrl?: string;
+    downloadUrl?: string;
     packageUrlDefault?: string;
     keyLabel?: string;
+    repository?: string;
+    refDefault?: string;
+    descriptorPath?: string;
+    includeWorkflow?: boolean;
   };
 }
 
@@ -208,8 +215,16 @@ interface PrivateInstallTarget {
   pipelineId: string;
   name: string;
   version?: string;
+  source: StorePipeline["source"];
   packageUrlDefault?: string;
   keyLabel?: string;
+}
+
+interface GitHubInstallTarget {
+  pipelineId: string;
+  name: string;
+  source: StorePipeline["source"];
+  version?: string;
 }
 
 function getPipelineIcon(icon: string) {
@@ -254,8 +269,17 @@ function getCategoryColor(category: string): string {
 
 function isPrivateStorePipeline(pipeline?: StorePipeline | null): boolean {
   if (!pipeline) return false;
-  if (pipeline.isPrivate === true || pipeline.licenseRequired === true) return true;
-  return pipeline.privateInstall?.requiresKey === true;
+  return pipeline.source.kind === "privateRegistry";
+}
+
+function isGitHubStorePipeline(pipeline?: StorePipeline | null): boolean {
+  return pipeline?.source.kind === "github";
+}
+
+function getSourceBadgeLabel(source: StorePipeline["source"]): string {
+  if (source.kind === "github") return "GitHub";
+  if (source.kind === "privateRegistry") return `${source.label} private`;
+  return source.label;
 }
 
 interface MetadataHint {
@@ -380,12 +404,14 @@ export default function PipelineSettingsPage() {
   const [privateAccessKey, setPrivateAccessKey] = useState("");
   const [privateSha256, setPrivateSha256] = useState("");
   const [privateInstallError, setPrivateInstallError] = useState<string | null>(null);
-  const [metaxPathDialogOpen, setMetaxPathDialogOpen] = useState(false);
-  const [metaxPathMode, setMetaxPathMode] = useState<"install" | "sync">("install");
-  const [metaxPathRef, setMetaxPathRef] = useState(DEFAULT_METAXPATH_REF);
-  const [metaxPathToken, setMetaxPathToken] = useState("");
-  const [metaxPathError, setMetaxPathError] = useState<string | null>(null);
-  const [metaxPathSubmitting, setMetaxPathSubmitting] = useState(false);
+  const [githubInstallDialogOpen, setGithubInstallDialogOpen] = useState(false);
+  const [githubInstallTarget, setGithubInstallTarget] = useState<GitHubInstallTarget | null>(null);
+  const [githubInstallMode, setGithubInstallMode] = useState<"install" | "update">("install");
+  const [githubRepository, setGithubRepository] = useState("");
+  const [githubRef, setGithubRef] = useState(DEFAULT_GITHUB_REF);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubInstallError, setGithubInstallError] = useState<string | null>(null);
+  const [githubSubmitting, setGithubSubmitting] = useState(false);
   const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
   const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -494,9 +520,14 @@ export default function PipelineSettingsPage() {
           pipelineId: privateInstallTarget.pipelineId,
           version: privateInstallTarget.version,
           replace: privateInstallMode === "update",
-          privatePackageUrl: packageUrl,
-          privateAccessKey: accessKey,
-          privateSha256: sha256 || undefined,
+          source: {
+            ...privateInstallTarget.source,
+            packageUrlDefault: packageUrl,
+          },
+          credentials: {
+            accessKey,
+            sha256: sha256 || undefined,
+          },
         }),
       });
       const data = await res.json();
@@ -523,64 +554,86 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  const openMetaxPathGitHubDialog = (mode: "install" | "sync") => {
-    setMetaxPathMode(mode);
-    setMetaxPathRef(DEFAULT_METAXPATH_REF);
-    setMetaxPathToken("");
-    setMetaxPathError(null);
-    setMetaxPathDialogOpen(true);
+  const openGitHubInstallDialog = (
+    target: GitHubInstallTarget,
+    mode: "install" | "update"
+  ) => {
+    setGithubInstallTarget(target);
+    setGithubInstallMode(mode);
+    setGithubRepository(target.source.repository || "");
+    setGithubRef(target.source.refDefault || DEFAULT_GITHUB_REF);
+    setGithubToken("");
+    setGithubInstallError(null);
+    setGithubInstallDialogOpen(true);
   };
 
-  const handleMetaxPathGitHubImport = async () => {
-    const token = metaxPathToken.trim();
-    const ref = metaxPathRef.trim() || DEFAULT_METAXPATH_REF;
+  const handleGitHubInstall = async () => {
+    if (!githubInstallTarget) return;
 
-    if (!token) {
-      setMetaxPathError("GitHub token is required.");
+    const token = githubToken.trim();
+    const repository = githubRepository.trim();
+    const ref = githubRef.trim() || githubInstallTarget.source.refDefault || DEFAULT_GITHUB_REF;
+
+    if (!token || !repository) {
+      setGithubInstallError("Repository and GitHub token are required.");
       return;
     }
 
-    setMetaxPathSubmitting(true);
-    setMetaxPathError(null);
+    setGithubSubmitting(true);
+    setGithubInstallError(null);
     setInstallError(null);
+    setInstallingPipeline(githubInstallTarget.pipelineId);
+    setInstallAction(githubInstallMode);
 
     try {
-      const res = await fetch("/api/admin/settings/pipelines/metaxpath/github", {
+      const res = await fetch("/api/admin/settings/pipelines/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, ref }),
+        body: JSON.stringify({
+          pipelineId: githubInstallTarget.pipelineId,
+          version: githubInstallTarget.version,
+          replace: githubInstallMode === "update",
+          source: {
+            ...githubInstallTarget.source,
+            repository,
+            refDefault: ref,
+          },
+          credentials: {
+            token,
+          },
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const details = Array.isArray(data?.details)
-          ? data.details.join(" ")
-          : data?.details;
-        const message =
-          details ||
-          data?.error ||
-          "Failed to import MetaxPath from GitHub.";
-        setMetaxPathError(message);
+        const message = data?.details || data?.error || "Failed to install pipeline from GitHub.";
+        setGithubInstallError(message);
         setInstallError(message);
         return;
       }
 
-      setMetaxPathDialogOpen(false);
-      setMetaxPathToken("");
-      setMetaxPathError(null);
+      setGithubInstallDialogOpen(false);
+      setGithubToken("");
+      setGithubInstallError(null);
       await Promise.all([mutate(), mutateStore()]);
     } catch (err) {
-      const message = "Failed to import MetaxPath from GitHub. Check server logs for details.";
-      setMetaxPathError(message);
+      const message = "Failed to install pipeline from GitHub. Check server logs for details.";
+      setGithubInstallError(message);
       setInstallError(message);
-      console.error("MetaxPath GitHub import error:", err);
+      console.error("GitHub install error:", err);
     } finally {
-      setMetaxPathSubmitting(false);
-      setMetaxPathToken("");
+      setGithubSubmitting(false);
+      setGithubToken("");
+      setInstallingPipeline(null);
+      setInstallAction(null);
     }
   };
 
   // Install a pipeline from the store
-  const handleInstallPipeline = async (pipelineId: string, version?: string) => {
+  const handleInstallPipeline = async (
+    pipelineId: string,
+    version: string | undefined,
+    source: StorePipeline["source"] | undefined
+  ) => {
     setInstallingPipeline(pipelineId);
     setInstallAction("install");
     setInstallError(null);
@@ -588,15 +641,14 @@ export default function PipelineSettingsPage() {
       const res = await fetch("/api/admin/settings/pipelines/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pipelineId, version }),
+        body: JSON.stringify({ pipelineId, version, source }),
       });
       const data = await res.json();
       if (!res.ok) {
         setInstallError(data.error || "Installation failed");
         return;
       }
-      // Refresh pipeline list
-      mutate();
+      await Promise.all([mutate(), mutateStore()]);
     } catch (err) {
       setInstallError("Installation failed. Check console for details.");
       console.error("Install error:", err);
@@ -606,7 +658,11 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  const handleUpdatePipeline = async (pipelineId: string, version?: string) => {
+  const handleUpdatePipeline = async (
+    pipelineId: string,
+    version: string | undefined,
+    source: StorePipeline["source"] | undefined
+  ) => {
     setInstallingPipeline(pipelineId);
     setInstallAction("update");
     setInstallError(null);
@@ -614,14 +670,14 @@ export default function PipelineSettingsPage() {
       const res = await fetch("/api/admin/settings/pipelines/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pipelineId, version, replace: true }),
+        body: JSON.stringify({ pipelineId, version, replace: true, source }),
       });
       const data = await res.json();
       if (!res.ok) {
         setInstallError(data.error || "Update failed");
         return;
       }
-      mutate();
+      await Promise.all([mutate(), mutateStore()]);
     } catch (err) {
       setInstallError("Update failed. Check console for details.");
       console.error("Update error:", err);
@@ -822,18 +878,23 @@ export default function PipelineSettingsPage() {
 
   const installedPipelines: PipelineConfig[] = data?.pipelines || [];
   const installedPipelineIds = new Set(installedPipelines.map((p) => p.pipelineId));
-  const isMetaxPathInstalled = installedPipelineIds.has(METAXPATH_PIPELINE_ID);
   const storePipelines: StorePipeline[] = storeData?.pipelines || [];
-  const visibleStorePipelines = storePipelines.filter(
-    (pipeline) => pipeline.id !== METAXPATH_PIPELINE_ID
-  );
-  const storePipelineMap = new Map(storePipelines.map((pipeline) => [pipeline.id, pipeline]));
+  const visibleStorePipelines = storePipelines;
+  const preferredStorePipelineMap = new Map<string, StorePipeline>();
+  for (const pipeline of storePipelines) {
+    const current = preferredStorePipelineMap.get(pipeline.id);
+    if (!current || compareVersions(pipeline.latestVersion, current.latestVersion) >= 0) {
+      preferredStorePipelineMap.set(pipeline.id, pipeline);
+    }
+  }
   const storeCategories: StoreCategory[] = storeData?.categories || [];
   const filteredInstalledPipelines = installedPipelines.filter(
     (pipeline) => selectedCategory === "all" || pipeline.category === selectedCategory
   );
   const availablePipelines = visibleStorePipelines.filter(
-    (pipeline) => !installedPipelineIds.has(pipeline.id) && (selectedCategory === "all" || pipeline.category === selectedCategory)
+    (pipeline) =>
+      !installedPipelineIds.has(pipeline.id) &&
+      (selectedCategory === "all" || pipeline.category === selectedCategory)
   );
   const installedCount = installedPipelines.length;
   const availablePipelineCount = visibleStorePipelines.filter(
@@ -919,22 +980,6 @@ export default function PipelineSettingsPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isMetaxPathInstalled && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="bg-white"
-                  onClick={() => openMetaxPathGitHubDialog("install")}
-                  disabled={metaxPathSubmitting}
-                >
-                  {metaxPathSubmitting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  Add MetaxPath from GitHub
-                </Button>
-              )}
               <div className="w-52">
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                   <SelectTrigger className="bg-white">
@@ -1075,18 +1120,29 @@ export default function PipelineSettingsPage() {
               {filteredInstalledPipelines.map((pipeline: PipelineConfig) => (
                 <GlassCard key={pipeline.pipelineId} className="relative">
                   {(() => {
-                    const storeEntry = storePipelineMap.get(pipeline.pipelineId);
-                    const isMetaxPathPipeline = pipeline.pipelineId === METAXPATH_PIPELINE_ID;
+                    const storeEntry = preferredStorePipelineMap.get(pipeline.pipelineId);
                     const privateStorePipeline = isPrivateStorePipeline(storeEntry);
+                    const gitHubStorePipeline = isGitHubStorePipeline(storeEntry);
                     const privateInstallTargetData: PrivateInstallTarget | null = privateStorePipeline
+                      && storeEntry
                       ? {
                           pipelineId: pipeline.pipelineId,
                           name: pipeline.name,
                           version: storeEntry?.latestVersion || pipeline.version,
-                          packageUrlDefault: storeEntry?.privateInstall?.packageUrlDefault,
-                          keyLabel: storeEntry?.privateInstall?.keyLabel,
+                          source: storeEntry.source,
+                          packageUrlDefault: storeEntry.source.packageUrlDefault,
+                          keyLabel: storeEntry.source.keyLabel,
                         }
                       : null;
+                    const githubInstallTarget: GitHubInstallTarget | null =
+                      gitHubStorePipeline && storeEntry
+                        ? {
+                            pipelineId: pipeline.pipelineId,
+                            name: pipeline.name,
+                            version: storeEntry.latestVersion || pipeline.version,
+                            source: storeEntry.source,
+                          }
+                        : null;
                     const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
                     const updateAvailable =
                       latestVersion &&
@@ -1151,7 +1207,12 @@ export default function PipelineSettingsPage() {
                                 >
                                   {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
-                                {privateStorePipeline && !isMetaxPathPipeline && (
+                                {storeEntry && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    {getSourceBadgeLabel(storeEntry.source)}
+                                  </Badge>
+                                )}
+                                {privateStorePipeline && (
                                   <Badge variant="secondary" className="text-xs">
                                     Private license
                                   </Badge>
@@ -1226,14 +1287,14 @@ export default function PipelineSettingsPage() {
                                     ? `Latest version: v${latestVersion}`
                                     : "Latest version: unknown"}
                                 </p>
-                                {privateStorePipeline && !isMetaxPathPipeline && (
+                                {privateStorePipeline && (
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Package install requires a private access key.
                                   </p>
                                 )}
-                                {isMetaxPathPipeline && (
+                                {gitHubStorePipeline && storeEntry?.source.repository && (
                                   <p className="text-xs text-muted-foreground mt-1">
-                                    Managed via GitHub import ({METAXPATH_REPOSITORY}, ref: {DEFAULT_METAXPATH_REF}).
+                                    Managed via GitHub import ({storeEntry.source.repository}, ref: {storeEntry.source.refDefault || DEFAULT_GITHUB_REF}).
                                   </p>
                                 )}
                                 <p className="text-xs text-muted-foreground mt-1">
@@ -1387,11 +1448,11 @@ export default function PipelineSettingsPage() {
                                 </Button>
                               );
                             })}
-                            {updateAvailable && !privateStorePipeline && !isMetaxPathPipeline && (
+                            {updateAvailable && !privateStorePipeline && !gitHubStorePipeline && (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleUpdatePipeline(pipeline.pipelineId, latestVersion)}
+                                onClick={() => handleUpdatePipeline(pipeline.pipelineId, latestVersion, storeEntry?.source)}
                                 className="h-8"
                                 disabled={installingPipeline === pipeline.pipelineId}
                               >
@@ -1405,7 +1466,7 @@ export default function PipelineSettingsPage() {
                                   : "Update"}
                               </Button>
                             )}
-                            {privateStorePipeline && privateInstallTargetData && !isMetaxPathPipeline && (
+                            {privateStorePipeline && privateInstallTargetData && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1423,20 +1484,20 @@ export default function PipelineSettingsPage() {
                                   : "Reinstall package"}
                               </Button>
                             )}
-                            {isMetaxPathPipeline && (
+                            {gitHubStorePipeline && githubInstallTarget && (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => openMetaxPathGitHubDialog("sync")}
+                                onClick={() => openGitHubInstallDialog(githubInstallTarget, "update")}
                                 className="h-8"
-                                disabled={metaxPathSubmitting}
+                                disabled={githubSubmitting}
                               >
-                                {metaxPathSubmitting ? (
+                                {githubSubmitting ? (
                                   <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                                 ) : (
                                   <RefreshCw className="h-4 w-4 mr-1" />
                                 )}
-                                {metaxPathSubmitting ? "Syncing..." : "Sync from GitHub"}
+                                {githubSubmitting ? "Syncing..." : "Sync from GitHub"}
                               </Button>
                             )}
                             <Button
@@ -1480,16 +1541,23 @@ export default function PipelineSettingsPage() {
               ))}
 
               {availablePipelines.map((pipeline) => (
-                <GlassCard key={pipeline.id} className="relative">
+                <GlassCard key={`${pipeline.id}:${pipeline.source.sourceId}`} className="relative">
                   {(() => {
-                    const isMetaxPathPipeline = pipeline.id === METAXPATH_PIPELINE_ID;
                     const privateStorePipeline = isPrivateStorePipeline(pipeline);
+                    const gitHubStorePipeline = isGitHubStorePipeline(pipeline);
                     const privateTarget: PrivateInstallTarget = {
                       pipelineId: pipeline.id,
                       name: pipeline.name,
                       version: pipeline.latestVersion || pipeline.version,
-                      packageUrlDefault: pipeline.privateInstall?.packageUrlDefault,
-                      keyLabel: pipeline.privateInstall?.keyLabel,
+                      source: pipeline.source,
+                      packageUrlDefault: pipeline.source.packageUrlDefault,
+                      keyLabel: pipeline.source.keyLabel,
+                    };
+                    const githubTarget: GitHubInstallTarget = {
+                      pipelineId: pipeline.id,
+                      name: pipeline.name,
+                      version: pipeline.latestVersion || pipeline.version,
+                      source: pipeline.source,
                     };
                     return (
                       <>
@@ -1507,7 +1575,10 @@ export default function PipelineSettingsPage() {
                           <Badge variant="secondary" className="text-xs">
                             Not installed
                           </Badge>
-                          {privateStorePipeline && !isMetaxPathPipeline && (
+                          <Badge variant="outline" className="text-xs font-normal">
+                            {getSourceBadgeLabel(pipeline.source)}
+                          </Badge>
+                          {privateStorePipeline && (
                             <Badge variant="secondary" className="text-xs">
                               Private license
                             </Badge>
@@ -1525,14 +1596,14 @@ export default function PipelineSettingsPage() {
                         <p className="text-xs text-muted-foreground mt-1">
                           by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
                         </p>
-                        {privateStorePipeline && !isMetaxPathPipeline && (
+                        {privateStorePipeline && (
                           <p className="text-xs text-muted-foreground mt-1">
                             Installation requires package URL and private access key.
                           </p>
                         )}
-                        {isMetaxPathPipeline && (
+                        {gitHubStorePipeline && (
                           <p className="text-xs text-muted-foreground mt-1">
-                            Add from GitHub by providing a token with repository read access.
+                            Add from GitHub by providing repository access details and a token.
                           </p>
                         )}
                       </div>
@@ -1544,13 +1615,14 @@ export default function PipelineSettingsPage() {
                       className="bg-white"
                       size="sm"
                       onClick={() =>
-                        isMetaxPathPipeline
-                          ? openMetaxPathGitHubDialog("install")
+                        gitHubStorePipeline
+                          ? openGitHubInstallDialog(githubTarget, "install")
                           : privateStorePipeline
                           ? openPrivateInstallDialog(privateTarget, "install")
                           : handleInstallPipeline(
                               pipeline.id,
-                              pipeline.latestVersion || pipeline.version
+                              pipeline.latestVersion || pipeline.version,
+                              pipeline.source
                             )
                       }
                       disabled={installingPipeline === pipeline.id}
@@ -1562,7 +1634,7 @@ export default function PipelineSettingsPage() {
                       )}
                       {installingPipeline === pipeline.id && installAction === "install"
                         ? "Installing..."
-                        : isMetaxPathPipeline
+                        : gitHubStorePipeline
                           ? "Add from GitHub"
                           : privateStorePipeline
                           ? "Install (key required)"
@@ -1594,85 +1666,89 @@ export default function PipelineSettingsPage() {
       </div>
 
       <Dialog
-        open={metaxPathDialogOpen}
+        open={githubInstallDialogOpen}
         onOpenChange={(open) => {
-          setMetaxPathDialogOpen(open);
+          setGithubInstallDialogOpen(open);
           if (!open) {
-            setMetaxPathToken("");
-            setMetaxPathError(null);
-            setMetaxPathRef(DEFAULT_METAXPATH_REF);
+            setGithubToken("");
+            setGithubInstallError(null);
+            setGithubRef(githubInstallTarget?.source.refDefault || DEFAULT_GITHUB_REF);
+            setGithubRepository(githubInstallTarget?.source.repository || "");
           }
         }}
       >
         <DialogContent className="max-w-lg w-[94vw]">
           <DialogHeader>
             <DialogTitle>
-              {metaxPathMode === "sync"
-                ? "Sync MetaxPath from GitHub"
-                : "Add MetaxPath from GitHub"}
+              {githubInstallMode === "update"
+                ? `Sync ${githubInstallTarget?.name || "Pipeline"} from GitHub`
+                : `Add ${githubInstallTarget?.name || "Pipeline"} from GitHub`}
             </DialogTitle>
             <DialogDescription>
-              Import MetaxPath pipeline descriptors and workflow snapshot from {METAXPATH_REPOSITORY}.
+              Import pipeline descriptors and optional workflow snapshot from a GitHub repository.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
             <div className="space-y-2">
-              <Label htmlFor="metaxpath-repository">Repository</Label>
+              <Label htmlFor="github-repository">Repository</Label>
               <Input
-                id="metaxpath-repository"
-                value={METAXPATH_REPOSITORY}
-                readOnly
-                className="bg-muted text-muted-foreground"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="metaxpath-ref">Branch or ref</Label>
-              <Input
-                id="metaxpath-ref"
-                value={metaxPathRef}
-                onChange={(event) => setMetaxPathRef(event.target.value)}
-                placeholder={DEFAULT_METAXPATH_REF}
+                id="github-repository"
+                value={githubRepository}
+                onChange={(event) => setGithubRepository(event.target.value)}
+                placeholder="owner/repository"
                 className="bg-white"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="metaxpath-token">GitHub token</Label>
+              <Label htmlFor="github-ref">Branch or ref</Label>
               <Input
-                id="metaxpath-token"
-                value={metaxPathToken}
-                onChange={(event) => setMetaxPathToken(event.target.value)}
+                id="github-ref"
+                value={githubRef}
+                onChange={(event) => setGithubRef(event.target.value)}
+                placeholder={githubInstallTarget?.source.refDefault || DEFAULT_GITHUB_REF}
+                className="bg-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="github-token">
+                {githubInstallTarget?.source.keyLabel || "GitHub token"}
+              </Label>
+              <Input
+                id="github-token"
+                value={githubToken}
+                onChange={(event) => setGithubToken(event.target.value)}
                 type="password"
                 placeholder="Paste token with read access to the repository"
                 className="bg-white"
               />
             </div>
 
-            {metaxPathError && (
-              <p className="text-sm text-destructive">{metaxPathError}</p>
+            {githubInstallError && (
+              <p className="text-sm text-destructive">{githubInstallError}</p>
             )}
           </div>
 
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setMetaxPathDialogOpen(false)}
-              disabled={metaxPathSubmitting}
+              onClick={() => setGithubInstallDialogOpen(false)}
+              disabled={githubSubmitting}
             >
               Cancel
             </Button>
             <Button
-              onClick={handleMetaxPathGitHubImport}
-              disabled={metaxPathSubmitting}
+              onClick={handleGitHubInstall}
+              disabled={githubSubmitting}
             >
-              {metaxPathSubmitting && (
+              {githubSubmitting && (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               )}
-              {metaxPathSubmitting
-                ? metaxPathMode === "sync"
+              {githubSubmitting
+                ? githubInstallMode === "update"
                   ? "Syncing..."
                   : "Adding..."
-                : metaxPathMode === "sync"
+                : githubInstallMode === "update"
                   ? "Sync from GitHub"
                   : "Add from GitHub"}
             </Button>

@@ -4,11 +4,12 @@
  * Checks seqdesk.com for new versions.
  */
 
-import type { UpdateCheckResult, ReleaseInfo } from './types';
+import type { UpdateCheckResult } from './types';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
 import { bootstrapRuntimeEnv } from '@/lib/config/runtime-env';
+import { parseUpdateCheckResponse } from '@/lib/config/version-response';
 
 // Read current version from package.json
 function readVersionFromPackageJson(): string {
@@ -64,12 +65,12 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = parseUpdateCheckResponse(await response.json());
 
     const result: UpdateCheckResult = {
-      updateAvailable: data.updateAvailable || false,
+      updateAvailable: data.updateAvailable,
       currentVersion: currentVersion,
-      latest: data.latest as ReleaseInfo,
+      latest: data.latest,
     };
 
     // Cache the result

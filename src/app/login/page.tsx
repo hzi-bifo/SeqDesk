@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Loader2,
 } from "lucide-react";
+import { isPublicDemoEnabledClient } from "@/lib/demo/client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,6 +19,11 @@ export default function LoginPage() {
   const [checkingDb, setCheckingDb] = useState(true);
 
   useEffect(() => {
+    if (isPublicDemoEnabledClient()) {
+      router.replace("/demo");
+      return;
+    }
+
     const checkDatabase = async () => {
       try {
         const res = await fetch("/api/setup/status", { cache: "no-store" });

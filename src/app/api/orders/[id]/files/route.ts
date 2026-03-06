@@ -13,6 +13,7 @@ import {
 } from "@/lib/files";
 
 import { checkAndCompleteOrder } from "@/lib/orders/auto-complete";
+import { isDemoSession } from "@/lib/demo/server";
 
 // Status after which files can be assigned
 const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
@@ -43,6 +44,13 @@ export async function GET(
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "File management is disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;
@@ -142,6 +150,13 @@ export async function PUT(
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "File management is disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

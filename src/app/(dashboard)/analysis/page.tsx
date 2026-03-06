@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { useSession } from "next-auth/react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Table,
   TableBody,
@@ -24,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square, Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -170,6 +172,7 @@ export default function AnalysisDashboardPage() {
   const [stopping, setStopping] = useState(false);
   const [syncDisabled, setSyncDisabled] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const isDemoUser = session?.user?.isDemo === true;
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const canCreateStudy = isResearcher || isFacilityAdmin;
@@ -178,13 +181,14 @@ export default function AnalysisDashboardPage() {
   const params = new URLSearchParams();
   if (pipelineFilter !== "all") params.set("pipelineId", pipelineFilter);
   if (statusFilter !== "all") params.set("status", statusFilter);
+  const runsEndpoint = isDemoUser ? null : `/api/pipelines/runs?${params.toString()}`;
 
   const {
     data,
     error,
     isLoading,
     mutate,
-  } = useSWR(`/api/pipelines/runs?${params.toString()}`, fetcher, {
+  } = useSWR(runsEndpoint, fetcher, {
     refreshInterval: 10000, // Refresh every 10 seconds for running jobs
   });
 
@@ -278,6 +282,15 @@ export default function AnalysisDashboardPage() {
     };
   }, [activeKey, mutate, syncDisabled, syncRun]);
 
+  if (isDemoUser) {
+    return (
+      <DemoFeatureNotice
+        title="Analysis is disabled in the public demo"
+        description="Pipeline execution is intentionally blocked here because it depends on local infrastructure, queueing, and pipeline runtimes that are not part of the hosted researcher demo. Later we can show example outputs and finished runs here without pretending the live pipeline stack is available."
+      />
+    );
+  }
+
   return (
     <PageContainer>
       <div className="flex items-center justify-between mb-6">
@@ -295,6 +308,11 @@ export default function AnalysisDashboardPage() {
           Refresh
         </Button>
       </div>
+
+      <HelpBox title="What is analysis?">
+        Once the sequencing center has executed analysis pipelines for your data, the runs will appear here.
+        You can then monitor progress and download the results for further analysis.
+      </HelpBox>
 
       {/* Runs Table */}
       <div className="bg-card rounded-lg overflow-hidden border border-border">

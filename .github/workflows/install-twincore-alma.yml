@@ -64,6 +64,7 @@ jobs:
           set -euo pipefail
           test -f "$CANARY_DIR/package.json"
           test -f "$CANARY_DIR/seqdesk.config.json"
+          test -x "$CANARY_DIR/start.sh"
           cp "$CANARY_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
 
       - name: Validate installed config values
@@ -92,7 +93,7 @@ jobs:
           set -euo pipefail
           cd "$CANARY_DIR"
 
-          PORT="$PORT" npm run dev >"$SERVER_LOG" 2>&1 &
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
 
           cleanup() {
@@ -102,7 +103,7 @@ jobs:
           trap cleanup EXIT
 
           READY=0
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 180); do
             if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
               READY=1
               break

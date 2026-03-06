@@ -1,12 +1,15 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { SidebarProvider, useSidebar } from "./SidebarContext";
 import { FieldHelpProvider } from "@/lib/contexts/FieldHelpContext";
 import { Sidebar } from "./Sidebar";
 import { UpdateBanner } from "@/components/admin/UpdateBanner";
 import { cn } from "@/lib/utils";
 import { Menu } from "lucide-react";
+import { DemoBanner } from "@/components/demo/DemoBanner";
+import { DEMO_READY_MESSAGE, isEmbeddedFrame, postDemoFrameMessage } from "@/lib/demo/client";
 
 interface DashboardShellProps {
   children: ReactNode;
@@ -14,11 +17,19 @@ interface DashboardShellProps {
     name?: string | null;
     email?: string | null;
     role?: string;
+    isDemo?: boolean;
   };
   version?: string;
 }
 
-function DashboardContent({ children, user, version }: DashboardShellProps) {
+const subscribeToEmbedState = () => () => {};
+
+function DashboardContent({
+  children,
+  user,
+  version,
+  embeddedMode,
+}: DashboardShellProps & { embeddedMode: boolean }) {
   const { collapsed, mobileOpen, setMobileOpen } = useSidebar();
 
   return (
@@ -55,6 +66,7 @@ function DashboardContent({ children, user, version }: DashboardShellProps) {
         )}
       >
         <UpdateBanner />
+        {user.isDemo ? <DemoBanner embeddedMode={embeddedMode} /> : null}
         <main>{children}</main>
       </div>
     </>
@@ -62,10 +74,38 @@ function DashboardContent({ children, user, version }: DashboardShellProps) {
 }
 
 export function DashboardShell({ children, user, version }: DashboardShellProps) {
+  const pathname = usePathname();
+  const isEmbedded = useSyncExternalStore(subscribeToEmbedState, isEmbeddedFrame, () => false);
+  const embeddedMode = Boolean(user.isDemo) && isEmbedded;
+
+  useEffect(() => {
+    if (embeddedMode) {
+      document.body.dataset.demoEmbedded = "true";
+    } else {
+      delete document.body.dataset.demoEmbedded;
+    }
+
+    return () => {
+      delete document.body.dataset.demoEmbedded;
+    };
+  }, [embeddedMode]);
+
+  useEffect(() => {
+    if (!embeddedMode) {
+      return;
+    }
+
+    postDemoFrameMessage(DEMO_READY_MESSAGE, { path: pathname });
+  }, [embeddedMode, pathname]);
+
   return (
-    <SidebarProvider>
+    <SidebarProvider embeddedMode={embeddedMode}>
       <FieldHelpProvider>
-        <DashboardContent user={user} version={version}>
+        <DashboardContent
+          user={user}
+          version={version}
+          embeddedMode={embeddedMode}
+        >
           {children}
         </DashboardContent>
       </FieldHelpProvider>

@@ -370,6 +370,7 @@ export default function StudyDetailPage({
   // Check if current user is the owner of this study
   const isOwner = session?.user?.id === study?.user?.id;
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const isDemoUser = session?.user?.isDemo === true;
   const apiStudyId = study?.id ?? id;
 
   const safeJsonParse = (value: unknown) => {
@@ -804,16 +805,20 @@ export default function StudyDetailPage({
             <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
               <TabsTrigger value="overview" className={tabTriggerClass}>Overview</TabsTrigger>
               <TabsTrigger value="samples" className={tabTriggerClass}>Samples</TabsTrigger>
-              <TabsTrigger value="reads" className={tabTriggerClass}>
-                Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
-              </TabsTrigger>
+              {!isDemoUser && (
+                <TabsTrigger value="reads" className={tabTriggerClass}>
+                  Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
+                </TabsTrigger>
+              )}
               {isAdmin && totalSamples > 0 && (
                 <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
               )}
               {notesSupported && (
                 <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
               )}
-              <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
+              {!isDemoUser && (
+                <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -1305,6 +1310,7 @@ export default function StudyDetailPage({
         </TabsContent>
 
         {/* Read Files Tab */}
+        {!isDemoUser && (
         <TabsContent value="reads">
           <div className="bg-card rounded-lg border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4">
@@ -1410,6 +1416,7 @@ export default function StudyDetailPage({
             )}
           </div>
         </TabsContent>
+        )}
 
         {/* Pipelines Tab - admin only */}
         {isAdmin && totalSamples > 0 && (
@@ -1471,6 +1478,7 @@ export default function StudyDetailPage({
         )}
 
         {/* ENA Tab */}
+        {!isDemoUser && (
         <TabsContent value="ena">
           {/* ENA Submission Readiness - Admin View */}
           {isAdmin && !study.submitted && (() => {
@@ -1621,6 +1629,7 @@ export default function StudyDetailPage({
           })()}
 
         </TabsContent>
+        )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

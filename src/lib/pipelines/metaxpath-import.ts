@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import type { PackageManifest } from "./package-loader";
+import { installPackageDirectory } from "./package-install";
 
 export const METAXPATH_PIPELINE_ID = "metaxpath";
 export const METAXPATH_REPOSITORY = "hzi-bifo/MetaxPath";
@@ -13,7 +14,6 @@ export const REQUIRED_DESCRIPTOR_FILES = [
   "definition.json",
   "registry.json",
   "samplesheet.yaml",
-  "README.md",
 ] as const;
 
 const EXCLUDED_WORKFLOW_ROOT_ENTRIES = new Set([
@@ -35,6 +35,15 @@ export interface DescriptorValidationResult {
   manifest?: PackageManifest;
 }
 
+export interface GitHubPipelineInstallOptions {
+  pipelineId: string;
+  cloneDir: string;
+  repo: string;
+  ref: string;
+  descriptorPath?: string;
+  includeWorkflow?: boolean;
+}
+
 function normalizeErrorText(value: string): string {
   return value.toLowerCase();
 }
@@ -50,9 +59,7 @@ function isAuthFailure(text: string): boolean {
 }
 
 function isMissingRefFailure(text: string): boolean {
-  return (
-    text.includes("remote branch") && text.includes("not found")
-  );
+  return text.includes("remote branch") && text.includes("not found");
 }
 
 export function classifyCloneFailure(details: string): CloneFailureClassification {
@@ -66,12 +73,12 @@ export function classifyCloneFailure(details: string): CloneFailureClassificatio
   if (isMissingRefFailure(normalized)) {
     return {
       status: 400,
-      error: "Requested Git reference was not found in the MetaxPath repository.",
+      error: "Requested Git reference was not found in the GitHub repository.",
     };
   }
   return {
     status: 500,
-    error: "Failed to clone MetaxPath repository.",
+    error: "Failed to clone GitHub repository.",
   };
 }
 
@@ -89,8 +96,25 @@ export function shouldCopyWorkflowEntry(entryName: string): boolean {
   return !EXCLUDED_WORKFLOW_ROOT_ENTRIES.has(entryName.toLowerCase());
 }
 
-export async function validateMetaxPathDescriptorDir(
-  descriptorDir: string
+function getDescriptorPath(pipelineId: string, descriptorPath?: string): string {
+  const trimmed = descriptorPath?.trim();
+  return trimmed && trimmed.length > 0
+    ? trimmed
+    : `.seqdesk/pipelines/${pipelineId}`;
+}
+
+function shouldRequireWorkflowSnapshot(
+  pipelineId: string,
+  manifest: PackageManifest,
+  includeWorkflow?: boolean
+): boolean {
+  if (typeof includeWorkflow === "boolean") return includeWorkflow;
+  return pipelineId === METAXPATH_PIPELINE_ID || manifest.execution.pipeline === "./workflow";
+}
+
+export async function validatePipelineDescriptorDir(
+  descriptorDir: string,
+  pipelineId: string
 ): Promise<DescriptorValidationResult> {
   const errors: string[] = [];
 
@@ -131,24 +155,26 @@ export async function validateMetaxPathDescriptorDir(
     return { valid: false, errors };
   }
 
-  if (manifest.package?.id !== METAXPATH_PIPELINE_ID) {
+  if (manifest.package?.id !== pipelineId) {
     errors.push(
-      `manifest.json package.id must be "${METAXPATH_PIPELINE_ID}" (received "${manifest.package?.id ?? "missing"}").`
+      `manifest.json package.id must be "${pipelineId}" (received "${manifest.package?.id ?? "missing"}").`
     );
   }
 
-  if (manifest.execution?.pipeline !== "./workflow") {
-    errors.push('manifest.json execution.pipeline must be "./workflow".');
-  }
+  if (pipelineId === METAXPATH_PIPELINE_ID) {
+    if (manifest.execution?.pipeline !== "./workflow") {
+      errors.push('manifest.json execution.pipeline must be "./workflow".');
+    }
 
-  if (manifest.execution?.type !== "nextflow") {
-    errors.push('manifest.json execution.type must be "nextflow".');
-  }
+    if (manifest.execution?.type !== "nextflow") {
+      errors.push('manifest.json execution.type must be "nextflow".');
+    }
 
-  if (manifest.execution?.version !== DEFAULT_METAXPATH_REF) {
-    errors.push(
-      `manifest.json execution.version must be "${DEFAULT_METAXPATH_REF}".`
-    );
+    if (manifest.execution?.version !== DEFAULT_METAXPATH_REF) {
+      errors.push(
+        `manifest.json execution.version must be "${DEFAULT_METAXPATH_REF}".`
+      );
+    }
   }
 
   if (errors.length > 0) {
@@ -156,4 +182,84 @@ export async function validateMetaxPathDescriptorDir(
   }
 
   return { valid: true, errors, manifest };
+}
+
+export async function validateMetaxPathDescriptorDir(
+  descriptorDir: string
+): Promise<DescriptorValidationResult> {
+  return validatePipelineDescriptorDir(descriptorDir, METAXPATH_PIPELINE_ID);
+}
+
+export async function installGitHubPipelineSnapshot(
+  options: GitHubPipelineInstallOptions
+): Promise<{ action: "install" | "update"; syncedAt: string; manifest?: PackageManifest }> {
+  const pipelinesDir = path.join(process.cwd(), "pipelines");
+  const descriptorPath = getDescriptorPath(options.pipelineId, options.descriptorPath);
+  const descriptorDir = path.join(options.cloneDir, descriptorPath);
+  const validation = await validatePipelineDescriptorDir(
+    descriptorDir,
+    options.pipelineId
+  );
+  if (!validation.valid) {
+    throw new Error(validation.errors.join(" "));
+  }
+
+  const manifest = validation.manifest;
+  const syncedAt = new Date().toISOString();
+  const action = await installPackageDirectory(
+    pipelinesDir,
+    options.pipelineId,
+    async (stageDir) => {
+      for (const fileName of REQUIRED_DESCRIPTOR_FILES) {
+        await fs.copyFile(
+          path.join(descriptorDir, fileName),
+          path.join(stageDir, fileName)
+        );
+      }
+
+      const readmePath = path.join(descriptorDir, "README.md");
+      try {
+        const stat = await fs.stat(readmePath);
+        if (stat.isFile()) {
+          await fs.copyFile(readmePath, path.join(stageDir, "README.md"));
+        }
+      } catch {
+        // README is optional for generic GitHub installs.
+      }
+
+      if (manifest && shouldRequireWorkflowSnapshot(options.pipelineId, manifest, options.includeWorkflow)) {
+        const workflowDir = path.join(stageDir, "workflow");
+        await fs.mkdir(workflowDir, { recursive: true });
+        const rootEntries = await fs.readdir(options.cloneDir, { withFileTypes: true });
+        for (const entry of rootEntries) {
+          if (!shouldCopyWorkflowEntry(entry.name)) continue;
+          const sourcePath = path.join(options.cloneDir, entry.name);
+          const destinationPath = path.join(workflowDir, entry.name);
+          await fs.cp(sourcePath, destinationPath, { recursive: true });
+        }
+      }
+
+      await fs.writeFile(
+        path.join(stageDir, ".source.json"),
+        `${JSON.stringify(
+          {
+            kind: "github",
+            repo: options.repo,
+            ref: options.ref,
+            descriptorPath,
+            syncedAt,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+    }
+  );
+
+  return {
+    action,
+    syncedAt,
+    manifest,
+  };
 }

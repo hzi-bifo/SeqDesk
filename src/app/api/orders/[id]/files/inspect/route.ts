@@ -9,6 +9,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { hasAllowedExtension, safeJoin } from "@/lib/files/paths";
+import { isDemoSession } from "@/lib/demo/server";
 
 const DEFAULT_PREVIEW_LINES = 12;
 const MAX_PREVIEW_LINES = 40;
@@ -131,6 +132,13 @@ export async function GET(
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "File inspection is disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

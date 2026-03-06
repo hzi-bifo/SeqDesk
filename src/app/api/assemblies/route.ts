@@ -7,6 +7,7 @@ import {
   getAvailableAssemblies,
   resolveAssemblySelection,
 } from "@/lib/pipelines/assembly-selection";
+import { isDemoSession } from "@/lib/demo/server";
 
 function fileNameFromPath(filePath: string | null): string | null {
   if (!filePath) return null;
@@ -22,6 +23,13 @@ export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "Assemblies are disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";

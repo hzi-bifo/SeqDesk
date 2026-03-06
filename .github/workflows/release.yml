@@ -3,7 +3,7 @@ name: Build Release
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v0.1.0
+      - "v*"
 
 jobs:
   build:
@@ -16,8 +16,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -32,55 +32,13 @@ jobs:
 
       - name: Get version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Create release package
         run: |
+          set -euo pipefail
           VERSION=${{ steps.version.outputs.VERSION }}
-          RELEASE_DIR="seqdesk-${VERSION}"
-
-          mkdir -p "${RELEASE_DIR}"
-
-          # Copy standalone build
-          cp -r .next/standalone/* "${RELEASE_DIR}/"
-          cp -r .next/static "${RELEASE_DIR}/.next/"
-          cp -r public "${RELEASE_DIR}/"
-          cp -r prisma "${RELEASE_DIR}/"
-          cp -r data "${RELEASE_DIR}/"
-
-          # Copy config files
-          cp .env.example "${RELEASE_DIR}/"
-          cp seqdesk.config.example.json "${RELEASE_DIR}/"
-          cp README.md "${RELEASE_DIR}/"
-          cp package.json "${RELEASE_DIR}/"
-
-          # Create start script
-          cat > "${RELEASE_DIR}/start.sh" << 'EOF'
-          #!/bin/bash
-          cd "$(dirname "$0")"
-
-          if [ ! -f ".env" ]; then
-              cp .env.example .env
-              SECRET=$(openssl rand -base64 32)
-              sed -i "s|NEXTAUTH_SECRET=.*|NEXTAUTH_SECRET=\"$SECRET\"|" .env
-              echo "Created .env with generated secret"
-          fi
-
-          if [ "$1" = "--init" ]; then
-              npx prisma db push --skip-generate
-              npx prisma db seed
-              echo "Database initialized"
-          fi
-
-          export NODE_ENV=production
-          node server.js
-          EOF
-          chmod +x "${RELEASE_DIR}/start.sh"
-
-          # Create tarball
-          tar -czf "seqdesk-${VERSION}.tar.gz" "${RELEASE_DIR}"
-
-          # Calculate checksum
+          scripts/build-release.sh "$VERSION" --skip-build
           sha256sum "seqdesk-${VERSION}.tar.gz" > "seqdesk-${VERSION}.tar.gz.sha256"
 
       - name: Create GitHub Release

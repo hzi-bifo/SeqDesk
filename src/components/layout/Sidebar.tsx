@@ -33,6 +33,7 @@ interface SidebarProps {
     name?: string | null;
     email?: string | null;
     role?: string;
+    isDemo?: boolean;
   };
   version?: string;
 }
@@ -43,6 +44,7 @@ export function Sidebar({ user, version }: SidebarProps) {
   const { collapsed, toggle, mobileOpen, setMobileOpen } = useSidebar();
   const { focusedField, setFocusedField, validationError } = useFieldHelp();
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
+  const isDemoUser = user.isDemo === true;
   const { enabled: sequencingTechEnabled } = useModule("sequencing-tech");
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -714,7 +716,7 @@ export function Sidebar({ user, version }: SidebarProps) {
       </nav>
 
       {/* Support section at bottom - Researchers only */}
-      {!isFacilityAdmin && (
+      {!isFacilityAdmin && !isDemoUser && (
         <div className={cn("px-3 pb-2", collapsed && "px-2")}>
           {/* Section separator */}
           <div className={cn("mb-2", collapsed ? "mx-1" : "mx-3")}>
@@ -789,7 +791,7 @@ export function Sidebar({ user, version }: SidebarProps) {
             <div className="px-4 py-2 border-b border-border">
               <p className="text-sm font-medium truncate">{user.name}</p>
               <p className="text-xs text-muted-foreground">
-                {isFacilityAdmin ? "Facility Admin" : "Researcher"}
+                {isFacilityAdmin ? "Facility Admin" : isDemoUser ? "Researcher Demo" : "Researcher"}
               </p>
             </div>
             <Link
@@ -829,7 +831,7 @@ export function Sidebar({ user, version }: SidebarProps) {
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-sm font-medium truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {isFacilityAdmin ? "Facility Admin" : "Researcher"}
+                  {isFacilityAdmin ? "Facility Admin" : isDemoUser ? "Researcher Demo" : "Researcher"}
                 </p>
               </div>
               <ChevronUp

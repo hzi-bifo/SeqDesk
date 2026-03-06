@@ -36,6 +36,8 @@ const PRISMA_DIR = path.join(INSTALL_DIR, 'prisma');
 const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
 const DB_SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal'];
+const BACKUP_DIRS = ['.next', 'data', 'node_modules', 'pipelines', 'prisma', 'public', 'scripts'];
+const BACKUP_FILES = ['package.json', 'seqdesk.config.json', 'server.js', 'start.sh'];
 
 function isTruthy(value?: string | null): boolean {
   if (!value) {
@@ -314,24 +316,20 @@ async function createBackup(): Promise<void> {
   await fs.mkdir(BACKUP_DIR, { recursive: true });
 
   // Backup important directories
-  const dirsToBackup = ['.next', 'node_modules', 'prisma', 'public'];
-
-  for (const dir of dirsToBackup) {
+  for (const dir of BACKUP_DIRS) {
     const srcPath = path.join(INSTALL_DIR, dir);
     const destPath = path.join(BACKUP_DIR, dir);
 
     try {
       await fs.access(srcPath);
-      await execAsync(`cp -r "${srcPath}" "${destPath}"`);
+      await fs.cp(srcPath, destPath, { recursive: true, force: true });
     } catch {
       // Directory doesn't exist, skip
     }
   }
 
   // Backup key files
-  const filesToBackup = ['package.json', 'seqdesk.config.json'];
-
-  for (const file of filesToBackup) {
+  for (const file of BACKUP_FILES) {
     const srcPath = path.join(INSTALL_DIR, file);
     const destPath = path.join(BACKUP_DIR, file);
 
@@ -441,8 +439,35 @@ async function runMigrations(): Promise<void> {
  * Restore from backup
  */
 async function restoreBackup(): Promise<void> {
-  // This is a simplified restore - in production you'd want more robust logic
-  await execAsync(`cp -r "${BACKUP_DIR}/"* "${INSTALL_DIR}/"`);
+  await fs.access(BACKUP_DIR);
+
+  for (const dir of BACKUP_DIRS) {
+    const backupPath = path.join(BACKUP_DIR, dir);
+    const installPath = path.join(INSTALL_DIR, dir);
+
+    try {
+      await fs.access(backupPath);
+    } catch {
+      continue;
+    }
+
+    await fs.rm(installPath, { recursive: true, force: true });
+    await fs.cp(backupPath, installPath, { recursive: true, force: true });
+  }
+
+  for (const file of BACKUP_FILES) {
+    const backupPath = path.join(BACKUP_DIR, file);
+    const installPath = path.join(INSTALL_DIR, file);
+
+    try {
+      await fs.access(backupPath);
+    } catch {
+      continue;
+    }
+
+    await fs.rm(installPath, { force: true });
+    await fs.copyFile(backupPath, installPath);
+  }
 }
 
 /**
