@@ -98,6 +98,39 @@ npm run start
 npm test
 ```
 
+## Live Test Dashboard
+
+SeqDesk includes a local test dashboard that groups tests by section and shows live pass/fail/running state while the suite executes.
+
+Start the default fast watcher:
+
+```bash
+npm run test:dashboard:watch
+```
+
+Other entry points:
+
+```bash
+npm run test:dashboard          # fast Vitest, one-shot
+npm run test:dashboard:watch    # fast Vitest, persistent local dashboard
+npm run test:dashboard:all      # all current Vitest tiers
+npm run test:dashboard:risk     # risk-tier Vitest files
+npm run test:dashboard:live     # live-tier Vitest files
+npm run test:dashboard:ui       # Playwright UI/E2E tests in the same dashboard shell
+```
+
+Useful examples:
+
+```bash
+npm run test:dashboard -- --no-open src/lib/testing/dashboard.test.ts
+npm run test:dashboard:ui -- --no-open playwright/tests/auth.setup.ts
+```
+
+Notes:
+- The dashboard prints a local URL when it starts and can open the browser automatically.
+- The page includes a tier selector and `Run Tests` button for local reruns.
+- `ui` is a separate Playwright tier. `all` currently means Vitest-only, not Vitest + Playwright combined.
+
 ## UI E2E Coverage
 
 Local Playwright coverage is tracked separately from the Codecov percentage shown above.
