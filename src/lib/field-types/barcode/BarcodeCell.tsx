@@ -70,7 +70,10 @@ export function BarcodeCell<T extends SampleRow>({
   // No barcode options available (no kit selected or kit doesn't support barcoding)
   if (options.length === 0) {
     return (
-      <div className="w-full h-full px-2 py-1.5 text-xs text-muted-foreground bg-muted/30 flex items-center">
+      <div
+        data-testid={`sample-cell-${row.index}-${column.id}`}
+        className="w-full h-full px-2 py-1.5 text-xs text-muted-foreground bg-muted/30 flex items-center"
+      >
         Select kit first
       </div>
     );
@@ -84,6 +87,7 @@ export function BarcodeCell<T extends SampleRow>({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          data-testid={`sample-cell-${row.index}-${column.id}`}
           onClick={onFocus}
           disabled={!isEditable}
           className={cn(
