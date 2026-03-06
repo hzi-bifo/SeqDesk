@@ -13,12 +13,13 @@ Pass any installer flags directly:
 
 ```bash
 seqdesk -y --dir /opt/seqdesk
+seqdesk -y --use-pm2 --config ./infrastructure-setup.json
 seqdesk -y --reconfigure --config ./infrastructure-setup.json
 ```
 
 ## Notes
 
-- The launcher fetches `https://seqdesk.com/install.sh` and executes it with `bash`.
+- The launcher downloads `https://seqdesk.com/install.sh` over HTTPS and executes it with `bash`.
 - By default it sets `SEQDESK_VERSION` to this package version (unless already set).
 
 ## Publishing

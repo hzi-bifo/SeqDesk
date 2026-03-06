@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AlertCircle, Download, Loader2, RefreshCw } from "lucide-react";
+import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 
 interface AssemblyItem {
   sample: {
@@ -64,10 +66,20 @@ function formatSelectionMode(mode: AssemblyItem["selection"]["mode"]): string {
 }
 
 export default function AssembliesPage() {
+  const { data: session } = useSession();
   const [data, setData] = useState<AssembliesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+
+  if (session?.user?.isDemo) {
+    return (
+      <DemoFeatureNotice
+        title="Assemblies are disabled in the public demo"
+        description="Downloaded artifacts depend on pipeline execution and local storage. The hosted researcher demo keeps those infrastructure-backed outputs turned off."
+      />
+    );
+  }
 
   const fetchAssemblies = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);

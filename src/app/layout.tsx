@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Caveat, Playfair_Display, Press_Start_2P } from "nex
 import { GeistPixelSquare } from "geist/font/pixel";
 import { Toaster } from "@/components/ui/sonner";
 import { Providers } from "@/components/providers";
+import { isPublicDemoEnabled } from "@/lib/demo/config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,6 +47,12 @@ export const metadata: Metadata = {
     "MIxS",
     "bioinformatics",
   ],
+  robots: isPublicDemoEnabled()
+    ? {
+        index: false,
+        follow: false,
+      }
+    : undefined,
 };
 
 export default function RootLayout({

@@ -18,55 +18,77 @@ if (!env.SEQDESK_VERSION) {
   env.SEQDESK_VERSION = version;
 }
 
-const curl = spawn("curl", ["-fsSL", INSTALL_URL], {
-  env,
-  stdio: ["ignore", "pipe", "inherit"],
-});
+async function downloadInstaller() {
+  let response;
+  try {
+    response = await fetch(INSTALL_URL, {
+      redirect: "follow",
+      headers: {
+        "user-agent": `seqdesk/${version}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(`Could not download installer from ${INSTALL_URL}: ${error.message}`);
+  }
 
-const bash = spawn("bash", ["-s", "--", ...args], {
-  env,
-  stdio: ["pipe", "inherit", "inherit"],
-});
+  if (!response.ok) {
+    throw new Error(`Could not download installer from ${INSTALL_URL}: HTTP ${response.status}`);
+  }
 
-let downloadFailed = false;
+  return response.text();
+}
 
-curl.on("error", (error) => {
-  downloadFailed = true;
-  console.error(`[seqdesk] Failed to start curl: ${error.message}`);
-  bash.kill("SIGTERM");
-});
+function runInstaller(script) {
+  return new Promise((resolve, reject) => {
+    const bash = spawn("bash", ["-s", "--", ...args], {
+      env,
+      stdio: ["pipe", "inherit", "inherit"],
+    });
 
-bash.on("error", (error) => {
-  console.error(`[seqdesk] Failed to start bash: ${error.message}`);
-  curl.kill("SIGTERM");
+    let settled = false;
+
+    function finishError(error) {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    }
+
+    function finishSuccess(code) {
+      if (settled) return;
+      settled = true;
+      resolve(code ?? 1);
+    }
+
+    bash.on("error", (error) => {
+      finishError(new Error(`Failed to start bash: ${error.message}`));
+    });
+
+    bash.stdin.on("error", (error) => {
+      if (error && error.code === "EPIPE") {
+        return;
+      }
+      finishError(new Error(`Failed to write installer to bash stdin: ${error.message}`));
+    });
+
+    bash.on("close", (code, signal) => {
+      if (signal) {
+        finishError(new Error(`Installer exited with signal ${signal}`));
+        return;
+      }
+      finishSuccess(code);
+    });
+
+    bash.stdin.end(script);
+  });
+}
+
+async function main() {
+  const script = await downloadInstaller();
+  const exitCode = await runInstaller(script);
+  process.exit(exitCode);
+}
+
+main().catch((error) => {
+  console.error(`[seqdesk] ${error.message}`);
   process.exit(1);
-});
-
-curl.stdout.pipe(bash.stdin);
-
-curl.on("close", (code, signal) => {
-  if (signal) {
-    downloadFailed = true;
-    console.error(`[seqdesk] Installer download interrupted (${signal}).`);
-    bash.kill("SIGTERM");
-    return;
-  }
-
-  if (code !== 0) {
-    downloadFailed = true;
-    console.error(`[seqdesk] Could not download installer from ${INSTALL_URL}.`);
-    bash.kill("SIGTERM");
-  }
-});
-
-bash.on("close", (code, signal) => {
-  if (signal) {
-    process.exit(1);
-  }
-
-  if (downloadFailed) {
-    process.exit(1);
-  }
-
-  process.exit(code ?? 1);
 });

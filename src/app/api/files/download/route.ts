@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { safeJoin, hasAllowedExtension } from "@/lib/files/paths";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
+import { isDemoSession } from "@/lib/demo/server";
 import * as fs from "fs";
 import * as path from "path";
 import { Readable } from "stream";
@@ -24,6 +25,13 @@ export async function GET(request: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "Downloads are disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const filePath = request.nextUrl.searchParams.get("path");

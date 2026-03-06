@@ -1,9 +1,11 @@
 import { getServerSession } from "next-auth";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { Footer } from "@/components/layout/Footer";
 import { getCurrentVersion } from "@/lib/updater";
+import { isPublicDemoEnabled } from "@/lib/demo/config";
 
 export default async function DashboardLayout({
   children,
@@ -13,7 +15,13 @@ export default async function DashboardLayout({
   const session = await getServerSession(authOptions);
 
   if (!session) {
-    redirect("/login");
+    if (!isPublicDemoEnabled()) {
+      redirect("/login");
+    }
+
+    const requestHeaders = await headers();
+    const fetchDest = requestHeaders.get("sec-fetch-dest");
+    redirect(fetchDest === "iframe" ? "/demo/embed" : "/demo");
   }
 
   const version = getCurrentVersion();

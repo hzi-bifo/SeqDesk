@@ -29,6 +29,7 @@ import {
   Copy,
   X,
 } from "lucide-react";
+import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 
 interface Submission {
   id: string;
@@ -269,6 +270,15 @@ export default function SubmissionsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [typeFilter, setTypeFilter] = useState<string>("");
+
+  if (session?.user?.isDemo) {
+    return (
+      <DemoFeatureNotice
+        title="ENA submission is disabled in the public demo"
+        description="The researcher demo uses real app screens, but external archive submission is blocked so the hosted environment never creates or simulates ENA records."
+      />
+    );
+  }
 
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { isDemoSession } from "@/lib/demo/server";
 import fs from "fs/promises";
 import path from "path";
 
@@ -23,6 +24,12 @@ export async function GET(request: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) {
       return new NextResponse("Unauthorized", { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return new NextResponse("Preview is disabled in the public demo.", {
+        status: 403,
+      });
     }
 
     const { searchParams } = new URL(request.url);

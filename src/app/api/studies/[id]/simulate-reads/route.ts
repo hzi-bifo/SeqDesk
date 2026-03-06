@@ -11,6 +11,7 @@ import {
 import * as fs from "fs/promises";
 import * as path from "path";
 import { gzipSync } from "zlib";
+import { isDemoSession } from "@/lib/demo/server";
 
 const DEFAULT_EXTENSION = ".fastq.gz";
 const DEFAULT_READ_COUNT = 1000;
@@ -42,6 +43,13 @@ export async function POST(
 
   if (!session || session.user.role !== "FACILITY_ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (isDemoSession(session)) {
+    return NextResponse.json(
+      { error: "Simulated reads are disabled in the public demo." },
+      { status: 403 }
+    );
   }
 
   try {

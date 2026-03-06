@@ -14,6 +14,7 @@ export async function GET() {
   try {
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const userId = session.user.id;
+    const isDemoUser = session.user.isDemo;
 
     // Get counts based on user role
     const [ordersCount, studiesCount, filesCount, submissionsCount, analysisCount] = await Promise.all([
@@ -34,12 +35,14 @@ export async function GET() {
         ? db.submission.count()
         : Promise.resolve(0),
       // Analysis runs count (running or queued)
-      db.pipelineRun.count({
-        where: {
-          status: { in: ['pending', 'queued', 'running'] },
-          ...(isFacilityAdmin ? {} : { study: { userId } }),
-        },
-      }),
+      isDemoUser
+        ? Promise.resolve(0)
+        : db.pipelineRun.count({
+            where: {
+              status: { in: ['pending', 'queued', 'running'] },
+              ...(isFacilityAdmin ? {} : { study: { userId } }),
+            },
+          }),
     ]);
 
     return NextResponse.json({

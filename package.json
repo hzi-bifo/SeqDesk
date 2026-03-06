@@ -10,6 +10,7 @@
     "lint": "eslint",
     "db:seed": "node prisma/seed.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:demo": "playwright test -c playwright.demo.config.ts",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "pipeline:validate": "tsx scripts/validate-pipeline-package.ts",

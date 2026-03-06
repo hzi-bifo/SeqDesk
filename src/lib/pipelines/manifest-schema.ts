@@ -100,7 +100,7 @@ export const ManifestSchema = z
           )
           .optional(),
       })
-      .strict(),
+      .passthrough(),
     outputs: z.array(
       z
         .object({

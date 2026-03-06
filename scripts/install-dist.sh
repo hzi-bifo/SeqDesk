@@ -145,6 +145,83 @@ is_truthy() {
     esac
 }
 
+parse_release_version_info() {
+    local version_info="$1"
+
+    VERSION_INFO="$version_info" node <<'NODE'
+const raw = process.env.VERSION_INFO;
+
+if (!raw) {
+  console.error("Missing version info payload.");
+  process.exit(1);
+}
+
+let parsed;
+try {
+  parsed = JSON.parse(raw);
+} catch (error) {
+  console.error(`Invalid version info JSON: ${error.message}`);
+  process.exit(1);
+}
+
+if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  console.error("Version info payload must be an object.");
+  process.exit(1);
+}
+
+function readRequiredString(key) {
+  const value = parsed[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    console.error(`${key} must be a non-empty string.`);
+    process.exit(1);
+  }
+
+  return value.trim();
+}
+
+function readOptionalString(key) {
+  const value = parsed[key];
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    console.error(`${key} must be a string when provided.`);
+    process.exit(1);
+  }
+
+  return value.trim();
+}
+
+function readOptionalSize(key) {
+  const value = parsed[key];
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+
+  const parsedValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsedValue) || parsedValue < 0) {
+    console.error(`${key} must be a non-negative integer when provided.`);
+    process.exit(1);
+  }
+
+  return String(parsedValue);
+}
+
+const delimiter = "\u001f";
+const endMarker = "__SEQDESK_VERSION_INFO_END__";
+process.stdout.write(
+  [
+    readRequiredString("version"),
+    readRequiredString("downloadUrl"),
+    readOptionalString("checksum"),
+    readOptionalSize("size"),
+    endMarker,
+  ].join(delimiter)
+);
+NODE
+}
+
 update_pm2_display_cmd() {
     case "$PM2_BIN" in
         pm2)
@@ -1793,10 +1870,16 @@ else
         exit 1
     fi
 
-    LATEST_VERSION=$(echo "$VERSION_INFO" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-    DOWNLOAD_URL=$(echo "$VERSION_INFO" | grep -o '"downloadUrl":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-    CHECKSUM=$(echo "$VERSION_INFO" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-    FILE_SIZE=$(echo "$VERSION_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d':' -f2 || true)
+    if ! VERSION_FIELDS=$(parse_release_version_info "$VERSION_INFO"); then
+        print_error "Could not parse version info"
+        exit 1
+    fi
+    IFS=$'\x1f' read -r LATEST_VERSION DOWNLOAD_URL CHECKSUM FILE_SIZE VERSION_FIELDS_END <<< "$VERSION_FIELDS"
+
+    if [ "${VERSION_FIELDS_END:-}" != "__SEQDESK_VERSION_INFO_END__" ]; then
+        print_error "Could not parse version info"
+        exit 1
+    fi
 
     if [ -z "$LATEST_VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
         print_error "Could not fetch version info"

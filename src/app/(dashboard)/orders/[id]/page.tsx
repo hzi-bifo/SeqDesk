@@ -45,6 +45,8 @@ import { parseProjectsValue } from "@/lib/field-types/projects";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 
+const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
+
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -123,6 +125,22 @@ function hasDisplayValue(value: unknown): boolean {
     value === null ||
     value === "" ||
     (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function renderOrderDeleteError(message: string): React.ReactNode {
+  if (message !== "Deletion of submitted orders is disabled. Enable it in Settings > Data Handling.") {
+    return message;
+  }
+
+  return (
+    <>
+      Deletion of submitted orders is disabled. Enable it in{" "}
+      <Link href={DATA_HANDLING_SETTINGS_HREF} className="underline underline-offset-2">
+        Settings &gt; Data Handling
+      </Link>
+      .
+    </>
   );
 }
 
@@ -345,6 +363,7 @@ export default function OrderDetailPage({
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const isDemoUser = session?.user?.isDemo === true;
   const isOwner = order?.user.id === session?.user?.id;
   const canEditOrder = isFacilityAdmin || ((isOwner ?? false) && order?.status !== "COMPLETED");
 
@@ -805,23 +824,27 @@ export default function OrderDetailPage({
               >
                 Overview
               </TabsTrigger>
-              <TabsTrigger
-                value="reads"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
-              </TabsTrigger>
-              {isFacilityAdmin && (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+              {!isDemoUser && (
                 <TabsTrigger
-                  value="manage-files"
-                  asChild
                   className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                  value="reads"
                 >
-                  <Link href={`/orders/${order.id}/files`}>
-                    Manage Files
-                  </Link>
+                  Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
                 </TabsTrigger>
               )}
+              {!isDemoUser &&
+                isFacilityAdmin &&
+                (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
+                  <TabsTrigger
+                    value="manage-files"
+                    asChild
+                    className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+                  >
+                    <Link href={`/orders/${order.id}/files`}>
+                      Manage Files
+                    </Link>
+                  </TabsTrigger>
+                )}
             </TabsList>
           </div>
 
@@ -850,7 +873,7 @@ export default function OrderDetailPage({
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
           <AlertCircle className="h-5 w-5" />
-          {error}
+          <span>{renderOrderDeleteError(error)}</span>
         </div>
       )}
 
@@ -1179,6 +1202,7 @@ export default function OrderDetailPage({
         </TabsContent>
 
         {/* Read Files Tab */}
+        {!isDemoUser && (
         <TabsContent value="reads">
           {/* Samples with file info */}
           <div className="bg-card rounded-lg border overflow-hidden">
@@ -1315,6 +1339,7 @@ export default function OrderDetailPage({
             )}
           </div>
         </TabsContent>
+        )}
       </PageContainer>
       </Tabs>
 

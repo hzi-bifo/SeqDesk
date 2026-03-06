@@ -4,8 +4,10 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   classifyCloneFailure,
+  installGitHubPipelineSnapshot,
   isValidGitRef,
   shouldCopyWorkflowEntry,
+  validatePipelineDescriptorDir,
   validateMetaxPathDescriptorDir,
 } from "./metaxpath-import";
 
@@ -110,7 +112,6 @@ describe("metaxpath-import helpers", () => {
     expect(result.errors).toContain("Missing descriptor file: definition.json");
     expect(result.errors).toContain("Missing descriptor file: registry.json");
     expect(result.errors).toContain("Missing descriptor file: samplesheet.yaml");
-    expect(result.errors).toContain("Missing descriptor file: README.md");
   });
 
   it("validates manifest metaxpath execution contract", async () => {
@@ -150,7 +151,6 @@ describe("metaxpath-import helpers", () => {
     await writeFile(path.join(descriptorDir, "definition.json"), "{}");
     await writeFile(path.join(descriptorDir, "registry.json"), "{}");
     await writeFile(path.join(descriptorDir, "samplesheet.yaml"), "samplesheet:\n");
-    await writeFile(path.join(descriptorDir, "README.md"), "# Test\n");
 
     const result = await validateMetaxPathDescriptorDir(descriptorDir);
 
@@ -176,7 +176,6 @@ describe("metaxpath-import helpers", () => {
     await writeFile(path.join(descriptorDir, "definition.json"), "{}");
     await writeFile(path.join(descriptorDir, "registry.json"), "{}");
     await writeFile(path.join(descriptorDir, "samplesheet.yaml"), "samplesheet:\n");
-    await writeFile(path.join(descriptorDir, "README.md"), "# Test\n");
 
     const result = await validateMetaxPathDescriptorDir(descriptorDir);
 
@@ -191,12 +190,113 @@ describe("metaxpath-import helpers", () => {
     await writeFile(path.join(descriptorDir, "definition.json"), "{ \"pipeline\": \"metaxpath\", \"steps\": [] }");
     await writeFile(path.join(descriptorDir, "registry.json"), "{ \"id\": \"metaxpath\" }");
     await writeFile(path.join(descriptorDir, "samplesheet.yaml"), "samplesheet:\n  format: csv\n");
-    await writeFile(path.join(descriptorDir, "README.md"), "# Test\n");
 
     const result = await validateMetaxPathDescriptorDir(descriptorDir);
 
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
     expect(result.manifest?.execution.pipeline).toBe("./workflow");
+  });
+
+  it("validates a generic GitHub descriptor directory", async () => {
+    const descriptorDir = path.join(tempDir, ".seqdesk/pipelines/custom");
+    await fs.mkdir(descriptorDir, { recursive: true });
+    await writeFile(
+      path.join(descriptorDir, "manifest.json"),
+      JSON.stringify(
+        {
+          manifestVersion: 1,
+          package: {
+            id: "custom",
+            name: "Custom Pipeline",
+            version: "1.0.0",
+            description: "Generic package",
+          },
+          files: {
+            definition: "definition.json",
+            registry: "registry.json",
+            samplesheet: "samplesheet.yaml",
+          },
+          inputs: [],
+          execution: {
+            type: "nextflow",
+            pipeline: "nf-core/custom",
+            version: "1.0.0",
+            profiles: ["conda"],
+            defaultParams: {},
+          },
+          outputs: [],
+        },
+        null,
+        2
+      )
+    );
+    await writeFile(path.join(descriptorDir, "definition.json"), "{}");
+    await writeFile(path.join(descriptorDir, "registry.json"), "{}");
+    await writeFile(path.join(descriptorDir, "samplesheet.yaml"), "samplesheet:\n");
+
+    const result = await validatePipelineDescriptorDir(descriptorDir, "custom");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("installs a generic GitHub snapshot without copying workflow when not needed", async () => {
+    const cloneDir = path.join(tempDir, "clone");
+    const descriptorDir = path.join(cloneDir, ".seqdesk/pipelines/custom");
+    await fs.mkdir(descriptorDir, { recursive: true });
+    await writeFile(
+      path.join(descriptorDir, "manifest.json"),
+      JSON.stringify(
+        {
+          manifestVersion: 1,
+          package: {
+            id: "custom",
+            name: "Custom Pipeline",
+            version: "1.0.0",
+            description: "Generic package",
+          },
+          files: {
+            definition: "definition.json",
+            registry: "registry.json",
+            samplesheet: "samplesheet.yaml",
+          },
+          inputs: [],
+          execution: {
+            type: "nextflow",
+            pipeline: "nf-core/custom",
+            version: "1.0.0",
+            profiles: ["conda"],
+            defaultParams: {},
+          },
+          outputs: [],
+        },
+        null,
+        2
+      )
+    );
+    await writeFile(path.join(descriptorDir, "definition.json"), "{}");
+    await writeFile(path.join(descriptorDir, "registry.json"), "{}");
+    await writeFile(path.join(descriptorDir, "samplesheet.yaml"), "samplesheet:\n");
+    await writeFile(path.join(cloneDir, "main.nf"), "workflow {}\n");
+
+    const originalCwd = process.cwd();
+    process.chdir(tempDir);
+    try {
+      const result = await installGitHubPipelineSnapshot({
+        pipelineId: "custom",
+        cloneDir,
+        repo: "example/custom",
+        ref: "main",
+      });
+      expect(result.action).toBe("install");
+      await expect(
+        fs.stat(path.join(tempDir, "pipelines/custom/manifest.json"))
+      ).resolves.toBeTruthy();
+      await expect(
+        fs.stat(path.join(tempDir, "pipelines/custom/workflow"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });

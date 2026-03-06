@@ -9,6 +9,7 @@ import {
   ScanOptions,
   FileMatchSuggestion,
 } from "@/lib/files";
+import { isDemoSession } from "@/lib/demo/server";
 
 // Status after which files can be discovered/assigned
 const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
@@ -30,6 +31,13 @@ export async function POST(
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "File discovery is disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

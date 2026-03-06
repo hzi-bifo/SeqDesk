@@ -15,12 +15,14 @@ model User {
   lastName       String
   phone          String?
   role           String          @default("RESEARCHER")
+  isDemo         Boolean         @default(false)
   researcherRole String?
   institution    String?
   facilityName   String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   departmentId   String?
+  demoWorkspace  DemoWorkspace?
   usedInvite     AdminInvite?    @relation("InviteUser")
   createdInvites AdminInvite[]   @relation("InviteCreator")
   orders         Order[]
@@ -378,6 +380,20 @@ model Submission {
   updatedAt        DateTime @updatedAt
   entityType       String
   entityId         String
+}
+
+model DemoWorkspace {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String   @unique
+  seedVersion Int
+  lastSeenAt DateTime
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([expiresAt])
 }
 
 model Ticket {
