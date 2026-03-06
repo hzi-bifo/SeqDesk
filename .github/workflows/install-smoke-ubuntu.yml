@@ -31,7 +31,6 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/public-server.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/public-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-seqdesk.config.json" >> "$GITHUB_ENV"
-          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/public-store-smoke.json" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -128,14 +127,6 @@ jobs:
             }
           ' "$PROVIDERS_JSON"
 
-      - name: Install public registry pipeline and verify loader exposure
-        run: |
-          set -euo pipefail
-          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
-            --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
-            --pipeline-ids "mag,submg" \
-            --result-file "$STORE_SMOKE_JSON"
-
       - name: Upload install smoke artifacts (public installer)
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,7 +137,6 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
-            ${{ env.STORE_SMOKE_JSON }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -173,6 +163,7 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/source-server.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/source-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/source-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/source-store-smoke.json" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -247,6 +238,14 @@ jobs:
             }
           ' "$PROVIDERS_JSON"
 
+      - name: Install source registry pipeline and verify loader exposure
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --pipeline-ids "mag,submg" \
+            --result-file "$STORE_SMOKE_JSON"
+
       - name: Upload install smoke artifacts (source installer)
         if: always()
         uses: actions/upload-artifact@v4
@@ -257,6 +256,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
+            ${{ env.STORE_SMOKE_JSON }}
           if-no-files-found: warn
           retention-days: 14
 
