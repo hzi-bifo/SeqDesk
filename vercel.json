@@ -1,5 +1,7 @@
 {
   "framework": "nextjs",
+  "regions": ["fra1"],
+  "buildCommand": "npm run db:migrate:deploy && npm run build",
   "crons": [
     {
       "path": "/api/demo/cleanup",
