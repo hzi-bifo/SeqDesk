@@ -24,7 +24,9 @@ jobs:
         run: |
           sudo systemctl start postgresql.service
           sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
-          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
+          fi
 
       - name: Configure paths
         run: |
@@ -166,7 +168,9 @@ jobs:
         run: |
           sudo systemctl start postgresql.service
           sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
-          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
+          fi
 
       - name: Configure paths
         run: |
@@ -293,7 +297,9 @@ jobs:
         run: |
           sudo systemctl start postgresql.service
           sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
-          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
+          fi
 
       - name: Configure paths
         run: |
