@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { checkForUpdates, installUpdate } from '@/lib/updater';
+import { checkForUpdates } from '@/lib/updater';
+import { installUpdate } from '@/lib/updater/installer';
 import {
   acquireUpdateLock,
   isUpdateInProgress,
@@ -47,6 +48,18 @@ export async function POST() {
         success: false,
         message: 'No update available',
       });
+    }
+
+    if (!result.databaseCompatible) {
+      await releaseUpdateLock();
+      return NextResponse.json(
+        {
+          error:
+            result.databaseCompatibilityError ||
+            'This update requires PostgreSQL and cannot be installed on the current database backend.',
+        },
+        { status: 409 }
+      );
     }
 
     await writeUpdateStatus(

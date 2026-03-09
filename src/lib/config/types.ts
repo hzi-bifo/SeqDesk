@@ -102,6 +102,8 @@ export interface AppConfig {
 export interface RuntimeConfig {
   /** Runtime database URL (maps to DATABASE_URL) */
   databaseUrl?: string;
+  /** Optional direct PostgreSQL URL for Prisma migrations/CLI (maps to DIRECT_URL) */
+  directUrl?: string;
   /** Runtime NextAuth URL (maps to NEXTAUTH_URL) */
   nextAuthUrl?: string;
   /** Runtime NextAuth secret (maps to NEXTAUTH_SECRET) */

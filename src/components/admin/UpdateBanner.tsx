@@ -11,6 +11,9 @@ interface UpdateInfo {
   installedVersion?: string;
   restartRequired?: boolean;
   updateAvailable: boolean;
+  currentDatabaseProvider?: "postgresql" | "sqlite" | "unknown";
+  databaseCompatible?: boolean;
+  databaseCompatibilityError?: string;
   latest?: {
     version: string;
     releaseNotes?: string;
@@ -67,6 +70,7 @@ export function UpdateBanner() {
   if (
     session?.user?.role !== "FACILITY_ADMIN" ||
     !updateInfo?.updateAvailable ||
+    updateInfo.databaseCompatible === false ||
     dismissed
   ) {
     return null;

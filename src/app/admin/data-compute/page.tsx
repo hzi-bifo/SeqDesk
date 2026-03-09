@@ -33,7 +33,10 @@ const EXAMPLE_INFRA_CONFIG = {
   port: 8000,
   pipelinesEnabled: true,
   nextAuthUrl: "http://seqdesk-host:8000",
-  databaseUrl: "file:./dev.db",
+  databaseUrl:
+    "postgresql://seqdesk:replace-with-password@127.0.0.1:5432/seqdesk?schema=public",
+  directUrl:
+    "postgresql://seqdesk:replace-with-password@127.0.0.1:5432/seqdesk?schema=public",
   anthropicApiKey: "replace-with-anthropic-api-key",
   sequencingDataDir: "/data/sequencing",
   pipelineRunDir: "/data/pipeline_runs",

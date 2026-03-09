@@ -17,6 +17,7 @@ describe("version response parser", () => {
       checksum: "",
       releaseNotes: "",
       minNodeVersion: "",
+      databaseRequirement: undefined,
       size: undefined,
     });
   });
@@ -31,6 +32,7 @@ describe("version response parser", () => {
         checksum: "sha256:deadbeef",
         releaseNotes: "Stability fixes",
         minNodeVersion: "18.0.0",
+        databaseRequirement: "postgresql",
         size: "1048576",
       })
     ).toEqual({
@@ -41,6 +43,7 @@ describe("version response parser", () => {
       checksum: "sha256:deadbeef",
       releaseNotes: "Stability fixes",
       minNodeVersion: "18.0.0",
+      databaseRequirement: "postgresql",
       size: 1048576,
     });
   });
@@ -60,6 +63,16 @@ describe("version response parser", () => {
         size: -1,
       })
     ).toThrow(/size/);
+  });
+
+  it("rejects unsupported database requirements", () => {
+    expect(() =>
+      parseReleaseInfoResponse({
+        version: "1.2.3",
+        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        databaseRequirement: "sqlite",
+      })
+    ).toThrow(/databaseRequirement/);
   });
 
   it("rejects non-object release payloads", () => {
@@ -96,6 +109,7 @@ describe("version response parser", () => {
         checksum: "",
         releaseNotes: "New release",
         minNodeVersion: "",
+        databaseRequirement: undefined,
         size: undefined,
       },
     });

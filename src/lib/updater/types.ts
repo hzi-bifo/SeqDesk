@@ -10,12 +10,16 @@ export interface ReleaseInfo {
   checksum: string;
   releaseNotes: string;
   minNodeVersion: string;
+  databaseRequirement?: "postgresql";
 }
 
 export interface UpdateCheckResult {
   updateAvailable: boolean;
   currentVersion: string;
   latest: ReleaseInfo | null;
+  currentDatabaseProvider: "postgresql" | "sqlite" | "unknown";
+  databaseCompatible: boolean;
+  databaseCompatibilityError?: string;
   error?: string;
 }
 

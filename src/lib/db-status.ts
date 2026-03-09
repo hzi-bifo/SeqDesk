@@ -32,27 +32,30 @@ export async function checkDatabaseStatus(): Promise<DatabaseStatus> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Check for common database errors
     if (
-      errorMessage.includes("no such table") ||
-      errorMessage.includes("does not exist") ||
-      errorMessage.includes("SQLITE_ERROR")
+      errorMessage.includes("P1001") ||
+      errorMessage.includes("Can't reach database server") ||
+      errorMessage.includes("connection") ||
+      errorMessage.includes("connect")
     ) {
       return {
         exists: false,
         configured: false,
-        error: "Database tables do not exist. Run migrations first.",
+        error:
+          "PostgreSQL is unreachable. Verify DATABASE_URL and DIRECT_URL, then retry.",
       };
     }
 
     if (
-      errorMessage.includes("ENOENT") ||
-      errorMessage.includes("unable to open database")
+      errorMessage.includes("no such table") ||
+      errorMessage.includes("does not exist") ||
+      errorMessage.includes("SQLITE_ERROR") ||
+      errorMessage.includes("The table")
     ) {
       return {
         exists: false,
         configured: false,
-        error: "Database file not found.",
+        error: "Database schema is missing. Run `npm run db:migrate:deploy` first.",
       };
     }
 

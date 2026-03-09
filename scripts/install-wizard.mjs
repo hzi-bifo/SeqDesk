@@ -31,6 +31,7 @@ const defaults = {
   port: process.env.SEQDESK_PORT || defaultPort,
   nextAuthUrl: process.env.SEQDESK_NEXTAUTH_URL || "",
   databaseUrl: process.env.SEQDESK_DATABASE_URL || "",
+  directUrl: process.env.SEQDESK_DATABASE_DIRECT_URL || "",
 };
 
 if (yesMode) {
@@ -86,7 +87,7 @@ async function runClackWizard(clack) {
           ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
           : "(pipelines disabled)"
       }`,
-      `DATABASE_URL: ${databaseUrl || "(default sqlite)"}`,
+      `DATABASE_URL: ${databaseUrl || "(default local PostgreSQL URL)"}`,
     ].join("\n"),
     "Review"
   );
@@ -107,6 +108,7 @@ async function runClackWizard(clack) {
       port: String(port || defaults.port),
       nextAuthUrl: String(nextAuthUrl),
       databaseUrl: String(databaseUrl),
+      directUrl: String(defaults.directUrl || ""),
     },
     pipelinesEnabled
   );
@@ -135,7 +137,7 @@ async function runReadlineWizard() {
       runDir: pipelinesEnabled
         ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
         : "(pipelines disabled)",
-      databaseUrl: databaseUrl || "(default sqlite)",
+      databaseUrl: databaseUrl || "(default local PostgreSQL URL)",
     };
 
     printLine("");
@@ -160,6 +162,7 @@ async function runReadlineWizard() {
         port,
         nextAuthUrl,
         databaseUrl,
+        directUrl: defaults.directUrl,
       },
       pipelinesEnabled
     );
@@ -201,6 +204,7 @@ function writeOutput(values, pipelinesEnabled) {
   lines.push(`SEQDESK_PORT="${escapeShell(port)}"`);
   lines.push(`SEQDESK_NEXTAUTH_URL="${escapeShell(nextAuthUrl)}"`);
   lines.push(`SEQDESK_DATABASE_URL="${escapeShell(values.databaseUrl || "")}"`);
+  lines.push(`SEQDESK_DATABASE_DIRECT_URL="${escapeShell(values.directUrl || "")}"`);
   fs.writeFileSync(outPath, lines.join("\n") + "\n");
 }
 

@@ -20,6 +20,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+
       - name: Configure paths
         run: |
           echo "PORT=8787" >> "$GITHUB_ENV"
@@ -39,7 +45,8 @@ jobs:
             "port": $PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$PORT",
-            "databaseUrl": "file:./dev.db"
+            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
           }
           EOF
           cat > "$RECONFIG_CONFIG" <<EOF
@@ -47,7 +54,8 @@ jobs:
             "port": $RECONFIG_PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$RECONFIG_PORT",
-            "databaseUrl": "file:./dev.db"
+            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
           }
           EOF
 
@@ -154,6 +162,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+
       - name: Configure paths
         run: |
           echo "PORT=8788" >> "$GITHUB_ENV"
@@ -172,7 +186,8 @@ jobs:
             "port": $PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$PORT",
-            "databaseUrl": "file:./dev.db"
+            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
           }
           EOF
 
@@ -274,6 +289,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          sudo -u postgres psql -c "SELECT 'CREATE DATABASE seqdesk OWNER seqdesk' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'seqdesk')\\gexec"
+
       - name: Configure paths
         run: |
           echo "PORT=8790" >> "$GITHUB_ENV"
@@ -293,7 +314,8 @@ jobs:
             "port": $PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$PORT",
-            "databaseUrl": "file:./dev.db"
+            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
           }
           EOF
 
