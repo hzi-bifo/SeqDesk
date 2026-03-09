@@ -60,7 +60,8 @@
   },
 
   "runtime": {
-    "databaseUrl": "file:./dev.db",
+    "databaseUrl": "postgresql://seqdesk:replace-with-local-db-password@127.0.0.1:5432/seqdesk?schema=public",
+    "directUrl": "postgresql://seqdesk:replace-with-local-db-password@127.0.0.1:5432/seqdesk?schema=public",
     "nextAuthUrl": "http://localhost:8000",
     "nextAuthSecret": "",
     "anthropicApiKey": "",

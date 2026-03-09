@@ -18,7 +18,8 @@
 #   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
-#   SEQDESK_DATABASE_URL=postgres  - Optional database URL
+#   SEQDESK_DATABASE_URL=postgresql://... - Optional database URL
+#   SEQDESK_DATABASE_DIRECT_URL=postgresql://... - Optional direct database URL for migrations
 #   SEQDESK_ANTHROPIC_API_KEY=...  - Optional Anthropic API key
 #   SEQDESK_ADMIN_SECRET=...       - Optional admin secret
 #   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
@@ -70,6 +71,7 @@ SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
+SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
@@ -143,6 +145,93 @@ is_truthy() {
         1|true|TRUE|yes|YES|y|Y) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+generate_postgres_password() {
+    if command_exists openssl; then
+        openssl rand -hex 16
+        return 0
+    fi
+
+    if command_exists node; then
+        node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("hex"))'
+        return 0
+    fi
+
+    date +%s | shasum | awk '{print $1}' | cut -c1-32
+}
+
+default_postgres_url() {
+    local password="$1"
+    printf 'postgresql://seqdesk:%s@127.0.0.1:5432/seqdesk?schema=public' "$password"
+}
+
+is_postgres_url() {
+    [[ "${1:-}" =~ ^postgres(ql)?:// ]]
+}
+
+configure_postgres_urls() {
+    if [ -z "$SEQDESK_DATABASE_URL" ]; then
+        local generated_password
+        generated_password="$(generate_postgres_password)"
+        SEQDESK_DATABASE_URL="$(default_postgres_url "$generated_password")"
+        print_info "No DATABASE_URL supplied. Defaulting to local PostgreSQL on 127.0.0.1:5432."
+        print_info "Create role 'seqdesk' with this password: $generated_password"
+    fi
+
+    if [[ "$SEQDESK_DATABASE_URL" == file:* ]]; then
+        print_error "SQLite is no longer supported. Configure PostgreSQL via --database-url or SEQDESK_DATABASE_URL."
+        exit 1
+    fi
+
+    if ! is_postgres_url "$SEQDESK_DATABASE_URL"; then
+        print_error "Unsupported DATABASE_URL. SeqDesk now only supports PostgreSQL connection strings."
+        exit 1
+    fi
+
+    if [ -z "$SEQDESK_DATABASE_DIRECT_URL" ]; then
+        SEQDESK_DATABASE_DIRECT_URL="$SEQDESK_DATABASE_URL"
+    fi
+
+    if [[ "$SEQDESK_DATABASE_DIRECT_URL" == file:* ]]; then
+        print_error "SQLite is no longer supported for DIRECT_URL. Use a PostgreSQL connection string."
+        exit 1
+    fi
+
+    if ! is_postgres_url "$SEQDESK_DATABASE_DIRECT_URL"; then
+        print_error "Unsupported DIRECT_URL. SeqDesk now only supports PostgreSQL connection strings."
+        exit 1
+    fi
+}
+
+print_postgres_setup_instructions() {
+    print_warning "PostgreSQL must be installed and the SeqDesk database must exist before migrations can run."
+    case "$OS:$DISTRO" in
+        linux:debian)
+            echo "  sudo apt-get update"
+            echo "  sudo apt-get install -y postgresql postgresql-contrib"
+            echo "  sudo systemctl enable --now postgresql"
+            ;;
+        linux:redhat)
+            if command_exists dnf; then
+                echo "  sudo dnf install -y postgresql-server postgresql-contrib"
+                echo "  sudo postgresql-setup --initdb"
+                echo "  sudo systemctl enable --now postgresql"
+            else
+                echo "  sudo yum install -y postgresql-server postgresql-contrib"
+                echo "  sudo postgresql-setup initdb"
+                echo "  sudo systemctl enable --now postgresql"
+            fi
+            ;;
+        *)
+            echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
+            ;;
+    esac
+    echo "  sudo -u postgres psql <<'SQL'"
+    echo "  CREATE ROLE seqdesk LOGIN PASSWORD 'replace-with-password-from-DATABASE_URL';"
+    echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
+    echo "  SQL"
+    echo "  Current DATABASE_URL: ${SEQDESK_DATABASE_URL}"
 }
 
 parse_release_version_info() {
@@ -346,6 +435,7 @@ Options:
   --nextauth-url <url>         NEXTAUTH_URL override
   --nextauth-secret <secret>   NEXTAUTH_SECRET override
   --database-url <url>         DATABASE_URL override
+  --database-direct-url <url>  DIRECT_URL override for Prisma migrations
   --anthropic-api-key <key>    ANTHROPIC_API_KEY override
   --admin-secret <secret>      ADMIN_SECRET override
   --blob-read-write-token <token>  BLOB_READ_WRITE_TOKEN override
@@ -449,6 +539,14 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_DATABASE_URL="$2"
+                shift
+                ;;
+            --database-direct-url)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --database-direct-url"
+                    exit 1
+                fi
+                SEQDESK_DATABASE_DIRECT_URL="$2"
                 shift
                 ;;
             --anthropic-api-key)
@@ -665,6 +763,7 @@ const values = {
   databaseUrl: toOptionalString(
     firstDefined(root.databaseUrl, app?.databaseUrl, runtime?.databaseUrl)
   ),
+  directUrl: toOptionalString(firstDefined(root.directUrl, runtime?.directUrl)),
   anthropicApiKey: toOptionalString(
     firstDefined(root.anthropicApiKey, runtime?.anthropicApiKey)
   ),
@@ -771,6 +870,7 @@ if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
 if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
 if (values.nextAuthSecret) out.SEQDESK_CFG_NEXTAUTH_SECRET = values.nextAuthSecret;
 if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
+if (values.directUrl) out.SEQDESK_CFG_DATABASE_DIRECT_URL = values.directUrl;
 if (values.anthropicApiKey) out.SEQDESK_CFG_ANTHROPIC_API_KEY = values.anthropicApiKey;
 if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
 if (values.blobReadWriteToken) {
@@ -828,6 +928,7 @@ NODE
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
     apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_CFG_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
+    apply_config_value SEQDESK_DATABASE_DIRECT_URL SEQDESK_CFG_DATABASE_DIRECT_URL
     apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
     apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
@@ -850,7 +951,7 @@ NODE
 
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_SECRET
-    unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_WITH_PIPELINES
+    unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
@@ -917,6 +1018,7 @@ if (fs.existsSync(configPath)) {
 const runtime = config && typeof config.runtime === "object" ? config.runtime : {};
 const nextAuthUrl = trimString(runtime.nextAuthUrl);
 const databaseUrl = trimString(runtime.databaseUrl);
+const directUrl = trimString(runtime.directUrl);
 const app = config && typeof config.app === "object" ? config.app : {};
 
 let port;
@@ -956,6 +1058,7 @@ const out = {};
 if (port) out.SEQDESK_EXISTING_PORT = port;
 if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
 if (databaseUrl) out.SEQDESK_EXISTING_DATABASE_URL = databaseUrl;
+if (directUrl) out.SEQDESK_EXISTING_DATABASE_DIRECT_URL = directUrl;
 if (dataPath) out.SEQDESK_EXISTING_DATA_PATH = dataPath;
 if (runDir) out.SEQDESK_EXISTING_RUN_DIR = runDir;
 if (withPipelines !== undefined) {
@@ -979,12 +1082,13 @@ NODE
     apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_EXISTING_DATABASE_URL
+    apply_config_value SEQDESK_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL
     apply_config_value SEQDESK_DATA_PATH SEQDESK_EXISTING_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_EXISTING_RUN_DIR
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
     unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL
-    unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATA_PATH
+    unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
     unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_WITH_PIPELINES
 }
 
@@ -1125,7 +1229,10 @@ print_config_summary() {
     fi
     print_kv "Port" "${SEQDESK_PORT:-8000}"
     print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
-    print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-default sqlite}"
+    print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-default local PostgreSQL URL}"
+    if [ -n "${SEQDESK_DATABASE_DIRECT_URL:-}" ] && [ "$SEQDESK_DATABASE_DIRECT_URL" != "$SEQDESK_DATABASE_URL" ]; then
+        print_kv "DIRECT_URL" "$SEQDESK_DATABASE_DIRECT_URL"
+    fi
     print_kv "seqdesk.config.json" "$config_status"
 }
 
@@ -1213,6 +1320,7 @@ run_wizard() {
     SEQDESK_PORT="${SEQDESK_PORT:-}" \
     SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
+    SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}" \
     node scripts/install-wizard.mjs
     local status=$?
     if [ $status -ne 0 ]; then
@@ -1311,6 +1419,7 @@ write_config() {
     SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_INSTALL_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}" \
     SEQDESK_INSTALL_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
+    SEQDESK_INSTALL_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}" \
     SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
     SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
     SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
@@ -1324,6 +1433,7 @@ const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
 const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
 const nextAuthSecret = process.env.SEQDESK_INSTALL_NEXTAUTH_SECRET || '';
 const databaseUrl = process.env.SEQDESK_INSTALL_DATABASE_URL || '';
+const directUrl = process.env.SEQDESK_INSTALL_DATABASE_DIRECT_URL || '';
 const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
 const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
 const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
@@ -1378,6 +1488,7 @@ if (appPort !== undefined) {
 const runtime = config.runtime && typeof config.runtime === 'object' ? config.runtime : {};
 if (nextAuthUrl) runtime.nextAuthUrl = nextAuthUrl;
 if (databaseUrl) runtime.databaseUrl = databaseUrl;
+if (directUrl) runtime.directUrl = directUrl;
 if (nextAuthSecret) runtime.nextAuthSecret = nextAuthSecret;
 if (anthropicApiKey) runtime.anthropicApiKey = anthropicApiKey;
 if (adminSecret) runtime.adminSecret = adminSecret;
@@ -1455,22 +1566,26 @@ function trimOrUndefined(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function loadDatabaseUrlFromConfig() {
+function loadDatabaseConfigFromConfig() {
   try {
     const raw = fs.readFileSync("seqdesk.config.json", "utf8");
     const parsed = JSON.parse(raw);
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
-    if (!runtime || typeof runtime !== "object") return undefined;
-    const value = runtime.databaseUrl;
-    return trimOrUndefined(value);
+    if (!runtime || typeof runtime !== "object") return {};
+    return {
+      databaseUrl: trimOrUndefined(runtime.databaseUrl),
+      directUrl: trimOrUndefined(runtime.directUrl),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
 async function main() {
   if (!process.env.DATABASE_URL) {
-    process.env.DATABASE_URL = loadDatabaseUrlFromConfig() || "file:./dev.db";
+    const loaded = loadDatabaseConfigFromConfig();
+    process.env.DATABASE_URL = loaded.databaseUrl;
+    process.env.DIRECT_URL = loaded.directUrl || loaded.databaseUrl;
   }
 
   const { PrismaClient } = require("@prisma/client");
@@ -2018,9 +2133,7 @@ fi
 print_config_summary
 confirm_config
 
-if [ -z "$SEQDESK_DATABASE_URL" ]; then
-    SEQDESK_DATABASE_URL="file:./dev.db"
-fi
+configure_postgres_urls
 
 if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
     SEQDESK_NEXTAUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
@@ -2028,54 +2141,29 @@ if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
 fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
+export DATABASE_URL="$SEQDESK_DATABASE_URL"
+export DIRECT_URL="$SEQDESK_DATABASE_DIRECT_URL"
 
 # Initialize database
 SEED_OK="false"
 DB_INIT_SKIPPED="false"
 if is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_RESEED_DB"; then
     DB_INIT_SKIPPED="true"
-    print_info "Reconfigure mode: skipping database push/seed to preserve existing data."
-    print_info "Use --reseed-db (or SEQDESK_RESEED_DB=1) to run DB push + seed explicitly."
+    print_info "Reconfigure mode: skipping database migrations/seed to preserve existing data."
+    print_info "Use --reseed-db (or SEQDESK_RESEED_DB=1) to run migrations + seed explicitly."
 else
     if is_truthy "$SEQDESK_RECONFIGURE" && is_truthy "$SEQDESK_RESEED_DB"; then
-        print_warning "Reconfigure mode with --reseed-db: running DB push + seed on existing database."
+        print_warning "Reconfigure mode with --reseed-db: running migrations + seed on existing database."
     fi
-    print_info "Initializing database..."
-    PRISMA_CLI="./node_modules/.bin/prisma"
-    PRISMA_VERSION=""
-    PRISMA_SKIP_GENERATE=""
-    if [ ! -f "./node_modules/@prisma/client/generator-build/index.js" ]; then
-        PRISMA_SKIP_GENERATE="--skip-generate"
-    fi
-    if command_exists node && [ -f package.json ]; then
-        PRISMA_VERSION=$(node -p "try{const pkg=require('./package.json'); (pkg.dependencies&&pkg.dependencies.prisma)||(pkg.devDependencies&&pkg.devDependencies.prisma)||''}catch(e){''}")
-        PRISMA_VERSION=$(echo "$PRISMA_VERSION" | sed 's/^[^0-9]*//')
-    fi
-    if [ -x "$PRISMA_CLI" ]; then
-        "$PRISMA_CLI" db push $PRISMA_SKIP_GENERATE
-    else
-        if [ -n "$PRISMA_VERSION" ]; then
-            print_info "Using Prisma CLI v$PRISMA_VERSION"
-            npx prisma@"$PRISMA_VERSION" db push $PRISMA_SKIP_GENERATE
-        else
-            npx prisma db push $PRISMA_SKIP_GENERATE
-        fi
+    print_info "Running PostgreSQL migrations..."
+    if ! node scripts/run-prisma.mjs migrate deploy; then
+        print_postgres_setup_instructions
+        exit 1
     fi
     print_info "Seeding initial data..."
     ensure_seed_dependency "bcryptjs" || true
-    if [ -x "$PRISMA_CLI" ]; then
-        if "$PRISMA_CLI" db seed; then
-            SEED_OK="true"
-        fi
-    elif [ -n "$PRISMA_VERSION" ]; then
-        print_info "Using Prisma CLI v$PRISMA_VERSION for seeding"
-        if npx prisma@"$PRISMA_VERSION" db seed; then
-            SEED_OK="true"
-        fi
-    else
-        if npx prisma db seed; then
-            SEED_OK="true"
-        fi
+    if npm run db:seed; then
+        SEED_OK="true"
     fi
 
     # Fallback: run seed.mjs directly if prisma db seed failed

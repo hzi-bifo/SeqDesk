@@ -17,6 +17,9 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 interface UserProfilePageProps {
   params: Promise<{ id: string }>;
 }

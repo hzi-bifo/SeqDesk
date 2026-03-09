@@ -82,9 +82,9 @@ export default function SetupPage() {
               <div
                 className={`h-2 w-2 rounded-full ${status?.exists ? "bg-emerald-500" : "bg-red-500"}`}
               />
-              <span className="text-muted-foreground">Database file:</span>
+              <span className="text-muted-foreground">Database connection:</span>
               <span className={status?.exists ? "text-emerald-600" : "text-red-600"}>
-                {status === null ? "Checking..." : status.exists ? "Found" : "Not found"}
+                {status === null ? "Checking..." : status.exists ? "Ready" : "Unavailable"}
               </span>
             </div>
             <div className="flex items-center gap-3 text-sm">
@@ -134,7 +134,7 @@ export default function SetupPage() {
             <div className="space-y-3">
               {!status?.exists && (
                 <div className="bg-foreground rounded-lg p-3 font-mono text-sm text-background">
-                  <code>npx prisma db push</code>
+                  <code>npm run db:migrate:deploy</code>
                 </div>
               )}
               <div className="bg-foreground rounded-lg p-3 font-mono text-sm text-background">

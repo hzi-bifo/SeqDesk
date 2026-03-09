@@ -6,6 +6,7 @@ export interface ParsedReleaseInfo {
   checksum: string;
   releaseNotes: string;
   minNodeVersion: string;
+  databaseRequirement?: "postgresql";
   size?: number;
 }
 
@@ -44,6 +45,22 @@ function readOptionalString(record: Record<string, unknown>, key: string): strin
   return value.trim();
 }
 
+function readOptionalDatabaseRequirement(
+  record: Record<string, unknown>,
+  key: string
+): "postgresql" | undefined {
+  const value = record[key];
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (value !== "postgresql") {
+    throw new Error(`${key} must be "postgresql" when provided`);
+  }
+
+  return "postgresql";
+}
+
 function readRequiredBoolean(record: Record<string, unknown>, key: string): boolean {
   const value = record[key];
   if (typeof value !== "boolean") {
@@ -78,6 +95,10 @@ export function parseReleaseInfoResponse(payload: unknown): ParsedReleaseInfo {
     checksum: readOptionalString(record, "checksum"),
     releaseNotes: readOptionalString(record, "releaseNotes"),
     minNodeVersion: readOptionalString(record, "minNodeVersion"),
+    databaseRequirement: readOptionalDatabaseRequirement(
+      record,
+      "databaseRequirement"
+    ),
     size: readOptionalSize(record, "size"),
   };
 }

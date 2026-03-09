@@ -107,7 +107,7 @@ cp -R "${ROOT_DIR}/.next/standalone/." "$RELEASE_DIR/"
 rm -rf "${RELEASE_DIR}"/seqdesk-*/
 rm -f "${RELEASE_DIR}"/seqdesk-*.tar.gz
 
-rm -f "${RELEASE_DIR}/dev.db" "${RELEASE_DIR}/seqdesk.config.json"
+rm -f "${RELEASE_DIR}/seqdesk.config.json"
 
 if [[ -d "${ROOT_DIR}/node_modules/@prisma/client" ]]; then
   echo "Copying Prisma client generator..."
@@ -149,14 +149,17 @@ if [[ -d "${RELEASE_DIR}/pipelines" && -n "${PRIVATE_PIPELINES}" ]]; then
   done
 fi
 
-# Remove any database files from the release (CRITICAL: prevents data loss on update)
-echo "Removing database files from release..."
-rm -f "${RELEASE_DIR}/prisma/dev.db" "${RELEASE_DIR}/prisma/dev.db-wal" "${RELEASE_DIR}/prisma/dev.db-shm" "${RELEASE_DIR}/prisma/dev.db-journal"
-rm -f "${RELEASE_DIR}/prisma/"*.db "${RELEASE_DIR}/prisma/"*.db-*
+echo "Verifying release does not bundle writable database state..."
+rm -f "${RELEASE_DIR}/prisma/"*.db "${RELEASE_DIR}/prisma/"*.db-* 2>/dev/null || true
 
 if [[ -f "${ROOT_DIR}/scripts/install-wizard.mjs" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp "${ROOT_DIR}/scripts/install-wizard.mjs" "${RELEASE_DIR}/scripts/"
+fi
+
+if [[ -f "${ROOT_DIR}/scripts/run-prisma.mjs" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/run-prisma.mjs" "${RELEASE_DIR}/scripts/"
 fi
 
 if [[ -f "${ROOT_DIR}/scripts/install-private-metaxpath.sh" ]]; then
@@ -224,6 +227,46 @@ fi
 if [[ -z "${PORT:-}" ]]; then
   export PORT=3000
 fi
+RUNTIME_DB_JSON=$(node <<'NODE'
+const fs = require("fs");
+
+function trim(value) {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+let databaseUrl = trim(process.env.DATABASE_URL);
+let directUrl = trim(process.env.DIRECT_URL);
+
+if ((!databaseUrl || !directUrl) && fs.existsSync("seqdesk.config.json")) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+    const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
+    if (!databaseUrl) databaseUrl = trim(runtime?.databaseUrl);
+    if (!directUrl) directUrl = trim(runtime?.directUrl) || databaseUrl;
+  } catch {}
+}
+
+if (!databaseUrl) {
+  console.error("DATABASE_URL is not configured. SeqDesk requires PostgreSQL.");
+  process.exit(1);
+}
+
+if (databaseUrl.startsWith("file:")) {
+  console.error("SQLite is no longer supported. Configure PostgreSQL in DATABASE_URL.");
+  process.exit(1);
+}
+
+if (!databaseUrl.startsWith("postgresql://") && !databaseUrl.startsWith("postgres://")) {
+  console.error("Unsupported DATABASE_URL. SeqDesk now only supports PostgreSQL connection strings.");
+  process.exit(1);
+}
+
+process.stdout.write(JSON.stringify({ databaseUrl, directUrl: directUrl || databaseUrl }));
+NODE
+)
+export DATABASE_URL="$(node -p "JSON.parse(process.argv[1]).databaseUrl" "$RUNTIME_DB_JSON")"
+export DIRECT_URL="$(node -p "JSON.parse(process.argv[1]).directUrl" "$RUNTIME_DB_JSON")"
 APP_VERSION=""
 if [[ -f package.json ]]; then
   APP_VERSION=$(node -p "try { require('./package.json').version || '' } catch (e) { '' }" 2>/dev/null || true)

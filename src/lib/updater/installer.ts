@@ -21,6 +21,11 @@ import os from 'os';
 import crypto from 'crypto';
 import type { ReleaseInfo, UpdateProgress } from './types';
 import { releaseUpdateLock } from './status';
+import { requirePostgresDatabaseUrl } from '@/lib/database-url';
+import {
+  getDatabaseCompatibilityError,
+  loadInstalledDatabaseConfig,
+} from './database-config';
 
 const execAsync = promisify(exec);
 
@@ -32,127 +37,10 @@ type ProgressCallback = (progress: UpdateProgress) => void;
 
 // Installation directory (where SeqDesk is installed)
 const INSTALL_DIR = process.cwd();
-const PRISMA_DIR = path.join(INSTALL_DIR, 'prisma');
 const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
-const DB_SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal'];
 const BACKUP_DIRS = ['.next', 'data', 'node_modules', 'pipelines', 'prisma', 'public', 'scripts'];
 const BACKUP_FILES = ['package.json', 'seqdesk.config.json', 'server.js', 'start.sh'];
-
-function isTruthy(value?: string | null): boolean {
-  if (!value) {
-    return false;
-  }
-  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
-}
-
-async function loadDatabaseUrl(): Promise<string | null> {
-  if (process.env.DATABASE_URL) {
-    return process.env.DATABASE_URL;
-  }
-
-  try {
-    const configPath = path.join(INSTALL_DIR, 'seqdesk.config.json');
-    const configContents = await fs.readFile(configPath, 'utf-8');
-    const parsed = JSON.parse(configContents) as { runtime?: { databaseUrl?: unknown } };
-    const databaseUrl = parsed?.runtime?.databaseUrl;
-    if (typeof databaseUrl === 'string' && databaseUrl.trim().length > 0) {
-      return databaseUrl.trim();
-    }
-  } catch {
-    // Ignore missing/invalid config and continue with null.
-  }
-
-  return null;
-}
-
-function resolveSqlitePath(databaseUrl: string): string | null {
-  const trimmed = databaseUrl.trim();
-  if (!trimmed.startsWith('file:')) {
-    return null;
-  }
-
-  let pathPart = trimmed.slice('file:'.length);
-  if (pathPart.startsWith('//')) {
-    pathPart = pathPart.slice(2);
-  }
-
-  const rawPath = pathPart.split('?')[0] || '';
-  if (!rawPath) {
-    return null;
-  }
-
-  const decodedPath = decodeURIComponent(rawPath);
-  if (path.isAbsolute(decodedPath)) {
-    return decodedPath;
-  }
-
-  // Prisma resolves relative SQLite paths against the schema directory.
-  // SeqDesk keeps schema.prisma in `<install>/prisma`.
-  return path.resolve(PRISMA_DIR, decodedPath);
-}
-
-function relativeToInstall(filePath: string): string | null {
-  const relative = path.relative(INSTALL_DIR, filePath);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    return null;
-  }
-  return relative;
-}
-
-async function getDatabaseFiles(): Promise<string[]> {
-  const files = new Set<string>();
-  // Primary Prisma default.
-  files.add(path.join(PRISMA_DIR, 'dev.db'));
-  // Legacy/alternate location used in some historical installs.
-  files.add(path.join(INSTALL_DIR, 'dev.db'));
-
-  const databaseUrl = await loadDatabaseUrl();
-  if (databaseUrl) {
-    const resolved = resolveSqlitePath(databaseUrl);
-    if (resolved) {
-      files.add(resolved);
-    }
-  }
-
-  for (const basePath of Array.from(files)) {
-    for (const suffix of DB_SIDECAR_SUFFIXES) {
-      files.add(`${basePath}${suffix}`);
-    }
-  }
-
-  return Array.from(files);
-}
-
-async function stripDatabaseFilesFromExtract(extractDir: string): Promise<void> {
-  const databaseFiles = await getDatabaseFiles();
-
-  await Promise.all(
-    databaseFiles.map(async (dbPath) => {
-      const relative = relativeToInstall(dbPath);
-      if (!relative) {
-        return;
-      }
-
-      const extractPath = path.join(extractDir, relative);
-      await fs.rm(extractPath, { force: true });
-    })
-  );
-}
-
-async function shouldSkipMigrations(): Promise<boolean> {
-  if (isTruthy(process.env.SEQDESK_SKIP_MIGRATIONS)) {
-    return true;
-  }
-
-  const databaseUrl = await loadDatabaseUrl();
-  const isSqlite = !databaseUrl || databaseUrl.trim().startsWith('file:');
-  if (isSqlite && !isTruthy(process.env.SEQDESK_AUTO_MIGRATE)) {
-    return true;
-  }
-
-  return false;
-}
 
 /**
  * Check available disk space
@@ -189,6 +77,16 @@ export async function installUpdate(
   };
 
   try {
+    const installedDatabase = await loadInstalledDatabaseConfig(INSTALL_DIR);
+    requirePostgresDatabaseUrl(installedDatabase.databaseUrl);
+    const databaseCompatibilityError = getDatabaseCompatibilityError(
+      installedDatabase.provider,
+      release.databaseRequirement
+    );
+    if (databaseCompatibilityError) {
+      throw new Error(databaseCompatibilityError);
+    }
+
     // Step 0: Check disk space
     report('downloading', 5, 'Checking disk space...');
     const diskSpace = await checkDiskSpace();
@@ -362,49 +260,12 @@ async function applyUpdate(): Promise<void> {
     }
   }
 
-  // Backup database files to a safe location (more robust than just stripping from extract)
-  // This ensures we preserve the database even if the strip function fails
-  const dbBackupDir = path.join(TEMP_DIR, 'db-backup');
-  await fs.mkdir(dbBackupDir, { recursive: true });
-  const databaseFiles = await getDatabaseFiles();
-  const dbBackups: Array<{ original: string; backup: string }> = [];
-
-  for (const dbPath of databaseFiles) {
-    try {
-      await fs.access(dbPath);
-      const relative = relativeToInstall(dbPath);
-      const backupPath = relative
-        ? path.join(dbBackupDir, relative)
-        : path.join(
-            dbBackupDir,
-            `${crypto.createHash('sha1').update(dbPath).digest('hex')}-${path.basename(dbPath)}`
-          );
-      await fs.mkdir(path.dirname(backupPath), { recursive: true });
-      await fs.copyFile(dbPath, backupPath);
-      dbBackups.push({ original: dbPath, backup: backupPath });
-    } catch {
-      // File doesn't exist, skip
-    }
-  }
-
-  await stripDatabaseFilesFromExtract(extractDir);
-
   // Copy new files
   await execAsync(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
 
   // Restore preserved files
   for (const [file, content] of Object.entries(preserved)) {
     await fs.writeFile(path.join(INSTALL_DIR, file), content);
-  }
-
-  // Restore database files from backup
-  for (const { original, backup } of dbBackups) {
-    try {
-      await fs.copyFile(backup, original);
-    } catch {
-      // Backup restore failed - this is critical
-      console.error(`Failed to restore database file: ${original}`);
-    }
   }
 }
 
@@ -425,14 +286,7 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
  * Run database migrations
  */
 async function runMigrations(): Promise<void> {
-  try {
-    if (await shouldSkipMigrations()) {
-      return;
-    }
-    await execAsync('npx prisma db push --skip-generate', { cwd: INSTALL_DIR });
-  } catch {
-    // Migration might fail if no changes - that's OK
-  }
+  await execAsync('node scripts/run-prisma.mjs migrate deploy', { cwd: INSTALL_DIR });
 }
 
 /**

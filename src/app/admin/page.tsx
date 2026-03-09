@@ -3,6 +3,9 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Building2, Users, FileText, Activity } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function AdminDashboardPage() {
   // Fetch stats
   const [departmentCount, userCount, orderCount] = await Promise.all([

@@ -20,4 +20,3 @@
 
 export * from './types';
 export { checkForUpdates, getCurrentVersion, getInstalledVersion, clearUpdateCache } from './checker';
-export { installUpdate } from './installer';

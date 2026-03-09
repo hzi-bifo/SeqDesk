@@ -7,6 +7,7 @@ import { bootstrapRuntimeEnv } from "./runtime-env";
 
 const TARGET_ENV_KEYS = [
   "DATABASE_URL",
+  "DIRECT_URL",
   "NEXTAUTH_URL",
   "NEXTAUTH_SECRET",
   "ANTHROPIC_API_KEY",
@@ -66,6 +67,7 @@ describe("bootstrapRuntimeEnv", () => {
       JSON.stringify({
         runtime: {
           databaseUrl: "postgres://local/db",
+          directUrl: "postgres://direct/db",
           nextAuthUrl: "https://seqdesk.local",
           nextAuthSecret: "secret",
           anthropicApiKey: "anthropic-key",
@@ -79,12 +81,30 @@ describe("bootstrapRuntimeEnv", () => {
     bootstrapRuntimeEnv(tempDir);
 
     expect(process.env.DATABASE_URL).toBe("postgres://local/db");
+    expect(process.env.DIRECT_URL).toBe("postgres://direct/db");
     expect(process.env.NEXTAUTH_URL).toBe("https://seqdesk.local");
     expect(process.env.NEXTAUTH_SECRET).toBe("secret");
     expect(process.env.ANTHROPIC_API_KEY).toBe("anthropic-key");
     expect(process.env.ADMIN_SECRET).toBe("admin-secret");
     expect(process.env.BLOB_READ_WRITE_TOKEN).toBe("blob-token");
     expect(process.env.SEQDESK_UPDATE_SERVER).toBe("https://updates.seqdesk.local");
+  });
+
+  it("defaults DIRECT_URL to DATABASE_URL when directUrl is omitted", async () => {
+    await writeFile(
+      tempDir,
+      "seqdesk.config.json",
+      JSON.stringify({
+        runtime: {
+          databaseUrl: "postgres://local/db",
+        },
+      })
+    );
+
+    bootstrapRuntimeEnv(tempDir);
+
+    expect(process.env.DATABASE_URL).toBe("postgres://local/db");
+    expect(process.env.DIRECT_URL).toBe("postgres://local/db");
   });
 
   it("does not overwrite existing env values", async () => {
@@ -127,6 +147,7 @@ describe("bootstrapRuntimeEnv", () => {
     bootstrapRuntimeEnv(tempDir);
 
     expect(process.env.DATABASE_URL).toBeUndefined();
+    expect(process.env.DIRECT_URL).toBeUndefined();
     expect(process.env.NEXTAUTH_SECRET).toBeUndefined();
     expect(process.env.ADMIN_SECRET).toBe("ok");
   });

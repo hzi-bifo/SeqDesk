@@ -63,7 +63,8 @@ Set at least:
 ```json
 {
   "runtime": {
-    "databaseUrl": "file:./dev.db",
+    "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+    "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
     "nextAuthUrl": "http://localhost:3000",
     "nextAuthSecret": "replace-with-a-random-secret"
   }
@@ -73,9 +74,12 @@ Set at least:
 ### 3. Initialize database
 
 ```bash
-npx prisma db push
+npm run db:migrate:deploy
 npx prisma db seed
 ```
+
+SeqDesk is now PostgreSQL-only. Existing SQLite installs must remain on the last
+SQLite-compatible release until they are migrated manually.
 
 ### 4. Start
 

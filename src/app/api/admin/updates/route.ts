@@ -31,6 +31,9 @@ export async function GET(request: Request) {
       restartRequired: installedVersion !== runningVersion,
       updateAvailable: result.updateAvailable,
       latest: result.latest,
+      currentDatabaseProvider: result.currentDatabaseProvider,
+      databaseCompatible: result.databaseCompatible,
+      databaseCompatibilityError: result.databaseCompatibilityError,
       error: result.error,
     });
   } catch (error) {

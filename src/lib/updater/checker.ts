@@ -10,6 +10,10 @@ import fsPromises from 'fs/promises';
 import path from 'path';
 import { bootstrapRuntimeEnv } from '@/lib/config/runtime-env';
 import { parseUpdateCheckResponse } from '@/lib/config/version-response';
+import {
+  getDatabaseCompatibilityError,
+  loadInstalledDatabaseConfig,
+} from './database-config';
 
 // Read current version from package.json
 function readVersionFromPackageJson(): string {
@@ -38,12 +42,14 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
  */
 export async function checkForUpdates(force = false): Promise<UpdateCheckResult> {
   const currentVersion = getCurrentVersion();
+  const installedDatabase = await loadInstalledDatabaseConfig();
 
   // Return cached result if still valid
   if (
     !force &&
     cachedResult &&
     cachedResult.currentVersion === currentVersion &&
+    cachedResult.currentDatabaseProvider === installedDatabase.provider &&
     Date.now() - cacheTime < CACHE_TTL
   ) {
     return cachedResult;
@@ -66,11 +72,18 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
     }
 
     const data = parseUpdateCheckResponse(await response.json());
+    const databaseCompatibilityError = getDatabaseCompatibilityError(
+      installedDatabase.provider,
+      data.latest?.databaseRequirement
+    );
 
     const result: UpdateCheckResult = {
       updateAvailable: data.updateAvailable,
       currentVersion: currentVersion,
       latest: data.latest,
+      currentDatabaseProvider: installedDatabase.provider,
+      databaseCompatible: !databaseCompatibilityError,
+      databaseCompatibilityError,
     };
 
     // Cache the result
@@ -85,6 +98,8 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
       updateAvailable: false,
       currentVersion: currentVersion,
       latest: null,
+      currentDatabaseProvider: installedDatabase.provider,
+      databaseCompatible: true,
       error: `Failed to check for updates: ${errorMessage}`,
     };
   }

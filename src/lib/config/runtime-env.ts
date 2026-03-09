@@ -9,6 +9,7 @@ const CONFIG_FILE_NAMES = [
 
 interface RuntimeConfig {
   databaseUrl?: string;
+  directUrl?: string;
   nextAuthUrl?: string;
   nextAuthSecret?: string;
   anthropicApiKey?: string;
@@ -73,6 +74,10 @@ export function bootstrapRuntimeEnv(baseDir: string = process.cwd()): void {
     }
 
     applyIfMissing("DATABASE_URL", runtime.databaseUrl);
+    applyIfMissing("DIRECT_URL", runtime.directUrl);
+    if (!process.env.DIRECT_URL && process.env.DATABASE_URL) {
+      process.env.DIRECT_URL = process.env.DATABASE_URL;
+    }
     applyIfMissing("NEXTAUTH_URL", runtime.nextAuthUrl);
     applyIfMissing("NEXTAUTH_SECRET", runtime.nextAuthSecret);
     applyIfMissing("ANTHROPIC_API_KEY", runtime.anthropicApiKey);

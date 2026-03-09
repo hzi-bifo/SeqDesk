@@ -1,12 +1,12 @@
-import path from "path";
 import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PLAYWRIGHT_DEMO_PORT || 3101);
 const baseURL =
   process.env.PLAYWRIGHT_DEMO_BASE_URL || `http://127.0.0.1:${port}`;
-const databaseFilePath = path.resolve(process.cwd(), "playwright/demo.e2e.db");
 const databaseUrl =
-  process.env.PLAYWRIGHT_DEMO_DATABASE_URL || `file:${databaseFilePath}`;
+  process.env.PLAYWRIGHT_DEMO_DATABASE_URL ||
+  "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_demo?schema=public";
+const directUrl = process.env.PLAYWRIGHT_DEMO_DIRECT_URL || databaseUrl;
 
 export default defineConfig({
   testDir: "./playwright/tests",
@@ -23,9 +23,10 @@ export default defineConfig({
     command:
       `PORT=${port} ` +
       `DATABASE_URL='${databaseUrl}' ` +
+      `DIRECT_URL='${directUrl}' ` +
       `NEXTAUTH_URL='${baseURL}' ` +
       `SEQDESK_ENABLE_PUBLIC_DEMO=true ` +
-      `sh -c "mkdir -p '${path.dirname(databaseFilePath)}' && touch '${databaseFilePath}' && npx prisma db push --skip-generate && npm run dev"`,
+      `sh -c "npm run db:migrate:deploy && npm run dev"`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

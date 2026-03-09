@@ -40,10 +40,14 @@ interface UpdateInfo {
   installedVersion?: string;
   restartRequired?: boolean;
   updateAvailable: boolean;
+  currentDatabaseProvider?: "postgresql" | "sqlite" | "unknown";
+  databaseCompatible?: boolean;
+  databaseCompatibilityError?: string;
   latest?: {
     version: string;
     releaseNotes?: string;
     downloadUrl?: string;
+    databaseRequirement?: "postgresql";
   };
   error?: string;
 }
@@ -337,15 +341,22 @@ export default function SettingsPage() {
   }, [stopRestartPolling, stopUpdatePolling]);
 
   const performUpdate = async () => {
-    if (!updateInfo?.updateAvailable || !updateInfo.latest) return;
+    if (
+      !updateInfo?.updateAvailable ||
+      !updateInfo.latest ||
+      updateInfo.databaseCompatible === false
+    ) {
+      return;
+    }
 
     const confirmed = window.confirm(
       `Update to v${updateInfo.latest.version}?\n\n` +
         `This will:\n` +
         `1. Download the new version\n` +
-        `2. Backup your database\n` +
+        `2. Run PostgreSQL migrations\n` +
         `3. Install the update\n` +
         `4. Restart the server\n\n` +
+        `Ensure you have a recent database backup before continuing.\n\n` +
         `The app will be unavailable for a few seconds during restart.`
     );
     if (!confirmed) return;
@@ -589,6 +600,15 @@ export default function SettingsPage() {
                   </div>
                 )}
 
+                {updateInfo.updateAvailable &&
+                  updateInfo.databaseCompatible === false &&
+                  updateInfo.databaseCompatibilityError && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                      <p className="font-medium">Manual database migration required</p>
+                      <p className="mt-1">{updateInfo.databaseCompatibilityError}</p>
+                    </div>
+                  )}
+
                 {updateInfo.updateAvailable && updateInfo.latest ? (
                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <div className="flex items-start gap-3">
@@ -602,15 +622,29 @@ export default function SettingsPage() {
                             {updateInfo.latest.releaseNotes}
                           </p>
                         )}
+                        {updateInfo.latest.databaseRequirement === "postgresql" && (
+                          <p className="text-xs text-blue-800 mt-2">
+                            Requires PostgreSQL-backed runtime storage.
+                          </p>
+                        )}
                         <div className="mt-3">
                           <Button
                             onClick={performUpdate}
-                            disabled={updateInProgress || restartPending}
+                            disabled={
+                              updateInProgress ||
+                              restartPending ||
+                              updateInfo.databaseCompatible === false
+                            }
                           >
                             {updateInProgress ? (
                               <>
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                 {updateStatus?.message || "Updating..."}
+                              </>
+                            ) : updateInfo.databaseCompatible === false ? (
+                              <>
+                                <AlertTriangle className="h-4 w-4 mr-2" />
+                                Migration required
                               </>
                             ) : restartPending ? (
                               <>
@@ -636,7 +670,7 @@ export default function SettingsPage() {
                 )}
 
                 <p className="text-xs text-muted-foreground">
-                  Each update creates a database backup before installation.
+                  Database backups stay operator-managed. SeqDesk applies PostgreSQL migrations during install.
                 </p>
               </>
             ) : checkingUpdate ? (
