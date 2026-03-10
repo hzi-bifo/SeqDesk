@@ -1,10 +1,11 @@
 {
   "name": "seqdesk",
-  "version": "2.0.0",
+  "version": "1.1.80",
   "private": true,
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "next dev",
+    "dev:mac": "node scripts/dev-mac.mjs",
     "build": "node scripts/run-prisma.mjs generate && next build",
     "start": "next start",
     "lint": "eslint",
