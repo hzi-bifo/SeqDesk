@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DemoBootstrapClient } from "@/components/demo/DemoBootstrapClient";
@@ -16,5 +17,9 @@ export default function EmbeddedAdminDemoPage() {
     notFound();
   }
 
-  return <DemoBootstrapClient embedded demoExperience="facility" />;
+  return (
+    <Suspense fallback={null}>
+      <DemoBootstrapClient embedded demoExperience="facility" />
+    </Suspense>
+  );
 }
