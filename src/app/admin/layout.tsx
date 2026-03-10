@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/layout/DashboardShell";
 import { Footer } from "@/components/layout/Footer";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
+import { isFacilityDemoSession } from "@/lib/demo/server";
 
 export default async function AdminLayout({
   children,
@@ -18,6 +19,10 @@ export default async function AdminLayout({
   }
 
   if (session.user.role !== "FACILITY_ADMIN") {
+    redirect("/orders");
+  }
+
+  if (isFacilityDemoSession(session)) {
     redirect("/orders");
   }
 

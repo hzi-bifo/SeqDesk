@@ -6,6 +6,7 @@ import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
+import { isDemoSession } from '@/lib/demo/server';
 
 // GET - List pipeline runs
 export async function GET(request: NextRequest) {
@@ -97,6 +98,13 @@ export async function POST(request: NextRequest) {
 
     if (!session || session.user.role !== 'FACILITY_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: 'Pipeline execution is disabled in the public demo.' },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();

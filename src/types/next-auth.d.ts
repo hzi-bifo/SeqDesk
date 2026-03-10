@@ -6,12 +6,14 @@ declare module "next-auth" {
       id: string;
       role: string;
       isDemo: boolean;
+      demoExperience?: "researcher" | "facility";
     } & DefaultSession["user"];
   }
 
   interface User {
     role: string;
     isDemo: boolean;
+    demoExperience?: "researcher" | "facility";
   }
 }
 
@@ -20,5 +22,6 @@ declare module "next-auth/jwt" {
     id: string;
     role: string;
     isDemo: boolean;
+    demoExperience?: "researcher" | "facility";
   }
 }

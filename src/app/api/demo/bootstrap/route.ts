@@ -1,24 +1,30 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import {
-  bootstrapDemoWorkspace,
-  createDemoSessionToken,
-  getAuthSessionCookieName,
-  getAuthSessionCookieOptions,
-  authorizeDemoWorkspaceToken,
-  getDemoCookieOptions,
-  getDemoWorkspaceCookieName,
-} from "@/lib/demo/server";
+import { normalizeDemoExperience } from "@/lib/demo/types";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const {
+      authorizeDemoWorkspaceToken,
+      bootstrapDemoWorkspace,
+      createDemoSessionToken,
+      getAuthSessionCookieName,
+      getAuthSessionCookieOptions,
+      getDemoCookieOptions,
+      getDemoWorkspaceCookieName,
+    } = await import("@/lib/demo/server");
     const cookieStore = await cookies();
-    const existingToken = cookieStore.get(getDemoWorkspaceCookieName())?.value;
-    const result = await bootstrapDemoWorkspace(existingToken);
-    const user = await authorizeDemoWorkspaceToken(result.token);
+    const body = await request.json().catch(() => ({}));
+    const explicitToken =
+      typeof body.workspace === "string" ? body.workspace.trim() : "";
+    const demoExperience = normalizeDemoExperience(body.demoExperience);
+    const existingToken =
+      explicitToken || cookieStore.get(getDemoWorkspaceCookieName())?.value;
+    const result = await bootstrapDemoWorkspace(existingToken, demoExperience);
+    const user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
     if (!user) {
       throw new Error("Failed to create demo session");
     }
@@ -27,6 +33,7 @@ export async function POST() {
       created: result.created,
       expiresAt: result.expiresAt.toISOString(),
       workspaceId: result.workspaceId,
+      demoExperience,
     });
 
     response.cookies.set(

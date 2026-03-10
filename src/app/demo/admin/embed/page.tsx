@@ -4,17 +4,17 @@ import { DemoBootstrapClient } from "@/components/demo/DemoBootstrapClient";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 
 export const metadata: Metadata = {
-  title: "Embedded Researcher Demo",
+  title: "Embedded Facility Demo",
   robots: {
     index: false,
     follow: false,
   },
 };
 
-export default function EmbeddedDemoPage() {
+export default function EmbeddedAdminDemoPage() {
   if (!isPublicDemoEnabled()) {
     notFound();
   }
 
-  return <DemoBootstrapClient embedded demoExperience="researcher" />;
+  return <DemoBootstrapClient embedded demoExperience="facility" />;
 }

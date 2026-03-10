@@ -14,6 +14,7 @@ import {
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
+import { isDemoSession } from '@/lib/demo/server';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -131,6 +132,13 @@ export async function POST(
 
     if (!session || session.user.role !== 'FACILITY_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: 'Pipeline execution is disabled in the public demo.' },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

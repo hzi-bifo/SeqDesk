@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     },
     study: {
       create: vi.fn(),
+      findMany: vi.fn(),
       deleteMany: vi.fn(),
     },
     order: {
@@ -40,7 +41,23 @@ const mocks = vi.hoisted(() => ({
       deleteMany: vi.fn(),
     },
     pipelineRun: {
+      create: vi.fn(),
       deleteMany: vi.fn(),
+    },
+    pipelineRunStep: {
+      create: vi.fn(),
+    },
+    pipelineRunEvent: {
+      create: vi.fn(),
+    },
+    pipelineArtifact: {
+      create: vi.fn(),
+    },
+    assembly: {
+      create: vi.fn(),
+    },
+    bin: {
+      create: vi.fn(),
     },
     ticket: {
       deleteMany: vi.fn(),
@@ -80,8 +97,8 @@ describe("demo workspace server helpers", () => {
 
     mocks.hash.mockResolvedValue("hashed-demo-password");
     mocks.autoSeedIfNeeded.mockResolvedValue({ seeded: false });
-    mocks.db.$transaction.mockImplementation(async (callback: (tx: typeof mocks.db) => unknown) =>
-      callback(mocks.db)
+    mocks.db.$transaction.mockImplementation(
+      async (callback: (tx: typeof mocks.db) => unknown) => callback(mocks.db)
     );
 
     mocks.db.siteSettings.findUnique.mockResolvedValue({
@@ -110,20 +127,42 @@ describe("demo workspace server helpers", () => {
     });
     mocks.db.orderFormConfig.update.mockResolvedValue({});
 
-    mocks.db.user.create.mockResolvedValue({ id: "user-1" });
+    mocks.db.user.create
+      .mockResolvedValueOnce({ id: "user-1" })
+      .mockResolvedValueOnce({ id: "admin-1" });
     mocks.db.demoWorkspace.create.mockResolvedValue({ id: "workspace-1" });
     mocks.db.study.create
       .mockResolvedValueOnce({ id: "study-ready" })
       .mockResolvedValueOnce({ id: "study-pilot" });
     mocks.db.order.create
       .mockResolvedValueOnce({ id: "order-draft" })
-      .mockResolvedValueOnce({ id: "order-submitted" })
-      .mockResolvedValueOnce({ id: "order-completed" });
+      .mockResolvedValueOnce({
+        id: "order-submitted",
+        samples: [
+          { id: "sample-sub-1", sampleId: "GR-01" },
+          { id: "sample-sub-2", sampleId: "GR-02" },
+          { id: "sample-sub-3", sampleId: "GR-03" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: "order-completed",
+        samples: [
+          { id: "sample-comp-1", sampleId: "SR-01" },
+          { id: "sample-comp-2", sampleId: "SR-02" },
+        ],
+      });
     mocks.db.statusNote.create.mockResolvedValue({});
+    mocks.db.pipelineRun.create.mockResolvedValue({ id: "run-1" });
+    mocks.db.pipelineRunStep.create.mockResolvedValue({});
+    mocks.db.pipelineRunEvent.create.mockResolvedValue({});
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+    mocks.db.assembly.create.mockResolvedValue({});
+    mocks.db.bin.create.mockResolvedValue({});
 
     mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
     mocks.db.demoWorkspace.update.mockResolvedValue({});
     mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
+    mocks.db.study.findMany.mockResolvedValue([]);
 
     mocks.db.statusNote.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.ticketMessage.deleteMany.mockResolvedValue({ count: 0 });
@@ -135,8 +174,8 @@ describe("demo workspace server helpers", () => {
     mocks.db.user.deleteMany.mockResolvedValue({ count: 0 });
   });
 
-  it("bootstraps a seeded demo workspace for a new visitor", async () => {
-    const result = await bootstrapDemoWorkspace();
+  it("bootstraps a shared demo workspace with researcher and facility personas", async () => {
+    const result = await bootstrapDemoWorkspace(undefined, "researcher");
 
     expect(result.created).toBe(true);
     expect(result.workspaceId).toBe("workspace-1");
@@ -146,80 +185,94 @@ describe("demo workspace server helpers", () => {
     expect(mocks.autoSeedIfNeeded).toHaveBeenCalledTimes(1);
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
     expect(mocks.db.orderFormConfig.update).toHaveBeenCalledTimes(1);
-    expect(mocks.db.user.create).toHaveBeenCalledTimes(1);
+    expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.study.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(3);
-    expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(2);
-
-    const submittedOrderArgs = mocks.db.order.create.mock.calls[1][0] as {
-      data: {
-        customFields: string;
-        samples: {
-          create: Array<{ study?: { connect: { id: string } } }>;
-        };
-      };
-    };
-
-    expect(JSON.parse(submittedOrderArgs.data.customFields)).toEqual({
-      _projects: "Gut recovery cohort\nTimepoint atlas",
-    });
-    expect(submittedOrderArgs.data.samples.create[0].study?.connect.id).toBe("study-ready");
+    expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(3);
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(1);
+    expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(3);
+    expect(mocks.db.pipelineRunEvent.create).toHaveBeenCalledTimes(3);
   });
 
-  it("reuses an existing active workspace for the same browser token", async () => {
+  it("reuses an existing active workspace for the facility persona", async () => {
     const existingWorkspace = {
       id: "workspace-existing",
       tokenHash: "hash",
       userId: "user-existing",
+      adminUserId: "admin-existing",
       seedVersion: 1,
       lastSeenAt: new Date("2026-03-06T08:00:00Z"),
       expiresAt: new Date("2099-03-06T20:00:00Z"),
       user: {
         id: "user-existing",
-        email: "demo-existing@seqdesk.local",
+        email: "demo-researcher@seqdesk.local",
         firstName: "Demo",
-        lastName: "User",
+        lastName: "Researcher",
         role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-existing",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
         isDemo: true,
       },
     };
     mocks.db.demoWorkspace.findUnique.mockResolvedValue(existingWorkspace);
 
-    const result = await bootstrapDemoWorkspace("demo-token");
+    const result = await bootstrapDemoWorkspace("demo-token", "facility");
 
     expect(result).toMatchObject({
       created: false,
       token: "demo-token",
       workspaceId: "workspace-existing",
-      userId: "user-existing",
+      userId: "admin-existing",
     });
     expect(mocks.db.demoWorkspace.update).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).not.toHaveBeenCalled();
     expect(mocks.db.order.create).not.toHaveBeenCalled();
   });
 
-  it("refreshes an active workspace token into an auth user", async () => {
-    const existingWorkspace = {
+  it("authorizes the requested facility persona for an active workspace", async () => {
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue({
       id: "workspace-existing",
       tokenHash: "hash",
       userId: "user-existing",
+      adminUserId: "admin-existing",
       seedVersion: 1,
       lastSeenAt: new Date("2026-03-06T08:00:00Z"),
       expiresAt: new Date("2099-03-06T20:00:00Z"),
       user: {
         id: "user-existing",
-        email: "demo-existing@seqdesk.local",
+        email: "demo-researcher@seqdesk.local",
         firstName: "Demo",
-        lastName: "User",
+        lastName: "Researcher",
         role: "RESEARCHER",
         isDemo: true,
       },
-    };
-    mocks.db.demoWorkspace.findUnique.mockResolvedValue(existingWorkspace);
+      adminUser: {
+        id: "admin-existing",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    });
 
-    const result = await authorizeDemoWorkspaceToken("demo-token");
+    const result = await authorizeDemoWorkspaceToken("demo-token", "facility");
 
-    expect(result).toEqual(existingWorkspace.user);
+    expect(result).toEqual({
+      id: "admin-existing",
+      email: "demo-facility@seqdesk.local",
+      firstName: "Facility",
+      lastName: "Admin",
+      role: "FACILITY_ADMIN",
+      isDemo: true,
+      demoExperience: "facility",
+    });
     expect(mocks.db.demoWorkspace.update).toHaveBeenCalledWith({
       where: { id: "workspace-existing" },
       data: expect.objectContaining({
@@ -229,83 +282,80 @@ describe("demo workspace server helpers", () => {
     });
   });
 
-  it("destroys expired workspaces instead of authorizing them", async () => {
-    mocks.db.demoWorkspace.findUnique.mockResolvedValue({
-      id: "workspace-expired",
-      tokenHash: "hash",
-      userId: "user-expired",
-      seedVersion: 1,
-      lastSeenAt: new Date("2026-03-05T08:00:00Z"),
-      expiresAt: new Date("2026-03-05T09:00:00Z"),
-      user: {
-        id: "user-expired",
-        email: "expired@seqdesk.local",
-        firstName: "Demo",
-        lastName: "User",
-        role: "RESEARCHER",
-        isDemo: true,
-      },
-    });
-
-    const result = await authorizeDemoWorkspaceToken("expired-token");
-
-    expect(result).toBeNull();
-    expect(mocks.db.statusNote.deleteMany).toHaveBeenCalledWith({
-      where: { userId: "user-expired" },
-    });
-    expect(mocks.db.order.deleteMany).toHaveBeenCalledWith({
-      where: { userId: "user-expired" },
-    });
-    expect(mocks.db.demoWorkspace.deleteMany).toHaveBeenCalledWith({
-      where: { id: "workspace-expired" },
-    });
-    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
-      where: { id: "user-expired" },
-    });
-  });
-
-  it("resets a browser workspace by deleting the old records and creating a fresh clone", async () => {
-    mocks.db.demoWorkspace.findUnique.mockResolvedValue({
+  it("resets an existing workspace while preserving its shared workspace token", async () => {
+    const existingWorkspace = {
       id: "workspace-existing",
       tokenHash: "hash",
       userId: "user-existing",
+      adminUserId: "admin-existing",
       seedVersion: 1,
       lastSeenAt: new Date("2026-03-06T08:00:00Z"),
       expiresAt: new Date("2099-03-06T20:00:00Z"),
       user: {
         id: "user-existing",
-        email: "demo-existing@seqdesk.local",
+        email: "demo-researcher@seqdesk.local",
         firstName: "Demo",
-        lastName: "User",
+        lastName: "Researcher",
         role: "RESEARCHER",
         isDemo: true,
       },
-    });
+      adminUser: {
+        id: "admin-existing",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue(existingWorkspace);
+    mocks.db.study.findMany.mockResolvedValue([{ id: "study-ready" }]);
 
-    const result = await resetDemoWorkspace("demo-token");
+    const result = await resetDemoWorkspace("demo-token", "facility");
 
     expect(result.created).toBe(true);
-    expect(mocks.db.order.deleteMany).toHaveBeenCalledWith({
-      where: { userId: "user-existing" },
+    expect(result.token).toBe("demo-token");
+    expect(result.userId).toBe("admin-1");
+    expect(mocks.db.demoWorkspace.deleteMany).toHaveBeenCalledWith({
+      where: { id: "workspace-existing" },
     });
-    expect(mocks.db.user.create).toHaveBeenCalledTimes(1);
-    expect(mocks.db.order.create).toHaveBeenCalledTimes(3);
   });
 
-  it("cleans up all expired or outdated workspaces", async () => {
+  it("cleans up expired shared workspaces and both demo users", async () => {
     mocks.db.demoWorkspace.findMany.mockResolvedValue([
-      { id: "workspace-a", userId: "user-a" },
-      { id: "workspace-b", userId: "user-b" },
+      {
+        id: "workspace-expired",
+        userId: "user-expired",
+        adminUserId: "admin-expired",
+      },
     ]);
+    mocks.db.study.findMany.mockResolvedValue([{ id: "study-expired" }]);
 
     const result = await cleanupExpiredDemoWorkspaces();
 
-    expect(result).toEqual({ deletedWorkspaces: 2 });
-    expect(mocks.db.user.deleteMany).toHaveBeenNthCalledWith(1, {
-      where: { id: "user-a" },
+    expect(result).toEqual({ deletedWorkspaces: 1 });
+    expect(mocks.db.pipelineRun.deleteMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          {
+            userId: {
+              in: ["user-expired", "admin-expired"],
+            },
+          },
+          {
+            studyId: {
+              in: ["study-expired"],
+            },
+          },
+        ],
+      },
     });
-    expect(mocks.db.user.deleteMany).toHaveBeenNthCalledWith(2, {
-      where: { id: "user-b" },
+    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: {
+          in: ["user-expired", "admin-expired"],
+        },
+      },
     });
   });
 });

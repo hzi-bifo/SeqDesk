@@ -16,5 +16,5 @@ export default function DemoPage() {
     notFound();
   }
 
-  return <DemoBootstrapClient />;
+  return <DemoBootstrapClient demoExperience="researcher" />;
 }

@@ -3,8 +3,8 @@ import { createDraftOrder } from "./helpers";
 
 test.setTimeout(90000);
 
-async function openDemo(page: Page) {
-  await page.goto("/demo");
+async function openDemo(page: Page, path = "/demo") {
+  await page.goto(path);
   await expect(page).toHaveURL(/\/orders$/);
   await expect(
     page.getByRole("heading", { name: /^(My Orders|All Orders)$/ })
@@ -115,4 +115,83 @@ test("different browser contexts stay isolated, while /demo and /demo/embed shar
   await expectOrderInApi(embedPage, orderName, true);
 
   await embedPage.close();
+});
+
+test("researcher and facility demos share one seeded workspace when they use the same workspace key", async ({
+  browser,
+}) => {
+  const workspace = `shared-${Date.now()}`;
+  const researcherContext = await browser.newContext();
+  const facilityContext = await browser.newContext();
+  const researcherPage = await researcherContext.newPage();
+  const facilityPage = await facilityContext.newPage();
+
+  await openDemo(researcherPage, `/demo?workspace=${workspace}`);
+  await openDemo(facilityPage, `/demo/admin?workspace=${workspace}`);
+
+  const orderName = `Shared Workspace ${Date.now()}`;
+  await createDraftOrder(researcherPage, orderName, 1);
+
+  await expectOrderInApi(researcherPage, orderName, true);
+  await facilityPage.reload();
+  await expectOrderInApi(facilityPage, orderName, true);
+
+  await researcherContext.close();
+  await facilityContext.close();
+});
+
+test("resetting one shared workspace clears it for the other demo role", async ({
+  browser,
+}) => {
+  const workspace = `reset-${Date.now()}`;
+  const researcherContext = await browser.newContext();
+  const facilityContext = await browser.newContext();
+  const researcherPage = await researcherContext.newPage();
+  const facilityPage = await facilityContext.newPage();
+
+  await openDemo(researcherPage, `/demo?workspace=${workspace}`);
+  await openDemo(facilityPage, `/demo/admin?workspace=${workspace}`);
+
+  const orderName = `Reset Workspace ${Date.now()}`;
+  await createDraftOrder(researcherPage, orderName, 1);
+  await expectOrderInApi(facilityPage, orderName, true);
+
+  await facilityPage.getByTestId("demo-reset-button").click();
+  await expect(facilityPage).toHaveURL(/\/orders$/);
+
+  await openDemo(researcherPage, `/demo?workspace=${workspace}`);
+  await expectOrderInApi(researcherPage, orderName, false);
+
+  await researcherContext.close();
+  await facilityContext.close();
+});
+
+test("facility demo shows seeded analysis data but rejects pipeline execution", async ({
+  page,
+}) => {
+  await openDemo(page, `/demo/admin?workspace=facility-${Date.now()}`);
+
+  await page.goto("/analysis");
+  await expect(page.getByRole("heading", { name: "Analysis Runs" })).toBeVisible();
+  await expect(page.getByText("MAG").first()).toBeVisible();
+
+  const studiesResponse = await page.request.get("/api/studies");
+  expect(studiesResponse.ok()).toBeTruthy();
+  const studies = (await studiesResponse.json()) as Array<{ id: string; title: string }>;
+  const pilotStudy = studies.find((study) => study.title === "Surface Resistome Pilot");
+  expect(pilotStudy).toBeTruthy();
+
+  const createResponse = await page.request.post("/api/pipelines/runs", {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    data: {
+      pipelineId: "mag",
+      studyId: pilotStudy!.id,
+      config: {},
+    },
+  });
+
+  expect(createResponse.status()).toBe(403);
+  await expect(page.getByText("Analysis is disabled in the public demo")).toHaveCount(0);
 });
