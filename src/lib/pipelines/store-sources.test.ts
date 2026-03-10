@@ -49,10 +49,11 @@ describe("store source helpers", () => {
     expect(normalized.source).toMatchObject({
       kind: "github",
       label: "GitHub",
-      repository: "hzi-bifo/MetaxPath",
-      refDefault: "Nextflow",
+      repository: "hzi-bifo/MetaxPath-Nextflow",
+      refDefault: "main",
       includeWorkflow: true,
     });
+    expect(normalized.source.sourceId).toBe("github:hzi-bifo/MetaxPath-Nextflow");
   });
 
   it("falls back to the resolved version download URL when only versions declare it", () => {

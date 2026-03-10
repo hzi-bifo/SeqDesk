@@ -38,7 +38,7 @@ function buildValidManifest(): string {
       execution: {
         type: "nextflow",
         pipeline: "./workflow",
-        version: "Nextflow",
+        version: "main",
         profiles: ["conda"],
         defaultParams: {},
       },
@@ -138,7 +138,7 @@ describe("metaxpath-import helpers", () => {
           execution: {
             type: "snakemake",
             pipeline: "hzi-bifo/MetaxPath",
-            version: "main",
+            version: "",
             profiles: ["conda"],
             defaultParams: {},
           },
@@ -165,7 +165,7 @@ describe("metaxpath-import helpers", () => {
       'manifest.json execution.type must be "nextflow".'
     );
     expect(result.errors).toContain(
-      'manifest.json execution.version must be "Nextflow".'
+      "manifest.json execution.version must be a non-empty string."
     );
   });
 

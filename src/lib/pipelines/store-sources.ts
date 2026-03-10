@@ -1,3 +1,9 @@
+import {
+  METAXPATH_PIPELINE_ID,
+  resolveMetaxPathRef,
+  resolveMetaxPathRepository,
+} from "./metaxpath-config";
+
 export type PipelineSourceKind = "registry" | "privateRegistry" | "github";
 
 export interface PipelineSourceDescriptor {
@@ -179,12 +185,20 @@ export function normalizeRegistryPipeline(
     pipeline.versions?.[0];
   const resolvedDownloadUrl =
     pipeline.source?.downloadUrl || pipeline.downloadUrl || matchingVersionEntry?.downloadUrl;
+  const resolvedRepository =
+    pipeline.id === METAXPATH_PIPELINE_ID && sourceKind === "github"
+      ? resolveMetaxPathRepository(pipeline.source?.repository)
+      : pipeline.source?.repository;
+  const resolvedRefDefault =
+    pipeline.id === METAXPATH_PIPELINE_ID && sourceKind === "github"
+      ? resolveMetaxPathRef(pipeline.source?.refDefault, pipeline.source?.repository)
+      : pipeline.source?.refDefault;
   const source: PipelineSourceDescriptor = {
     kind: sourceKind,
     sourceId:
       sourceKind === "registry" || sourceKind === "privateRegistry"
         ? registry.id
-        : `github:${pipeline.source?.repository || pipeline.id}`,
+        : `github:${resolvedRepository || pipeline.id}`,
     label: pipeline.source?.label || registry.label,
     registryUrl: registry.registryUrl,
     browseUrl: registry.browseUrl,
@@ -192,8 +206,8 @@ export function normalizeRegistryPipeline(
     packageUrlDefault:
       pipeline.source?.packageUrlDefault || pipeline.privateInstall?.packageUrlDefault,
     keyLabel: pipeline.source?.keyLabel || pipeline.privateInstall?.keyLabel,
-    repository: pipeline.source?.repository,
-    refDefault: pipeline.source?.refDefault,
+    repository: resolvedRepository,
+    refDefault: resolvedRefDefault,
     descriptorPath: pipeline.source?.descriptorPath,
     includeWorkflow: pipeline.source?.includeWorkflow,
   };

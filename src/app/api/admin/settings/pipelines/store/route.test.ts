@@ -102,8 +102,8 @@ describe("GET /api/admin/settings/pipelines/store", () => {
           id: "metaxpath",
           source: expect.objectContaining({
             kind: "github",
-            repository: "hzi-bifo/MetaxPath",
-            refDefault: "Nextflow",
+            repository: "hzi-bifo/MetaxPath-Nextflow",
+            refDefault: "main",
           }),
         }),
       ])
