@@ -60,7 +60,7 @@ NC='\033[0m'
 # Config
 SEQDESK_DIR="${SEQDESK_DIR:-./seqdesk}"
 SEQDESK_VERSION="${SEQDESK_VERSION:-}"
-SEQDESK_API="https://seqdesk.com/api"
+SEQDESK_API="https://www.seqdesk.com/api"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
@@ -258,8 +258,13 @@ if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
   process.exit(1);
 }
 
+const release =
+  parsed.latest && typeof parsed.latest === "object" && !Array.isArray(parsed.latest)
+    ? parsed.latest
+    : parsed;
+
 function readRequiredString(key) {
-  const value = parsed[key];
+  const value = release[key];
   if (typeof value !== "string" || value.trim().length === 0) {
     console.error(`${key} must be a non-empty string.`);
     process.exit(1);
@@ -269,7 +274,7 @@ function readRequiredString(key) {
 }
 
 function readOptionalString(key) {
-  const value = parsed[key];
+  const value = release[key];
   if (value === undefined || value === null) {
     return "";
   }
@@ -283,7 +288,7 @@ function readOptionalString(key) {
 }
 
 function readOptionalSize(key) {
-  const value = parsed[key];
+  const value = release[key];
   if (value === undefined || value === null || value === "") {
     return "";
   }
