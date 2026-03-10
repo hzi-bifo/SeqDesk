@@ -14,13 +14,18 @@ import {
 } from "@/lib/pipelines/package-install";
 import {
   classifyCloneFailure,
-  DEFAULT_METAXPATH_REF,
   installGitHubPipelineSnapshot,
   isValidGitRef,
 } from "@/lib/pipelines/metaxpath-import";
+import {
+  METAXPATH_PIPELINE_ID,
+  resolveMetaxPathRef,
+  resolveMetaxPathRepository,
+} from "@/lib/pipelines/metaxpath-config";
 import type { PipelineSourceDescriptor } from "@/lib/pipelines/store-sources";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_GITHUB_REF = "main";
 
 interface InstallRequestBody {
   pipelineId?: unknown;
@@ -140,8 +145,16 @@ async function installFromGitHub(
   source: Partial<PipelineSourceDescriptor>,
   credentials: InstallRequestBody["credentials"]
 ): Promise<{ action: "install" | "update"; version?: string; source: string }> {
-  const repo = trimToUndefined(source.repository);
-  const ref = trimToUndefined(source.refDefault) || DEFAULT_METAXPATH_REF;
+  const requestedRepo = trimToUndefined(source.repository);
+  const requestedRef = trimToUndefined(source.refDefault);
+  const repo =
+    pipelineId === METAXPATH_PIPELINE_ID
+      ? resolveMetaxPathRepository(requestedRepo)
+      : requestedRepo;
+  const ref =
+    pipelineId === METAXPATH_PIPELINE_ID
+      ? resolveMetaxPathRef(requestedRef, requestedRepo)
+      : requestedRef || DEFAULT_GITHUB_REF;
   const token = trimToUndefined(credentials?.token);
 
   if (!repo || !token) {

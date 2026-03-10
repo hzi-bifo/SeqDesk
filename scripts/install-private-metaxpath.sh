@@ -237,6 +237,6 @@ if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
 fi
 
 log "Installed private MetaxPath package to: $TARGET_DIR"
-log "The workflow source is pulled by Nextflow at runtime from the hzi-bifo/MetaxPath repository."
+log "GitHub import/sync for MetaxPath uses the hzi-bifo/MetaxPath-Nextflow repository."
 log "Ensure the server has GitHub access (SSH key or token) to the private repo."
 log "Next step: open SeqDesk Admin > Settings > Pipelines and enable/configure metaxpath database paths."

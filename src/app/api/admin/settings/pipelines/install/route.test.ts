@@ -34,7 +34,6 @@ vi.mock("child_process", () => ({
 }));
 
 vi.mock("@/lib/pipelines/metaxpath-import", () => ({
-  DEFAULT_METAXPATH_REF: "Nextflow",
   isValidGitRef: vi.fn(() => true),
   classifyCloneFailure: vi.fn(() => ({
     status: 500,
@@ -163,7 +162,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     expect((init.headers as Headers).get("authorization")).toBe("Bearer secret-token");
   });
 
-  it("dispatches github installs through the github snapshot installer", async () => {
+  it("rewrites legacy metaxpath github source details before installing", async () => {
     mocks.installGitHubPipelineSnapshot.mockResolvedValue({
       action: "install",
       manifest: {
@@ -199,8 +198,8 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     expect(mocks.installGitHubPipelineSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
         pipelineId: "metaxpath",
-        repo: "hzi-bifo/MetaxPath",
-        ref: "Nextflow",
+        repo: "hzi-bifo/MetaxPath-Nextflow",
+        ref: "main",
         descriptorPath: ".seqdesk/pipelines/metaxpath",
         includeWorkflow: true,
       })

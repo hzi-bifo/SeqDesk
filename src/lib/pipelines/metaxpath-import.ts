@@ -2,12 +2,20 @@ import fs from "fs/promises";
 import path from "path";
 import type { PackageManifest } from "./package-loader";
 import { installPackageDirectory } from "./package-install";
+import {
+  METAXPATH_DESCRIPTOR_RELATIVE_PATH,
+  METAXPATH_PIPELINE_ID,
+  METAXPATH_REPOSITORY,
+} from "./metaxpath-config";
 
-export const METAXPATH_PIPELINE_ID = "metaxpath";
-export const METAXPATH_REPOSITORY = "hzi-bifo/MetaxPath";
+export {
+  DEFAULT_METAXPATH_REF,
+  METAXPATH_DESCRIPTOR_RELATIVE_PATH,
+  METAXPATH_PIPELINE_ID,
+  METAXPATH_REPOSITORY,
+} from "./metaxpath-config";
+
 export const METAXPATH_REPO_HTTPS = `https://github.com/${METAXPATH_REPOSITORY}.git`;
-export const DEFAULT_METAXPATH_REF = "Nextflow";
-export const METAXPATH_DESCRIPTOR_RELATIVE_PATH = ".seqdesk/pipelines/metaxpath";
 
 export const REQUIRED_DESCRIPTOR_FILES = [
   "manifest.json",
@@ -170,10 +178,11 @@ export async function validatePipelineDescriptorDir(
       errors.push('manifest.json execution.type must be "nextflow".');
     }
 
-    if (manifest.execution?.version !== DEFAULT_METAXPATH_REF) {
-      errors.push(
-        `manifest.json execution.version must be "${DEFAULT_METAXPATH_REF}".`
-      );
+    if (
+      typeof manifest.execution?.version !== "string" ||
+      manifest.execution.version.trim().length === 0
+    ) {
+      errors.push("manifest.json execution.version must be a non-empty string.");
     }
   }
 
