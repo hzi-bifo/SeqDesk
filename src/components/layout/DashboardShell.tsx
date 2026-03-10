@@ -18,6 +18,7 @@ interface DashboardShellProps {
     email?: string | null;
     role?: string;
     isDemo?: boolean;
+    demoExperience?: "researcher" | "facility";
   };
   version?: string;
 }
@@ -65,8 +66,13 @@ function DashboardContent({
           collapsed ? "md:ml-16" : "md:ml-64"
         )}
       >
-        <UpdateBanner />
-        {user.isDemo ? <DemoBanner embeddedMode={embeddedMode} /> : null}
+        {!user.isDemo ? <UpdateBanner /> : null}
+        {user.isDemo ? (
+          <DemoBanner
+            embeddedMode={embeddedMode}
+            demoExperience={user.demoExperience === "facility" ? "facility" : "researcher"}
+          />
+        ) : null}
         <main>{children}</main>
       </div>
     </>

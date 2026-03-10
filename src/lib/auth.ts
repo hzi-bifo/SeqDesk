@@ -4,6 +4,7 @@ import { compare } from "bcryptjs";
 import { db } from "./db";
 import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
 import { authorizeDemoWorkspaceToken } from "@/lib/demo/server";
+import { normalizeDemoExperience } from "@/lib/demo/types";
 
 bootstrapRuntimeEnv();
 
@@ -40,6 +41,7 @@ export const authOptions: NextAuthOptions = {
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
           isDemo: user.isDemo,
+          demoExperience: undefined,
         };
       },
     }),
@@ -48,9 +50,13 @@ export const authOptions: NextAuthOptions = {
       name: "demo workspace",
       credentials: {
         token: { label: "Demo token", type: "text" },
+        demoExperience: { label: "Demo experience", type: "text" },
       },
       async authorize(credentials) {
-        const user = await authorizeDemoWorkspaceToken(credentials?.token);
+        const user = await authorizeDemoWorkspaceToken(
+          credentials?.token,
+          normalizeDemoExperience(credentials?.demoExperience)
+        );
         if (!user) {
           return null;
         }
@@ -61,6 +67,7 @@ export const authOptions: NextAuthOptions = {
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
           isDemo: user.isDemo,
+          demoExperience: user.demoExperience,
         };
       },
     }),
@@ -74,6 +81,7 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role;
         token.id = user.id;
         token.isDemo = Boolean(user.isDemo);
+        token.demoExperience = user.demoExperience;
       }
       return token;
     },
@@ -82,6 +90,8 @@ export const authOptions: NextAuthOptions = {
         session.user.role = token.role as string;
         session.user.id = token.id as string;
         session.user.isDemo = Boolean(token.isDemo);
+        session.user.demoExperience =
+          token.demoExperience === "facility" ? "facility" : token.isDemo ? "researcher" : undefined;
       }
       return session;
     },

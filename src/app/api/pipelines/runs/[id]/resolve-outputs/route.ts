@@ -6,6 +6,7 @@ import { getAdapter } from '@/lib/pipelines/adapters';
 import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 import path from 'path';
+import { isDemoSession } from '@/lib/demo/server';
 
 /**
  * POST - Manually trigger output resolution for a completed run
@@ -20,6 +21,13 @@ export async function POST(
 
     if (!session || session.user.role !== 'FACILITY_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: 'Pipeline execution is disabled in the public demo.' },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

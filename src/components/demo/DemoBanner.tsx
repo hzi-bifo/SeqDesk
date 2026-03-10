@@ -3,23 +3,30 @@
 import { useState } from "react";
 import { Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DEMO_LOADING_MESSAGE, postDemoFrameMessage } from "@/lib/demo/client";
+import {
+  DEMO_LOADING_MESSAGE,
+  DEMO_RESET_MESSAGE,
+  getDemoEntryPath,
+  postDemoFrameMessage,
+} from "@/lib/demo/client";
+import type { DemoExperience } from "@/lib/demo/types";
 
 interface DemoBannerProps {
   embeddedMode: boolean;
+  demoExperience: DemoExperience;
 }
 
-export function DemoBanner({ embeddedMode }: DemoBannerProps) {
+export function DemoBanner({
+  embeddedMode,
+  demoExperience,
+}: DemoBannerProps) {
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
+  const isFacilityDemo = demoExperience === "facility";
 
   const handleReset = async () => {
     setResetting(true);
     setError("");
-
-    if (embeddedMode) {
-      postDemoFrameMessage(DEMO_LOADING_MESSAGE);
-    }
 
     try {
       const response = await fetch("/api/demo/reset", {
@@ -27,6 +34,9 @@ export function DemoBanner({ embeddedMode }: DemoBannerProps) {
         headers: {
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          demoExperience,
+        }),
       });
 
       if (!response.ok) {
@@ -35,7 +45,13 @@ export function DemoBanner({ embeddedMode }: DemoBannerProps) {
       }
 
       await response.json().catch(() => ({}));
-      window.location.assign(embeddedMode ? "/demo/embed" : "/demo");
+      if (embeddedMode) {
+        postDemoFrameMessage(DEMO_RESET_MESSAGE, {
+          demoExperience,
+        });
+        postDemoFrameMessage(DEMO_LOADING_MESSAGE);
+      }
+      window.location.assign(getDemoEntryPath(demoExperience, embeddedMode));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset demo");
       setResetting(false);
@@ -50,9 +66,11 @@ export function DemoBanner({ embeddedMode }: DemoBannerProps) {
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="text-sm font-semibold text-foreground">Researcher Demo</p>
+          <p className="text-sm font-semibold text-foreground">
+            {isFacilityDemo ? "Facility Demo" : "Researcher Demo"}
+          </p>
           <p className="text-xs text-muted-foreground">
-            Private to this browser session. Reset anytime to restore the seeded workspace.
+            Private to this demo workspace. Reset anytime to restore the seeded data.
           </p>
           {error ? (
             <p className="mt-1 text-xs text-destructive">{error}</p>

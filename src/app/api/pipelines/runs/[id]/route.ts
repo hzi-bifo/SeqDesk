@@ -6,6 +6,7 @@ import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
+import { isDemoSession } from '@/lib/demo/server';
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -416,6 +417,13 @@ export async function DELETE(
 
     if (!session || session.user.role !== 'FACILITY_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: 'Pipeline execution is disabled in the public demo.' },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

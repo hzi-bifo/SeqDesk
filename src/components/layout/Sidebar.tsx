@@ -34,6 +34,7 @@ interface SidebarProps {
     email?: string | null;
     role?: string;
     isDemo?: boolean;
+    demoExperience?: "researcher" | "facility";
   };
   version?: string;
 }
@@ -45,6 +46,15 @@ export function Sidebar({ user, version }: SidebarProps) {
   const { focusedField, setFocusedField, validationError } = useFieldHelp();
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const isDemoUser = user.isDemo === true;
+  const isFacilityDemoUser = user.demoExperience === "facility";
+  const showAdminControls = isFacilityAdmin && !isFacilityDemoUser;
+  const userRoleLabel = isFacilityDemoUser
+    ? "Facility Demo"
+    : isFacilityAdmin
+      ? "Facility Admin"
+      : isDemoUser
+        ? "Researcher Demo"
+        : "Researcher";
   const { enabled: sequencingTechEnabled } = useModule("sequencing-tech");
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -143,7 +153,7 @@ export function Sidebar({ user, version }: SidebarProps) {
 
   // Fetch infrastructure readiness for sidebar guidance
   useEffect(() => {
-    if (!isFacilityAdmin) return;
+    if (!showAdminControls) return;
 
     let mounted = true;
 
@@ -189,7 +199,7 @@ export function Sidebar({ user, version }: SidebarProps) {
       mounted = false;
       clearInterval(interval);
     };
-  }, [isFacilityAdmin]);
+  }, [showAdminControls]);
 
   const handleSignOut = async () => {
     await signOut({ redirect: false });
@@ -309,7 +319,7 @@ export function Sidebar({ user, version }: SidebarProps) {
         </Link>
 
         {/* ENA Submissions - Admin only */}
-        {isFacilityAdmin && (
+        {showAdminControls && (
           <Link href="/submissions" className={navItemClass("/submissions")} title="ENA Submissions">
             <Send className={navIconClass} />
             {!collapsed && "ENA Submissions"}
@@ -485,7 +495,7 @@ export function Sidebar({ user, version }: SidebarProps) {
         )}
 
         {/* Users and support - Admin only */}
-        {isFacilityAdmin && (
+        {showAdminControls && (
           <>
             {/* Section separator */}
             <div className={cn("my-2", collapsed ? "mx-1" : "mx-3")}>
@@ -791,7 +801,7 @@ export function Sidebar({ user, version }: SidebarProps) {
             <div className="px-4 py-2 border-b border-border">
               <p className="text-sm font-medium truncate">{user.name}</p>
               <p className="text-xs text-muted-foreground">
-                {isFacilityAdmin ? "Facility Admin" : isDemoUser ? "Researcher Demo" : "Researcher"}
+                {userRoleLabel}
               </p>
             </div>
             <Link
@@ -831,7 +841,7 @@ export function Sidebar({ user, version }: SidebarProps) {
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-sm font-medium truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {isFacilityAdmin ? "Facility Admin" : isDemoUser ? "Researcher Demo" : "Researcher"}
+                  {userRoleLabel}
                 </p>
               </div>
               <ChevronUp

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import fs from 'fs/promises';
+import { isDemoSession } from '@/lib/demo/server';
 
 export async function POST(
   request: NextRequest,
@@ -13,6 +14,13 @@ export async function POST(
 
     if (!session || session.user.role !== 'FACILITY_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: 'Pipeline execution is disabled in the public demo.' },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

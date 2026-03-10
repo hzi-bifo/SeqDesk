@@ -23,7 +23,8 @@ model User {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   departmentId   String?
-  demoWorkspace  DemoWorkspace?
+  demoWorkspace  DemoWorkspace?  @relation("DemoWorkspaceResearcher")
+  adminDemoWorkspace DemoWorkspace? @relation("DemoWorkspaceAdmin")
   usedInvite     AdminInvite?    @relation("InviteUser")
   createdInvites AdminInvite[]   @relation("InviteCreator")
   orders         Order[]
@@ -384,15 +385,17 @@ model Submission {
 }
 
 model DemoWorkspace {
-  id         String   @id @default(cuid())
-  tokenHash  String   @unique
-  userId     String   @unique
+  id          String   @id @default(cuid())
+  tokenHash   String   @unique
+  userId      String   @unique
+  adminUserId String?  @unique
   seedVersion Int
-  lastSeenAt DateTime
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  user       User     @relation(fields: [userId], references: [id])
+  lastSeenAt  DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation("DemoWorkspaceResearcher", fields: [userId], references: [id])
+  adminUser   User?    @relation("DemoWorkspaceAdmin", fields: [adminUserId], references: [id])
 
   @@index([expiresAt])
 }

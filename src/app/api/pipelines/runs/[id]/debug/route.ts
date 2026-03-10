@@ -7,6 +7,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
+import { isDemoSession } from "@/lib/demo/server";
 
 const execFileAsync = promisify(execFile);
 
@@ -448,6 +449,13 @@ export async function GET(
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isDemoSession(session)) {
+      return NextResponse.json(
+        { error: "Run diagnostics are disabled in the public demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

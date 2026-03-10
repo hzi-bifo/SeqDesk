@@ -2,21 +2,60 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { ExternalLink, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DEMO_LOADING_MESSAGE, postDemoFrameMessage } from "@/lib/demo/client";
+import {
+  DEMO_ERROR_MESSAGE,
+  DEMO_LOADING_MESSAGE,
+  getDemoEntryPath,
+  postDemoFrameMessage,
+} from "@/lib/demo/client";
+import type { DemoExperience } from "@/lib/demo/types";
 
 interface DemoBootstrapClientProps {
   embedded?: boolean;
+  demoExperience?: DemoExperience;
+}
+
+function extractErrorMessage(rawBody: string, fallback: string): string {
+  if (!rawBody) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(rawBody) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Fall through to a text fallback for non-JSON error pages.
+  }
+
+  const stripped = rawBody
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return stripped.slice(0, 240) || fallback;
 }
 
 export function DemoBootstrapClient({
   embedded = false,
+  demoExperience = "researcher",
 }: DemoBootstrapClientProps) {
   const { data: session, status } = useSession();
+  const searchParams = useSearchParams();
   const bootstrappedRef = useRef(false);
   const [error, setError] = useState("");
+  const workspace = searchParams.get("workspace")?.trim() || "";
+  const demoLabel =
+    demoExperience === "facility" ? "facility workspace" : "researcher workspace";
+  const fullDemoPath = getDemoEntryPath(demoExperience, false);
+  const fullDemoHref = workspace
+    ? `${fullDemoPath}?workspace=${encodeURIComponent(workspace)}`
+    : fullDemoPath;
 
   useEffect(() => {
     if (!embedded) {
@@ -35,7 +74,12 @@ export function DemoBootstrapClient({
 
     const bootstrap = async () => {
       try {
-        if (status === "authenticated" && session?.user?.isDemo) {
+        if (
+          !workspace &&
+          status === "authenticated" &&
+          session?.user?.isDemo &&
+          session.user.demoExperience === demoExperience
+        ) {
           window.location.replace("/orders");
           return;
         }
@@ -45,22 +89,57 @@ export function DemoBootstrapClient({
           headers: {
             "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            demoExperience,
+            workspace: workspace || undefined,
+          }),
         });
 
         if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.error || "Failed to start demo");
+          const responseText = await response.text().catch(() => "");
+          throw new Error(
+            extractErrorMessage(
+              responseText,
+              `Failed to start demo (HTTP ${response.status})`
+            )
+          );
         }
-        await response.json().catch(() => ({}));
         window.location.replace("/orders");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to start demo");
+        const message =
+          err instanceof Error ? err.message : "Failed to start demo";
+        setError(message);
+        if (embedded) {
+          postDemoFrameMessage(DEMO_ERROR_MESSAGE, {
+            demoExperience,
+            message,
+          });
+        }
         bootstrappedRef.current = false;
       }
     };
 
     void bootstrap();
-  }, [session?.user?.isDemo, status]);
+  }, [
+    demoExperience,
+    embedded,
+    session?.user?.demoExperience,
+    session?.user?.isDemo,
+    status,
+    workspace,
+  ]);
+
+  if (embedded && !error) {
+    return (
+      <div
+        className="min-h-screen bg-[#F7F7F4]"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <span className="sr-only">{`Opening ${demoLabel}`}</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#F7F7F4] px-6">
@@ -70,12 +149,12 @@ export function DemoBootstrapClient({
             SeqDesk Demo
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
-            Opening a disposable researcher workspace
+            {`Opening a disposable ${demoLabel}`}
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
             {embedded
-              ? "Preparing the live researcher view for the landing-page embed."
-              : "Preparing the full-screen live researcher demo."}
+              ? `Preparing the live ${demoExperience} view for the landing-page embed.`
+              : `Preparing the full-screen live ${demoExperience} demo.`}
           </p>
         </div>
 
@@ -92,7 +171,7 @@ export function DemoBootstrapClient({
               </Button>
               {embedded ? (
                 <Button variant="outline" asChild>
-                  <Link href="/demo" target="_blank" rel="noopener noreferrer">
+                  <Link href={fullDemoHref} target="_blank" rel="noopener noreferrer">
                     Open Full Demo
                     <ExternalLink className="ml-2 h-4 w-4" />
                   </Link>
@@ -109,7 +188,7 @@ export function DemoBootstrapClient({
                   Creating or resuming your private demo data
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Orders, studies, and changes remain isolated to this browser session.
+                  Orders, studies, and changes remain isolated to this demo workspace.
                 </p>
               </div>
             </div>

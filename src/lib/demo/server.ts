@@ -15,6 +15,10 @@ import {
   addDemoProjectsFieldToSchema,
   getDemoSiteSettingsUpdate,
 } from "./seed";
+import {
+  type DemoExperience,
+  normalizeDemoExperience,
+} from "./types";
 
 type DemoBootstrapResult = {
   created: boolean;
@@ -24,16 +28,25 @@ type DemoBootstrapResult = {
   workspaceId: string;
 };
 
+type DemoSeedResult = {
+  expiresAt: Date;
+  token: string;
+  workspaceId: string;
+  researcherUserId: string;
+  adminUserId: string;
+};
+
 type DemoWorkspaceRecord = {
   id: string;
   tokenHash: string;
   userId: string;
+  adminUserId: string | null;
   seedVersion: number;
   lastSeenAt: Date;
   expiresAt: Date;
 };
 
-type DemoAuthUser = {
+type DemoWorkspaceUser = {
   id: string;
   email: string;
   firstName: string;
@@ -42,8 +55,19 @@ type DemoAuthUser = {
   isDemo: boolean;
 };
 
-type DemoWorkspaceWithUser = DemoWorkspaceRecord & {
-  user: DemoAuthUser;
+export type DemoAuthUser = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  isDemo: boolean;
+  demoExperience: DemoExperience;
+};
+
+type DemoWorkspaceWithUsers = DemoWorkspaceRecord & {
+  user: DemoWorkspaceUser;
+  adminUser: DemoWorkspaceUser | null;
 };
 
 function addHours(date: Date, hours: number): Date {
@@ -58,15 +82,27 @@ function createDemoToken(): string {
   return randomBytes(32).toString("hex");
 }
 
-function createDemoEmail(token: string): string {
-  return `demo-${token.slice(0, 12)}@seqdesk.local`;
+function createDemoEmail(
+  token: string,
+  demoExperience: DemoExperience
+): string {
+  const prefix = demoExperience === "facility" ? "facility" : "researcher";
+  return `demo-${prefix}-${token.slice(0, 12)}@seqdesk.local`;
 }
 
 function createOrderNumber(prefix: string, index: number): string {
   return `DEMO-${prefix}-${String(index).padStart(3, "0")}`;
 }
 
-function createSampleId(prefix: string, orderIndex: number, sampleIndex: number): string {
+function createRunNumber(prefix: string): string {
+  return `MAG-${prefix}-001`;
+}
+
+function createSampleId(
+  prefix: string,
+  orderIndex: number,
+  sampleIndex: number
+): string {
   return `D-${prefix}-${orderIndex}${String(sampleIndex).padStart(2, "0")}`;
 }
 
@@ -78,6 +114,48 @@ function getStudyMetadata(
     principal_investigator: principalInvestigator,
     study_abstract: abstract,
   };
+}
+
+function getDemoUserIdForExperience(
+  data:
+    | DemoWorkspaceWithUsers
+    | Pick<DemoSeedResult, "researcherUserId" | "adminUserId">,
+  demoExperience: DemoExperience
+): string {
+  const researcherUserId =
+    "researcherUserId" in data ? data.researcherUserId : data.userId;
+  const adminUserId = data.adminUserId;
+
+  return demoExperience === "facility"
+    ? adminUserId ?? researcherUserId
+    : researcherUserId;
+}
+
+function toDemoAuthUser(
+  user: DemoWorkspaceUser,
+  demoExperience: DemoExperience
+): DemoAuthUser {
+  return {
+    ...user,
+    demoExperience,
+  };
+}
+
+function selectWorkspaceUser(
+  workspace: DemoWorkspaceWithUsers,
+  demoExperience: DemoExperience
+): DemoWorkspaceUser | null {
+  return demoExperience === "facility" ? workspace.adminUser : workspace.user;
+}
+
+function isWorkspaceReusable(workspace: DemoWorkspaceWithUsers | null): boolean {
+  return Boolean(
+    workspace &&
+      workspace.adminUserId &&
+      workspace.adminUser &&
+      workspace.seedVersion === DEMO_SEED_VERSION &&
+      workspace.expiresAt.getTime() > Date.now()
+  );
 }
 
 async function ensureDemoBaseState(): Promise<void> {
@@ -114,24 +192,28 @@ async function ensureDemoBaseState(): Promise<void> {
   }
 }
 
-async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
+async function createDemoWorkspaceInternal(
+  preferredToken?: string | null
+): Promise<DemoSeedResult> {
   await ensureDemoBaseState();
 
   const now = new Date();
   const expiresAt = addHours(now, DEMO_SESSION_TTL_HOURS);
-  const rawToken = createDemoToken();
+  const rawToken = preferredToken?.trim() || createDemoToken();
   const tokenHash = hashDemoToken(rawToken);
   const prefix = rawToken.slice(0, 6).toUpperCase();
-  const email = createDemoEmail(rawToken);
+  const researcherEmail = createDemoEmail(rawToken, "researcher");
+  const adminEmail = createDemoEmail(rawToken, "facility");
   const passwordHash = await hash(rawToken, 10);
+  const demoRoot = `demo/${prefix.toLowerCase()}`;
 
   const result = await db.$transaction(async (tx) => {
-    const user = await tx.user.create({
+    const researcher = await tx.user.create({
       data: {
-        email,
+        email: researcherEmail,
         password: passwordHash,
         firstName: "Demo",
-        lastName: "User",
+        lastName: "Researcher",
         role: "RESEARCHER",
         isDemo: true,
         institution: "SeqDesk Demo Workspace",
@@ -139,10 +221,23 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
       },
     });
 
+    const facilityAdmin = await tx.user.create({
+      data: {
+        email: adminEmail,
+        password: passwordHash,
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+        facilityName: "SeqDesk Demo Facility",
+      },
+    });
+
     const workspace = await tx.demoWorkspace.create({
       data: {
         tokenHash,
-        userId: user.id,
+        userId: researcher.id,
+        adminUserId: facilityAdmin.id,
         seedVersion: DEMO_SEED_VERSION,
         lastSeenAt: now,
         expiresAt,
@@ -164,7 +259,7 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         ),
         readyForSubmission: true,
         readyAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
-        userId: user.id,
+        userId: researcher.id,
       },
     });
 
@@ -181,7 +276,7 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
             "Pilot screen of resistome markers across public-touch surface samples."
           )
         ),
-        userId: user.id,
+        userId: researcher.id,
       },
     });
 
@@ -191,8 +286,8 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         name: "Draft host-associated screening batch",
         status: "DRAFT",
         numberOfSamples: 2,
-        contactName: "Demo User",
-        contactEmail: email,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         platform: "ILLUMINA",
         instrumentModel: "MiSeq",
@@ -201,7 +296,7 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         customFields: JSON.stringify({
           _projects: "Screening batch\nValidation panel",
         }),
-        userId: user.id,
+        userId: researcher.id,
         samples: {
           create: [
             {
@@ -231,15 +326,15 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
       },
     });
 
-    await tx.order.create({
+    const submittedOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 2),
         name: "Gut recovery metagenome cohort",
         status: "SUBMITTED",
         statusUpdatedAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
         numberOfSamples: 3,
-        contactName: "Demo User",
-        contactEmail: email,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         platform: "ILLUMINA",
         instrumentModel: "NovaSeq 6000",
@@ -248,7 +343,7 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         customFields: JSON.stringify({
           _projects: "Gut recovery cohort\nTimepoint atlas",
         }),
-        userId: user.id,
+        userId: researcher.id,
         samples: {
           create: [
             {
@@ -311,6 +406,14 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
           ],
         },
       },
+      include: {
+        samples: {
+          select: {
+            id: true,
+            sampleId: true,
+          },
+        },
+      },
     });
 
     const completedOrder = await tx.order.create({
@@ -320,14 +423,14 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         status: "COMPLETED",
         statusUpdatedAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
         numberOfSamples: 2,
-        contactName: "Demo User",
-        contactEmail: email,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         platform: "ILLUMINA",
         instrumentModel: "NextSeq 2000",
         libraryStrategy: "WGS",
         librarySource: "METAGENOMIC",
-        userId: user.id,
+        userId: researcher.id,
         samples: {
           create: [
             {
@@ -350,8 +453,8 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
               },
               reads: {
                 create: {
-                  file1: `demo/${prefix.toLowerCase()}/surface-resistome/SR-01_R1.fastq.gz`,
-                  file2: `demo/${prefix.toLowerCase()}/surface-resistome/SR-01_R2.fastq.gz`,
+                  file1: `${demoRoot}/surface-resistome/SR-01_R1.fastq.gz`,
+                  file2: `${demoRoot}/surface-resistome/SR-01_R2.fastq.gz`,
                 },
               },
             },
@@ -375,12 +478,20 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
               },
               reads: {
                 create: {
-                  file1: `demo/${prefix.toLowerCase()}/surface-resistome/SR-02_R1.fastq.gz`,
-                  file2: `demo/${prefix.toLowerCase()}/surface-resistome/SR-02_R2.fastq.gz`,
+                  file1: `${demoRoot}/surface-resistome/SR-02_R1.fastq.gz`,
+                  file2: `${demoRoot}/surface-resistome/SR-02_R2.fastq.gz`,
                 },
               },
             },
           ],
+        },
+      },
+      include: {
+        samples: {
+          select: {
+            id: true,
+            sampleId: true,
+          },
         },
       },
     });
@@ -390,7 +501,7 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         noteType: "SAMPLES_SENT",
         content: "Demo samples marked as sent to the institution.",
         orderId: completedOrder.id,
-        userId: user.id,
+        userId: facilityAdmin.id,
       },
     });
 
@@ -399,33 +510,206 @@ async function createDemoWorkspaceInternal(): Promise<DemoBootstrapResult> {
         noteType: "INTERNAL",
         content: `Workspace seeded from demo template v${DEMO_SEED_VERSION}.`,
         orderId: draftOrder.id,
-        userId: user.id,
+        userId: researcher.id,
       },
     });
 
+    await tx.statusNote.create({
+      data: {
+        noteType: "INTERNAL",
+        content:
+          "Facility review completed. Samples and analysis outputs are seeded for the live admin demo.",
+        orderId: submittedOrder.id,
+        userId: facilityAdmin.id,
+      },
+    });
+
+    const runQueuedAt = new Date(now.getTime() - 37 * 60 * 60 * 1000);
+    const runStartedAt = new Date(now.getTime() - 36 * 60 * 60 * 1000);
+    const runCompletedAt = new Date(now.getTime() - 34 * 60 * 60 * 1000);
+    const completedSample = completedOrder.samples[0];
+
+    const pipelineRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix),
+        pipelineId: "mag",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        studyId: pilotStudy.id,
+        userId: facilityAdmin.id,
+        inputSampleIds: JSON.stringify(
+          completedOrder.samples.map((sample) => sample.id)
+        ),
+        config: JSON.stringify({
+          preset: "demo-seeded",
+          note: "Seeded analysis results for the public facility demo.",
+        }),
+        runFolder: `${demoRoot}/runs/mag-demo`,
+        queueJobId: `demo-${prefix.toLowerCase()}`,
+        queuedAt: runQueuedAt,
+        startedAt: runStartedAt,
+        completedAt: runCompletedAt,
+        lastEventAt: runCompletedAt,
+        lastWeblogAt: runCompletedAt,
+        lastTraceAt: runCompletedAt,
+        statusSource: "process",
+        outputTail:
+          "Demo MAG pipeline completed successfully.\n2 bins and 1 assembly were registered.",
+        results: JSON.stringify({
+          note: "Seeded completed run for the public facility demo.",
+          assembliesCreated: 1,
+          binsCreated: 1,
+        }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: runCompletedAt,
+      },
+    });
+
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        stepId: "fastp",
+        stepName: "Read QC",
+        status: "completed",
+        startedAt: runStartedAt,
+        completedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        outputTail: "All reads passed demo QC thresholds.",
+      },
+    });
+
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        stepId: "megahit",
+        stepName: "Assembly",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        completedAt: new Date(runStartedAt.getTime() + 90 * 60 * 1000),
+        outputTail: "Assembly completed with seeded demo contigs.",
+      },
+    });
+
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        stepId: "metabat2",
+        stepName: "Binning",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 90 * 60 * 1000),
+        completedAt: runCompletedAt,
+        outputTail: "Binning completed for the seeded demo run.",
+      },
+    });
+
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        eventType: "workflow_start",
+        status: "running",
+        source: "process",
+        message: "Demo MAG workflow started.",
+        occurredAt: runStartedAt,
+      },
+    });
+
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        eventType: "process_complete",
+        processName: "megahit",
+        stepId: "megahit",
+        status: "completed",
+        source: "trace",
+        message: "Assembly finished with seeded demo outputs.",
+        occurredAt: new Date(runStartedAt.getTime() + 90 * 60 * 1000),
+      },
+    });
+
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: pipelineRun.id,
+        eventType: "workflow_complete",
+        status: "completed",
+        source: "process",
+        message: "Seeded facility demo run completed successfully.",
+        occurredAt: runCompletedAt,
+      },
+    });
+
+    if (completedSample) {
+      await tx.assembly.create({
+        data: {
+          sampleId: completedSample.id,
+          assemblyName: "Seeded MAG Assembly",
+          assemblyFile: `${demoRoot}/runs/mag-demo/output/assembly/contigs.fasta`,
+          createdByPipelineRunId: pipelineRun.id,
+        },
+      });
+
+      await tx.bin.create({
+        data: {
+          sampleId: completedSample.id,
+          binName: "Seeded Bin 01",
+          binFile: `${demoRoot}/runs/mag-demo/output/bins/bin.001.fa`,
+          completeness: 97.8,
+          contamination: 2.1,
+          createdByPipelineRunId: pipelineRun.id,
+        },
+      });
+
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: pipelineRun.id,
+          studyId: pilotStudy.id,
+          sampleId: completedSample.id,
+          type: "qc_report",
+          name: "MultiQC Report",
+          path: `${demoRoot}/runs/mag-demo/output/multiqc_report.html`,
+          size: BigInt(245760),
+          producedByStepId: "fastp",
+          metadata: JSON.stringify({
+            seeded: true,
+            label: "Demo report",
+          }),
+        },
+      });
+    }
+
     return {
-      userId: user.id,
       workspaceId: workspace.id,
+      researcherUserId: researcher.id,
+      adminUserId: facilityAdmin.id,
     };
   });
 
   return {
-    created: true,
     expiresAt,
     token: rawToken,
-    userId: result.userId,
     workspaceId: result.workspaceId,
+    researcherUserId: result.researcherUserId,
+    adminUserId: result.adminUserId,
   };
 }
 
 async function findWorkspaceByToken(
   token: string
-): Promise<DemoWorkspaceWithUser | null> {
+): Promise<DemoWorkspaceWithUsers | null> {
   const tokenHash = hashDemoToken(token);
   return db.demoWorkspace.findUnique({
     where: { tokenHash },
     include: {
       user: {
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          isDemo: true,
+        },
+      },
+      adminUser: {
         select: {
           id: true,
           email: true,
@@ -441,24 +725,39 @@ async function findWorkspaceByToken(
 
 async function destroyWorkspaceByRecord(
   tx: Prisma.TransactionClient,
-  workspace: Pick<DemoWorkspaceRecord, "id" | "userId">
+  workspace: Pick<DemoWorkspaceRecord, "id" | "userId" | "adminUserId">
 ): Promise<void> {
-  await tx.statusNote.deleteMany({ where: { userId: workspace.userId } });
-  await tx.ticketMessage.deleteMany({ where: { userId: workspace.userId } });
-  await tx.pipelineRun.deleteMany({ where: { userId: workspace.userId } });
-  await tx.ticket.deleteMany({ where: { userId: workspace.userId } });
+  const userIds = [
+    workspace.userId,
+    ...(workspace.adminUserId ? [workspace.adminUserId] : []),
+  ];
+  const studies = await tx.study.findMany({
+    where: { userId: workspace.userId },
+    select: { id: true },
+  });
+  const studyIds = studies.map((study) => study.id);
+
+  await tx.statusNote.deleteMany({ where: { userId: { in: userIds } } });
+  await tx.ticketMessage.deleteMany({ where: { userId: { in: userIds } } });
+  await tx.ticket.deleteMany({ where: { userId: { in: userIds } } });
   await tx.order.deleteMany({ where: { userId: workspace.userId } });
+
+  const pipelineRunWhere: Prisma.PipelineRunWhereInput = {
+    OR: [
+      { userId: { in: userIds } },
+      ...(studyIds.length > 0 ? [{ studyId: { in: studyIds } }] : []),
+    ],
+  };
+  await tx.pipelineRun.deleteMany({ where: pipelineRunWhere });
   await tx.study.deleteMany({ where: { userId: workspace.userId } });
   await tx.demoWorkspace.deleteMany({ where: { id: workspace.id } });
-  await tx.user.deleteMany({ where: { id: workspace.userId } });
-}
-
-async function destroyWorkspaceByUserId(
-  tx: Prisma.TransactionClient,
-  userId: string,
-  workspaceId: string
-): Promise<void> {
-  await destroyWorkspaceByRecord(tx, { id: workspaceId, userId });
+  await tx.user.deleteMany({
+    where: {
+      id: {
+        in: userIds,
+      },
+    },
+  });
 }
 
 async function destroyWorkspaceByToken(token: string): Promise<boolean> {
@@ -468,10 +767,22 @@ async function destroyWorkspaceByToken(token: string): Promise<boolean> {
   }
 
   await db.$transaction(async (tx) => {
-    await destroyWorkspaceByUserId(tx, workspace.userId, workspace.id);
+    await destroyWorkspaceByRecord(tx, workspace);
   });
 
   return true;
+}
+
+async function refreshWorkspace(workspaceId: string): Promise<Date> {
+  const refreshedExpiry = addHours(new Date(), DEMO_SESSION_TTL_HOURS);
+  await db.demoWorkspace.update({
+    where: { id: workspaceId },
+    data: {
+      lastSeenAt: new Date(),
+      expiresAt: refreshedExpiry,
+    },
+  });
+  return refreshedExpiry;
 }
 
 export function getDemoWorkspaceCookieName(): string {
@@ -511,7 +822,9 @@ export function getAuthSessionCookieOptions(expiresAt: Date) {
   };
 }
 
-export async function createDemoSessionToken(user: DemoAuthUser): Promise<string> {
+export async function createDemoSessionToken(
+  user: DemoAuthUser
+): Promise<string> {
   const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
   if (!secret) {
     throw new Error("NEXTAUTH_SECRET is not configured.");
@@ -527,6 +840,7 @@ export async function createDemoSessionToken(user: DemoAuthUser): Promise<string
       name: `${user.firstName} ${user.lastName}`.trim(),
       role: user.role,
       isDemo: user.isDemo,
+      demoExperience: user.demoExperience,
     },
   });
 }
@@ -537,8 +851,31 @@ export function isDemoSession(
   return Boolean(session?.user?.isDemo);
 }
 
+export function getDemoExperience(
+  session: Session | null | undefined
+): DemoExperience | null {
+  if (!isDemoSession(session)) {
+    return null;
+  }
+
+  return normalizeDemoExperience(session?.user?.demoExperience);
+}
+
+export function isResearcherDemoSession(
+  session: Session | null | undefined
+): boolean {
+  return getDemoExperience(session) === "researcher";
+}
+
+export function isFacilityDemoSession(
+  session: Session | null | undefined
+): boolean {
+  return getDemoExperience(session) === "facility";
+}
+
 export async function authorizeDemoWorkspaceToken(
-  token?: string | null
+  token?: string | null,
+  demoExperience: DemoExperience = "researcher"
 ): Promise<DemoAuthUser | null> {
   if (!token || !isPublicDemoEnabled()) {
     return null;
@@ -549,79 +886,91 @@ export async function authorizeDemoWorkspaceToken(
     return null;
   }
 
-  if (
-    workspace.seedVersion !== DEMO_SEED_VERSION ||
-    workspace.expiresAt.getTime() <= Date.now()
-  ) {
+  if (!isWorkspaceReusable(workspace)) {
     await db.$transaction(async (tx) => {
       await destroyWorkspaceByRecord(tx, workspace);
     });
     return null;
   }
 
-  await db.demoWorkspace.update({
-    where: { id: workspace.id },
-    data: {
-      lastSeenAt: new Date(),
-      expiresAt: addHours(new Date(), DEMO_SESSION_TTL_HOURS),
-    },
-  });
+  await refreshWorkspace(workspace.id);
 
-  return workspace.user;
+  const selectedUser = selectWorkspaceUser(workspace, demoExperience);
+  if (!selectedUser) {
+    return null;
+  }
+
+  return toDemoAuthUser(selectedUser, demoExperience);
 }
 
 export async function bootstrapDemoWorkspace(
-  token?: string | null
+  token?: string | null,
+  demoExperience: DemoExperience = "researcher"
 ): Promise<DemoBootstrapResult> {
   if (!isPublicDemoEnabled()) {
     throw new Error("Public demo is not enabled.");
   }
 
-  if (token) {
-    const existing = await findWorkspaceByToken(token);
-    if (
-      existing &&
-      existing.seedVersion === DEMO_SEED_VERSION &&
-      existing.expiresAt.getTime() > Date.now()
-    ) {
-      const refreshedExpiry = addHours(new Date(), DEMO_SESSION_TTL_HOURS);
-      await db.demoWorkspace.update({
-        where: { id: existing.id },
-        data: {
-          lastSeenAt: new Date(),
-          expiresAt: refreshedExpiry,
-        },
-      });
+  const normalizedToken = token?.trim() || null;
 
+  if (normalizedToken) {
+    const existing = await findWorkspaceByToken(normalizedToken);
+    if (existing && isWorkspaceReusable(existing)) {
+      const refreshedExpiry = await refreshWorkspace(existing.id);
       return {
         created: false,
         expiresAt: refreshedExpiry,
-        token,
-        userId: existing.userId,
+        token: normalizedToken,
+        userId: getDemoUserIdForExperience(existing, demoExperience),
         workspaceId: existing.id,
       };
     }
 
     if (existing) {
-      await destroyWorkspaceByToken(token);
+      await destroyWorkspaceByToken(normalizedToken);
     }
+
+    const created = await createDemoWorkspaceInternal(normalizedToken);
+    return {
+      created: true,
+      expiresAt: created.expiresAt,
+      token: created.token,
+      userId: getDemoUserIdForExperience(created, demoExperience),
+      workspaceId: created.workspaceId,
+    };
   }
 
-  return createDemoWorkspaceInternal();
+  const created = await createDemoWorkspaceInternal();
+  return {
+    created: true,
+    expiresAt: created.expiresAt,
+    token: created.token,
+    userId: getDemoUserIdForExperience(created, demoExperience),
+    workspaceId: created.workspaceId,
+  };
 }
 
 export async function resetDemoWorkspace(
-  token?: string | null
+  token?: string | null,
+  demoExperience: DemoExperience = "researcher"
 ): Promise<DemoBootstrapResult> {
   if (!isPublicDemoEnabled()) {
     throw new Error("Public demo is not enabled.");
   }
 
-  if (token) {
-    await destroyWorkspaceByToken(token);
+  const normalizedToken = token?.trim() || null;
+  if (normalizedToken) {
+    await destroyWorkspaceByToken(normalizedToken);
   }
 
-  return createDemoWorkspaceInternal();
+  const created = await createDemoWorkspaceInternal(normalizedToken);
+  return {
+    created: true,
+    expiresAt: created.expiresAt,
+    token: created.token,
+    userId: getDemoUserIdForExperience(created, demoExperience),
+    workspaceId: created.workspaceId,
+  };
 }
 
 export async function cleanupExpiredDemoWorkspaces(): Promise<{
@@ -638,6 +987,7 @@ export async function cleanupExpiredDemoWorkspaces(): Promise<{
     select: {
       id: true,
       userId: true,
+      adminUserId: true,
     },
   });
 

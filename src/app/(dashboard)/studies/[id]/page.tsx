@@ -810,7 +810,7 @@ export default function StudyDetailPage({
                   Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
                 </TabsTrigger>
               )}
-              {isAdmin && totalSamples > 0 && (
+              {isAdmin && totalSamples > 0 && !isDemoUser && (
                 <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
               )}
               {notesSupported && (

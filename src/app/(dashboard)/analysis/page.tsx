@@ -173,6 +173,8 @@ export default function AnalysisDashboardPage() {
   const [syncDisabled, setSyncDisabled] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const isDemoUser = session?.user?.isDemo === true;
+  const isFacilityDemo = session?.user?.demoExperience === "facility";
+  const isResearcherDemo = isDemoUser && !isFacilityDemo;
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const canCreateStudy = isResearcher || isFacilityAdmin;
@@ -181,7 +183,9 @@ export default function AnalysisDashboardPage() {
   const params = new URLSearchParams();
   if (pipelineFilter !== "all") params.set("pipelineId", pipelineFilter);
   if (statusFilter !== "all") params.set("status", statusFilter);
-  const runsEndpoint = isDemoUser ? null : `/api/pipelines/runs?${params.toString()}`;
+  const runsEndpoint = isResearcherDemo
+    ? null
+    : `/api/pipelines/runs?${params.toString()}`;
 
   const {
     data,
@@ -282,7 +286,7 @@ export default function AnalysisDashboardPage() {
     };
   }, [activeKey, mutate, syncDisabled, syncRun]);
 
-  if (isDemoUser) {
+  if (isResearcherDemo) {
     return (
       <DemoFeatureNotice
         title="Analysis is disabled in the public demo"
