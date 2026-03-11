@@ -73,10 +73,24 @@ export function bootstrapRuntimeEnv(baseDir: string = process.cwd()): void {
       return;
     }
 
-    applyIfMissing("DATABASE_URL", runtime.databaseUrl);
-    applyIfMissing("DIRECT_URL", runtime.directUrl);
-    if (!process.env.DIRECT_URL && process.env.DATABASE_URL) {
-      process.env.DIRECT_URL = process.env.DATABASE_URL;
+    const runtimeDatabaseUrl = toOptionalString(runtime.databaseUrl);
+    const runtimeDirectUrl = toOptionalString(runtime.directUrl);
+    const envDatabaseUrl = toOptionalString(process.env.DATABASE_URL);
+    const envDirectUrl = toOptionalString(process.env.DIRECT_URL);
+
+    if (!envDatabaseUrl && runtimeDatabaseUrl) {
+      process.env.DATABASE_URL = runtimeDatabaseUrl;
+    }
+
+    if (!envDirectUrl) {
+      if (envDatabaseUrl) {
+        // Keep the migration URL aligned when the runtime DB URL is overridden via env.
+        process.env.DIRECT_URL = envDatabaseUrl;
+      } else if (runtimeDirectUrl) {
+        process.env.DIRECT_URL = runtimeDirectUrl;
+      } else if (process.env.DATABASE_URL) {
+        process.env.DIRECT_URL = process.env.DATABASE_URL;
+      }
     }
     applyIfMissing("NEXTAUTH_URL", runtime.nextAuthUrl);
     applyIfMissing("NEXTAUTH_SECRET", runtime.nextAuthSecret);

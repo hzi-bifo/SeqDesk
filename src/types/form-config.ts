@@ -129,6 +129,7 @@ export interface OrderFormSchema {
   version: number;
   // MIxS checklists enabled for users to select during order creation
   enabledMixsChecklists?: string[];
+  moduleDefaultsVersion?: number;
 }
 
 // Platform options for the system field
@@ -222,6 +223,18 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     systemKey: "platform",
   },
   {
+    id: "field_seqtech_default",
+    type: "sequencing-tech",
+    label: "Sequencing Technology",
+    name: "_sequencing_tech",
+    required: false,
+    visible: true,
+    helpText: "Select the sequencing technology for your samples",
+    order: 1,
+    groupId: "group_sequencing",
+    moduleSource: "sequencing-tech",
+  },
+  {
     id: "system_instrumentModel",
     type: "text",
     label: "Instrument Model",
@@ -230,7 +243,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     visible: true,
     placeholder: "e.g., NovaSeq 6000, MinION",
     helpText: "Specific instrument model if known",
-    order: 1,
+    order: 2,
     groupId: "group_sequencing",
     isSystem: true,
     systemKey: "instrumentModel",
@@ -244,7 +257,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     visible: true,
     helpText: "The sequencing strategy for library preparation",
     options: LIBRARY_STRATEGY_OPTIONS,
-    order: 2,
+    order: 3,
     groupId: "group_sequencing",
     isSystem: true,
     systemKey: "libraryStrategy",
@@ -258,7 +271,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     visible: true,
     helpText: "The type of source material",
     options: LIBRARY_SOURCE_OPTIONS,
-    order: 3,
+    order: 4,
     groupId: "group_sequencing",
     isSystem: true,
     systemKey: "librarySource",
@@ -272,7 +285,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     visible: true,
     helpText: "Method used to select/enrich the material",
     options: LIBRARY_SELECTION_OPTIONS,
-    order: 4,
+    order: 5,
     groupId: "group_sequencing",
     isSystem: true,
     systemKey: "librarySelection",

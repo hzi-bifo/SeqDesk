@@ -125,6 +125,26 @@ describe("bootstrapRuntimeEnv", () => {
     expect(process.env.DATABASE_URL).toBe("postgres://already/set");
   });
 
+  it("aligns DIRECT_URL with an env DATABASE_URL override", async () => {
+    process.env.DATABASE_URL = "postgres://env/db";
+
+    await writeFile(
+      tempDir,
+      "seqdesk.config.json",
+      JSON.stringify({
+        runtime: {
+          databaseUrl: "postgres://from/config",
+          directUrl: "file:./dev.db",
+        },
+      })
+    );
+
+    bootstrapRuntimeEnv(tempDir);
+
+    expect(process.env.DATABASE_URL).toBe("postgres://env/db");
+    expect(process.env.DIRECT_URL).toBe("postgres://env/db");
+  });
+
   it("ignores invalid JSON", async () => {
     await writeFile(tempDir, "seqdesk.config.json", "{not-json");
     expect(() => bootstrapRuntimeEnv(tempDir)).not.toThrow();

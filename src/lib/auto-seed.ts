@@ -161,6 +161,19 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
           perSample: false,
         },
         {
+          id: "field_seqtech_default",
+          type: "sequencing-tech",
+          label: "Sequencing Technology",
+          name: "_sequencing_tech",
+          required: false,
+          visible: true,
+          helpText: "Select the sequencing technology for your samples",
+          order: 1,
+          groupId: "group_sequencing",
+          moduleSource: "sequencing-tech",
+          perSample: false,
+        },
+        {
           id: "system_libraryStrategy",
           type: "select",
           label: "Library Strategy",
@@ -177,7 +190,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
             { value: "ChIP-Seq", label: "ChIP-Seq" },
             { value: "OTHER", label: "Other" },
           ],
-          order: 1,
+          order: 2,
           groupId: "group_sequencing",
           isSystem: true,
           systemKey: "libraryStrategy",
@@ -199,7 +212,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
             { value: "SYNTHETIC", label: "Synthetic" },
             { value: "OTHER", label: "Other" },
           ],
-          order: 2,
+          order: 3,
           groupId: "group_sequencing",
           isSystem: true,
           systemKey: "librarySource",
@@ -311,6 +324,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         },
       ],
       version: 1,
+      moduleDefaultsVersion: 1,
     };
 
     await db.orderFormConfig.upsert({
@@ -369,6 +383,19 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         perSample: false,
       },
       {
+        id: "field_mixs_default",
+        type: "mixs",
+        label: "MIxS Metadata",
+        name: "_mixs",
+        required: false,
+        visible: true,
+        helpText: "Environment-specific metadata fields following MIxS standards",
+        order: 3,
+        groupId: "group_metadata",
+        perSample: false,
+        moduleSource: "mixs-metadata",
+      },
+      {
         id: "collection_date",
         type: "date",
         label: "Collection Date",
@@ -419,6 +446,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         extraSettings: JSON.stringify({
           studyFormFields,
           studyFormGroups,
+          studyFormDefaultsVersion: 1,
         }),
       },
     });

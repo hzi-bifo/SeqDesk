@@ -1,4 +1,7 @@
-import { db } from "./db";
+import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
+import { getDatabaseConfigurationError } from "@/lib/database-url";
+
+bootstrapRuntimeEnv();
 
 export type DatabaseStatus = {
   exists: boolean;
@@ -10,7 +13,18 @@ export type DatabaseStatus = {
  * Check if the database exists and is properly configured
  */
 export async function checkDatabaseStatus(): Promise<DatabaseStatus> {
+  const configurationError = getDatabaseConfigurationError(process.env.DATABASE_URL);
+  if (configurationError) {
+    return {
+      exists: false,
+      configured: false,
+      error: configurationError,
+    };
+  }
+
   try {
+    const { db } = await import("./db");
+
     // Try to query the SiteSettings table - this should exist if DB is set up
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },

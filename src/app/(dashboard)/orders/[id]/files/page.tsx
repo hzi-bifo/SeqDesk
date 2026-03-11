@@ -24,7 +24,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  ArrowLeft,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -105,13 +104,6 @@ const STATUS_BADGES: Record<string, { label: string; variant: "default" | "secon
   ambiguous: { label: "Multiple Matches", variant: "destructive" },
   none: { label: "No Match", variant: "outline" },
 };
-
-const tabClass =
-  "relative h-[52px] border-0 border-b-2 rounded-none px-4 text-sm font-medium transition-colors inline-flex items-center";
-const tabInactiveClass =
-  `${tabClass} border-b-transparent text-muted-foreground hover:text-foreground`;
-const tabActiveClass =
-  `${tabClass} border-b-foreground text-foreground`;
 
 export default function OrderFilesPage({
   params,
@@ -438,17 +430,6 @@ export default function OrderFilesPage({
   if (error && !data) {
     return (
       <>
-        <div className="sticky top-0 z-30 bg-card border-b border-border">
-          <div className="flex items-center h-[52px] px-6 lg:px-8">
-            <Link
-              href="/orders"
-              className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-            </Link>
-            <span className="text-sm font-medium truncate">Order</span>
-          </div>
-        </div>
         <PageContainer>
           <div className="bg-card rounded-lg border p-8 text-center">
             <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
@@ -471,42 +452,6 @@ export default function OrderFilesPage({
 
   return (
     <>
-      {/* Sticky header bar - matches order detail page */}
-      <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex items-center h-[52px] px-6 lg:px-8">
-          <Link
-            href="/orders"
-            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Link>
-          <span className="text-sm font-medium truncate">{data.orderName}</span>
-
-          {/* Tabs - centered */}
-          <div className="flex-1 flex justify-center">
-            <nav className="flex h-[52px] gap-1">
-              <Link
-                href={`/orders/${resolvedParams.id}`}
-                className={tabInactiveClass}
-              >
-                Overview
-              </Link>
-              <Link
-                href={`/orders/${resolvedParams.id}`}
-                className={tabInactiveClass}
-              >
-                Read Files
-              </Link>
-              <span className={tabActiveClass}>
-                Manage Files
-              </span>
-            </nav>
-          </div>
-
-          <div className="flex-shrink-0" />
-        </div>
-      </div>
-
       <PageContainer>
         {canEdit && (
           <div className="mb-4 flex items-center justify-between">

@@ -1026,15 +1026,18 @@ function trim(value) {
 
 let databaseUrl = trim(process.env.DATABASE_URL);
 let directUrl = trim(process.env.DIRECT_URL);
+const envDatabaseUrl = databaseUrl;
 
 if ((!databaseUrl || !directUrl) && fs.existsSync("seqdesk.config.json")) {
   try {
     const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
     if (!databaseUrl) databaseUrl = trim(runtime?.databaseUrl);
-    if (!directUrl) directUrl = trim(runtime?.directUrl) || databaseUrl;
+    if (!directUrl) directUrl = envDatabaseUrl || trim(runtime?.directUrl) || databaseUrl;
   } catch {}
 }
+
+directUrl = directUrl || databaseUrl;
 
 if (!databaseUrl) process.exit(1);
 if (databaseUrl.startsWith("file:")) {
@@ -1046,7 +1049,16 @@ if (!databaseUrl.startsWith("postgresql://") && !databaseUrl.startsWith("postgre
   process.exit(1);
 }
 
-process.stdout.write(JSON.stringify({ databaseUrl, directUrl: directUrl || databaseUrl }));
+if (directUrl.startsWith("file:")) {
+  console.error("SQLite is no longer supported for DIRECT_URL. Use a PostgreSQL connection string.");
+  process.exit(1);
+}
+if (!directUrl.startsWith("postgresql://") && !directUrl.startsWith("postgres://")) {
+  console.error("Unsupported DIRECT_URL. SeqDesk now only supports PostgreSQL connection strings.");
+  process.exit(1);
+}
+
+process.stdout.write(JSON.stringify({ databaseUrl, directUrl }));
 NODE
 )
 export DATABASE_URL="$(node -p "JSON.parse(process.argv[1]).databaseUrl" "$RUNTIME_DB_JSON")"

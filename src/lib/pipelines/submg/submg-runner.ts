@@ -1161,7 +1161,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
         formatSampleIssue(
           sample.sampleId,
           sample.preferredAssemblyId
-            ? `preferred assembly selection is unavailable. Update it in the Study Pipelines panel before running SubMG.${fallbackHint}`
+            ? `preferred assembly selection is unavailable. Update it in the Study Analysis section before running SubMG.${fallbackHint}`
             : "has no assembly file. SubMG requires an assembly FASTA; run the MAG pipeline first for this sample."
         )
       );

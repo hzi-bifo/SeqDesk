@@ -723,22 +723,20 @@ export default function SequencingTechPage() {
       className="gap-0"
     >
       <div className="sticky top-0 z-30 border-b border-border bg-card">
-        <div className="flex h-[52px] items-center gap-3 px-4 sm:px-6 lg:px-8">
-          <span className="text-sm font-medium whitespace-nowrap">Sequencing Tech</span>
+        <div className="relative flex h-[52px] items-center justify-center px-4 sm:px-6 lg:px-8">
+          <span className="absolute left-4 sm:left-6 lg:left-8 text-sm font-medium whitespace-nowrap">Sequencing Tech</span>
 
-          <div className="flex flex-1 justify-center overflow-x-auto">
-            <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
-              {SEQUENCING_TECH_TABS.map((tab) => (
-                <TabsTrigger
-                  key={tab.value}
-                  value={tab.value}
-                  className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-                >
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
+          <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
+            {SEQUENCING_TECH_TABS.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+              >
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </div>
       </div>
 

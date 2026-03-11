@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { DEFAULT_FORM_SCHEMA, DEFAULT_GROUPS, type FormFieldDefinition } from "@/types/form-config";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import {
+  ensureOrderModuleDefaultFields,
+  ORDER_FORM_DEFAULTS_VERSION,
+} from "@/lib/modules/default-form-fields";
 
 interface ModulesConfig {
   modules: Record<string, boolean>;
@@ -91,7 +95,10 @@ export async function GET() {
 
     // If no config exists, return default system fields and groups
     if (!config) {
-      const filteredFields = filterFieldsByModules(DEFAULT_FORM_SCHEMA.fields, modulesConfig);
+      const defaultFields = ensureOrderModuleDefaultFields(DEFAULT_FORM_SCHEMA.fields, {
+        sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
+      });
+      const filteredFields = filterFieldsByModules(defaultFields, modulesConfig);
       const perSampleFields = filteredFields.filter(
         (field) => field.perSample && field.visible
       );
@@ -106,8 +113,17 @@ export async function GET() {
 
     // Parse JSON fields and return
     const parsed = JSON.parse(config.schema);
-    // Handle both formats: { fields: [...] } or just [...]
-    const fields = (Array.isArray(parsed) ? parsed : parsed.fields || []) as FormFieldDefinition[];
+    const moduleDefaultsVersion =
+      Array.isArray(parsed) || typeof parsed.moduleDefaultsVersion !== "number"
+        ? 0
+        : parsed.moduleDefaultsVersion;
+    const baseFields = (Array.isArray(parsed) ? parsed : parsed.fields || []) as FormFieldDefinition[];
+    const fields =
+      moduleDefaultsVersion < ORDER_FORM_DEFAULTS_VERSION
+        ? ensureOrderModuleDefaultFields(baseFields, {
+            sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
+          })
+        : baseFields;
     const filteredFields = filterFieldsByModules(fields, modulesConfig);
     const groups = parsed.groups || DEFAULT_GROUPS;
     const enabledMixsChecklists = isModuleEnabled(modulesConfig, "mixs-metadata")

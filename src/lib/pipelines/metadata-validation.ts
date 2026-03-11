@@ -465,7 +465,7 @@ export async function validatePipelineMetadata(
         issues.push({
           field: 'assemblies',
           message: sample.preferredAssemblyId
-            ? `Sample ${sample.sampleId} has an invalid preferred assembly selection (update it in Study Pipelines)`
+            ? `Sample ${sample.sampleId} has an invalid preferred assembly selection (update it in Study Analysis)`
             : `Sample ${sample.sampleId} has no assembly file`,
           severity: 'error',
         });

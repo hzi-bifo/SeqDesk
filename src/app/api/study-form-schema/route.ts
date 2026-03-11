@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import {
+  ensureStudyModuleDefaultFields,
+  STUDY_FORM_DEFAULTS_VERSION,
+} from "@/lib/modules/default-form-fields";
 
 // Default study form groups
 const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
@@ -64,15 +68,26 @@ export async function GET() {
     // Parse configuration
     let fields: FormFieldDefinition[] = [];
     let groups: FormFieldGroup[] = DEFAULT_STUDY_GROUPS;
+    let studyFormDefaultsVersion = 0;
 
     if (settings?.extraSettings) {
       try {
         const extra = JSON.parse(settings.extraSettings);
         fields = extra.studyFormFields || [];
         groups = extra.studyFormGroups || DEFAULT_STUDY_GROUPS;
+        studyFormDefaultsVersion =
+          typeof extra.studyFormDefaultsVersion === "number"
+            ? extra.studyFormDefaultsVersion
+            : 0;
       } catch {
         // Use defaults on parse error
       }
+    }
+
+    if (studyFormDefaultsVersion < STUDY_FORM_DEFAULTS_VERSION) {
+      fields = ensureStudyModuleDefaultFields(fields, groups, {
+        mixs: mixsModuleEnabled,
+      });
     }
 
     const filteredFields = fields.filter((field) => {

@@ -465,7 +465,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
             if (!selectedAssembly?.assemblyFile) {
               issues.push(
                 sample.preferredAssemblyId
-                  ? `Sample ${sample.sampleId}: Preferred assembly selection is invalid (update it in Study Pipelines)`
+                  ? `Sample ${sample.sampleId}: Preferred assembly selection is invalid (update it in Study Analysis)`
                   : `Sample ${sample.sampleId}: Assembly file is required`
               );
             }
