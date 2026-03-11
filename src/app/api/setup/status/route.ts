@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { checkDatabaseStatus } from "@/lib/db-status";
-import { autoSeedIfNeeded } from "@/lib/auto-seed";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -10,14 +9,22 @@ export async function GET() {
 
   // Auto-seed if database exists but hasn't been seeded
   if (status.exists && !status.configured) {
-    const result = await autoSeedIfNeeded();
-    if (result.seeded) {
-      // Re-check status after seeding
-      status = await checkDatabaseStatus();
-    } else if (result.error) {
+    try {
+      const { autoSeedIfNeeded } = await import("@/lib/auto-seed");
+      const result = await autoSeedIfNeeded();
+      if (result.seeded) {
+        // Re-check status after seeding
+        status = await checkDatabaseStatus();
+      } else if (result.error) {
+        status = {
+          ...status,
+          error: result.error,
+        };
+      }
+    } catch (error) {
       status = {
         ...status,
-        error: result.error,
+        error: error instanceof Error ? error.message : "Automatic seeding failed",
       };
     }
   }

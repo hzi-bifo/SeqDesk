@@ -447,7 +447,7 @@ export default function SubmissionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold">ENA Submissions</h1>
+          <h1 className="text-xl font-semibold">Archive Queue</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
             {acceptedCount > 0 && <span className="text-emerald-600"> · {acceptedCount} accepted</span>}
@@ -472,7 +472,7 @@ export default function SubmissionsPage() {
         <div className="bg-card rounded-lg p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No submissions yet</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            When you register studies or samples with ENA, they will appear here.
+            Archive work is managed per study. When a study or sample is registered with ENA, it will appear here.
           </p>
           <Button size="sm" variant="outline" asChild>
             <Link href="/studies">
@@ -636,7 +636,7 @@ export default function SubmissionsPage() {
                           asChild
                           onClick={(e: React.MouseEvent) => e.stopPropagation()}
                         >
-                          <Link href={`/studies/${submission.entityId}`}>
+                          <Link href={`/studies/${submission.entityId}?section=archive`}>
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         </Button>

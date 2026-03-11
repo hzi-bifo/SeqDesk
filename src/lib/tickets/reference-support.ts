@@ -9,7 +9,13 @@ let ticketReferenceSupportPromise: Promise<boolean> | null = null;
 async function detectTicketReferenceSupport(): Promise<boolean> {
   try {
     const columns = await db.$queryRawUnsafe<TableInfoRow[]>(
-      "PRAGMA table_info('Ticket')"
+      `
+        SELECT column_name AS name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'Ticket'
+          AND column_name IN ('orderId', 'studyId')
+      `
     );
     const columnNames = new Set(columns.map((column) => column.name));
     return columnNames.has("orderId") && columnNames.has("studyId");

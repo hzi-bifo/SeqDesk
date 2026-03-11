@@ -301,7 +301,7 @@ export default function AnalysisDashboardPage() {
         <div>
           <h1 className="text-xl font-semibold">Analysis Runs</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Monitor and manage pipeline executions
+            Cross-study pipeline runs and execution status
           </p>
           {syncWarning && (
             <p className="text-xs text-amber-700 mt-1">{syncWarning}</p>
@@ -377,7 +377,7 @@ export default function AnalysisDashboardPage() {
             <FlaskConical className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
             <h2 className="text-lg font-medium mb-2">No pipeline runs found</h2>
             <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-              Pipeline runs are started from the study page. Open a study and go to the Pipelines tab to launch an analysis.
+              Pipeline runs are started from each study workspace. Open a study and use its Analysis section to launch a run.
             </p>
             <Button size="sm" variant="outline" asChild>
               <Link href={canCreateStudy ? "/studies/new" : "/studies"}>
@@ -435,7 +435,7 @@ export default function AnalysisDashboardPage() {
                     <TableCell>
                       {run.study ? (
                         <Link
-                          href={`/studies/${run.study.id}`}
+                          href={`/studies/${run.study.id}?section=analysis`}
                           className="hover:underline"
                         >
                           {run.study.title}

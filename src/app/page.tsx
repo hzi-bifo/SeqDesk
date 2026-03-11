@@ -120,7 +120,7 @@ export default function HomePage() {
               Sequencing Order Management
             </h1>
             <p className="text-base mb-10" style={{ color: '#525252', lineHeight: '1.6' }}>
-              A platform for managing sequencing orders, tracking samples, and submitting to the European Nucleotide Archive.
+              A platform for managing sequencing orders, tracking samples, and coordinating archive submissions.
             </p>
 
             <div className="mb-8">
@@ -134,7 +134,7 @@ export default function HomePage() {
                 {[
                   "Create sequencing orders with sample metadata",
                   "Track order status from submission to delivery",
-                  "Download sequencing files, final assemblies, and ENA accession numbers",
+                  "Download sequencing files, final assemblies, and archive accession numbers",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
@@ -154,7 +154,7 @@ export default function HomePage() {
                 {[
                   "Receive and manage incoming orders",
                   "Update order status throughout the workflow",
-                  "Run pipelines, publish final assemblies, and submit to ENA",
+                  "Run pipelines, publish final assemblies, and manage archive submissions",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
@@ -166,7 +166,7 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               {[
                 { title: "MIxS Standards", subtitle: "17 environmental checklists" },
-                { title: "ENA Submission", subtitle: "Direct archive upload" },
+                { title: "Archive Submissions", subtitle: "ENA-ready upload workflow" },
                 { title: "Assemblies", subtitle: "Final assembly downloads" },
                 { title: "Order Tracking", subtitle: "Real-time status updates" },
               ].map((feature, i) => (

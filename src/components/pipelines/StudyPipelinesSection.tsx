@@ -1668,10 +1668,10 @@ export function StudyPipelinesSection({
                           Missing: {readiness.missingRequired.join(", ")}
                         </p>
                       )}
-                      {pipeline.pipelineId === "submg" &&
+                        {pipeline.pipelineId === "submg" &&
                         readiness.missingRequired.includes("Study accession") && (
                           <p className="text-xs text-amber-700 mt-1">
-                            Register this study in the ENA tab first to populate the
+                            Register this study in the Archive section first to populate the
                             accession used by SubMG.
                           </p>
                         )}
@@ -2293,7 +2293,7 @@ export function StudyPipelinesSection({
                         {submgCoverage.studyAccessionMissing && (
                           <p className="text-xs text-amber-700">
                             Study accession comes from ENA Registration in this
-                            study&apos;s ENA tab (Test Server or Production).
+                            study&apos;s Archive section (Test Server or Production).
                           </p>
                         )}
                         <div className="space-y-1">

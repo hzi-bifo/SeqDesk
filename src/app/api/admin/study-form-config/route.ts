@@ -3,6 +3,44 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
+import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import {
+  ensureStudyModuleDefaultFields,
+  STUDY_FORM_DEFAULTS_VERSION,
+} from "@/lib/modules/default-form-fields";
+
+interface ModulesConfig {
+  modules: Record<string, boolean>;
+  globalDisabled: boolean;
+}
+
+function parseModulesConfig(configString: string | null): ModulesConfig {
+  if (!configString) {
+    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
+  }
+
+  try {
+    const parsed = JSON.parse(configString);
+    if (typeof parsed.modules === "object") {
+      return {
+        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
+        globalDisabled: parsed.globalDisabled ?? false,
+      };
+    }
+
+    return {
+      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
+      globalDisabled: false,
+    };
+  } catch {
+    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
+  }
+}
+
+function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
+  if (config.globalDisabled) return false;
+  return config.modules[moduleId] ?? false;
+}
 
 // GET - retrieve study form configuration
 export async function GET() {
@@ -15,7 +53,7 @@ export async function GET() {
   try {
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
-      select: { extraSettings: true },
+      select: { extraSettings: true, modulesConfig: true },
     });
 
     if (!settings?.extraSettings) {
@@ -23,9 +61,20 @@ export async function GET() {
     }
 
     const extra = JSON.parse(settings.extraSettings);
+    const groups = extra.studyFormGroups || [];
+    const fields =
+      typeof extra.studyFormDefaultsVersion === "number" &&
+      extra.studyFormDefaultsVersion >= STUDY_FORM_DEFAULTS_VERSION
+        ? extra.studyFormFields || []
+        : ensureStudyModuleDefaultFields(extra.studyFormFields || [], groups, {
+            mixs: isModuleEnabled(
+              parseModulesConfig(settings.modulesConfig ?? null),
+              "mixs-metadata"
+            ),
+          });
     return NextResponse.json({
-      fields: extra.studyFormFields || [],
-      groups: extra.studyFormGroups || [],
+      fields,
+      groups,
     });
   } catch {
     return NextResponse.json({ fields: [], groups: [] });
@@ -48,7 +97,7 @@ export async function PUT(request: NextRequest) {
     };
 
     // Get current settings
-    let settings = await db.siteSettings.findUnique({
+    const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
 
@@ -64,6 +113,7 @@ export async function PUT(request: NextRequest) {
     // Update study form config
     extraSettings.studyFormFields = fields || [];
     extraSettings.studyFormGroups = groups || [];
+    extraSettings.studyFormDefaultsVersion = STUDY_FORM_DEFAULTS_VERSION;
 
     // Upsert the settings
     await db.siteSettings.upsert({

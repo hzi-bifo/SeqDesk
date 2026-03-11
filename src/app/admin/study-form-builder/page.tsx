@@ -703,9 +703,9 @@ export default function StudyFormBuilderPage() {
     <Tabs defaultValue="fields">
       {/* Sticky header bar -- outside PageContainer, matching order form builder */}
       <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex items-center h-[52px] px-6 lg:px-8">
+        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
           <div
-            className={`text-xs flex-shrink-0 ${
+            className={`absolute left-6 lg:left-8 text-xs ${
               autoSaveStatus === "error"
                 ? "text-destructive"
                 : autoSaveStatus === "dirty"
@@ -715,35 +715,33 @@ export default function StudyFormBuilderPage() {
           >
             {autoSaveMessage}
           </div>
-          <div className="flex-1 flex justify-center">
-            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
-              <TabsTrigger
-                value="fields"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Study Fields
-              </TabsTrigger>
-              <TabsTrigger
-                value="per-sample"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Per-Sample
-              </TabsTrigger>
-              <TabsTrigger
-                value="groups"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Groups
-              </TabsTrigger>
-              <TabsTrigger
-                value="settings"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Settings
-              </TabsTrigger>
-            </TabsList>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+            <TabsTrigger
+              value="fields"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Study Fields
+            </TabsTrigger>
+            <TabsTrigger
+              value="per-sample"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Per-Sample
+            </TabsTrigger>
+            <TabsTrigger
+              value="groups"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Groups
+            </TabsTrigger>
+            <TabsTrigger
+              value="settings"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Settings
+            </TabsTrigger>
+          </TabsList>
+          <div className="absolute right-6 lg:right-8 flex items-center gap-2">
             <Button onClick={handleSave} disabled={saving || justSaved} variant="outline" size="sm" className="bg-white">
               {saving ? (
                 <>

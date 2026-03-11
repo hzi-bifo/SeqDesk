@@ -114,11 +114,11 @@ export async function GET(request: NextRequest) {
 
     if (search) {
       whereClause.OR = [
-        { sampleId: { contains: search } },
-        { sampleAlias: { contains: search } },
-        { sampleTitle: { contains: search } },
-        { order: { name: { contains: search } } },
-        { order: { orderNumber: { contains: search } } },
+        { sampleId: { contains: search, mode: "insensitive" } },
+        { sampleAlias: { contains: search, mode: "insensitive" } },
+        { sampleTitle: { contains: search, mode: "insensitive" } },
+        { order: { name: { contains: search, mode: "insensitive" } } },
+        { order: { orderNumber: { contains: search, mode: "insensitive" } } },
       ];
     }
 

@@ -23,6 +23,7 @@ export async function GET() {
         description: true,
         checklistType: true,
         submitted: true,
+        readyForSubmission: true,
         submittedAt: true,
         studyAccessionId: true,
         createdAt: true,

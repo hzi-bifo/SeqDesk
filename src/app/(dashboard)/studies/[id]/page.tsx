@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, use, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -114,6 +114,45 @@ interface StudyFormSchemaResponse {
   fields?: FormFieldDefinition[];
   studyFields?: FormFieldDefinition[];
   groups?: FormFieldGroup[];
+}
+
+type StudySectionValue =
+  | "overview"
+  | "samples"
+  | "reads"
+  | "analysis"
+  | "notes"
+  | "archive";
+
+interface StudySectionConfig {
+  value: StudySectionValue;
+  label: string;
+  description: string;
+  badge?: string;
+}
+
+const LEGACY_STUDY_SECTION_ALIASES: Record<string, StudySectionValue> = {
+  pipelines: "analysis",
+  ena: "archive",
+};
+
+function normalizeStudySection(value: string | null): StudySectionValue | null {
+  if (!value) return null;
+  if (value in LEGACY_STUDY_SECTION_ALIASES) {
+    return LEGACY_STUDY_SECTION_ALIASES[value];
+  }
+
+  switch (value) {
+    case "overview":
+    case "samples":
+    case "reads":
+    case "analysis":
+    case "notes":
+    case "archive":
+      return value;
+    default:
+      return null;
+  }
 }
 
 // Helper to check if sample has metadata
@@ -324,6 +363,7 @@ export default function StudyDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const [study, setStudy] = useState<Study | null>(null);
   const [loading, setLoading] = useState(true);
@@ -740,6 +780,113 @@ export default function StudyDetailPage({
     [parsedStudyMetadata, knownStudyFieldNames, isAdmin]
   );
 
+  // Calculate metadata completion
+  const samplesWithMetadata = study?.samples.filter(sampleHasMetadata).length ?? 0;
+  const totalSamples = study?.samples.length ?? 0;
+  const allMetadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
+  const metadataCompletionPercent = totalSamples > 0
+    ? Math.round((samplesWithMetadata / totalSamples) * 100)
+    : 0;
+  const ownerDisplayName = study
+    ? study.user.firstName && study.user.lastName
+      ? `${study.user.firstName} ${study.user.lastName}`
+      : study.user.email
+    : "";
+  const samplesWithFiles = study?.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length ?? 0;
+  const notesSupported = study?.notesSupported !== false;
+  const requestedSection = normalizeStudySection(searchParams.get("section"));
+  const studyStatusLabel = study?.submitted
+    ? "Registered"
+    : study?.readyForSubmission
+      ? "Ready"
+      : "Draft";
+  const studySections = useMemo<StudySectionConfig[]>(() => {
+    const sections: StudySectionConfig[] = [
+      {
+        value: "overview",
+        label: "Overview",
+        description: "Status, metadata, and study progress",
+      },
+      {
+        value: "samples",
+        label: "Samples",
+        description: "Assigned samples and metadata readiness",
+        badge: totalSamples > 0 ? String(totalSamples) : undefined,
+      },
+    ];
+
+    if (!isDemoUser) {
+      sections.push({
+        value: "reads",
+        label: "Read Files",
+        description: "Sequencing files linked to this study",
+        badge: totalSamples > 0 ? `${samplesWithFiles}/${totalSamples}` : undefined,
+      });
+    }
+
+    if (isAdmin && totalSamples > 0 && !isDemoUser) {
+      sections.push({
+        value: "analysis",
+        label: "Analysis",
+        description: "Run pipelines and review derived outputs",
+      });
+    }
+
+    if (notesSupported) {
+      sections.push({
+        value: "notes",
+        label: "Notes",
+        description: "Internal notes and handoff context",
+      });
+    }
+
+    if (!isDemoUser) {
+      sections.push({
+        value: "archive",
+        label: "Archive",
+        description: "ENA registration state and accession numbers",
+        badge: study?.submitted ? "Live" : study?.readyForSubmission ? "Ready" : undefined,
+      });
+    }
+
+    return sections;
+  }, [
+    isAdmin,
+    isDemoUser,
+    notesSupported,
+    samplesWithFiles,
+    study?.readyForSubmission,
+    study?.submitted,
+    totalSamples,
+  ]);
+  const firstStudySection = studySections[0]?.value ?? "overview";
+  const [activeSection, setActiveSection] = useState<StudySectionValue>("overview");
+
+  useEffect(() => {
+    const nextSection =
+      requestedSection && studySections.some((section) => section.value === requestedSection)
+        ? requestedSection
+        : firstStudySection;
+    setActiveSection(nextSection);
+  }, [firstStudySection, requestedSection, studySections]);
+
+  const handleSectionChange = (nextValue: string) => {
+    const nextSection = nextValue as StudySectionValue;
+    setActiveSection(nextSection);
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextSection === firstStudySection) {
+      params.delete("section");
+    } else {
+      params.set("section", nextSection);
+    }
+
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `/studies/${id}?${nextQuery}` : `/studies/${id}`, {
+      scroll: false,
+    });
+  };
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -771,100 +918,9 @@ export default function StudyDetailPage({
     );
   }
 
-  // Calculate metadata completion
-  const samplesWithMetadata = study.samples.filter(sampleHasMetadata).length;
-  const totalSamples = study.samples.length;
-  const allMetadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
-  const metadataCompletionPercent = totalSamples > 0
-    ? Math.round((samplesWithMetadata / totalSamples) * 100)
-    : 0;
-  const ownerDisplayName = study.user.firstName && study.user.lastName
-    ? `${study.user.firstName} ${study.user.lastName}`
-    : study.user.email;
-  const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
-  const notesSupported = study.notesSupported !== false;
-
-  const tabTriggerClass = "relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-3 text-xs font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground";
-
   return (
     <>
-      <Tabs defaultValue="overview">
-      {/* Sticky header bar */}
-      <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex items-center h-[52px] px-6 lg:px-8">
-          <Link
-            href="/studies"
-            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Link>
-          <span className="text-sm font-medium truncate flex-shrink-0">{study.title}</span>
-
-          {/* Tabs - centered */}
-          <div className="flex-1 flex justify-center">
-            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
-              <TabsTrigger value="overview" className={tabTriggerClass}>Overview</TabsTrigger>
-              <TabsTrigger value="samples" className={tabTriggerClass}>Samples</TabsTrigger>
-              {!isDemoUser && (
-                <TabsTrigger value="reads" className={tabTriggerClass}>
-                  Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
-                </TabsTrigger>
-              )}
-              {isAdmin && totalSamples > 0 && !isDemoUser && (
-                <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
-              )}
-              {notesSupported && (
-                <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
-              )}
-              {!isDemoUser && (
-                <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
-              )}
-            </TabsList>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {(isOwner || isAdmin) && (
-              <>
-                {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setUnmarkReadyDialogOpen(true)}
-                    disabled={markingReady}
-                  >
-                    {markingReady ? (
-                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                    )}
-                    Back to Draft
-                  </Button>
-                )}
-                {!study.submitted && !study.readyForSubmission && isOwner && (
-                  <>
-                    {allMetadataComplete && (
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => setMarkReadyDialogOpen(true)}
-                        disabled={markingReady}
-                      >
-                        {markingReady ? (
-                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                        ) : null}
-                        Mark as Ready
-                      </Button>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
+      <Tabs value={activeSection} onValueChange={handleSectionChange} className="gap-0">
       <PageContainer>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -1227,6 +1283,56 @@ export default function StudyDetailPage({
               </div>
             </div>
           )}
+
+          {/* Study Actions */}
+          {(isOwner || isAdmin) && !study.submitted && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                {study.readyForSubmission ? (
+                  <>
+                    <div>
+                      <h2 className="text-sm font-semibold">Study Status</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        This study is marked as ready for submission.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setUnmarkReadyDialogOpen(true)}
+                      disabled={markingReady}
+                    >
+                      {markingReady ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Back to Draft
+                    </Button>
+                  </>
+                ) : allMetadataComplete ? (
+                  <>
+                    <div>
+                      <h2 className="text-sm font-semibold">Study Status</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        All metadata is complete. Mark this study as ready for submission.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => setMarkReadyDialogOpen(true)}
+                      disabled={markingReady}
+                    >
+                      {markingReady ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : null}
+                      Mark as Ready
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* Samples Tab */}
@@ -1418,9 +1524,9 @@ export default function StudyDetailPage({
         </TabsContent>
         )}
 
-        {/* Pipelines Tab - admin only */}
+        {/* Analysis Tab - admin only */}
         {isAdmin && totalSamples > 0 && (
-          <TabsContent value="pipelines">
+          <TabsContent value="analysis">
             <StudyPipelinesSection studyId={study.id} samples={study.samples} />
           </TabsContent>
         )}
@@ -1477,9 +1583,9 @@ export default function StudyDetailPage({
           </TabsContent>
         )}
 
-        {/* ENA Tab */}
+        {/* Archive Tab */}
         {!isDemoUser && (
-        <TabsContent value="ena">
+        <TabsContent value="archive">
           {/* ENA Submission Readiness - Admin View */}
           {isAdmin && !study.submitted && (() => {
             const requiredChecks = {
@@ -1837,7 +1943,7 @@ export default function StudyDetailPage({
                   )}
                   <p className="text-xs text-muted-foreground mt-3">
                     <Link href="/submissions" className="text-primary hover:underline">
-                      View details in ENA Submissions
+                      View details in Archive Queue
                     </Link>
                   </p>
                 </div>

@@ -73,13 +73,15 @@ function fail(message) {
 }
 
 const runtime = loadRuntimeConfig(process.cwd());
+const envDatabaseUrl = trimToString(process.env.DATABASE_URL);
+const envDirectUrl = trimToString(process.env.DIRECT_URL);
 
-if (!process.env.DATABASE_URL && runtime.databaseUrl) {
+if (!envDatabaseUrl && runtime.databaseUrl) {
   process.env.DATABASE_URL = runtime.databaseUrl;
 }
 
-if (!process.env.DIRECT_URL) {
-  process.env.DIRECT_URL = runtime.directUrl || process.env.DATABASE_URL;
+if (!envDirectUrl) {
+  process.env.DIRECT_URL = envDatabaseUrl || runtime.directUrl || process.env.DATABASE_URL;
 }
 
 if (!process.env.DATABASE_URL) {
@@ -103,6 +105,18 @@ if (!isPostgresDatabaseUrl(process.env.DATABASE_URL)) {
 if (!process.env.DIRECT_URL) {
   fail(
     "DIRECT_URL could not be resolved. Set DIRECT_URL explicitly or configure runtime.directUrl in seqdesk.config.json."
+  );
+}
+
+if (isSqliteDatabaseUrl(process.env.DIRECT_URL)) {
+  fail(
+    "SQLite is no longer supported for DIRECT_URL. Use a PostgreSQL connection string."
+  );
+}
+
+if (!isPostgresDatabaseUrl(process.env.DIRECT_URL)) {
+  fail(
+    "Unsupported DIRECT_URL. SeqDesk now only supports PostgreSQL connection strings."
   );
 }
 
