@@ -429,15 +429,13 @@ export default function OrderFilesPage({
 
   if (error && !data) {
     return (
-      <>
-        <PageContainer>
-          <div className="bg-card rounded-lg border p-8 text-center">
-            <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-            <h2 className="text-xl font-semibold mb-2">Error</h2>
-            <p className="text-muted-foreground">{error}</p>
-          </div>
-        </PageContainer>
-      </>
+      <PageContainer>
+        <div className="bg-card rounded-lg border p-8 text-center">
+          <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
+          <h2 className="text-xl font-semibold mb-2">Error</h2>
+          <p className="text-muted-foreground">{error}</p>
+        </div>
+      </PageContainer>
     );
   }
 

@@ -2,12 +2,11 @@
 
 import { useState, useEffect, use, useMemo } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
 import {
@@ -307,12 +306,6 @@ const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string 
   COMPLETED: { label: "Completed", dot: "bg-emerald-500", color: "text-emerald-600" },
 };
 
-type OrderSectionValue = "overview" | "reads";
-
-function normalizeOrderSection(value: string | null): OrderSectionValue {
-  return value === "reads" ? "reads" : "overview";
-}
-
 export default function OrderDetailPage({
   params,
 }: {
@@ -321,7 +314,6 @@ export default function OrderDetailPage({
   const resolvedParams = use(params);
   const { data: session } = useSession();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -367,7 +359,6 @@ export default function OrderDetailPage({
   const [inspectError, setInspectError] = useState("");
   const [inspectedFile, setInspectedFile] = useState<FileInspectionResponse | null>(null);
   const [inspectionCache, setInspectionCache] = useState<Record<string, FileInspectionResponse>>({});
-  const [activeSection, setActiveSection] = useState<OrderSectionValue>("overview");
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -669,25 +660,6 @@ export default function OrderDetailPage({
     return fallbackCount;
   };
 
-  useEffect(() => {
-    setActiveSection(normalizeOrderSection(searchParams.get("section")));
-  }, [searchParams]);
-
-  const handleSectionChange = (nextValue: string) => {
-    const nextSection = normalizeOrderSection(nextValue);
-    setActiveSection(nextSection);
-    const params = new URLSearchParams(searchParams.toString());
-    if (nextSection === "overview") {
-      params.delete("section");
-    } else {
-      params.set("section", nextSection);
-    }
-    const nextQuery = params.toString();
-    router.replace(nextQuery ? `/orders/${orderId}?${nextQuery}` : `/orders/${orderId}`, {
-      scroll: false,
-    });
-  };
-
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
@@ -754,7 +726,6 @@ export default function OrderDetailPage({
   if (!order) return null;
 
   const statusCfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
-
   const samplesWithFiles = order.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
   const visibleOrderFields = formFields
     .filter((field) => field.visible && !field.perSample && field.type !== "mixs")
@@ -830,8 +801,6 @@ export default function OrderDetailPage({
 
   return (
     <>
-      {/* Tabs wrapper */}
-      <Tabs value={activeSection} onValueChange={handleSectionChange}>
     <PageContainer>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -839,9 +808,6 @@ export default function OrderDetailPage({
           <span>{renderOrderDeleteError(error)}</span>
         </div>
       )}
-
-        {/* Overview Tab */}
-        <TabsContent value="overview">
           {/* Order Process - only when there are samples */}
           {order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
@@ -1163,36 +1129,9 @@ export default function OrderDetailPage({
             </div>
           )}
 
-          {/* Delete Order */}
-          {(isOwner || isFacilityAdmin) && (order.status === "DRAFT" || isFacilityAdmin) && (
-            <div className="bg-card rounded-lg border overflow-hidden mt-4">
-              <div className="px-5 py-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold">Delete Order</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Permanently remove this order and all its data.
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={handleDeleteClick}
-                  disabled={updating}
-                >
-                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                  Delete
-                </Button>
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Read Files Tab */}
-        {!isDemoUser && (
-        <TabsContent value="reads">
-          {/* Samples with file info */}
-          <div className="bg-card rounded-lg border overflow-hidden">
+          {/* Read Files section */}
+          {!isDemoUser && (
+          <div className="bg-card rounded-lg border overflow-hidden mt-4">
             <div className="px-5 py-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <HardDrive className="h-4 w-4" />
@@ -1325,10 +1264,32 @@ export default function OrderDetailPage({
               </div>
             )}
           </div>
-        </TabsContent>
-        )}
+          )}
+
+          {/* Delete Order */}
+          {(isOwner || isFacilityAdmin) && (order.status === "DRAFT" || isFacilityAdmin) && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Delete Order</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Permanently remove this order and all its data.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={handleDeleteClick}
+                  disabled={updating}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+          )}
       </PageContainer>
-      </Tabs>
 
       {/* File Inspect Dialog */}
       <Dialog

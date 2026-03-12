@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, use } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function EditOrderPage({
   params,
@@ -10,11 +10,16 @@ export default function EditOrderPage({
 }) {
   const resolvedParams = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    // Redirect to new order page with edit mode
-    router.replace(`/orders/new?edit=${resolvedParams.id}`);
-  }, [router, resolvedParams.id]);
+    // Redirect to new order page with edit mode, forwarding the step param if present
+    const step = searchParams.get("step");
+    const url = step
+      ? `/orders/new?edit=${resolvedParams.id}&step=${step}`
+      : `/orders/new?edit=${resolvedParams.id}`;
+    router.replace(url);
+  }, [router, resolvedParams.id, searchParams]);
 
   return (
     <div className="p-8 flex items-center justify-center min-h-[400px]">
