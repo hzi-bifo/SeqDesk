@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { SidebarProvider, useSidebar } from "./SidebarContext";
 import { FieldHelpProvider } from "@/lib/contexts/FieldHelpContext";
-import { Sidebar } from "./Sidebar";
+import { Sidebar } from "./sidebar";
 import { UpdateBanner } from "@/components/admin/UpdateBanner";
 import { cn } from "@/lib/utils";
 import { Menu } from "lucide-react";

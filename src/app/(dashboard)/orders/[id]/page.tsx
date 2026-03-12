@@ -7,7 +7,6 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Input } from "@/components/ui/input";
 import {
@@ -802,73 +801,6 @@ export default function OrderDetailPage({
 
   return (
     <>
-      {/* Tabs wrapper */}
-      <Tabs defaultValue="overview">
-      {/* Sticky header bar */}
-      <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex items-center h-[52px] px-6 lg:px-8">
-          <Link
-            href="/orders"
-            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Link>
-          <span className="text-sm font-medium truncate">{order.name}</span>
-
-          {/* Tabs - centered */}
-          <div className="flex-1 flex justify-center">
-            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
-              <TabsTrigger
-                value="overview"
-                className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-              >
-                Overview
-              </TabsTrigger>
-              {!isDemoUser && (
-                <TabsTrigger
-                  className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-                  value="reads"
-                >
-                  Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${order._count.samples})` : ""}
-                </TabsTrigger>
-              )}
-              {!isDemoUser &&
-                isFacilityAdmin &&
-                (order.status === "SUBMITTED" || order.status === "COMPLETED") && (
-                  <TabsTrigger
-                    value="manage-files"
-                    asChild
-                    className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-                  >
-                    <Link href={`/orders/${order.id}/files`}>
-                      Manage Files
-                    </Link>
-                  </TabsTrigger>
-                )}
-            </TabsList>
-          </div>
-
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {(isOwner || isFacilityAdmin) && (
-              <>
-                {(order.status === "DRAFT" || isFacilityAdmin) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-destructive hover:text-destructive"
-                    onClick={handleDeleteClick}
-                    disabled={updating}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                    Delete
-                  </Button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
     <PageContainer>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -876,9 +808,6 @@ export default function OrderDetailPage({
           <span>{renderOrderDeleteError(error)}</span>
         </div>
       )}
-
-        {/* Overview Tab */}
-        <TabsContent value="overview">
           {/* Order Process - only when there are samples */}
           {order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
@@ -1199,13 +1128,10 @@ export default function OrderDetailPage({
               </div>
             </div>
           )}
-        </TabsContent>
 
-        {/* Read Files Tab */}
-        {!isDemoUser && (
-        <TabsContent value="reads">
-          {/* Samples with file info */}
-          <div className="bg-card rounded-lg border overflow-hidden">
+          {/* Read Files section */}
+          {!isDemoUser && (
+          <div className="bg-card rounded-lg border overflow-hidden mt-4">
             <div className="px-5 py-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <HardDrive className="h-4 w-4" />
@@ -1338,10 +1264,32 @@ export default function OrderDetailPage({
               </div>
             )}
           </div>
-        </TabsContent>
-        )}
+          )}
+
+          {/* Delete Order */}
+          {(isOwner || isFacilityAdmin) && (order.status === "DRAFT" || isFacilityAdmin) && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Delete Order</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Permanently remove this order and all its data.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={handleDeleteClick}
+                  disabled={updating}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+          )}
       </PageContainer>
-      </Tabs>
 
       {/* File Inspect Dialog */}
       <Dialog
