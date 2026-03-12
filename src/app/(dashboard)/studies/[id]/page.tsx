@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, use, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -324,6 +324,7 @@ export default function StudyDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const [study, setStudy] = useState<Study | null>(null);
   const [loading, setLoading] = useState(true);
@@ -784,88 +785,53 @@ export default function StudyDetailPage({
   const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
   const notesSupported = study.notesSupported !== false;
 
-  const tabTriggerClass = "relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-3 text-xs font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground";
-
   return (
     <>
-      <Tabs defaultValue="overview">
-      {/* Sticky header bar */}
-      <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex items-center h-[52px] px-6 lg:px-8">
-          <Link
-            href="/studies"
-            className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-secondary transition-colors flex-shrink-0 mr-3"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Link>
-          <span className="text-sm font-medium truncate flex-shrink-0">{study.title}</span>
-
-          {/* Tabs - centered */}
-          <div className="flex-1 flex justify-center">
-            <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
-              <TabsTrigger value="overview" className={tabTriggerClass}>Overview</TabsTrigger>
-              <TabsTrigger value="samples" className={tabTriggerClass}>Samples</TabsTrigger>
-              {!isDemoUser && (
-                <TabsTrigger value="reads" className={tabTriggerClass}>
-                  Read Files{samplesWithFiles > 0 ? ` (${samplesWithFiles}/${totalSamples})` : ""}
-                </TabsTrigger>
-              )}
-              {isAdmin && totalSamples > 0 && !isDemoUser && (
-                <TabsTrigger value="pipelines" className={tabTriggerClass}>Pipelines</TabsTrigger>
-              )}
-              {notesSupported && (
-                <TabsTrigger value="notes" className={tabTriggerClass}>Notes</TabsTrigger>
-              )}
-              {!isDemoUser && (
-                <TabsTrigger value="ena" className={tabTriggerClass}>ENA</TabsTrigger>
-              )}
-            </TabsList>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {(isOwner || isAdmin) && (
-              <>
-                {!study.submitted && study.readyForSubmission && (isOwner || isAdmin) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setUnmarkReadyDialogOpen(true)}
-                    disabled={markingReady}
-                  >
-                    {markingReady ? (
-                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                    )}
-                    Back to Draft
-                  </Button>
-                )}
-                {!study.submitted && !study.readyForSubmission && isOwner && (
-                  <>
-                    {allMetadataComplete && (
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => setMarkReadyDialogOpen(true)}
-                        disabled={markingReady}
-                      >
-                        {markingReady ? (
-                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                        ) : null}
-                        Mark as Ready
-                      </Button>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      <Tabs value={searchParams.get("tab") || "overview"} onValueChange={(tab) => {
+        const url = tab === "overview" ? `/studies/${id}` : `/studies/${id}?tab=${tab}`;
+        router.replace(url, { scroll: false });
+      }}>
 
       <PageContainer>
+      {/* Page title + actions */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold truncate">{study.title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {study.submitted ? "Registered" : study.readyForSubmission ? "Ready for submission" : "Draft"}
+            {study.studyAccessionId && ` \u00B7 ${study.studyAccessionId}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 ml-4">
+          {(isOwner || isAdmin) && !study.submitted && study.readyForSubmission && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setUnmarkReadyDialogOpen(true)}
+              disabled={markingReady}
+            >
+              {markingReady ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Back to Draft
+            </Button>
+          )}
+          {isOwner && !study.submitted && !study.readyForSubmission && allMetadataComplete && (
+            <Button
+              size="sm"
+              onClick={() => setMarkReadyDialogOpen(true)}
+              disabled={markingReady}
+            >
+              {markingReady ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : null}
+              Mark as Ready
+            </Button>
+          )}
+        </div>
+      </div>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
           <AlertCircle className="h-5 w-5" />

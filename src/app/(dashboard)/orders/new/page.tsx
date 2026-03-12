@@ -1286,6 +1286,18 @@ export default function NewOrderPage() {
   const steps = buildSteps();
   const isSamplesStepActive = steps[currentStep]?.id === "samples";
 
+  // Navigate to a specific step if the URL has a ?step= param
+  const initialStepParam = searchParams.get("step");
+  const initialStepApplied = useRef(false);
+  useEffect(() => {
+    if (initialStepApplied.current || !initialStepParam || steps.length === 0) return;
+    const stepIndex = steps.findIndex((s) => s.id === initialStepParam);
+    if (stepIndex >= 0) {
+      setCurrentStep(stepIndex);
+      initialStepApplied.current = true;
+    }
+  }, [initialStepParam, steps]);
+
   useEffect(() => {
     if (!isSamplesStepActive) return;
 
