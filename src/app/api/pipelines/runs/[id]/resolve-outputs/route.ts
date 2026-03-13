@@ -7,6 +7,7 @@ import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 import path from 'path';
 import { isDemoSession } from '@/lib/demo/server';
+import type { PipelineTarget } from '@/lib/pipelines/types';
 
 /**
  * POST - Manually trigger output resolution for a completed run
@@ -45,6 +46,16 @@ export async function POST(
             },
           },
         },
+        order: {
+          include: {
+            samples: {
+              select: {
+                id: true,
+                sampleId: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -74,7 +85,14 @@ export async function POST(
       );
     }
 
-    const samples = run.study?.samples || [];
+    const target: PipelineTarget | null =
+      run.targetType === 'order' && run.orderId
+        ? { type: 'order', orderId: run.orderId }
+        : run.studyId
+          ? { type: 'study', studyId: run.studyId }
+          : null;
+
+    const samples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
     if (samples.length === 0) {
       return NextResponse.json(
         { error: 'No samples found for this run' },
@@ -89,6 +107,7 @@ export async function POST(
     const discovered = await adapter.discoverOutputs({
       runId: id,
       outputDir,
+      target: target || undefined,
       samples,
     });
 

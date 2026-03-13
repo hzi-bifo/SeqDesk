@@ -3,10 +3,13 @@
 
 import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
+import { getPackage } from '@/lib/pipelines/package-loader';
 import {
   resolveOrderPlatform,
   resolveOrderSequencingTechnologyId,
 } from '@/lib/pipelines/order-platform';
+import type { PipelineTarget } from '@/lib/pipelines/types';
+import { isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
 
 export interface MetadataIssue {
   field: string;
@@ -225,16 +228,35 @@ function hasRequiredChecklistField(
 /**
  * Validate that a study has all required metadata for a specific pipeline
  */
+function normalizeValidationTarget(
+  targetOrStudyId: PipelineTarget | string,
+  sampleIds?: string[]
+): PipelineTarget {
+  if (typeof targetOrStudyId === 'string') {
+    return { type: 'study', studyId: targetOrStudyId, sampleIds };
+  }
+
+  if (sampleIds && (!targetOrStudyId.sampleIds || targetOrStudyId.sampleIds.length === 0)) {
+    return {
+      ...targetOrStudyId,
+      sampleIds,
+    };
+  }
+
+  return targetOrStudyId;
+}
+
 export async function validatePipelineMetadata(
-  studyId: string,
+  targetOrStudyId: PipelineTarget | string,
   pipelineId: string,
   sampleIds?: string[]
 ): Promise<MetadataValidationResult> {
+  const target = normalizeValidationTarget(targetOrStudyId, sampleIds);
   const issues: MetadataIssue[] = [];
   const metadata: MetadataValidationResult['metadata'] = {};
   const sampleFilter =
-    Array.isArray(sampleIds) && sampleIds.length > 0
-      ? { id: { in: sampleIds } }
+    Array.isArray(target.sampleIds) && target.sampleIds.length > 0
+      ? { id: { in: target.sampleIds } }
       : undefined;
 
   const runtimeConfig = parsePipelineRuntimeConfig(
@@ -246,55 +268,71 @@ export async function validatePipelineMetadata(
     )?.config ?? null
   );
 
-  // Get study with samples and their orders
-  const study = await db.study.findUnique({
-    where: { id: studyId },
-    include: {
-      samples: {
-        ...(sampleFilter ? { where: sampleFilter } : {}),
-        include: {
-          reads: {
-            select: {
-              file1: true,
-              file2: true,
-              checksum1: true,
-              checksum2: true,
-            },
-          },
-          assemblies: {
-            select: {
-              id: true,
-              assemblyFile: true,
-              createdByPipelineRunId: true,
-              createdByPipelineRun: {
-                select: {
-                  id: true,
-                  runNumber: true,
-                  createdAt: true,
-                },
-              },
-            },
-          },
-          bins: {
-            select: { id: true },
-          },
-          order: {
-            select: {
-              id: true,
-              platform: true,
-              customFields: true,
-              instrumentModel: true,
-              libraryStrategy: true,
-              librarySelection: true,
-              librarySource: true,
-            },
+  const sampleInclude = {
+    reads: {
+      select: {
+        file1: true,
+        file2: true,
+        checksum1: true,
+        checksum2: true,
+      },
+    },
+    assemblies: {
+      select: {
+        id: true,
+        assemblyFile: true,
+        createdByPipelineRunId: true,
+        createdByPipelineRun: {
+          select: {
+            id: true,
+            runNumber: true,
+            createdAt: true,
           },
         },
       },
     },
-  });
+    bins: {
+      select: { id: true },
+    },
+    order: {
+      select: {
+        id: true,
+        platform: true,
+        customFields: true,
+        instrumentModel: true,
+        libraryStrategy: true,
+        librarySelection: true,
+        librarySource: true,
+      },
+    },
+  } as const;
 
-  if (!study) {
+  const [study, order] = await Promise.all([
+    isStudyTarget(target)
+      ? db.study.findUnique({
+          where: { id: target.studyId },
+          include: {
+            samples: {
+              ...(sampleFilter ? { where: sampleFilter } : {}),
+              include: sampleInclude,
+            },
+          },
+        })
+      : Promise.resolve(null),
+    isOrderTarget(target)
+      ? db.order.findUnique({
+          where: { id: target.orderId },
+          include: {
+            samples: {
+              ...(sampleFilter ? { where: sampleFilter } : {}),
+              include: sampleInclude,
+            },
+          },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (isStudyTarget(target) && !study) {
     return {
       valid: false,
       issues: [{ field: 'study', message: 'Study not found', severity: 'error' }],
@@ -302,24 +340,61 @@ export async function validatePipelineMetadata(
     };
   }
 
-  if (study.samples.length === 0) {
+  if (isOrderTarget(target) && !order) {
     return {
       valid: false,
-      issues: [{ field: 'samples', message: 'No samples in study', severity: 'error' }],
+      issues: [{ field: 'order', message: 'Order not found', severity: 'error' }],
       metadata,
     };
+  }
+
+  const samples = isStudyTarget(target)
+    ? study?.samples ?? []
+    : order?.samples ?? [];
+
+  if (samples.length === 0) {
+    return {
+      valid: false,
+      issues: [{
+        field: 'samples',
+        message: isStudyTarget(target) ? 'No samples in study' : 'No samples in order',
+        severity: 'error',
+      }],
+      metadata,
+    };
+  }
+
+  if (isOrderTarget(target)) {
+    const pkg = getPackage(pipelineId);
+    const studyScopedInputs = pkg?.manifest.inputs.filter(
+      (input) => input.required && (input.scope === 'study' || input.source.startsWith('study.'))
+    ) ?? [];
+    if (studyScopedInputs.length > 0) {
+      for (const input of studyScopedInputs) {
+        issues.push({
+          field: input.id,
+          message: `${pipelineId.toUpperCase()} requires study-scoped input ${input.source} and cannot run on an order target`,
+          severity: 'error',
+        });
+      }
+      return {
+        valid: false,
+        issues,
+        metadata,
+      };
+    }
   }
 
   // Collect metadata from all orders (with sample IDs for better error messages)
   const orders = new Map<
     string,
     {
-      order: NonNullable<(typeof study.samples)[number]['order']>;
+      order: NonNullable<(typeof samples)[number]['order']>;
       sampleIds: string[];
     }
   >();
   const samplesWithoutOrder = new Set<string>();
-  for (const sample of study.samples) {
+  for (const sample of samples) {
     if (sample.order) {
       const existing = orders.get(sample.order.id);
       if (existing) {
@@ -379,6 +454,18 @@ export async function validatePipelineMetadata(
   };
 
   if (pipelineId === 'submg') {
+    if (!study) {
+      return {
+        valid: false,
+        issues: [{
+          field: 'study',
+          message: 'SubMG can only run on study targets',
+          severity: 'error',
+        }],
+        metadata,
+      };
+    }
+
     const enaTestMode =
       (
         await db.siteSettings.findUnique({
@@ -415,7 +502,7 @@ export async function validatePipelineMetadata(
       }
     }
 
-    for (const sample of study.samples) {
+    for (const sample of samples) {
       const checklistFieldSet = extractChecklistFieldSet(sample.checklistData);
       const missingChecklistFields = SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS
         .filter((field) => !hasRequiredChecklistField(checklistFieldSet, field))

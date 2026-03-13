@@ -7,6 +7,21 @@ import { createGenericAdapter } from "./generic-adapter";
 import { getAdapter, registerAdapter } from "./adapters";
 import { resolveOutputs, saveRunResults } from "./output-resolver";
 import { processSubmgRunResults } from "./submg/submg-runner";
+import type { PipelineTarget } from "./types";
+
+function getRunTarget(run: {
+  targetType?: string | null;
+  studyId?: string | null;
+  orderId?: string | null;
+}): PipelineTarget | null {
+  if (run.targetType === "order" && run.orderId) {
+    return { type: "order", orderId: run.orderId };
+  }
+  if (run.studyId) {
+    return { type: "study", studyId: run.studyId };
+  }
+  return null;
+}
 
 export async function processCompletedPipelineRun(runId: string, pipelineId: string): Promise<void> {
   if (pipelineId === "submg") {
@@ -37,6 +52,13 @@ export async function processCompletedPipelineRun(runId: string, pipelineId: str
           },
         },
       },
+      order: {
+        include: {
+          samples: {
+            select: { id: true, sampleId: true },
+          },
+        },
+      },
     },
   });
 
@@ -44,7 +66,8 @@ export async function processCompletedPipelineRun(runId: string, pipelineId: str
     return;
   }
 
-  const samples = run.study?.samples || [];
+  const target = getRunTarget(run);
+  const samples = run.targetType === "order" ? run.order?.samples || [] : run.study?.samples || [];
   if (samples.length === 0) {
     return;
   }
@@ -53,6 +76,7 @@ export async function processCompletedPipelineRun(runId: string, pipelineId: str
   const discovered = await adapter.discoverOutputs({
     runId,
     outputDir,
+    target: target || undefined,
     samples: samples.map((sample) => ({ id: sample.id, sampleId: sample.sampleId })),
   });
 

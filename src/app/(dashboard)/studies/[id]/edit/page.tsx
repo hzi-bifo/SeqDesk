@@ -1023,6 +1023,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             id: field.id || field.name, name: field.name, label: field.label, type: field.type,
             required: field.required, visible: true, order: field.order ?? i,
             helpText: field.helpText, placeholder: field.placeholder, options: field.options,
+            adminOnly: field.adminOnly,
             source: 'custom',
           });
         }
@@ -1734,6 +1735,11 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             />
           </div>
         </div>
+        {allPerSampleFields.some((field) => field.adminOnly) && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
+            Facility-only columns are shown only to facility admins and stay hidden from researchers.
+          </div>
+        )}
 
         {allPerSampleFields.length === 0 ? (
           <div className="text-center py-8 bg-muted/30 rounded-lg">
@@ -1750,6 +1756,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                         const colMeta = header.column.columnDef.meta as StudyColumnMeta | undefined;
                         const isMixs = colMeta?.isMixsField;
                         const field = colMeta?.field;
+                        const isFacilityField = field?.adminOnly === true;
                         return (
                           <th
                             key={header.id}
@@ -1761,10 +1768,23 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                             }}
                             className={cn(
                               "px-2 py-1.5 text-left text-xs font-medium border-b border-r last:border-r-0 cursor-pointer",
-                              isMixs ? "bg-emerald-50 hover:bg-emerald-100" : "bg-muted/50 hover:bg-muted"
+                              isFacilityField
+                                ? "bg-slate-100 hover:bg-slate-200"
+                                : isMixs
+                                  ? "bg-emerald-50 hover:bg-emerald-100"
+                                  : "bg-muted/50 hover:bg-muted"
                             )}
                           >
-                            {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                            {header.isPlaceholder ? null : (
+                              <div className="flex items-center gap-1.5">
+                                {flexRender(header.column.columnDef.header, header.getContext())}
+                                {isFacilityField && (
+                                  <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                                    Facility
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </th>
                         );
                       })}
@@ -1787,11 +1807,17 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                         {row.getVisibleCells().map((cell) => {
                           const colMeta = cell.column.columnDef.meta as StudyColumnMeta | undefined;
                           const isMixs = colMeta?.isMixsField;
+                          const isFacilityField = colMeta?.field?.adminOnly === true;
                           return (
                             <td
                               key={cell.id}
                               style={{ width: cell.column.getSize() }}
-                              className={cn("border-b border-r last:border-r-0 h-8", isMixs && "bg-emerald-50/50")}
+                              className={cn(
+                                "border-b border-r last:border-r-0 h-8",
+                                isFacilityField
+                                  ? "bg-slate-50/80"
+                                  : isMixs && "bg-emerald-50/50"
+                              )}
                             >
                               {flexRender(cell.column.columnDef.cell, cell.getContext())}
                             </td>

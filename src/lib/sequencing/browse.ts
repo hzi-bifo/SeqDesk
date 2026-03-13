@@ -1,4 +1,5 @@
 import * as fs from "fs/promises";
+import type { Dirent } from "fs";
 import * as path from "path";
 
 export interface SequencingBrowsableFile {
@@ -32,7 +33,7 @@ async function walkDirectory(
     return;
   }
 
-  let entries: Awaited<ReturnType<typeof fs.readdir>>;
+  let entries: Dirent[];
   try {
     entries = await fs.readdir(currentPath, { withFileTypes: true });
   } catch {

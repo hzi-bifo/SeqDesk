@@ -14,10 +14,12 @@ const mocks = vi.hoisted(() => ({
   },
   getPackage: vi.fn(),
   getAllPackages: vi.fn(),
+  getPackageScriptPath: vi.fn(),
   resolveAssemblySelection: vi.fn(),
   resolveOrderPlatform: vi.fn(),
   generateSamplesheetFromConfig: vi.fn(),
   runAllParsers: vi.fn(),
+  runDiscoverOutputsScript: vi.fn(),
   getAdapter: vi.fn(),
   registerAdapter: vi.fn(),
 }));
@@ -29,6 +31,7 @@ vi.mock("@/lib/db", () => ({
 vi.mock("./package-loader", () => ({
   getPackage: mocks.getPackage,
   getAllPackages: mocks.getAllPackages,
+  getPackageScriptPath: mocks.getPackageScriptPath,
 }));
 
 vi.mock("./assembly-selection", () => ({
@@ -45,6 +48,10 @@ vi.mock("./samplesheet-generator", () => ({
 
 vi.mock("./parser-runtime", () => ({
   runAllParsers: mocks.runAllParsers,
+}));
+
+vi.mock("./script-runtime", () => ({
+  runDiscoverOutputsScript: mocks.runDiscoverOutputsScript,
 }));
 
 vi.mock("./adapters/types", async () => {
@@ -186,9 +193,12 @@ beforeEach(async () => {
   });
   mocks.getPackage.mockReset();
   mocks.getAllPackages.mockReset();
+  mocks.getPackageScriptPath.mockReset();
   mocks.getAdapter.mockReset();
   mocks.registerAdapter.mockReset();
+  mocks.runDiscoverOutputsScript.mockReset();
   mocks.getAdapter.mockReturnValue(undefined);
+  mocks.getPackageScriptPath.mockReturnValue(null);
 });
 
 describe("generic-adapter", () => {
@@ -221,7 +231,7 @@ describe("generic-adapter", () => {
     mocks.db.study.findUnique.mockResolvedValue(null);
 
     const adapter = createGenericAdapter("test");
-    const result = await adapter!.validateInputs("study-1");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
 
     expect(adapter).not.toBeNull();
     expect(result.valid).toBe(false);
@@ -270,7 +280,7 @@ describe("generic-adapter", () => {
     mocks.resolveOrderPlatform.mockReturnValue(null);
 
     const adapter = createGenericAdapter("test");
-    const result = await adapter!.validateInputs("study-1");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
 
     expect(result.valid).toBe(false);
     expect(result.issues).toContain("Sample SAMPLE-1: Read checksums are required");
@@ -315,11 +325,45 @@ describe("generic-adapter", () => {
     mocks.resolveOrderPlatform.mockReturnValue("Sequel II/IIe");
 
     const adapter = createGenericAdapter("metaxpath");
-    const result = await adapter!.validateInputs("study-1");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
 
     expect(result.valid).toBe(false);
     expect(result.issues).toContain(
       'Sample SAMPLE-1: Unsupported sequencing platform "Sequel II/IIe" for this pipeline (expected mapping to: Nanopore, PacBio)'
+    );
+  });
+
+  it("rejects order targets when required study-scoped inputs are present", async () => {
+    const pkg = makePackageIdOnly("study-bound", [
+      {
+        id: "study-accession",
+        scope: "study",
+        source: "study.studyAccessionId",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: {
+          platform: "Illumina",
+          customFields: null,
+        },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("study-bound");
+    const result = await adapter!.validateInputs({ type: "order", orderId: "order-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain(
+      "Input study-accession requires study-scoped data (study.studyAccessionId) and cannot run on an order target"
     );
   });
 
@@ -334,9 +378,12 @@ describe("generic-adapter", () => {
 
     const adapter = createGenericAdapter("test");
     const result = await adapter!.generateSamplesheet({
-      studyId: "study-1",
+      target: {
+        type: "study",
+        studyId: "study-1",
+        sampleIds: ["sample-1"],
+      },
       dataBasePath: "/tmp/data",
-      sampleIds: ["sample-1"],
     });
 
     expect(result).toEqual({
@@ -345,10 +392,60 @@ describe("generic-adapter", () => {
       errors: [],
     });
     expect(mocks.generateSamplesheetFromConfig).toHaveBeenCalledWith("test", {
-      studyId: "study-1",
-      sampleIds: ["sample-1"],
+      target: {
+        type: "study",
+        studyId: "study-1",
+        sampleIds: ["sample-1"],
+      },
       dataBasePath: "/tmp/data",
     });
+  });
+
+  it("uses a custom discoverOutputs script when the package provides one", async () => {
+    const pkg = makePackageIdOnly("checksum");
+    const discovered = {
+      files: [
+        {
+          type: "artifact" as const,
+          name: "sample-1.json",
+          path: "/tmp/sample-1.json",
+          sampleId: "sample-1",
+          outputId: "sample_checksums",
+        },
+      ],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 1,
+        reportsFound: 0,
+      },
+    };
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.getPackageScriptPath.mockReturnValue("/tmp/discover-outputs.mjs");
+    mocks.runDiscoverOutputsScript.mockResolvedValue(discovered);
+
+    const adapter = createGenericAdapter("checksum");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+    });
+
+    expect(result).toEqual(discovered);
+    expect(mocks.runDiscoverOutputsScript).toHaveBeenCalledWith(
+      "/tmp/discover-outputs.mjs",
+      {
+        packageId: "checksum",
+        runId: "run-1",
+        outputDir: tempDir,
+        target: { type: "order", orderId: "order-1" },
+        samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+      }
+    );
+    expect(mocks.runAllParsers).not.toHaveBeenCalled();
   });
 
   it("returns discoverable outputs with fallback patterns and parsed metadata", async () => {

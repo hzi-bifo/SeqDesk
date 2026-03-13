@@ -1,0 +1,12 @@
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample
+  columns:
+    - name: sample_id
+      source: sample.sampleId
+      required: true
+    - name: order_id
+      source: order.id
+      required: true

@@ -13,7 +13,8 @@ import {
 import { toast } from "sonner";
 import {
   Bold,
-  ChevronRight,
+  ChevronLeft,
+  GripVertical,
   Italic,
   Link2,
   List,
@@ -29,6 +30,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 
 const ICON_CLASSNAME = "h-3.5 w-3.5";
+const MIN_WIDTH = 240;
+const MAX_WIDTH = 480;
+const DEFAULT_WIDTH = 320;
 const EMPTY_EDITOR_HTML_VALUES = new Set(["", "<br>", "<div><br></div>", "<p><br></p>"]);
 
 marked.setOptions({
@@ -172,8 +176,10 @@ export function EntityNotesPanel({
   const [notesContent, setNotesContent] = useState("");
   const [editorHtml, setEditorHtml] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
   const lastServerNotesRef = useRef("");
   const hasLoadedRef = useRef(false);
+  const isResizingRef = useRef(false);
 
   const entityLabelTitle = toSentenceCase(entityLabel);
   const panelAttributes = { [panelDataAttribute]: "" };
@@ -183,11 +189,52 @@ export function EntityNotesPanel({
     if (stored !== null) {
       setDesktopOpen(stored === "true");
     }
+    const storedWidth = window.localStorage.getItem(`${desktopPanelStateKey}-width`);
+    if (storedWidth !== null) {
+      const w = parseInt(storedWidth, 10);
+      if (!isNaN(w) && w >= MIN_WIDTH && w <= MAX_WIDTH) {
+        setPanelWidth(w);
+      }
+    }
   }, [desktopPanelStateKey]);
 
   useEffect(() => {
     window.localStorage.setItem(desktopPanelStateKey, String(desktopOpen));
   }, [desktopOpen, desktopPanelStateKey]);
+
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizingRef.current = true;
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        if (!isResizingRef.current) return;
+        const delta = startX - moveEvent.clientX;
+        const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta));
+        setPanelWidth(newWidth);
+      };
+
+      const handleMouseUp = () => {
+        isResizingRef.current = false;
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        setPanelWidth((w) => {
+          window.localStorage.setItem(`${desktopPanelStateKey}-width`, String(w));
+          return w;
+        });
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [desktopPanelStateKey, panelWidth]
+  );
 
   useEffect(() => {
     setMobileOpen(false);
@@ -420,10 +467,10 @@ export function EntityNotesPanel({
 
   const panelBody = (
     <div {...panelAttributes} className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+      <div className="flex h-10 shrink-0 items-center justify-between px-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <StickyNote className="h-3.5 w-3.5 shrink-0" />
-          <span>Notes</span>
+          <span className="uppercase tracking-wider">Notes</span>
           {saveIndicator}
         </div>
 
@@ -446,7 +493,7 @@ export function EntityNotesPanel({
             className="hidden xl:inline-flex h-7 w-7"
             aria-label={`Hide ${entityLabel} notes`}
           >
-            <ChevronRight className="h-3.5 w-3.5" />
+            <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
@@ -483,7 +530,7 @@ export function EntityNotesPanel({
                   "order-notes-wysiwyg flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent",
               }}
             >
-              <Toolbar className="order-notes-toolbar shrink-0 border-b border-border/60 bg-card">
+              <Toolbar className="order-notes-toolbar shrink-0 bg-card">
                 <ToolbarBtn title="Bold" command="bold">
                   <Bold className={ICON_CLASSNAME} />
                 </ToolbarBtn>
@@ -528,14 +575,24 @@ export function EntityNotesPanel({
     <>
       <aside
         className={cn(
-          "hidden xl:flex fixed top-10 right-0 bottom-0 flex-col border-l border-border bg-card z-30 transition-all duration-300",
-          desktopOpen ? "w-[20rem]" : "w-10"
+          "hidden xl:flex fixed top-0 right-0 bottom-0 flex-col border-l border-border bg-card z-30 transition-all duration-300",
+          !desktopOpen && "w-10"
         )}
+        style={desktopOpen ? { width: panelWidth } : undefined}
       >
+        {desktopOpen && (
+          <div
+            className="absolute left-0 top-0 bottom-0 z-10 flex w-1.5 cursor-col-resize items-center justify-center -translate-x-1/2 group"
+            onMouseDown={handleResizeStart}
+          >
+            <div className="h-8 w-1 rounded-full bg-border opacity-0 transition-opacity group-hover:opacity-100 group-active:opacity-100" />
+          </div>
+        )}
+
         {desktopOpen ? (
           panelBody
         ) : (
-          <div className="flex h-full flex-col items-center pt-2">
+          <div className="flex h-full flex-col items-center pt-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -558,8 +615,9 @@ export function EntityNotesPanel({
       <div
         className={cn(
           "hidden xl:block shrink-0 transition-all duration-300",
-          desktopOpen ? "w-[20rem]" : "w-10"
+          !desktopOpen && "w-10"
         )}
+        style={desktopOpen ? { width: panelWidth } : undefined}
         aria-hidden
       />
 

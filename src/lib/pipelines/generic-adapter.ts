@@ -14,6 +14,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
+import type { PipelineTarget } from '@/lib/pipelines/types';
+import { getPipelineSampleWhere, isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
 
 /**
  * Simple glob implementation for finding files matching a pattern
@@ -120,14 +122,21 @@ function hasChecklistData(value: string | null): boolean {
     return false;
   }
 }
+
+function inputRequiresStudy(input: { scope: string; source: string }): boolean {
+  return input.scope === 'study' || input.source.startsWith('study.');
+}
+
 import {
   getPackage,
+  getPackageScriptPath,
   getAllPackages,
   type PackageOutput,
 } from './package-loader';
 import { resolveOrderPlatform } from './order-platform';
 import { generateSamplesheetFromConfig } from './samplesheet-generator';
 import { runAllParsers, type ParsedData, type ParsedRow } from './parser-runtime';
+import { runDiscoverOutputsScript } from './script-runtime';
 import {
   type PipelineAdapter,
   type ValidationResult,
@@ -338,24 +347,31 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
     pipelineId: packageId,
 
     async validateInputs(
-      studyId: string,
-      sampleIds?: string[]
+      target: PipelineTarget
     ): Promise<ValidationResult> {
       const issues: string[] = [];
+      const whereClause = getPipelineSampleWhere(target);
 
-      const whereClause: { studyId: string; id?: { in: string[] } } = { studyId };
-      if (sampleIds && sampleIds.length > 0) {
-        whereClause.id = { in: sampleIds };
+      if (isOrderTarget(target)) {
+        for (const input of pkg.manifest.inputs) {
+          if (!input.required) continue;
+          if (!inputRequiresStudy(input)) continue;
+          issues.push(
+            `Input ${input.id} requires study-scoped data (${input.source}) and cannot run on an order target`
+          );
+        }
       }
 
       const [study, samples] = await Promise.all([
-        db.study.findUnique({
-          where: { id: studyId },
-          select: {
-            id: true,
-            studyAccessionId: true,
-          },
-        }),
+        isStudyTarget(target)
+          ? db.study.findUnique({
+              where: { id: target.studyId },
+              select: {
+                id: true,
+                studyAccessionId: true,
+              },
+            })
+          : Promise.resolve(null),
         db.sample.findMany({
           where: whereClause,
           include: {
@@ -372,7 +388,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         }),
       ]);
 
-      if (!study) {
+      if (isStudyTarget(target) && !study) {
         issues.push('Study not found');
         return { valid: false, issues };
       }
@@ -502,6 +518,10 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         }
 
         if (input.scope === 'study' && input.source === 'study.studyAccessionId') {
+          if (!study) {
+            issues.push('Study accession (PRJ*) is required');
+            continue;
+          }
           if (!hasNonEmptyString(study.studyAccessionId)) {
             issues.push('Study accession (PRJ*) is required');
           }
@@ -519,8 +539,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
     ): Promise<SamplesheetResult> {
       // Use the declarative samplesheet generator
       const result = await generateSamplesheetFromConfig(packageId, {
-        studyId: options.studyId,
-        sampleIds: options.sampleIds,
+        target: options.target,
         dataBasePath: options.dataBasePath,
       });
 
@@ -544,6 +563,32 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
       options: DiscoverOutputsOptions
     ): Promise<DiscoverOutputsResult> {
       const { outputDir, samples } = options;
+      const customDiscoverScript = getPackageScriptPath(packageId, 'discoverOutputs');
+
+      if (customDiscoverScript) {
+        try {
+          return await runDiscoverOutputsScript(customDiscoverScript, {
+            packageId,
+            runId: options.runId,
+            outputDir,
+            target: options.target,
+            samples,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          return {
+            files: [],
+            errors: [message],
+            summary: {
+              assembliesFound: 0,
+              binsFound: 0,
+              artifactsFound: 0,
+              reportsFound: 0,
+            },
+          };
+        }
+      }
+
       const allFiles: DiscoveredFile[] = [];
       const errors: string[] = [];
 

@@ -40,6 +40,11 @@ export async function GET(
             userId: true,
           },
         },
+        order: {
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
@@ -49,7 +54,8 @@ export async function GET(
 
     if (
       session.user.role !== 'FACILITY_ADMIN' &&
-      run.study?.userId !== session.user.id
+      run.study?.userId !== session.user.id &&
+      run.order?.userId !== session.user.id
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

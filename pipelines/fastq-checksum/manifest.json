@@ -1,0 +1,66 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "fastq-checksum",
+    "name": "FASTQ Checksum",
+    "version": "0.1.0",
+    "description": "Compute MD5 checksums for linked FASTQ files in an order",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {}
+  },
+  "outputs": [
+    {
+      "id": "sample_checksums",
+      "scope": "sample",
+      "destination": "sample_reads",
+      "type": "artifact",
+      "fromStep": "checksum",
+      "discovery": {
+        "pattern": "checksums/*.json",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "checksum",
+      "discovery": {
+        "pattern": "summary/checksum-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

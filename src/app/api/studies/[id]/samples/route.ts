@@ -2,6 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { loadStudyFormSchema } from "@/lib/studies/schema";
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore malformed JSON and fall back to an empty object.
+  }
+
+  return {};
+}
+
+function stringifyOrNull(value: Record<string, unknown>): string | null {
+  return Object.keys(value).length > 0 ? JSON.stringify(value) : null;
+}
 
 // POST assign samples to study
 export async function POST(
@@ -45,7 +69,9 @@ export async function POST(
       where: {
         id: { in: sampleIds },
       },
-      include: {
+      select: {
+        id: true,
+        checklistData: true,
         order: {
           select: { userId: true },
         },
@@ -77,13 +103,45 @@ export async function POST(
 
     // Save per-sample metadata (collection_date, geographic_location, etc.)
     if (perSampleData && typeof perSampleData === "object") {
-      for (const [sampleId, data] of Object.entries(perSampleData)) {
-        if (sampleIds.includes(sampleId) && data && typeof data === "object") {
+      const schema = await loadStudyFormSchema({
+        isFacilityAdmin,
+        applyRoleFilter: true,
+        applyModuleFilter: true,
+      });
+      const allowedFieldNames = new Set(schema.perSampleFields.map((field) => field.name));
+      const checklistDataBySampleId = new Map(
+        samples.map((sample) => [sample.id, sample.checklistData])
+      );
+
+      for (const sampleId of sampleIds) {
+        const submitted = parseJsonObject(
+          (perSampleData as Record<string, unknown>)[sampleId]
+        );
+
+        if (isFacilityAdmin) {
           await db.sample.update({
             where: { id: sampleId },
-            data: { checklistData: JSON.stringify(data) },
+            data: { checklistData: stringifyOrNull(submitted) },
           });
+          continue;
         }
+
+        const merged = {
+          ...parseJsonObject(checklistDataBySampleId.get(sampleId)),
+        };
+
+        for (const fieldName of allowedFieldNames) {
+          if (fieldName in submitted) {
+            merged[fieldName] = submitted[fieldName];
+          } else {
+            delete merged[fieldName];
+          }
+        }
+
+        await db.sample.update({
+          where: { id: sampleId },
+          data: { checklistData: stringifyOrNull(merged) },
+        });
       }
     }
 
@@ -190,13 +248,52 @@ export async function PUT(
 
     // Update per-sample metadata (checklistData)
     if (perSampleData && typeof perSampleData === "object") {
-      for (const [sampleId, data] of Object.entries(perSampleData)) {
-        if (sampleIds.includes(sampleId) && data && typeof data === "object") {
+      const schema = await loadStudyFormSchema({
+        isFacilityAdmin,
+        applyRoleFilter: true,
+        applyModuleFilter: true,
+      });
+      const allowedFieldNames = new Set(schema.perSampleFields.map((field) => field.name));
+      const metadataSamples = await db.sample.findMany({
+        where: { id: { in: sampleIds } },
+        select: {
+          id: true,
+          checklistData: true,
+        },
+      });
+      const checklistDataBySampleId = new Map(
+        metadataSamples.map((sample) => [sample.id, sample.checklistData])
+      );
+
+      for (const sampleId of sampleIds) {
+        const submitted = parseJsonObject(
+          (perSampleData as Record<string, unknown>)[sampleId]
+        );
+
+        if (isFacilityAdmin) {
           await db.sample.update({
             where: { id: sampleId },
-            data: { checklistData: JSON.stringify(data) },
+            data: { checklistData: stringifyOrNull(submitted) },
           });
+          continue;
         }
+
+        const merged = {
+          ...parseJsonObject(checklistDataBySampleId.get(sampleId)),
+        };
+
+        for (const fieldName of allowedFieldNames) {
+          if (fieldName in submitted) {
+            merged[fieldName] = submitted[fieldName];
+          } else {
+            delete merged[fieldName];
+          }
+        }
+
+        await db.sample.update({
+          where: { id: sampleId },
+          data: { checklistData: stringifyOrNull(merged) },
+        });
       }
     }
 

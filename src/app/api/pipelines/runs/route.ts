@@ -7,6 +7,8 @@ import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 import { isDemoSession } from '@/lib/demo/server';
+import type { PipelineTarget } from '@/lib/pipelines/types';
+import { supportsPipelineTarget } from '@/lib/pipelines/target';
 
 // GET - List pipeline runs
 export async function GET(request: NextRequest) {
@@ -21,6 +23,7 @@ export async function GET(request: NextRequest) {
     const pipelineId = searchParams.get('pipelineId');
     const status = searchParams.get('status');
     const studyId = searchParams.get('studyId');
+    const orderId = searchParams.get('orderId');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
 
@@ -29,7 +32,10 @@ export async function GET(request: NextRequest) {
 
     // Non-admins can only see runs for their own studies
     if (session.user.role !== 'FACILITY_ADMIN') {
-      where.study = { userId: session.user.id };
+      where.OR = [
+        { study: { userId: session.user.id } },
+        { order: { userId: session.user.id } },
+      ];
     }
 
     if (pipelineId) {
@@ -44,12 +50,19 @@ export async function GET(request: NextRequest) {
       where.studyId = studyId;
     }
 
+    if (orderId) {
+      where.orderId = orderId;
+    }
+
     const [runs, total] = await Promise.all([
       db.pipelineRun.findMany({
         where,
         include: {
           study: {
             select: { id: true, title: true, userId: true },
+          },
+          order: {
+            select: { id: true, name: true, orderNumber: true, userId: true },
           },
           user: {
             select: { id: true, firstName: true, lastName: true, email: true },
@@ -108,7 +121,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { pipelineId, studyId, sampleIds, config } = body;
+    const { pipelineId, studyId, orderId, sampleIds, config } = body;
     let requestedSampleIds: string[] | undefined;
 
     if (sampleIds !== undefined) {
@@ -121,33 +134,74 @@ export async function POST(request: NextRequest) {
       requestedSampleIds = sampleIds;
     }
 
+    if ((!studyId && !orderId) || (studyId && orderId)) {
+      return NextResponse.json(
+        { error: 'Exactly one of studyId or orderId is required' },
+        { status: 400 }
+      );
+    }
+
+    const target: PipelineTarget = orderId
+      ? { type: 'order', orderId, sampleIds: requestedSampleIds }
+      : { type: 'study', studyId, sampleIds: requestedSampleIds };
+
     // Validate pipeline
     const definition = PIPELINE_REGISTRY[pipelineId];
     if (!definition) {
       return NextResponse.json({ error: 'Invalid pipeline ID' }, { status: 400 });
     }
 
-    // Validate study exists
-    const study = await db.study.findUnique({
-      where: { id: studyId },
-      include: {
-        samples: {
-          include: {
-            reads: true,
-            assemblies: true,
-            bins: true,
-          },
-        },
-      },
-    });
+    if (!supportsPipelineTarget(definition, target)) {
+      return NextResponse.json(
+        { error: `Pipeline ${pipelineId} does not support ${target.type} targets` },
+        { status: 400 }
+      );
+    }
 
-    if (!study) {
+    const [study, order] = await Promise.all([
+      target.type === 'study'
+        ? db.study.findUnique({
+            where: { id: target.studyId },
+            include: {
+              samples: {
+                include: {
+                  reads: true,
+                  assemblies: true,
+                  bins: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve(null),
+      target.type === 'order'
+        ? db.order.findUnique({
+            where: { id: target.orderId },
+            include: {
+              samples: {
+                include: {
+                  reads: true,
+                  assemblies: true,
+                  bins: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    const samples = target.type === 'study' ? study?.samples || [] : order?.samples || [];
+
+    if (target.type === 'study' && !study) {
       return NextResponse.json({ error: 'Study not found' }, { status: 404 });
+    }
+
+    if (target.type === 'order' && !order) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
     // Validate samples if specific ones requested
     if (requestedSampleIds && requestedSampleIds.length > 0) {
-      const validSampleIds = new Set(study.samples.map(s => s.id));
+      const validSampleIds = new Set(samples.map(s => s.id));
       const invalidIds = requestedSampleIds.filter((id) => !validSampleIds.has(id));
       if (invalidIds.length > 0) {
         return NextResponse.json(
@@ -159,9 +213,8 @@ export async function POST(request: NextRequest) {
 
     // Validate runtime metadata server-side so runs cannot bypass UI checks
     const metadataValidation = await validatePipelineMetadata(
-      studyId,
+      target,
       pipelineId,
-      requestedSampleIds
     );
     const metadataErrors = metadataValidation.issues
       .filter((issue) => issue.severity === 'error')
@@ -187,7 +240,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (adapter) {
-      const validation = await adapter.validateInputs(studyId, requestedSampleIds);
+      const validation = await adapter.validateInputs(target);
       if (!validation.valid) {
         return NextResponse.json(
           {
@@ -213,7 +266,9 @@ export async function POST(request: NextRequest) {
         runNumber: tempRunNumber,
         pipelineId,
         status: 'pending',
-        studyId,
+        targetType: target.type,
+        studyId: target.type === 'study' ? target.studyId : null,
+        orderId: target.type === 'order' ? target.orderId : null,
         userId: session.user.id,
         config: config ? JSON.stringify(config) : null,
         inputSampleIds,
@@ -232,6 +287,8 @@ export async function POST(request: NextRequest) {
         status: run.status,
         pipelineId: run.pipelineId,
         studyId: run.studyId,
+        orderId: run.orderId,
+        targetType: run.targetType,
       },
     });
   } catch (error) {

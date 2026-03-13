@@ -19,6 +19,7 @@ import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs/promises';
+import type { PipelineTarget } from '@/lib/pipelines/types';
 
 const execAsync = promisify(exec);
 
@@ -154,6 +155,13 @@ export async function POST(
             },
           },
         },
+        order: {
+          include: {
+            samples: {
+              include: { reads: true },
+            },
+          },
+        },
       },
     });
 
@@ -168,9 +176,16 @@ export async function POST(
       );
     }
 
-    if (!run.study) {
+    const target: PipelineTarget | null =
+      run.targetType === 'order' && run.orderId
+        ? { type: 'order', orderId: run.orderId }
+        : run.studyId
+          ? { type: 'study', studyId: run.studyId }
+          : null;
+
+    if (!target) {
       return NextResponse.json(
-        { error: 'Run has no associated study' },
+        { error: 'Run has no associated target' },
         { status: 400 }
       );
     }
@@ -233,9 +248,10 @@ export async function POST(
     }
 
     const metadataValidation = await validatePipelineMetadata(
-      run.studyId!,
+      selectedSampleIds && selectedSampleIds.length > 0
+        ? { ...target, sampleIds: selectedSampleIds }
+        : target,
       run.pipelineId,
-      selectedSampleIds
     );
     const metadataErrors = metadataValidation.issues
       .filter((issue) => issue.severity === 'error')
@@ -395,8 +411,9 @@ export async function POST(
       : await prepareGenericRun({
           runId: run.id,
           pipelineId,
-          studyId: run.studyId!,
-          sampleIds: selectedSampleIds,
+          target: selectedSampleIds && selectedSampleIds.length > 0
+            ? { ...target, sampleIds: selectedSampleIds }
+            : target,
           config,
           executionSettings: {
             ...executionSettings,

@@ -79,6 +79,7 @@ model Order {
   samples          Sample[]
   sequencingArtifacts SequencingArtifact[]
   sequencingUploads   SequencingUpload[]
+  pipelineRuns      PipelineRun[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
   tickets          Ticket[]     @relation("TicketOrder")
@@ -295,6 +296,7 @@ model PipelineRun {
   runNumber  String @unique // MAG-20240126-001
   pipelineId String // 'mag', 'submg', 'fastqc'
   status     String @default("pending") // pending, queued, running, completed, failed, cancelled
+  targetType String @default("study") // study, order
 
   // Configuration snapshot at run time
   config         String? // JSON
@@ -303,6 +305,8 @@ model PipelineRun {
   // Input - which study this run is for
   studyId String?
   study   Study?  @relation(fields: [studyId], references: [id])
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id])
 
   // Execution details
   runFolder   String? // Path to run directory
@@ -347,6 +351,10 @@ model PipelineRun {
   steps             PipelineRunStep[]
   events            PipelineRunEvent[]
   artifacts         PipelineArtifact[]
+
+  @@index([studyId])
+  @@index([orderId])
+  @@index([targetType])
 }
 
 // Individual step within a pipeline run (for DAG visualization)

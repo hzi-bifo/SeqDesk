@@ -1,0 +1,47 @@
+{
+  "pipeline": "simulate-reads",
+  "name": "Simulate Reads",
+  "description": "Generate dummy sequencing reads for order samples and wire them back into SeqDesk.",
+  "version": "0.1.0",
+  "steps": [
+    {
+      "id": "simulate_reads",
+      "name": "Simulate Reads",
+      "description": "Create synthetic FASTQ files for each selected sample.",
+      "category": "qc",
+      "dependsOn": [],
+      "tools": [
+        "node"
+      ],
+      "outputs": [
+        "sample_simulated_reads",
+        "summary"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "order_samples",
+      "name": "Order Samples",
+      "description": "Selected samples from the current order."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_simulated_reads",
+      "name": "Simulated sample reads",
+      "description": "Generated FASTQ files written back into sample Read records.",
+      "fromStep": "simulate_reads",
+      "destination": "sample_reads",
+      "destinationDescription": "Creates or replaces linked sample reads."
+    },
+    {
+      "id": "summary",
+      "name": "Simulation summary",
+      "description": "Summary file listing generated reads per sample.",
+      "fromStep": "simulate_reads",
+      "destination": "run_artifact",
+      "destinationDescription": "Run artifact for provenance and download."
+    }
+  ]
+}

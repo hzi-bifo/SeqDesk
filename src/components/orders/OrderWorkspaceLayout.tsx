@@ -13,7 +13,7 @@ export function OrderWorkspaceLayout({
   orderId,
 }: OrderWorkspaceLayoutProps) {
   return (
-    <div className="min-w-0 xl:flex xl:min-h-[calc(100svh-2.5rem)] xl:items-stretch">
+    <div className="min-w-0 xl:flex xl:min-h-svh xl:items-stretch">
       <div className="min-w-0 flex-1">{children}</div>
       <OrderNotesPanel orderId={orderId} />
     </div>

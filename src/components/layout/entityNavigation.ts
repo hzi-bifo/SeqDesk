@@ -37,8 +37,14 @@ export function getStudyHref(
     return "/studies";
   }
 
-  const studySubview = pathname.match(/^\/studies\/[^/]+\/(edit|metadata)$/)?.[1];
+  const studySubview = pathname.match(/^\/studies\/[^/]+\/(edit|metadata|facility)$/)?.[1];
   if (studySubview) {
+    if (studySubview === "facility") {
+      const subsection = searchParams.get("subsection");
+      return subsection
+        ? `/studies/${studyId}/facility?subsection=${subsection}`
+        : `/studies/${studyId}/facility`;
+    }
     return `/studies/${studyId}/${studySubview}`;
   }
 

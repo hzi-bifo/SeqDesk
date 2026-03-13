@@ -1,20 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Caveat, Playfair_Display, Press_Start_2P } from "next/font/google";
+import { Caveat, Playfair_Display, Press_Start_2P } from "next/font/google";
+import { GeistMono } from "geist/font/mono";
 import { GeistPixelSquare } from "geist/font/pixel";
+import { GeistSans } from "geist/font/sans";
 import { Toaster } from "@/components/ui/sonner";
 import { Providers } from "@/components/providers";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 const caveat = Caveat({
   variable: "--font-caveat",
@@ -63,7 +55,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} ${playfair.variable} ${ghostPixel.variable} ${GeistPixelSquare.variable} font-sans antialiased min-h-screen bg-background`}
+        className={`${GeistSans.variable} ${GeistMono.variable} ${caveat.variable} ${playfair.variable} ${ghostPixel.variable} ${GeistPixelSquare.variable} font-sans antialiased min-h-screen bg-background`}
       >
         <Providers>
           {children}

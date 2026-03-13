@@ -9,7 +9,23 @@ export type OutputType =
   | 'report'     // Generates viewable reports (HTML, PDF)
   | 'metric';    // Stores metrics in database
 
-export type InputScope = 'study' | 'samples' | 'sample';
+export type InputScope = 'study' | 'order' | 'samples' | 'sample';
+
+export type PipelineTargetType = 'study' | 'order';
+
+export interface StudyPipelineTarget {
+  type: 'study';
+  studyId: string;
+  sampleIds?: string[];
+}
+
+export interface OrderPipelineTarget {
+  type: 'order';
+  orderId: string;
+  sampleIds?: string[];
+}
+
+export type PipelineTarget = StudyPipelineTarget | OrderPipelineTarget;
 
 export interface PipelineOutput {
   type: OutputType;
@@ -111,8 +127,9 @@ export type PipelineStepStatus =
 // Input for starting a pipeline run
 export interface StartPipelineInput {
   pipelineId: string;
-  studyId: string;
-  sampleIds?: string[];  // If not provided, run on all samples in study
+  studyId?: string;
+  orderId?: string;
+  sampleIds?: string[];  // If not provided, run on all samples in target
   config?: Record<string, unknown>;
 }
 

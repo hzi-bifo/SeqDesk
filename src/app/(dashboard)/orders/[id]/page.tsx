@@ -24,17 +24,16 @@ import {
   AlertCircle,
   Clock,
   CheckCircle2,
-  XCircle,
   FileText,
   Pencil,
   Trash2,
   BookOpen,
   FolderOpen,
   HardDrive,
+  Hash,
   Download,
   Eye,
   RefreshCw,
-  FileCode,
 } from "lucide-react";
 import { parseProjectsValue } from "@/lib/field-types/projects";
 import {
@@ -333,26 +332,6 @@ export default function OrderDetailPage({
   const [perSampleFields, setPerSampleFields] = useState<FormFieldDefinition[]>([]);
   const [enabledMixsChecklists, setEnabledMixsChecklists] = useState<string[]>([]);
 
-  // Simulate reads states
-  const [simulateReadsDialogOpen, setSimulateReadsDialogOpen] = useState(false);
-  const [simulateReadsPhase, setSimulateReadsPhase] = useState<"confirm" | "running" | "done">("confirm");
-  const [simulatingReads, setSimulatingReads] = useState(false);
-  const [simulateReadsResult, setSimulateReadsResult] = useState<{
-    success: boolean;
-    error?: string;
-    createdPath?: string;
-    filesCreated?: number;
-    oldFilesRemoved?: number;
-    samplesProcessed?: number;
-    files?: Array<{
-      sampleId: string;
-      file1: string;
-      file1Size: number;
-      file2: string | null;
-      file2Size: number | null;
-    }>;
-  } | null>(null);
-
   // File inspection states
   const [inspectDialogOpen, setInspectDialogOpen] = useState(false);
   const [inspectingFilePath, setInspectingFilePath] = useState<string | null>(null);
@@ -444,51 +423,6 @@ export default function OrderDetailPage({
         setEnabledMixsChecklists([]);
       });
   }, [fetchOrder, orderId]);
-
-  const handleSimulateReadsConfirm = async () => {
-    setSimulateReadsPhase("running");
-    setSimulatingReads(true);
-    setSimulateReadsResult(null);
-    setError("");
-
-    try {
-      const res = await fetch(`/api/orders/${orderId}/simulate-reads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pairedEnd: true,
-          createRecords: true,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setSimulateReadsResult({
-          success: false,
-          error: data.error || "Failed to create simulated read files",
-        });
-      } else {
-        setSimulateReadsResult({
-          success: true,
-          createdPath: data.createdPath,
-          filesCreated: data.filesCreated,
-          oldFilesRemoved: data.oldFilesRemoved,
-          samplesProcessed: data.samplesProcessed,
-          files: data.files,
-        });
-        setTimeout(() => fetchOrder({ silent: true }), 500);
-      }
-    } catch (err) {
-      setSimulateReadsResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to create simulated reads",
-      });
-    } finally {
-      setSimulatingReads(false);
-      setSimulateReadsPhase("done");
-    }
-  };
 
   const orderStatus = order?.status;
 
@@ -1457,6 +1391,12 @@ export default function OrderDetailPage({
                     Open Sequencing Workspace
                   </Link>
                 </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/orders/${order.id}/pipelines`}>
+                    <Hash className="h-3.5 w-3.5 mr-1.5" />
+                    Order Pipelines
+                  </Link>
+                </Button>
               </div>
             </div>
           )}
@@ -1781,172 +1721,6 @@ export default function OrderDetailPage({
         </DialogContent>
       </Dialog>
 
-      {/* Simulate Reads Dialog */}
-      <Dialog
-        open={simulateReadsDialogOpen}
-        onOpenChange={(open) => {
-          if (!simulatingReads) setSimulateReadsDialogOpen(open);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileCode className="h-5 w-5" />
-              Simulate Reads
-            </DialogTitle>
-            <DialogDescription>
-              {simulateReadsPhase === "confirm"
-                ? "Create simulated FASTQ files for testing"
-                : simulateReadsResult
-                  ? simulateReadsResult.success
-                    ? "Simulated read files created successfully"
-                    : "Failed to create simulated reads"
-                  : "Creating simulated FASTQ files..."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-4">
-            {/* Confirmation phase */}
-            {simulateReadsPhase === "confirm" && order && (
-              <div className="space-y-3">
-                {(() => {
-                  const existingFileCount = order.samples.reduce(
-                    (count, s) => count + s.reads.filter(r => r.file1 || r.file2).length * 2,
-                    0
-                  );
-                  const samplesWithReads = order.samples.filter(
-                    s => s.reads.some(r => r.file1 || r.file2)
-                  );
-                  return (
-                    <>
-                      <div className="text-sm">
-                        This will create paired-end FASTQ files (R1 + R2) for{" "}
-                        <span className="font-medium">{order.samples.length}</span>{" "}
-                        sample{order.samples.length !== 1 ? "s" : ""}.
-                      </div>
-                      {samplesWithReads.length > 0 && (
-                        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
-                          <div className="text-sm font-medium text-amber-800 mb-2 flex items-center gap-1.5">
-                            <AlertCircle className="h-4 w-4" />
-                            Existing files will be replaced
-                          </div>
-                          <div className="text-xs text-amber-700 space-y-1">
-                            <p>
-                              {samplesWithReads.length} sample{samplesWithReads.length !== 1 ? "s" : ""}{" "}
-                              already {samplesWithReads.length !== 1 ? "have" : "has"} read files
-                              ({existingFileCount} file{existingFileCount !== 1 ? "s" : ""} total).
-                            </p>
-                            <div className="mt-2 max-h-[120px] overflow-y-auto space-y-0.5">
-                              {samplesWithReads.map((s) => (
-                                <div key={s.id} className="flex items-center gap-1.5">
-                                  <FlaskConical className="h-3 w-3 flex-shrink-0" />
-                                  <span className="font-medium">{s.sampleId}</span>
-                                  <span className="text-amber-600">
-                                    -- {s.reads.filter(r => r.file1 || r.file2).length} read record{s.reads.filter(r => r.file1 || r.file2).length !== 1 ? "s" : ""}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-
-            {/* Running phase */}
-            {simulateReadsPhase === "running" && (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            )}
-
-            {/* Done phase */}
-            {simulateReadsPhase === "done" && simulateReadsResult && (
-              <div
-                className={`p-4 rounded-lg border ${
-                  simulateReadsResult.success
-                    ? "bg-green-50 border-green-200"
-                    : "bg-red-50 border-red-200"
-                }`}
-              >
-                <div className="text-center">
-                  {simulateReadsResult.success ? (
-                    <>
-                      <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-2" />
-                      <p className="font-medium">Files Created Successfully</p>
-                      <div className="mt-3 text-sm text-muted-foreground space-y-1">
-                        <p>
-                          <span className="font-medium">
-                            {simulateReadsResult.filesCreated}
-                          </span>{" "}
-                          files created for{" "}
-                          <span className="font-medium">
-                            {simulateReadsResult.samplesProcessed}
-                          </span>{" "}
-                          samples
-                        </p>
-                        {(simulateReadsResult.oldFilesRemoved ?? 0) > 0 && (
-                          <p className="text-xs text-muted-foreground">
-                            {simulateReadsResult.oldFilesRemoved} old file{simulateReadsResult.oldFilesRemoved !== 1 ? "s" : ""} replaced
-                          </p>
-                        )}
-                        {simulateReadsResult.files && simulateReadsResult.files.length > 0 && (
-                          <div className="mt-3 text-left max-h-[150px] overflow-y-auto space-y-2">
-                            {simulateReadsResult.files.map((f) => (
-                              <div key={f.sampleId} className="text-xs border-t pt-1.5">
-                                <span className="font-medium">{f.sampleId}</span>
-                                <div className="ml-2 text-muted-foreground">
-                                  R1: {formatFileSize(f.file1Size)}
-                                  {f.file2Size != null && <> · R2: {formatFileSize(f.file2Size)}</>}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
-                      <p className="font-medium text-red-800">Failed</p>
-                      <p className="text-sm text-red-600 mt-1">
-                        {simulateReadsResult.error}
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            {simulateReadsPhase === "confirm" && (
-              <>
-                <Button variant="outline" onClick={() => setSimulateReadsDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSimulateReadsConfirm}>
-                  Confirm
-                </Button>
-              </>
-            )}
-            {simulateReadsPhase === "running" && (
-              <Button variant="outline" disabled>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Creating files...
-              </Button>
-            )}
-            {simulateReadsPhase === "done" && (
-              <Button onClick={() => setSimulateReadsDialogOpen(false)}>
-                Close
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
     </>
   );
