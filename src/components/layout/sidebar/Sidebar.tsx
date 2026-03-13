@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Plus, ArrowLeft } from "lucide-react";
+import { ArrowLeft, Settings } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "../SidebarContext";
@@ -12,7 +12,6 @@ import { useSidebarEntity } from "./useSidebarEntity";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarEntitySwitcher } from "./SidebarEntitySwitcher";
 import { SidebarEntityNav } from "./SidebarEntityNav";
-import { SidebarGlobalNav } from "./SidebarGlobalNav";
 import { SidebarFieldHelp } from "./SidebarFieldHelp";
 import { SidebarAdminNav } from "./SidebarAdminNav";
 import { SidebarSupportNav } from "./SidebarSupportNav";
@@ -43,13 +42,6 @@ export function Sidebar({ user, version }: SidebarProps) {
   const isAdminPage = pathname.startsWith("/admin") || pathname.startsWith("/messages");
 
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [counts, setCounts] = useState<{
-    orders: number;
-    studies: number;
-    files: number;
-    submissions: number;
-    analysis: number;
-  }>({ orders: 0, studies: 0, files: 0, submissions: 0, analysis: 0 });
 
   // Fetch unread message count
   useEffect(() => {
@@ -70,33 +62,10 @@ export function Sidebar({ user, version }: SidebarProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch sidebar counts (only needed for regular sidebar)
-  useEffect(() => {
-    if (isAdminPage) return;
-
-    const fetchCounts = async () => {
-      try {
-        const res = await fetch("/api/sidebar/counts");
-        if (res.ok) {
-          const data = await res.json();
-          setCounts(data);
-        }
-      } catch {
-        // Silently fail
-      }
-    };
-
-    fetchCounts();
-    const interval = setInterval(fetchCounts, 60000);
-    return () => clearInterval(interval);
-  }, [isAdminPage]);
-
   // Close mobile sidebar on navigation
   useEffect(() => {
     setMobileOpen((isOpen) => (isOpen ? false : isOpen));
   }, [pathname, setMobileOpen]);
-
-  const hasEntityContext = entityContext.entityType !== null;
 
   return (
     <aside
@@ -141,24 +110,12 @@ export function Sidebar({ user, version }: SidebarProps) {
 
           {/* Navigation */}
           <nav className={cn("flex-1 p-3 space-y-1 overflow-y-auto", collapsed && "px-2")}>
-            {/* Entity/data sub-navigation (always shown -- adapts to context) */}
-            <SidebarEntityNav entityContext={entityContext} collapsed={collapsed} />
-
-            {/* Separator */}
-            <div className={cn("my-2", collapsed ? "mx-1" : "mx-3")}>
-              <div className="h-px bg-border" />
-            </div>
-
-            {/* Global nav */}
-            <SidebarGlobalNav
+            <SidebarEntityNav
+              entityContext={entityContext}
               collapsed={collapsed}
-              counts={counts}
+              isDemoUser={isDemoUser}
               showAdminControls={showAdminControls}
-              hasEntityContext={hasEntityContext}
             />
-
-            {/* Field Help Panel */}
-            {focusedField && !collapsed && <SidebarFieldHelp />}
           </nav>
 
           {/* Support section - Researchers only */}
@@ -166,21 +123,32 @@ export function Sidebar({ user, version }: SidebarProps) {
             <SidebarSupportNav collapsed={collapsed} unreadMessages={unreadMessages} />
           )}
 
-          {/* New Order Button */}
-          <div className={cn("px-3 pb-3", collapsed && "px-2")}>
-            <Link
-              href="/orders/new"
-              className={cn(
-                "flex items-center justify-center gap-2 w-full py-2.5 rounded-lg font-medium text-sm transition-colors",
-                "border border-border text-foreground hover:bg-secondary"
-              )}
-              title="Create new order"
-            >
-              <Plus className={collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} />
-              {!collapsed && "New Order"}
-            </Link>
-          </div>
+          {/* Field Help Panel */}
+          {focusedField && !collapsed && (
+            <div className="px-3 pb-2">
+              <SidebarFieldHelp />
+            </div>
+          )}
+
         </>
+      )}
+
+      {/* Facility Settings - admin shortcut */}
+      {showAdminControls && !isAdminPage && (
+        <div className={cn("px-3 pb-1", collapsed && "px-2")}>
+          <Link
+            href="/admin/settings"
+            className={cn(
+              "flex items-center gap-2 w-full rounded-lg text-sm transition-colors",
+              "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+              collapsed ? "justify-center p-2" : "px-3 py-2"
+            )}
+            title={collapsed ? "Facility Settings" : undefined}
+          >
+            <Settings className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
+            {!collapsed && <span>Facility Settings</span>}
+          </Link>
+        </div>
       )}
 
       {/* User Menu */}

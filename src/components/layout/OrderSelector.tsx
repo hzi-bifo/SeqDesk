@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Inbox, ChevronDown, Search, Layers, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { getOrderHref } from "./entityNavigation";
 
 interface OrderItem {
   id: string;
@@ -37,6 +38,8 @@ export function OrderSelector({
   collapsed = false,
 }: OrderSelectorProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<OrderItem[]>([]);
@@ -95,70 +98,71 @@ export function OrderSelector({
 
   const handleSelect = (orderId: string | null) => {
     setOpen(false);
-    if (orderId === null) {
-      router.push("/orders");
-    } else {
-      router.push(`/orders/${orderId}`);
-    }
+    router.push(getOrderHref(orderId, pathname, searchParams));
   };
 
   const displayLabel = currentOrderName || "All Orders";
   const hasOrder = !!currentOrderId;
-
-  if (variant === "sidebar" && collapsed) {
-    return (
-      <div className="px-2 pb-2">
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex w-full items-center justify-center rounded-lg p-2 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
-          title={displayLabel}
-        >
-          {hasOrder ? (
-            <Inbox className="h-5 w-5" />
-          ) : (
-            <Layers className="h-5 w-5" />
-          )}
-        </button>
-      </div>
-    );
-  }
-
   const isSidebar = variant === "sidebar";
+  const isCollapsedSidebar = isSidebar && collapsed;
 
   return (
-    <div ref={ref} className={cn("relative", isSidebar ? "px-3 pb-2" : "")}>
+    <div
+      ref={ref}
+      className={cn(
+        "relative",
+        isSidebar && (isCollapsedSidebar ? "px-2 pb-2" : "px-3 pb-2"),
+      )}
+    >
       <button
         onClick={() => setOpen(!open)}
         className={cn(
           "flex w-full items-center gap-2 rounded-lg text-sm transition-colors",
-          isSidebar
+          isCollapsedSidebar
+            ? "justify-center p-2 text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+            : isSidebar
             ? "border border-border px-3 py-2 hover:bg-secondary/50"
             : "px-3 py-1.5 hover:bg-secondary/50",
           open && "bg-secondary/50"
         )}
+        title={isCollapsedSidebar ? displayLabel : undefined}
       >
-        {isSidebar &&
-          (hasOrder ? (
-            <Inbox className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {isCollapsedSidebar ? (
+          hasOrder ? (
+            <Inbox className="h-5 w-5" />
           ) : (
-            <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ))}
-        <span className="min-w-0 truncate flex-1 text-left font-medium">
-          {displayLabel}
-        </span>
-        <ChevronDown
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
-            open && "rotate-180"
-          )}
-        />
+            <Layers className="h-5 w-5" />
+          )
+        ) : (
+          <>
+            {isSidebar &&
+              (hasOrder ? (
+                <Inbox className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ))}
+            <span className="min-w-0 truncate flex-1 text-left font-medium">
+              {displayLabel}
+            </span>
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                open && "rotate-180"
+              )}
+            />
+          </>
+        )}
       </button>
 
       {open && (
         <div
           className={cn(
-            "absolute z-50 mt-1 rounded-lg border border-border bg-card p-2 shadow-md",
-            isSidebar ? "left-3 right-3" : "left-0 min-w-[260px]"
+            "absolute z-50 rounded-lg border border-border bg-card p-2 shadow-md",
+            isCollapsedSidebar
+              ? "left-full top-0 ml-2 w-72"
+              : isSidebar
+                ? "left-3 right-3 mt-1"
+                : "left-0 mt-1 min-w-[260px]"
           )}
         >
           {/* Search */}

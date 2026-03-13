@@ -1,245 +1,307 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Eye,
-  Pencil,
+  FileText,
   FlaskConical,
   HardDrive,
-  BookOpen,
-  FileCode,
-  FileText,
-  Settings,
-  ClipboardList,
-  CheckCircle2,
-  Table as TableIcon,
-  Leaf,
-  StickyNote,
   Send,
+  Shield,
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SidebarEntityContext } from "./useSidebarEntity";
 import { useOrderFormSteps } from "./useOrderFormSteps";
+import {
+  getOrderProgressIndicatorClassName,
+  getOrderProgressIndicatorLabel,
+} from "@/lib/orders/progress-status";
 
 interface SidebarEntityNavProps {
   entityContext: SidebarEntityContext;
   collapsed: boolean;
+  isDemoUser?: boolean;
+  showAdminControls?: boolean;
 }
 
-interface SubPageDef {
+interface NavItem {
   key: string;
   label: string;
-  href: string;
+  href: string | undefined;
   icon: React.ComponentType<{ className?: string }>;
-  groupHeader?: string; // Section header text before this item
+  show: boolean;
 }
 
-// Map icon names from form schema to lucide icon components
-const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-  FileText,
-  Settings,
-  ClipboardList,
-  CheckCircle2,
-  FlaskConical,
-  Table: TableIcon,
-  Leaf,
-  Eye,
-};
-
-function resolveIcon(name?: string): React.ComponentType<{ className?: string }> {
-  if (!name) return FileText;
-  return iconMap[name] || FileText;
-}
-
-function getStudySubPages(id: string): SubPageDef[] {
-  return [
-    // Overview
-    { key: "overview", label: "Overview", href: `/studies/${id}`, icon: Eye },
-
-    // Study Metadata section
-    { key: "edit", label: "Edit Study", href: `/studies/${id}/edit`, icon: Pencil, groupHeader: "Study Metadata" },
-    { key: "metadata", label: "MIxS Metadata", href: `/studies/${id}/metadata`, icon: FileCode },
-
-    // Data section
-    { key: "samples", label: "Samples", href: `/studies/${id}?tab=samples`, icon: FlaskConical, groupHeader: "Data" },
-    { key: "reads", label: "Read Files", href: `/studies/${id}?tab=reads`, icon: HardDrive },
-
-    // Pipeline section
-    { key: "pipelines", label: "Pipelines", href: `/studies/${id}?tab=pipelines`, icon: Workflow, groupHeader: "Pipeline" },
-
-    // Internal section
-    { key: "notes", label: "Notes", href: `/studies/${id}?tab=notes`, icon: StickyNote, groupHeader: "Internal" },
-    { key: "ena", label: "ENA Submission", href: `/studies/${id}?tab=ena`, icon: Send },
-  ];
-}
-
-/** Study sub-pages when no study is selected — link to /studies list */
-function getStudyGlobalPages(): SubPageDef[] {
-  return [
-    // Data section — always accessible, shows aggregated views
-    { key: "samples", label: "Samples", href: "/studies?tab=samples", icon: FlaskConical, groupHeader: "Data" },
-    { key: "reads", label: "Read Files", href: "/studies?tab=reads", icon: HardDrive },
-
-    // Pipeline section
-    { key: "pipelines", label: "Pipelines", href: "/studies?tab=pipelines", icon: Workflow, groupHeader: "Pipeline" },
-
-    // Internal section
-    { key: "notes", label: "Notes", href: "/studies?tab=notes", icon: StickyNote, groupHeader: "Internal" },
-  ];
-}
-
-export function SidebarEntityNav({ entityContext, collapsed }: SidebarEntityNavProps) {
-  const { entityType, entityId, currentSubPage } = entityContext;
+export function SidebarEntityNav({
+  entityContext,
+  collapsed,
+  isDemoUser = false,
+  showAdminControls = false,
+}: SidebarEntityNavProps) {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { steps: formSteps, loading: formStepsLoading } = useOrderFormSteps();
+  const { entityType, entityId } = entityContext;
+  const { steps: orderFormSteps, facilitySections } = useOrderFormSteps(
+    showAdminControls,
+    entityType === "order" ? entityId : null
+  );
+  const facilityStep = orderFormSteps.find((step) => step.id === "_facility");
+  const detailOrderSteps = orderFormSteps.filter((step) => step.id !== "_facility");
+  const isEntityRoute = pathname.startsWith("/orders") || pathname.startsWith("/studies");
 
-  let subPages: SubPageDef[];
-  let isStudyGlobal = false;
+  // Derive active tab from URL
+  const activeTab = pathname.startsWith("/studies") ? "studies" : "orders";
 
-  if (entityType === "order" && entityId) {
-    // ── Order entity nav ──
-    subPages = [
-      { key: "overview", label: "Overview", href: `/orders/${entityId}`, icon: Eye },
-    ];
+  // ── Study nav items ──
+  const studyItems: NavItem[] = [
+    { key: "overview", label: "Overview", href: entityId ? `/studies/${entityId}` : undefined, icon: FileText, show: true },
+    { key: "samples", label: "Samples", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: FlaskConical, show: true },
+    { key: "reads", label: "Read Files", href: entityId ? `/studies/${entityId}?tab=reads` : undefined, icon: HardDrive, show: !isDemoUser },
+    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls && !isDemoUser },
+    { key: "archive", label: "Archive", href: entityId ? `/studies/${entityId}?tab=ena` : undefined, icon: Send, show: !isDemoUser },
+  ];
 
-    // Dynamic form wizard steps (from form schema)
-    if (!formStepsLoading && formSteps.length > 0) {
-      for (let i = 0; i < formSteps.length; i++) {
-        const step = formSteps[i];
-        subPages.push({
-          key: `step-${step.id}`,
-          label: step.label,
-          href: `/orders/${entityId}/edit?step=${step.id}`,
-          icon: resolveIcon(step.icon),
-          groupHeader: i === 0 ? "Order Form" : undefined,
-        });
-      }
-    }
+  // ── Order nav items ──
+  const currentOrderSubview =
+    pathname.match(/^\/orders\/[^/]+\/(edit|files|sequencing|studies)$/)?.[1] ?? null;
+  const requestedOrderSection = searchParams.get("section");
+  const currentOrderSection =
+    requestedOrderSection === "reads"
+      ? "reads"
+      : requestedOrderSection === "facility"
+        ? "facility"
+        : "overview";
+  const currentOrderSubsection = searchParams.get("subsection");
+  const currentOrderOverviewSubsection =
+    currentOrderSection === "overview" ? currentOrderSubsection : null;
+  const currentOrderFacilitySubsection =
+    currentOrderSection === "facility" ? currentOrderSubsection : null;
+  const currentOrderEditStep =
+    currentOrderSubview === "edit" ? searchParams.get("step") : null;
+  const currentOrderEditScope =
+    currentOrderSubview === "edit" ? searchParams.get("scope") : null;
 
-    // Extra pages
-    subPages.push({
-      key: "files",
-      label: "Files",
-      href: `/orders/${entityId}/files`,
-      icon: HardDrive,
-      groupHeader: "Data",
-    });
-    subPages.push({
-      key: "studies",
-      label: "Studies",
-      href: `/orders/${entityId}/studies`,
-      icon: BookOpen,
-    });
-  } else if (entityType === "study" && entityId) {
-    // ── Study entity nav ──
-    subPages = getStudySubPages(entityId);
-  } else {
-    // ── No entity selected — show study data views ──
-    subPages = getStudyGlobalPages();
-    isStudyGlobal = true;
+  const orderItems: NavItem[] = [
+    { key: "details", label: "Overview", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
+    {
+      key: "facility",
+      label: "Facility Fields",
+      href: entityId ? `/orders/${entityId}?section=facility` : undefined,
+      icon: Shield,
+      show: showAdminControls && !!facilityStep,
+    },
+    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls && !isDemoUser },
+  ];
+
+  const items = activeTab === "studies" ? studyItems : orderItems;
+  const hasEntity = activeTab === "studies"
+    ? entityType === "study" && !!entityId
+    : entityType === "order" && !!entityId;
+
+  if (!isEntityRoute && !hasEntity) {
+    return null;
   }
 
-  if (subPages.length === 0) return null;
+  // Determine active state
+  const getIsActive = (item: NavItem): boolean => {
+    if (!hasEntity) return false;
 
-  // Determine which item is active
-  const getIsActive = (page: SubPageDef): boolean => {
-    if (isStudyGlobal) {
-      // For global study items, check tab search param
+    if (activeTab === "studies") {
       const currentTab = searchParams.get("tab");
-      return currentTab === page.key;
+      if (item.key === "overview") return currentTab === null || currentTab === "overview" || currentTab === "notes";
+      if (item.key === "samples") return currentTab === "samples";
+      if (item.key === "reads") return currentTab === "reads";
+      if (item.key === "analysis") return currentTab === "pipelines";
+      if (item.key === "archive") return currentTab === "ena";
+      return false;
     }
-    if (entityType === "order") {
-      if (page.key === "overview") {
-        return currentSubPage === "overview";
+
+    // Orders
+    if (item.key === "details") {
+      if (currentOrderSubview === "edit") {
+        return currentOrderEditStep !== "_facility" && currentOrderEditScope !== "facility";
       }
-      if (page.key.startsWith("step-")) {
-        const stepId = page.key.replace("step-", "");
-        if (currentSubPage === "edit") {
-          const stepParam = searchParams.get("step");
-          return stepParam === stepId;
-        }
-        return false;
-      }
-      return currentSubPage === page.key;
+      return currentOrderSection === "overview" && currentOrderOverviewSubsection !== "_facility";
     }
-    if (entityType === "study") {
-      // Overview: on /studies/[id] with no tab param
-      if (page.key === "overview") {
-        return currentSubPage === "overview" && !searchParams.get("tab");
-      }
-      // Edit/metadata: sub-page routes
-      if (page.key === "edit") return currentSubPage === "edit";
-      if (page.key === "metadata") return currentSubPage === "metadata";
-      // Tab-based pages: check ?tab= param
-      const currentTab = searchParams.get("tab");
-      return currentTab === page.key;
+    if (item.key === "facility") {
+      return (
+        currentOrderSection === "facility" ||
+        currentOrderEditStep === "_facility" ||
+        (currentOrderEditScope === "facility" && currentOrderEditStep === "samples")
+      );
+    }
+    if (item.key === "sequencing") {
+      return currentOrderSubview === "sequencing" || currentOrderSubview === "files" || (!currentOrderSubview && currentOrderSection === "reads");
     }
     return false;
   };
 
-  const navIconClass = collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0";
-
   return (
-    <div className="space-y-0.5">
-      {subPages.map((page) => {
-        const isActive = getIsActive(page);
+    <div className="space-y-1">
+      {items
+        .filter((item) => item.show)
+        .map((item) => {
+          const isActive = getIsActive(item);
+          const isDisabled = !hasEntity;
+          const shouldShowOrderSubitems =
+            !collapsed &&
+            activeTab === "orders" &&
+            item.key === "details" &&
+            !!entityId &&
+            detailOrderSteps.length > 0;
+          const shouldShowFacilitySubitems =
+            !collapsed &&
+            activeTab === "orders" &&
+            item.key === "facility" &&
+            !!entityId &&
+            facilitySections.length > 0;
 
-        return (
-          <div key={page.key}>
-            {/* Section group header */}
-            {page.groupHeader && !collapsed && (
-              <div className="mt-3 mb-1 px-3">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                  {page.groupHeader}
-                </p>
-              </div>
-            )}
-            {page.groupHeader && collapsed && (
-              <div className="mx-1 my-1.5">
-                <div className="h-px bg-border" />
-              </div>
-            )}
-            {collapsed ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Link
-                    href={page.href}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
-                      "justify-center px-0 py-2.5",
-                      isActive
-                        ? "bg-secondary text-foreground font-medium border-l-2 border-foreground ml-0.5"
-                        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                    )}
-                    title={page.label}
-                  >
-                    <page.icon className={navIconClass} />
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>
-                  {page.label}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Link
-                href={page.href}
+          if (isDisabled) {
+            const disabledItem = (
+              <span
+                key={item.key}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
-                  isActive
-                    ? "bg-secondary text-foreground font-medium border-l-2 border-foreground ml-0.5"
-                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                  "flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm text-muted-foreground/40 cursor-default",
+                  collapsed && "justify-center px-0 py-2"
                 )}
               >
-                <page.icon className={navIconClass} />
-                <span className="flex-1">{page.label}</span>
-              </Link>
-            )}
-          </div>
-        );
-      })}
+                <item.icon className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
+                {!collapsed && <span className="flex-1">{item.label}</span>}
+              </span>
+            );
+
+            if (collapsed) {
+              return (
+                <Tooltip key={item.key}>
+                  <TooltipTrigger asChild>{disabledItem}</TooltipTrigger>
+                  <TooltipContent side="right" sideOffset={8}>
+                    {item.label}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            }
+
+            return disabledItem;
+          }
+
+          const link = (
+            <Link
+              key={item.key}
+              href={item.href || (activeTab === "studies" ? "/studies" : "/orders")}
+              className={cn(
+                "flex items-center gap-3 px-3 py-1.5 rounded-lg transition-colors text-sm",
+                collapsed && "justify-center px-0 py-2",
+                isActive
+                  ? "bg-secondary text-foreground font-medium"
+                  : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+              )}
+            >
+              <item.icon className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+            </Link>
+          );
+
+          if (collapsed) {
+            return (
+              <Tooltip key={item.key}>
+                <TooltipTrigger asChild>{link}</TooltipTrigger>
+                <TooltipContent side="right" sideOffset={8}>
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+
+          if (!shouldShowOrderSubitems && !shouldShowFacilitySubitems) {
+            return link;
+          }
+
+          return (
+            <div key={item.key} className="space-y-1">
+              {link}
+              {shouldShowOrderSubitems && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  {detailOrderSteps.map((step) => {
+                    const isStepActive =
+                      currentOrderSubview === "edit"
+                        ? currentOrderEditStep === step.id
+                        : currentOrderOverviewSubsection === step.id;
+                    const indicatorStatus = step.status || "empty";
+                    return (
+                      <Link
+                        key={step.id}
+                        href={`/orders/${entityId}/edit?step=${step.id}`}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                          isStepActive
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full shadow-sm",
+                            getOrderProgressIndicatorClassName(indicatorStatus),
+                            isStepActive && "ring-2 ring-background"
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{step.label}</span>
+                        <span className="sr-only">
+                          {getOrderProgressIndicatorLabel(indicatorStatus)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+              {shouldShowFacilitySubitems && (
+                <div className="ml-5 border-l border-slate-200 pl-2">
+                  {facilitySections.map((section) => {
+                    const facilitySectionHref =
+                      section.id === "order-fields"
+                        ? `/orders/${entityId}/edit?step=_facility&scope=facility`
+                        : section.id === "sample-fields"
+                          ? `/orders/${entityId}/edit?step=samples&scope=facility`
+                          : `/orders/${entityId}?section=facility&subsection=${section.id}`;
+                    const isSectionActive =
+                      currentOrderFacilitySubsection === section.id ||
+                      (currentOrderEditScope === "facility" &&
+                        ((section.id === "order-fields" && currentOrderEditStep === "_facility") ||
+                          (section.id === "sample-fields" && currentOrderEditStep === "samples")));
+                    return (
+                      <Link
+                        key={section.id}
+                        href={facilitySectionHref}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                          isSectionActive
+                            ? "bg-slate-100 text-slate-900 font-medium"
+                            : "text-muted-foreground hover:bg-slate-100/80 hover:text-foreground"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full shadow-sm",
+                            getOrderProgressIndicatorClassName(section.status),
+                            isSectionActive && "ring-2 ring-background"
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{section.label}</span>
+                        <span className="sr-only">
+                          {getOrderProgressIndicatorLabel(section.status)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
     </div>
   );
 }

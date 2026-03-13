@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { DEFAULT_FORM_SCHEMA, DEFAULT_GROUPS, type FormFieldDefinition } from "@/types/form-config";
+import { DEFAULT_FORM_SCHEMA, type FormFieldDefinition } from "@/types/form-config";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 import {
   ensureOrderModuleDefaultFields,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
+import {
+  getFixedOrderSections,
+  normalizeOrderFormSchema,
+} from "@/lib/orders/fixed-sections";
 
 interface ModulesConfig {
   modules: Record<string, boolean>;
@@ -73,6 +77,13 @@ function filterFieldsByModules(
   });
 }
 
+function filterFieldsForRole(
+  fields: FormFieldDefinition[],
+  isFacilityAdmin: boolean
+): FormFieldDefinition[] {
+  return isFacilityAdmin ? fields : fields.filter((field) => !field.adminOnly);
+}
+
 // GET form schema for order creation (public to authenticated users)
 export async function GET() {
   try {
@@ -81,6 +92,8 @@ export async function GET() {
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
     const [config, siteSettings] = await Promise.all([
       db.orderFormConfig.findUnique({
@@ -98,13 +111,16 @@ export async function GET() {
       const defaultFields = ensureOrderModuleDefaultFields(DEFAULT_FORM_SCHEMA.fields, {
         sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
       });
-      const filteredFields = filterFieldsByModules(defaultFields, modulesConfig);
+      const filteredFields = filterFieldsForRole(
+        filterFieldsByModules(defaultFields, modulesConfig),
+        isFacilityAdmin
+      );
       const perSampleFields = filteredFields.filter(
         (field) => field.perSample && field.visible
       );
       return NextResponse.json({
         fields: filteredFields,
-        groups: DEFAULT_FORM_SCHEMA.groups,
+        groups: getFixedOrderSections(),
         version: 1,
         enabledMixsChecklists: [],
         perSampleFields,
@@ -124,8 +140,14 @@ export async function GET() {
             sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
           })
         : baseFields;
-    const filteredFields = filterFieldsByModules(fields, modulesConfig);
-    const groups = parsed.groups || DEFAULT_GROUPS;
+    const normalizedSchema = normalizeOrderFormSchema({
+      fields,
+      groups: Array.isArray(parsed) ? undefined : parsed.groups,
+    });
+    const filteredFields = filterFieldsForRole(
+      filterFieldsByModules(normalizedSchema.fields, modulesConfig),
+      isFacilityAdmin
+    );
     const enabledMixsChecklists = isModuleEnabled(modulesConfig, "mixs-metadata")
       ? parsed.enabledMixsChecklists || []
       : [];
@@ -134,7 +156,7 @@ export async function GET() {
     );
     return NextResponse.json({
       fields: filteredFields,
-      groups,
+      groups: normalizedSchema.groups,
       version: config.version,
       enabledMixsChecklists,
       perSampleFields,

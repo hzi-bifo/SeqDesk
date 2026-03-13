@@ -58,7 +58,7 @@ export const DEFAULT_GROUPS: FormFieldGroup[] = [
   },
   {
     id: "group_sequencing",
-    name: "Sequencing Parameters",
+    name: "Sequencing Information",
     description: "Sequencing technology and library settings",
     icon: "Settings",
     order: 1,
@@ -172,6 +172,20 @@ export const LIBRARY_SELECTION_OPTIONS: SelectOption[] = [
   { value: "PolyA", label: "PolyA" },
   { value: "Oligo-dT", label: "Oligo-dT" },
   { value: "UNSPECIFIED", label: "Unspecified" },
+];
+
+export const FACILITY_QC_STATUS_OPTIONS: SelectOption[] = [
+  { value: "pending", label: "Pending" },
+  { value: "in_review", label: "In Review" },
+  { value: "passed", label: "Passed" },
+  { value: "needs_follow_up", label: "Needs Follow-up" },
+];
+
+export const FACILITY_SAMPLE_QC_RESULT_OPTIONS: SelectOption[] = [
+  { value: "pending", label: "Pending" },
+  { value: "passed", label: "Passed" },
+  { value: "failed", label: "Failed" },
+  { value: "repeat_requested", label: "Repeat Requested" },
 ];
 
 // Default system fields - pre-seeded on new installations
@@ -291,6 +305,30 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     systemKey: "librarySelection",
   },
   {
+    id: "field_facility_qc_status",
+    type: "select",
+    label: "Internal QC Status",
+    name: "facility_qc_status",
+    required: false,
+    visible: true,
+    helpText: "Facility-only QC checkpoint for tracking internal review on this order.",
+    options: FACILITY_QC_STATUS_OPTIONS,
+    order: 6,
+    adminOnly: true,
+  },
+  {
+    id: "field_facility_internal_notes",
+    type: "textarea",
+    label: "Internal Notes",
+    name: "facility_internal_notes",
+    required: false,
+    visible: true,
+    helpText: "Facility-only notes about intake, coordination, or follow-up for this order.",
+    placeholder: "Internal notes for the sequencing team...",
+    order: 7,
+    adminOnly: true,
+  },
+  {
     id: "system_organism",
     type: "organism",
     label: "Organism",
@@ -332,6 +370,32 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     isSystem: true,
     perSample: true,
     moduleSource: "ena-sample-fields",
+  },
+  {
+    id: "field_facility_sample_qc_result",
+    type: "select",
+    label: "Sample QC Result",
+    name: "facility_sample_qc_result",
+    required: false,
+    visible: true,
+    helpText: "Facility-only QC result for this sample after internal review.",
+    options: FACILITY_SAMPLE_QC_RESULT_OPTIONS,
+    order: 3,
+    perSample: true,
+    adminOnly: true,
+  },
+  {
+    id: "field_facility_sample_notes",
+    type: "textarea",
+    label: "Sample Notes",
+    name: "facility_sample_notes",
+    required: false,
+    visible: true,
+    helpText: "Facility-only notes for this sample, such as handling issues or follow-up comments.",
+    placeholder: "Internal sample notes...",
+    order: 4,
+    perSample: true,
+    adminOnly: true,
   },
 ];
 

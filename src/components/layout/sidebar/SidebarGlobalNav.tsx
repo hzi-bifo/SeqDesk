@@ -16,6 +16,7 @@ interface SidebarGlobalNavProps {
   };
   showAdminControls: boolean;
   hasEntityContext: boolean;
+  showEntityLinks?: boolean;
 }
 
 export function SidebarGlobalNav({
@@ -23,6 +24,7 @@ export function SidebarGlobalNav({
   counts,
   showAdminControls,
   hasEntityContext,
+  showEntityLinks = true,
 }: SidebarGlobalNavProps) {
   const pathname = usePathname();
 
@@ -52,6 +54,7 @@ export function SidebarGlobalNav({
       count: counts.orders,
       show: true,
       hasSubNav: true,
+      isEntityLink: true,
     },
     {
       href: "/studies",
@@ -60,6 +63,7 @@ export function SidebarGlobalNav({
       count: counts.studies,
       show: true,
       hasSubNav: true,
+      isEntityLink: true,
     },
     {
       href: "/submissions",
@@ -68,6 +72,7 @@ export function SidebarGlobalNav({
       count: counts.submissions,
       show: showAdminControls,
       hasSubNav: false,
+      isEntityLink: false,
     },
     {
       href: "/analysis",
@@ -76,13 +81,14 @@ export function SidebarGlobalNav({
       count: counts.analysis,
       show: true,
       hasSubNav: false,
+      isEntityLink: false,
     },
   ];
 
   return (
     <div className="space-y-1">
       {items
-        .filter((item) => item.show)
+        .filter((item) => item.show && (showEntityLinks || !item.isEntityLink))
         .map((item) => {
           const link = (
             <Link

@@ -9,7 +9,7 @@ export function SidebarFieldHelp() {
   if (!focusedField) return null;
 
   return (
-    <div className="mt-6 mb-6">
+    <div>
       <div
         className="relative p-3 rounded-lg overflow-hidden"
         style={{

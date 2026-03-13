@@ -636,7 +636,7 @@ export default function SubmissionsPage() {
                           asChild
                           onClick={(e: React.MouseEvent) => e.stopPropagation()}
                         >
-                          <Link href={`/studies/${submission.entityId}?section=archive`}>
+                          <Link href={`/studies/${submission.entityId}?tab=ena`}>
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         </Button>

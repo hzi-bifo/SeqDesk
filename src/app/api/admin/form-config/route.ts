@@ -6,13 +6,16 @@ import {
   FormFieldDefinition,
   FormFieldGroup,
   DEFAULT_FORM_SCHEMA,
-  DEFAULT_GROUPS,
 } from "@/types/form-config";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 import {
   ensureOrderModuleDefaultFields,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
+import {
+  getFixedOrderSections,
+  normalizeOrderFormSchema,
+} from "@/lib/orders/fixed-sections";
 
 interface ModulesConfig {
   modules: Record<string, boolean>;
@@ -75,7 +78,7 @@ export async function GET() {
       return NextResponse.json({
         id: "singleton",
         fields: defaultFields,
-        groups: DEFAULT_FORM_SCHEMA.groups,
+        groups: getFixedOrderSections(),
         version: 1,
         enabledMixsChecklists: [],
       });
@@ -94,12 +97,15 @@ export async function GET() {
             sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
           })
         : baseFields;
-    const groups = parsed.groups || DEFAULT_GROUPS;
+    const normalizedSchema = normalizeOrderFormSchema({
+      fields,
+      groups: Array.isArray(parsed) ? undefined : parsed.groups,
+    });
     const enabledMixsChecklists = parsed.enabledMixsChecklists || [];
     return NextResponse.json({
       id: config.id,
-      fields,
-      groups,
+      fields: normalizedSchema.fields,
+      groups: normalizedSchema.groups,
       version: config.version,
       updatedAt: config.updatedAt,
       enabledMixsChecklists,
@@ -153,9 +159,13 @@ export async function PUT(request: NextRequest) {
     const newVersion = (existing?.version || 0) + 1;
 
     // Build schema object with fields, groups, and enabledMixsChecklists
-    const schemaObj = {
+    const normalizedSchema = normalizeOrderFormSchema({
       fields: fields || DEFAULT_FORM_SCHEMA.fields,
-      groups: groups || DEFAULT_FORM_SCHEMA.groups,
+      groups,
+    });
+    const schemaObj = {
+      fields: normalizedSchema.fields,
+      groups: normalizedSchema.groups,
       enabledMixsChecklists: enabledMixsChecklists || [],
       moduleDefaultsVersion: ORDER_FORM_DEFAULTS_VERSION,
     };
@@ -178,12 +188,15 @@ export async function PUT(request: NextRequest) {
 
     const savedParsed = JSON.parse(config.schema);
     const savedFields = Array.isArray(savedParsed) ? savedParsed : savedParsed.fields || [];
-    const savedGroups = savedParsed.groups || DEFAULT_GROUPS;
+    const savedNormalized = normalizeOrderFormSchema({
+      fields: savedFields,
+      groups: Array.isArray(savedParsed) ? undefined : savedParsed.groups,
+    });
     const savedChecklists = savedParsed.enabledMixsChecklists || [];
     return NextResponse.json({
       id: config.id,
-      fields: savedFields,
-      groups: savedGroups,
+      fields: savedNormalized.fields,
+      groups: savedNormalized.groups,
       version: config.version,
       updatedAt: config.updatedAt,
       enabledMixsChecklists: savedChecklists,

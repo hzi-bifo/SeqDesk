@@ -9,7 +9,7 @@ test("authenticate seeded researcher", async ({ page }) => {
   await page.getByRole("button", { name: /sign in/i }).click();
 
   await page.waitForURL(/\/orders$/);
-  await expect(page.getByRole("link", { name: "New Order" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "All Orders" }).first()).toBeVisible();
 
   await page.context().storageState({ path: "playwright/.auth/researcher.json" });
 });

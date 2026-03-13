@@ -78,7 +78,7 @@ export default function HelpPage() {
               A sequencing request. Use it to define request-level fields and sample list.
             </p>
             <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-              <li>- Order Details and Sequencing Parameters</li>
+              <li>- Order Details and Sequencing Information</li>
               <li>- Sample IDs and order-specific fields</li>
               <li>- Facility processing status (Draft/Submitted/Completed)</li>
             </ul>
