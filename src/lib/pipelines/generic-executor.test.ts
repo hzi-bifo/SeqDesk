@@ -101,8 +101,7 @@ describe("generic-executor", () => {
     const result = await prepareGenericRun({
       runId: "run-1",
       pipelineId: "missing-pipe",
-      studyId: "study-1",
-      sampleIds: ["sample-1"],
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
       config: {},
       executionSettings: baseExecutionSettings(tempDir),
       userId: "user-1",
@@ -137,8 +136,7 @@ describe("generic-executor", () => {
     const result = await prepareGenericRun({
       runId: "run-1",
       pipelineId: "mag",
-      studyId: "study-1",
-      sampleIds: ["sample-1"],
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
       config: {},
       executionSettings: baseExecutionSettings(tempDir),
       userId: "user-1",
@@ -177,7 +175,7 @@ describe("generic-executor", () => {
     const result = await prepareGenericRun({
       runId: "run-1",
       pipelineId: "mag",
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       config: {},
       executionSettings: baseExecutionSettings(tempDir),
       userId: "user-1",
@@ -228,7 +226,7 @@ describe("generic-executor", () => {
     const result = await prepareGenericRun({
       runId: "run-1",
       pipelineId: "mag",
-      studyId: "study-1",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1", "sample-2"] },
       config: {
         threads: 8,
         runType: "full",
@@ -267,6 +265,10 @@ describe("generic-executor", () => {
 
     const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
     expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");
+    expect(adapter.generateSamplesheet).toHaveBeenCalledWith({
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1", "sample-2"] },
+      dataBasePath: tempDir,
+    });
 
     expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
       where: { id: "run-1" },

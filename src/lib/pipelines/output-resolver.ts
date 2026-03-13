@@ -7,7 +7,10 @@
 // This is the ONLY place that writes pipeline outputs to the DB.
 // Pipeline adapters discover outputs but do not write to DB.
 
+import fs from 'fs/promises';
+import path from 'path';
 import { db } from '@/lib/db';
+import { ensureWithinBase } from '@/lib/files';
 import { PipelineOutput as DefinitionOutput } from './definitions';
 import { getPackage, PackageOutput } from './package-loader';
 import { DiscoveredFile, DiscoverOutputsResult } from './adapters/types';
@@ -33,14 +36,134 @@ type DestinationHandler = (
   output: DefinitionOutput
 ) => Promise<{ success: boolean; error?: string }>;
 
+function getStringMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): string | null | undefined {
+  const value = metadata?.[key];
+  if (value === undefined) return undefined;
+  return typeof value === 'string' ? value : null;
+}
+
+function getNumberMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): number | null | undefined {
+  const value = metadata?.[key];
+  if (value === undefined) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return null;
+}
+
+function getBooleanMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): boolean | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+async function copyReadFileToStorage(
+  dataBasePath: string,
+  targetRelativePath: string,
+  sourcePath: string
+): Promise<void> {
+  const targetAbsolutePath = ensureWithinBase(dataBasePath, targetRelativePath);
+  await fs.mkdir(path.dirname(targetAbsolutePath), { recursive: true });
+  if (path.resolve(sourcePath) === targetAbsolutePath) {
+    return;
+  }
+  await fs.copyFile(sourcePath, targetAbsolutePath);
+}
+
+async function safeDeleteReadFile(
+  dataBasePath: string,
+  relativeOrAbsolutePath: string | null | undefined
+): Promise<void> {
+  if (!relativeOrAbsolutePath) return;
+
+  try {
+    const absolutePath = path.isAbsolute(relativeOrAbsolutePath)
+      ? path.resolve(relativeOrAbsolutePath)
+      : ensureWithinBase(dataBasePath, relativeOrAbsolutePath);
+
+    const resolvedBase = path.resolve(dataBasePath);
+    if (
+      absolutePath !== resolvedBase &&
+      !absolutePath.startsWith(`${resolvedBase}${path.sep}`)
+    ) {
+      return;
+    }
+
+    await fs.unlink(absolutePath);
+  } catch {
+    // Ignore missing files and path validation errors during cleanup.
+  }
+}
+
+async function replaceSampleReads(
+  sampleId: string,
+  dataBasePath: string,
+  readData: {
+    file1: string;
+    file2: string | null;
+    checksum1: string | null | undefined;
+    checksum2: string | null | undefined;
+    readCount1: number | null | undefined;
+    readCount2: number | null | undefined;
+    avgQuality1: number | null | undefined;
+    avgQuality2: number | null | undefined;
+    fastqcReport1: string | null | undefined;
+    fastqcReport2: string | null | undefined;
+  }
+): Promise<void> {
+  const existingReads = await db.read.findMany({
+    where: { sampleId },
+    select: {
+      id: true,
+      file1: true,
+      file2: true,
+    },
+  });
+
+  for (const read of existingReads) {
+    await safeDeleteReadFile(dataBasePath, read.file1);
+    await safeDeleteReadFile(dataBasePath, read.file2);
+  }
+
+  if (existingReads.length > 0) {
+    await db.read.deleteMany({
+      where: { sampleId },
+    });
+  }
+
+  await db.read.create({
+    data: {
+      sampleId,
+      file1: readData.file1,
+      file2: readData.file2,
+      checksum1: readData.checksum1 ?? null,
+      checksum2: readData.checksum2 ?? null,
+      readCount1: readData.readCount1 ?? null,
+      readCount2: readData.readCount2 ?? null,
+      avgQuality1: readData.avgQuality1 ?? null,
+      avgQuality2: readData.avgQuality2 ?? null,
+      fastqcReport1: readData.fastqcReport1 ?? null,
+      fastqcReport2: readData.fastqcReport2 ?? null,
+    },
+  });
+}
+
 /**
  * Create an Assembly record (with idempotency check)
  */
 async function createAssembly(
   file: DiscoveredFile,
   runId: string,
-  _output: DefinitionOutput
+  output: DefinitionOutput
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  void output;
+
   if (!file.sampleId) {
     return { success: false, error: `Assembly ${file.name}: No sample ID` };
   }
@@ -80,8 +203,10 @@ async function createAssembly(
 async function createBin(
   file: DiscoveredFile,
   runId: string,
-  _output: DefinitionOutput
+  output: DefinitionOutput
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  void output;
+
   if (!file.sampleId) {
     return { success: false, error: `Bin ${file.name}: No sample ID` };
   }
@@ -157,6 +282,119 @@ async function createArtifact(
   }
 }
 
+async function updateSampleRead(
+  file: DiscoveredFile,
+  runId: string,
+  output: DefinitionOutput
+): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  void runId;
+  void output;
+
+  if (!file.sampleId) {
+    return { success: false, error: `Sample read output ${file.name}: No sample ID` };
+  }
+
+  const metadata = file.metadata;
+  const file1 = getStringMetadata(metadata, 'file1');
+  const file2 = getStringMetadata(metadata, 'file2');
+  const sourceFile1 = getStringMetadata(metadata, 'sourceFile1');
+  const sourceFile2 = getStringMetadata(metadata, 'sourceFile2');
+  const replaceExisting = getBooleanMetadata(metadata, 'replaceExisting') === true;
+  const hasFileWriteback = Boolean(file1 && sourceFile1);
+
+  if (hasFileWriteback) {
+    const settings = await db.siteSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { dataBasePath: true },
+    });
+
+    if (!settings?.dataBasePath) {
+      return {
+        success: false,
+        error: `Sample read output ${file.name}: Data base path is not configured`,
+      };
+    }
+
+    try {
+      await copyReadFileToStorage(settings.dataBasePath, file1!, sourceFile1!);
+
+      if (file2 && sourceFile2) {
+        await copyReadFileToStorage(settings.dataBasePath, file2, sourceFile2);
+      }
+
+      if (replaceExisting) {
+        await replaceSampleReads(file.sampleId, settings.dataBasePath, {
+          file1: file1!,
+          file2: file2 ?? null,
+          checksum1: getStringMetadata(metadata, 'checksum1'),
+          checksum2: getStringMetadata(metadata, 'checksum2'),
+          readCount1: getNumberMetadata(metadata, 'readCount1'),
+          readCount2: getNumberMetadata(metadata, 'readCount2'),
+          avgQuality1: getNumberMetadata(metadata, 'avgQuality1'),
+          avgQuality2: getNumberMetadata(metadata, 'avgQuality2'),
+          fastqcReport1: getStringMetadata(metadata, 'fastqcReport1'),
+          fastqcReport2: getStringMetadata(metadata, 'fastqcReport2'),
+        });
+        return { success: true };
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: `Failed to materialize sample reads: ${msg}` };
+    }
+  }
+
+  const read = await db.read.findFirst({
+    where: { sampleId: file.sampleId },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+
+  if (!read) {
+    return {
+      success: false,
+      error: `Sample read output ${file.name}: No canonical Read record found for sample`,
+    };
+  }
+
+  const data: Record<string, string | number | null> = {};
+
+  if (file1 !== undefined) {
+    data.file1 = file1;
+  }
+  if (file2 !== undefined) {
+    data.file2 = file2;
+  }
+
+  for (const key of ['checksum1', 'checksum2', 'fastqcReport1', 'fastqcReport2'] as const) {
+    const value = getStringMetadata(metadata, key);
+    if (value !== undefined) {
+      data[key] = value;
+    }
+  }
+
+  for (const key of ['readCount1', 'readCount2', 'avgQuality1', 'avgQuality2'] as const) {
+    const value = getNumberMetadata(metadata, key);
+    if (value !== undefined) {
+      data[key] = value;
+    }
+  }
+
+  if (Object.keys(data).length === 0) {
+    return { success: true, skipped: true };
+  }
+
+  try {
+    await db.read.update({
+      where: { id: read.id },
+      data,
+    });
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return { success: false, error: `Failed to update sample read metadata: ${msg}` };
+  }
+}
+
 /**
  * Map destination types to handler functions
  */
@@ -164,7 +402,7 @@ const skipDownloadOnly: DestinationHandler = async () => ({ success: true });
 
 const destinationHandlers: Record<string, DestinationHandler> = {
   // Sample-scoped outputs
-  sample_reads: createArtifact,
+  sample_reads: updateSampleRead,
   sample_assemblies: createAssembly,
   sample_bins: createBin,
   sample_qc: createArtifact,
@@ -312,6 +550,7 @@ export async function resolveOutputs(
         case 'sample_bins':
           result.binsCreated++;
           break;
+        case 'sample_reads':
         case 'download_only':
           break;
         default:

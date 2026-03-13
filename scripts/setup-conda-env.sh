@@ -303,6 +303,8 @@ if "$CONDA_BIN" env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
       "${CHANNEL_ARGS[@]}" \
       "python=${PYTHON_VERSION}" \
       "openjdk=17" \
+      nodejs \
+      coreutils \
       nextflow \
       nf-core
   fi
@@ -314,6 +316,8 @@ if [[ "$ENV_EXISTS" -eq 0 ]]; then
     "${CHANNEL_ARGS[@]}" \
     "python=${PYTHON_VERSION}" \
     "openjdk=17" \
+    nodejs \
+    coreutils \
     nextflow \
     nf-core
 fi

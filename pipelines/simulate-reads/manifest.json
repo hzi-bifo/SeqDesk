@@ -1,0 +1,64 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "simulate-reads",
+    "name": "Simulate Reads",
+    "version": "0.1.0",
+    "description": "Generate dummy FASTQ data for the samples in an order",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "inputs": [],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {
+      "mode": "shortReadPaired",
+      "readCount": 1000,
+      "readLength": 150,
+      "replaceExisting": true
+    }
+  },
+  "outputs": [
+    {
+      "id": "sample_simulated_reads",
+      "scope": "sample",
+      "destination": "sample_reads",
+      "type": "artifact",
+      "fromStep": "simulate_reads",
+      "discovery": {
+        "pattern": "manifests/*.json",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "simulate_reads",
+      "discovery": {
+        "pattern": "summary/simulation-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

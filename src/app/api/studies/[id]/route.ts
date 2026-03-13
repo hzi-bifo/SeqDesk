@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { loadStudyFormSchema } from "@/lib/studies/schema";
 
 function isMissingColumnError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -9,6 +10,25 @@ function isMissingColumnError(error: unknown): boolean {
   if (maybe.code === "P2022") return true;
   const message = String(maybe.message ?? "");
   return /no such column|unknown column/i.test(message);
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore malformed JSON and fall back to an empty object.
+  }
+
+  return {};
 }
 
 const studyUserSelect = {
@@ -415,7 +435,7 @@ export async function PUT(
     // Check study exists and ownership
     const existing = await db.study.findUnique({
       where: { id: resolvedStudyId },
-      select: { userId: true },
+      select: { userId: true, studyMetadata: true },
     });
 
     if (!existing) {
@@ -435,9 +455,32 @@ export async function PUT(
     if (alias !== undefined) updateData.alias = typeof alias === "string" ? alias.trim() || null : null;
     if (checklistType !== undefined) updateData.checklistType = checklistType;
     if (studyMetadata !== undefined) {
-      updateData.studyMetadata = typeof studyMetadata === 'string'
-        ? studyMetadata
-        : JSON.stringify(studyMetadata);
+      if (isFacilityAdmin) {
+        updateData.studyMetadata =
+          typeof studyMetadata === "string"
+            ? studyMetadata
+            : JSON.stringify(studyMetadata);
+      } else {
+        const schema = await loadStudyFormSchema({
+          isFacilityAdmin: false,
+          applyRoleFilter: true,
+          applyModuleFilter: true,
+        });
+        const allowedFieldNames = new Set(schema.studyFields.map((field) => field.name));
+        const currentMetadata = parseJsonObject(existing.studyMetadata);
+        const submittedMetadata = parseJsonObject(studyMetadata);
+        const mergedMetadata = { ...currentMetadata };
+
+        for (const fieldName of allowedFieldNames) {
+          if (fieldName in submittedMetadata) {
+            mergedMetadata[fieldName] = submittedMetadata[fieldName];
+          } else {
+            delete mergedMetadata[fieldName];
+          }
+        }
+
+        updateData.studyMetadata = JSON.stringify(mergedMetadata);
+      }
     }
     if (readyForSubmission !== undefined) {
       updateData.readyForSubmission = readyForSubmission;

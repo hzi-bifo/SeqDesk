@@ -141,6 +141,29 @@ export async function GET(
             },
           },
         },
+        order: {
+          select: {
+            id: true,
+            name: true,
+            orderNumber: true,
+            userId: true,
+            samples: {
+              select: {
+                id: true,
+                sampleId: true,
+                reads: {
+                  select: {
+                    id: true,
+                    file1: true,
+                    file2: true,
+                    checksum1: true,
+                    checksum2: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         user: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
@@ -200,10 +223,11 @@ export async function GET(
       return NextResponse.json({ error: 'Run not found' }, { status: 404 });
     }
 
-    // Non-admins can only see runs for their own studies
+    // Non-admins can only see runs for their own studies/orders
     if (
       session.user.role !== 'FACILITY_ADMIN' &&
-      run.study?.userId !== session.user.id
+      run.study?.userId !== session.user.id &&
+      run.order?.userId !== session.user.id
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -241,9 +265,11 @@ export async function GET(
       size?: number;
     }[] = [];
 
+    const targetSamples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
+
     // Add reads as input files
-    if (run.study?.samples) {
-      for (const sample of run.study.samples) {
+    if (targetSamples.length > 0) {
+      for (const sample of targetSamples) {
         if (selectedSampleIdSet && !selectedSampleIdSet.has(sample.id)) {
           continue;
         }

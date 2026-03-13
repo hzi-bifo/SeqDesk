@@ -181,7 +181,7 @@ export interface RegistryConfig {
     userCanStart: boolean;
   };
   input: {
-    supportedScopes: string[];
+    supportedScopes: Array<'study' | 'order' | 'samples' | 'sample'>;
     minSamples?: number;
     perSample: {
       reads: boolean;
@@ -430,6 +430,16 @@ function validatePackageManifest(
     }
   }
 
+  if (manifest.files.scripts) {
+    for (const [scriptKey, scriptFile] of Object.entries(manifest.files.scripts)) {
+      if (!scriptFile) continue;
+      const scriptPath = path.join(packageDir, scriptFile);
+      if (!fs.existsSync(scriptPath)) {
+        errors.push(`Missing script file: files.scripts.${scriptKey}="${scriptFile}" not found`);
+      }
+    }
+  }
+
   // 6. Validate parser IDs referenced in outputs[].parsed.from exist
   const parserIds = new Set<string>();
   if (manifest.files.parsers) {
@@ -645,6 +655,16 @@ export function getPackageRegistry(packageId: string): RegistryConfig | undefine
 export function getPackageSamplesheet(packageId: string): SamplesheetConfig | null {
   const pkg = getPackage(packageId);
   return pkg?.samplesheet ?? null;
+}
+
+export function getPackageScriptPath(
+  packageId: string,
+  scriptKey: 'samplesheet' | 'discoverOutputs'
+): string | null {
+  const pkg = getPackage(packageId);
+  const scriptPath = pkg?.manifest.files.scripts?.[scriptKey];
+  if (!pkg || !scriptPath) return null;
+  return path.join(pkg.basePath, scriptPath);
 }
 
 /**

@@ -3,44 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import { STUDY_FORM_DEFAULTS_VERSION } from "@/lib/modules/default-form-fields";
 import {
-  ensureStudyModuleDefaultFields,
-  STUDY_FORM_DEFAULTS_VERSION,
-} from "@/lib/modules/default-form-fields";
-
-interface ModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
-
-function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-}
-
-function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
-  if (config.globalDisabled) return false;
-  return config.modules[moduleId] ?? false;
-}
+  getFixedStudySections,
+  normalizeStudyFormSchema,
+} from "@/lib/studies/fixed-sections";
+import { loadStudyFormSchema } from "@/lib/studies/schema";
 
 // GET - retrieve study form configuration
 export async function GET() {
@@ -51,33 +19,17 @@ export async function GET() {
   }
 
   try {
-    const settings = await db.siteSettings.findUnique({
-      where: { id: "singleton" },
-      select: { extraSettings: true, modulesConfig: true },
+    const schema = await loadStudyFormSchema({
+      isFacilityAdmin: true,
+      applyRoleFilter: false,
+      applyModuleFilter: false,
     });
-
-    if (!settings?.extraSettings) {
-      return NextResponse.json({ fields: [], groups: [] });
-    }
-
-    const extra = JSON.parse(settings.extraSettings);
-    const groups = extra.studyFormGroups || [];
-    const fields =
-      typeof extra.studyFormDefaultsVersion === "number" &&
-      extra.studyFormDefaultsVersion >= STUDY_FORM_DEFAULTS_VERSION
-        ? extra.studyFormFields || []
-        : ensureStudyModuleDefaultFields(extra.studyFormFields || [], groups, {
-            mixs: isModuleEnabled(
-              parseModulesConfig(settings.modulesConfig ?? null),
-              "mixs-metadata"
-            ),
-          });
     return NextResponse.json({
-      fields,
-      groups,
+      fields: schema.fields,
+      groups: schema.groups,
     });
   } catch {
-    return NextResponse.json({ fields: [], groups: [] });
+    return NextResponse.json({ fields: [], groups: getFixedStudySections() });
   }
 }
 
@@ -110,9 +62,14 @@ export async function PUT(request: NextRequest) {
       }
     }
 
+    const normalized = normalizeStudyFormSchema({
+      fields: fields || [],
+      groups: groups || getFixedStudySections(),
+    });
+
     // Update study form config
-    extraSettings.studyFormFields = fields || [];
-    extraSettings.studyFormGroups = groups || [];
+    extraSettings.studyFormFields = normalized.fields;
+    extraSettings.studyFormGroups = normalized.groups;
     extraSettings.studyFormDefaultsVersion = STUDY_FORM_DEFAULTS_VERSION;
 
     // Upsert the settings

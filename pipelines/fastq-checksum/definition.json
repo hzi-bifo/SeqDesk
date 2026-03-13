@@ -1,0 +1,65 @@
+{
+  "pipeline": "fastq-checksum",
+  "name": "FASTQ Checksum",
+  "description": "Generate MD5 checksums for linked single-end or paired-end FASTQ files",
+  "version": "0.1.0",
+  "inputs": [
+    {
+      "id": "sample_reads",
+      "name": "Linked FASTQ files",
+      "description": "FASTQ files already linked to order samples",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to selected order samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_checksums",
+      "name": "Per-sample checksum metadata",
+      "description": "Per-sample checksum JSON used to update canonical read fields",
+      "fromStep": "checksum",
+      "fileTypes": [
+        ".json"
+      ],
+      "destination": "sample_reads",
+      "destinationDescription": "Writes checksum values back to linked read records"
+    },
+    {
+      "id": "summary",
+      "name": "Checksum summary",
+      "description": "Run-level checksum summary table",
+      "fromStep": "checksum",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for provenance and download"
+    }
+  ],
+  "steps": [
+    {
+      "id": "checksum",
+      "name": "Calculate Checksums",
+      "description": "Run md5sum over each linked FASTQ file",
+      "category": "qc",
+      "dependsOn": [],
+      "processMatchers": [
+        "CALCULATE_CHECKSUMS",
+        "SUMMARIZE_CHECKSUMS"
+      ],
+      "tools": [
+        "md5sum"
+      ],
+      "outputs": [
+        "checksum-json",
+        "checksum-summary"
+      ]
+    }
+  ]
+}

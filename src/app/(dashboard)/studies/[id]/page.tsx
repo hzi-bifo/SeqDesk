@@ -34,6 +34,23 @@ import {
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
+import {
+  STUDY_ADDITIONAL_DETAILS_SECTION_ID,
+  STUDY_INFORMATION_SECTION_ID,
+  getFixedStudySections,
+  getStudyOverviewSectionAnchorId,
+} from "@/lib/studies/fixed-sections";
+import {
+  buildStudyFacilityFieldSections,
+} from "@/lib/studies/facility-sections";
+import {
+  STUDY_OVERVIEW_ASSOCIATED_SAMPLES_SECTION_ID,
+  STUDY_OVERVIEW_ENVIRONMENT_TYPE_SECTION_ID,
+  STUDY_OVERVIEW_REVIEW_SECTION_ID,
+  STUDY_OVERVIEW_SAMPLE_METADATA_SECTION_ID,
+  STUDY_OVERVIEW_STUDY_DETAILS_SECTION_ID,
+  sampleHasStudyOverviewMetadata,
+} from "@/lib/studies/overview-flow";
 
 interface Sample {
   id: string;
@@ -101,60 +118,16 @@ interface Study {
   };
 }
 
-const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
-  { id: "group_study_info", name: "Study Information", order: 0 },
-  { id: "group_metadata", name: "Metadata", order: 1 },
-];
-
 interface StudyFormSchemaResponse {
   fields?: FormFieldDefinition[];
   studyFields?: FormFieldDefinition[];
+  perSampleFields?: FormFieldDefinition[];
   groups?: FormFieldGroup[];
-}
-
-// Helper to check if sample has metadata
-function sampleHasMetadata(sample: Sample): boolean {
-  if (!sample.taxId || sample.taxId.trim() === "") {
-    return false;
-  }
-
-  // Check core sample fields (from order form's per-sample fields)
-  const hasCoreSampleData =
-    (sample.taxId && sample.taxId.trim() !== "") ||
-    (sample.scientificName && sample.scientificName.trim() !== "") ||
-    (sample.sampleTitle && sample.sampleTitle.trim() !== "") ||
-    (sample.sampleAlias && sample.sampleAlias.trim() !== "");
-
-  if (hasCoreSampleData) return true;
-
-  // Check customFields (per-sample custom fields from order form)
-  if (sample.customFields) {
-    try {
-      const customData = typeof sample.customFields === "string"
-        ? JSON.parse(sample.customFields)
-        : sample.customFields;
-      const hasCustomData = Object.values(customData).some(
-        v => v !== null && v !== "" && v !== undefined
-      );
-      if (hasCustomData) return true;
-    } catch {
-      // ignore parse errors
-    }
-  }
-
-  // Check MIxS checklistData
-  if (sample.checklistData) {
-    try {
-      const data = typeof sample.checklistData === "string"
-        ? JSON.parse(sample.checklistData)
-        : sample.checklistData;
-      return Object.values(data).some(v => v !== null && v !== "" && v !== undefined);
-    } catch {
-      return false;
-    }
-  }
-
-  return false;
+  modules?: {
+    mixs?: boolean;
+    sampleAssociation?: boolean;
+    funding?: boolean;
+  };
 }
 
 // Calculate expiration status for test submissions (24h expiry)
@@ -328,7 +301,10 @@ export default function StudyDetailPage({
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [studyFormFields, setStudyFormFields] = useState<FormFieldDefinition[]>([]);
-  const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(DEFAULT_STUDY_GROUPS);
+  const [studyPerSampleFields, setStudyPerSampleFields] = useState<FormFieldDefinition[]>([]);
+  const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(getFixedStudySections());
+  const [studyModules, setStudyModules] = useState<StudyFormSchemaResponse["modules"]>({});
+  const [studySchemaLoaded, setStudySchemaLoaded] = useState(false);
 
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -417,15 +393,23 @@ export default function StudyDetailPage({
       .then((data: StudyFormSchemaResponse | null) => {
         const schemaStudyFields = (data?.studyFields ?? data?.fields ?? [])
           .filter((field) => !field.perSample && field.name !== "_sample_association" && field.visible);
-        const groups = (data?.groups && data.groups.length > 0 ? data.groups : DEFAULT_STUDY_GROUPS)
+        const schemaPerSampleFields = (data?.perSampleFields ?? data?.fields ?? [])
+          .filter((field) => field.perSample && field.visible);
+        const groups = (data?.groups && data.groups.length > 0 ? data.groups : getFixedStudySections())
           .slice()
           .sort((a, b) => a.order - b.order);
         setStudyFormFields(schemaStudyFields);
+        setStudyPerSampleFields(schemaPerSampleFields);
         setStudyFormGroups(groups);
+        setStudyModules(data?.modules ?? {});
+        setStudySchemaLoaded(true);
       })
       .catch(() => {
         setStudyFormFields([]);
-        setStudyFormGroups(DEFAULT_STUDY_GROUPS);
+        setStudyPerSampleFields([]);
+        setStudyFormGroups(getFixedStudySections());
+        setStudyModules({});
+        setStudySchemaLoaded(true);
       });
   }, []);
 
@@ -641,43 +625,54 @@ export default function StudyDetailPage({
     [study?.studyMetadata]
   );
 
-  const visibleStudyFields = useMemo(
+  const visibleUserStudyFields = useMemo(
     () => studyFormFields
-      .filter((field) => isAdmin || !field.adminOnly)
+      .filter((field) => !field.adminOnly)
       .slice()
       .sort((a, b) => a.order - b.order),
-    [studyFormFields, isAdmin]
-  );
-
-  const knownStudyFieldNames = useMemo(
-    () => new Set(studyFormFields.map((field) => field.name)),
     [studyFormFields]
   );
 
-  const groupedStudyMetadataSections = useMemo(
+  const visibleUserPerSampleFields = useMemo(
+    () => studyPerSampleFields
+      .filter((field) => !field.adminOnly)
+      .slice()
+      .sort((a, b) => a.order - b.order),
+    [studyPerSampleFields]
+  );
+
+  const knownStudyFieldNames = useMemo(
+    () => new Set([...studyFormFields, ...studyPerSampleFields].map((field) => field.name)),
+    [studyFormFields, studyPerSampleFields]
+  );
+
+  const fixedStudyOverviewSections = useMemo(
     () => studyFormGroups
       .slice()
       .sort((a, b) => a.order - b.order)
-      .flatMap((group) => {
-        const rows = visibleStudyFields
+      .map((group) => ({
+        id: group.id,
+        title: group.name,
+        rows: visibleUserStudyFields
           .filter((field) => field.groupId === group.id)
           .slice()
           .sort((a, b) => a.order - b.order)
-          .map((field) => ({ field, value: parsedStudyMetadata[field.name] }))
-          .filter(({ value }) => hasDisplayValue(value));
-        return rows.length > 0 ? [{ id: group.id, title: group.name, rows }] : [];
+          .map((field) => ({ field, value: parsedStudyMetadata[field.name] })),
+      }))
+          .filter(({ id, rows }) => {
+        if (id === STUDY_INFORMATION_SECTION_ID) return true;
+        return rows.length > 0;
       }),
-    [studyFormGroups, visibleStudyFields, parsedStudyMetadata]
+    [parsedStudyMetadata, studyFormGroups, visibleUserStudyFields]
   );
 
   const ungroupedStudyMetadataRows = useMemo(
-    () => visibleStudyFields
+    () => visibleUserStudyFields
       .filter((field) => !field.groupId)
       .slice()
       .sort((a, b) => a.order - b.order)
-      .map((field) => ({ field, value: parsedStudyMetadata[field.name] }))
-      .filter(({ value }) => hasDisplayValue(value)),
-    [visibleStudyFields, parsedStudyMetadata]
+      .map((field) => ({ field, value: parsedStudyMetadata[field.name] })),
+    [visibleUserStudyFields, parsedStudyMetadata]
   );
 
   const fallbackStudyMetadataRows = useMemo(
@@ -692,6 +687,120 @@ export default function StudyDetailPage({
     },
     [parsedStudyMetadata, knownStudyFieldNames, isAdmin]
   );
+
+  const hasAdditionalDetailsSection =
+    ungroupedStudyMetadataRows.length > 0 || fallbackStudyMetadataRows.length > 0;
+
+  const overviewSectionsWithRows = useMemo(
+    () =>
+      fixedStudyOverviewSections.map((section) => {
+        const coreRows =
+          section.id === STUDY_INFORMATION_SECTION_ID
+            ? [
+                { key: "study-title", label: "Study Title", value: study?.title ?? "" },
+                { key: "study-description", label: "Description", value: study?.description ?? "" },
+                { key: "study-alias", label: "Alias", value: study?.alias ?? "" },
+              ]
+            : [];
+
+        return {
+          ...section,
+          coreRows,
+        };
+      }),
+    [
+      fixedStudyOverviewSections,
+      study?.alias,
+      study?.description,
+      study?.title,
+    ]
+  );
+
+  const facilitySections = useMemo(
+    () =>
+      buildStudyFacilityFieldSections({
+        fields: [...studyFormFields, ...studyPerSampleFields],
+        study: study
+          ? {
+              studyMetadata: study.studyMetadata,
+              samples: (study.samples ?? []).map((sample) => ({
+                id: sample.id,
+                checklistData: sample.checklistData,
+              })),
+            }
+          : null,
+        includeFacilityFields: isAdmin,
+      }),
+    [isAdmin, study, studyFormFields, studyPerSampleFields]
+  );
+  const studySamples = study?.samples ?? [];
+  const hasAssociatedSamplesSection =
+    Boolean(studyModules?.sampleAssociation) || studySamples.length > 0;
+  const hasEnvironmentTypeSection =
+    Boolean(studyModules?.mixs) || hasDisplayValue(study?.checklistType);
+  const hasSampleMetadataSection =
+    hasAssociatedSamplesSection &&
+    (visibleUserPerSampleFields.length > 0 ||
+      (Boolean(studyModules?.mixs) && hasDisplayValue(study?.checklistType)));
+  const associatedSamplePreview = studySamples.slice(0, 5);
+
+  const requestedSection = searchParams.get("section");
+  const requestedSubsection = searchParams.get("subsection");
+  const activeOverviewSubsection =
+    currentTab === "overview" ? requestedSubsection : null;
+
+  useEffect(() => {
+    if (loading || !studySchemaLoaded || currentTab !== "overview") {
+      return;
+    }
+
+    if (requestedSection === "facility") {
+      if (!isAdmin || facilitySections.length === 0) {
+        router.replace(`/studies/${apiStudyId}`);
+        return;
+      }
+
+      const target = requestedSubsection
+        ? `/studies/${apiStudyId}/facility?subsection=${encodeURIComponent(requestedSubsection)}`
+        : `/studies/${apiStudyId}/facility`;
+      router.replace(target);
+    }
+  }, [
+    apiStudyId,
+    currentTab,
+    facilitySections.length,
+    isAdmin,
+    loading,
+    requestedSection,
+    requestedSubsection,
+    router,
+    studySchemaLoaded,
+  ]);
+
+  useEffect(() => {
+    if (!study || currentTab !== "overview") return;
+
+    const anchorId = activeOverviewSubsection
+      ? getStudyOverviewSectionAnchorId(activeOverviewSubsection)
+      : null;
+    if (!anchorId) return;
+
+    const element = document.getElementById(anchorId);
+    if (!element) return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [
+    activeOverviewSubsection,
+    currentTab,
+    hasAssociatedSamplesSection,
+    hasEnvironmentTypeSection,
+    hasSampleMetadataSection,
+    study,
+  ]);
 
   if (loading) {
     return (
@@ -725,8 +834,8 @@ export default function StudyDetailPage({
   }
 
   // Calculate metadata completion
-  const samplesWithMetadata = study.samples.filter(sampleHasMetadata).length;
-  const totalSamples = study.samples.length;
+  const samplesWithMetadata = studySamples.filter(sampleHasStudyOverviewMetadata).length;
+  const totalSamples = studySamples.length;
   const allMetadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
   const metadataCompletionPercent = totalSamples > 0
     ? Math.round((samplesWithMetadata / totalSamples) * 100)
@@ -734,7 +843,6 @@ export default function StudyDetailPage({
   const ownerDisplayName = study.user.firstName && study.user.lastName
     ? `${study.user.firstName} ${study.user.lastName}`
     : study.user.email;
-  const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
   return (
     <>
       <Tabs value={currentTab} onValueChange={(tab) => {
@@ -798,333 +906,448 @@ export default function StudyDetailPage({
 
         {/* Overview Tab */}
         <TabsContent value="overview">
-          {/* Study Process */}
-          {!study.submitted && (() => {
-            const hasSamples = totalSamples > 0;
-            const metadataStepStatus = !hasSamples
-              ? "Blocked"
-              : allMetadataComplete
-                ? "Done"
-                : "In Progress";
-            return (
-              <div className="mb-4 rounded-lg border bg-card p-5">
-                <h3 className="mb-4 text-base font-semibold">Study Process</h3>
-                <div className="space-y-3">
-                  {/* Step 1: Study Created */}
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-foreground bg-foreground text-xs font-semibold text-background">
-                          1
-                        </span>
-                        <span className="text-sm font-medium">Create Study</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">Done</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Study created and available for sample assignment.
+          <>
+            {hasAssociatedSamplesSection && (
+              <div
+                id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_ASSOCIATED_SAMPLES_SECTION_ID)}
+                className="bg-card rounded-lg border overflow-hidden scroll-mt-20"
+              >
+                <div className="flex items-start justify-between gap-3 px-5 py-4">
+                  <div>
+                    <h2 className="text-sm font-semibold">Associated Samples</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Samples currently linked to this study.
                     </p>
                   </div>
-
-                  {/* Step 2: Add Samples */}
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-muted-foreground/40 text-muted-foreground"
-                          }`}
-                        >
-                          2
-                        </span>
-                        <span className="text-sm font-medium">Add Samples</span>
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href={`/studies/${id}?tab=samples`}>Open Samples</Link>
+                  </Button>
+                </div>
+                {studySamples.length > 0 ? (
+                  <div className="divide-y divide-border border-t">
+                    {associatedSamplePreview.map((sample) => (
+                      <div key={sample.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+                        <div>
+                          <div className="font-medium">{sample.sampleId}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {sample.order ? `${sample.order.orderNumber}${sample.order.name ? ` · ${sample.order.name}` : ""}` : "No source order"}
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {sampleHasStudyOverviewMetadata(sample) ? "Metadata started" : "No metadata yet"}
+                        </div>
                       </div>
-                      <span className="text-xs text-muted-foreground">{hasSamples ? "Done" : "Pending"}</span>
-                    </div>
-                    {hasSamples ? (
-                      <p className="text-xs text-muted-foreground">
-                        {totalSamples} sample{totalSamples !== 1 ? "s" : ""} linked to this study.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          No samples are linked yet.
-                        </p>
-                        {isOwner && (
-                          <Link
-                            href={`/studies/${id}/edit`}
-                            className="text-xs font-medium text-primary hover:underline"
-                          >
-                            Add samples
-                          </Link>
-                        )}
+                    ))}
+                    {studySamples.length > associatedSamplePreview.length && (
+                      <div className="px-5 py-3 text-xs text-muted-foreground">
+                        +{studySamples.length - associatedSamplePreview.length} more sample{studySamples.length - associatedSamplePreview.length === 1 ? "" : "s"}
                       </div>
                     )}
                   </div>
-
-                  {/* Step 3: Complete Metadata */}
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-muted-foreground/40 text-muted-foreground"
-                          }`}
-                        >
-                          3
-                        </span>
-                        <span className="text-sm font-medium">Complete Metadata</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{metadataStepStatus}</span>
-                    </div>
-                    {!hasSamples ? (
-                      <p className="text-xs text-muted-foreground">Add samples first to unlock metadata completion.</p>
-                    ) : allMetadataComplete ? (
-                      <p className="text-xs text-muted-foreground">
-                        Metadata complete for all {totalSamples} sample{totalSamples !== 1 ? "s" : ""}.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          {samplesWithMetadata}/{totalSamples} sample{totalSamples !== 1 ? "s" : ""} complete.
-                        </p>
-                        {isOwner && (
-                          <Link
-                            href={`/studies/${id}/edit`}
-                            className="text-xs font-medium text-primary hover:underline"
-                          >
-                            Edit metadata
-                          </Link>
-                        )}
-                      </div>
+                ) : (
+                  <div className="border-t px-5 py-6 text-sm text-muted-foreground">
+                    No samples are linked yet.
+                    {(isOwner || isAdmin) && !study.submitted && (
+                      <>
+                        {" "}
+                        <Link href={`/studies/${id}/edit`} className="font-medium text-primary hover:underline">
+                          Associate samples
+                        </Link>
+                      </>
                     )}
                   </div>
-
-                </div>
+                )}
               </div>
-            );
-          })()}
+            )}
 
-          {/* Submitted Study Status */}
-          {study.submitted && (
-            <div className="rounded-lg border p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-                <div>
-                  <p className="font-medium">Registered with ENA</p>
-                  <p className="text-sm text-muted-foreground">
-                    {study.studyAccessionId && <span className="font-mono">{study.studyAccessionId}</span>}
-                    {study.submittedAt && <span className="ml-2">{formatDate(study.submittedAt)}</span>}
+              <div
+                id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_STUDY_DETAILS_SECTION_ID)}
+                className="mt-4 rounded-lg border bg-card p-4 scroll-mt-20"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-semibold">Study Details</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Information entered in the study details step.
                   </p>
                 </div>
-              </div>
-              {study.studyAccessionId && (
-                <a
-                  href="https://www.ebi.ac.uk/ena/submit/webin/report/studies"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                >
-                  View in Webin Portal
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-          )}
 
-          {/* Ready / Awaiting facility status */}
-          {!study.submitted && study.readyForSubmission && !study.studyAccessionId && !study.testRegisteredAt && (
-            <div className="rounded-lg border p-4 flex items-center gap-3">
-              <Clock className="h-5 w-5 text-muted-foreground" />
-              <div>
-                <p className="font-medium">Awaiting Facility Review</p>
-                <p className="text-sm text-muted-foreground">
-                  This study is marked as ready. The sequencing facility will review and submit to ENA.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Status History */}
-          <div className="bg-card rounded-lg border overflow-hidden mt-4">
-            <div className="px-5 py-4">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                Status History
-              </h2>
-            </div>
-            <div className="divide-y divide-border border-t">
-              {/* Created */}
-              <div className="flex items-start gap-3 px-5 py-3">
-                <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <BookOpen className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Study Created</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDate(study.createdAt)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Marked as Ready */}
-              {study.readyAt && (
-                <div className="flex items-start gap-3 px-5 py-3">
-                  <div className="h-7 w-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
-                    <Send className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Marked as Ready</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(study.readyAt)}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Submitted to ENA */}
-              {study.submittedAt && (
-                <div className="flex items-start gap-3 px-5 py-3">
-                  <div className="h-7 w-7 rounded-md bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Submitted to ENA</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(study.submittedAt)}
-                      {study.studyAccessionId && (
-                        <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                          {study.studyAccessionId}
-                        </span>
+                <div className="space-y-4">
+                  {overviewSectionsWithRows.map((section) => (
+                    <div key={section.id} className="rounded-lg border overflow-hidden">
+                      <div className="px-5 py-4">
+                        <h3 className="text-sm font-semibold">{section.title}</h3>
+                      </div>
+                      {section.coreRows.length > 0 || section.rows.length > 0 ? (
+                        <div className="divide-y divide-border border-t">
+                          {section.coreRows.map((row) => (
+                            <div key={row.key} className="flex justify-between items-start px-5 py-3 text-sm">
+                              <span className="text-muted-foreground">{row.label}</span>
+                              <span className="font-medium text-right max-w-[60%] break-words">
+                                {formatUnknownFieldValue(row.value)}
+                              </span>
+                            </div>
+                          ))}
+                          {section.rows.map(({ field, value }) => (
+                            <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                              <span className="text-muted-foreground">{field.label}</span>
+                              <span className="font-medium text-right max-w-[60%] break-words">
+                                {formatSchemaFieldValue(field, value)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="border-t px-5 py-6 text-sm text-muted-foreground">
+                          No values provided in this section yet.
+                        </div>
                       )}
+                    </div>
+                  ))}
+
+                  {hasAdditionalDetailsSection && (
+                    <div
+                      id={getStudyOverviewSectionAnchorId(STUDY_ADDITIONAL_DETAILS_SECTION_ID)}
+                      className="rounded-lg border overflow-hidden"
+                    >
+                      <div className="px-5 py-4">
+                        <h3 className="text-sm font-semibold">Additional Details</h3>
+                      </div>
+                      {ungroupedStudyMetadataRows.length > 0 || fallbackStudyMetadataRows.length > 0 ? (
+                        <div className="divide-y divide-border border-t">
+                          {ungroupedStudyMetadataRows.map(({ field, value }) => (
+                            <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
+                              <span className="text-muted-foreground">{field.label}</span>
+                              <span className="font-medium text-right max-w-[60%] break-words">
+                                {formatSchemaFieldValue(field, value)}
+                              </span>
+                            </div>
+                          ))}
+                          {fallbackStudyMetadataRows.map(([key, value]) => (
+                            <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
+                              <span className="text-muted-foreground capitalize">{getFieldLabel(key)}</span>
+                              <span className="font-medium text-right max-w-[60%] break-words">
+                                {formatUnknownFieldValue(value)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="border-t px-5 py-6 text-sm text-muted-foreground">
+                          No additional details provided yet.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {hasEnvironmentTypeSection && (
+                <div
+                  id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_ENVIRONMENT_TYPE_SECTION_ID)}
+                  className="bg-card rounded-lg border overflow-hidden mt-4 scroll-mt-20"
+                >
+                  <div className="px-5 py-4">
+                    <h2 className="text-sm font-semibold">Environment Type</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      MIxS environment selection used to define sample metadata requirements.
                     </p>
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Study summary */}
-          <div className="mt-4 rounded-lg border bg-card overflow-hidden">
-            <div className="px-5 py-4">
-              <h2 className="text-sm font-semibold">Study Snapshot</h2>
-            </div>
-            <div className="border-t">
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-border">
-                  <tr>
-                    <td className="px-5 py-3 text-muted-foreground">Samples</td>
-                    <td className="px-5 py-3 text-right font-medium">{totalSamples}</td>
-                  </tr>
-                  <tr>
-                    <td className="px-5 py-3 text-muted-foreground">Metadata</td>
-                    <td className="px-5 py-3 text-right font-medium">
-                      {samplesWithMetadata} / {totalSamples}
-                      <span className="ml-2 text-xs text-muted-foreground">({metadataCompletionPercent}%)</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="px-5 py-3 text-muted-foreground">Owner</td>
-                    <td className="px-5 py-3 text-right font-medium">{ownerDisplayName}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="bg-card rounded-lg border overflow-hidden mt-4">
-            <div className="px-5 py-4">
-              <h2 className="text-sm font-semibold">Filled Study Information</h2>
-            </div>
-            <div className="divide-y divide-border border-t">
-              <div className="flex justify-between items-start px-5 py-3 text-sm">
-                <span className="text-muted-foreground">Study Title</span>
-                <span className="font-medium text-right max-w-[60%] break-words">
-                  {study.title}
-                </span>
-              </div>
-              {hasDisplayValue(study.description) && (
-                <div className="flex justify-between items-start px-5 py-3 text-sm">
-                  <span className="text-muted-foreground">Description</span>
-                  <span className="font-medium text-right max-w-[60%] break-words">
-                    {study.description}
-                  </span>
-                </div>
-              )}
-              {hasDisplayValue(study.alias) && (
-                <div className="flex justify-between items-start px-5 py-3 text-sm">
-                  <span className="text-muted-foreground">Alias</span>
-                  <span className="font-medium text-right max-w-[60%] break-words">
-                    {study.alias}
-                  </span>
-                </div>
-              )}
-              {hasDisplayValue(study.checklistType) && (
-                <div className="flex justify-between items-start px-5 py-3 text-sm">
-                  <span className="text-muted-foreground">Environment Type</span>
-                  <span className="font-medium text-right max-w-[60%] break-words">
-                    {study.checklistType}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {groupedStudyMetadataSections.map((section) => (
-            <div key={section.id} className="bg-card rounded-lg border overflow-hidden mt-4">
-              <div className="px-5 py-4">
-                <h2 className="text-sm font-semibold">{section.title}</h2>
-              </div>
-              <div className="divide-y divide-border border-t">
-                {section.rows.map(({ field, value }) => (
-                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
-                    <span className="text-muted-foreground">{field.label}</span>
-                    <span className="font-medium text-right max-w-[60%] break-words">
-                      {formatSchemaFieldValue(field, value)}
-                    </span>
+                  <div className="divide-y divide-border border-t">
+                    <div className="flex justify-between items-start px-5 py-3 text-sm">
+                      <span className="text-muted-foreground">Selected Environment</span>
+                      <span className="font-medium text-right max-w-[60%] break-words">
+                        {formatUnknownFieldValue(study.checklistType)}
+                      </span>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          ))}
+                </div>
+              )}
 
-          {ungroupedStudyMetadataRows.length > 0 && (
-            <div className="bg-card rounded-lg border overflow-hidden mt-4">
-              <div className="px-5 py-4">
-                <h2 className="text-sm font-semibold">Additional Details</h2>
-              </div>
-              <div className="divide-y divide-border border-t">
-                {ungroupedStudyMetadataRows.map(({ field, value }) => (
-                  <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
-                    <span className="text-muted-foreground">{field.label}</span>
-                    <span className="font-medium text-right max-w-[60%] break-words">
-                      {formatSchemaFieldValue(field, value)}
-                    </span>
+              {hasSampleMetadataSection && (
+                <div
+                  id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_SAMPLE_METADATA_SECTION_ID)}
+                  className="bg-card rounded-lg border overflow-hidden mt-4 scroll-mt-20"
+                >
+                  <div className="flex items-start justify-between gap-3 px-5 py-4">
+                    <div>
+                      <h2 className="text-sm font-semibold">Sample Metadata</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Progress across all associated samples for the metadata step.
+                      </p>
+                    </div>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link href={`/studies/${id}?tab=samples`}>View Sample List</Link>
+                    </Button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                  {totalSamples > 0 ? (
+                    <>
+                      <div className="border-t px-5 py-4 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground">Completion</span>
+                          <span className="font-medium">
+                            {samplesWithMetadata} / {totalSamples}
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              ({metadataCompletionPercent}%)
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="divide-y divide-border border-t">
+                        {associatedSamplePreview.map((sample) => {
+                          const hasMetadata = sampleHasStudyOverviewMetadata(sample);
+                          return (
+                            <div key={sample.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+                              <div className="font-medium">{sample.sampleId}</div>
+                              <div className={hasMetadata ? "text-green-600" : "text-muted-foreground"}>
+                                {hasMetadata ? "Metadata entered" : "Waiting for metadata"}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {study.samples.length > associatedSamplePreview.length && (
+                          <div className="px-5 py-3 text-xs text-muted-foreground">
+                            +{study.samples.length - associatedSamplePreview.length} more sample{study.samples.length - associatedSamplePreview.length === 1 ? "" : "s"}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="border-t px-5 py-6 text-sm text-muted-foreground">
+                      Associate samples first to start the metadata step.
+                    </div>
+                  )}
+                </div>
+              )}
 
-          {fallbackStudyMetadataRows.length > 0 && (
-            <div className="bg-card rounded-lg border overflow-hidden mt-4">
-              <div className="px-5 py-4">
-                <h2 className="text-sm font-semibold">Additional Information</h2>
-              </div>
-              <div className="divide-y divide-border border-t">
-                {fallbackStudyMetadataRows.map(([key, value]) => (
-                  <div key={key} className="flex justify-between items-start px-5 py-3 text-sm">
-                    <span className="text-muted-foreground capitalize">{getFieldLabel(key)}</span>
-                    <span className="font-medium text-right max-w-[60%] break-words">
-                      {formatUnknownFieldValue(value)}
-                    </span>
+            <div
+              id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_REVIEW_SECTION_ID)}
+              className="mt-4 space-y-4 scroll-mt-20"
+            >
+                {!study.submitted && (() => {
+                  const hasSamples = totalSamples > 0;
+                  const metadataStepStatus = !hasSamples
+                    ? "Blocked"
+                    : allMetadataComplete
+                      ? "Done"
+                      : "In Progress";
+                  return (
+                    <div className="rounded-lg border bg-card p-5">
+                      <h3 className="mb-4 text-base font-semibold">Study Process</h3>
+                      <div className="space-y-3">
+                        <div className="rounded-lg border bg-background p-3">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-6 w-6 items-center justify-center rounded-full border border-foreground bg-foreground text-xs font-semibold text-background">
+                                1
+                              </span>
+                              <span className="text-sm font-medium">Create Study</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">Done</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Study created and available for sample assignment.
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg border bg-background p-3">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
+                                  ? "border-foreground bg-foreground text-background"
+                                  : "border-muted-foreground/40 text-muted-foreground"
+                                }`}
+                              >
+                                2
+                              </span>
+                              <span className="text-sm font-medium">Add Samples</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{hasSamples ? "Done" : "Pending"}</span>
+                          </div>
+                          {hasSamples ? (
+                            <p className="text-xs text-muted-foreground">
+                              {totalSamples} sample{totalSamples !== 1 ? "s" : ""} linked to this study.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-xs text-muted-foreground">
+                                No samples are linked yet.
+                              </p>
+                              {isOwner && (
+                                <Link
+                                  href={`/studies/${id}/edit`}
+                                  className="text-xs font-medium text-primary hover:underline"
+                                >
+                                  Add samples
+                                </Link>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-lg border bg-background p-3">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${hasSamples
+                                  ? "border-foreground bg-foreground text-background"
+                                  : "border-muted-foreground/40 text-muted-foreground"
+                                }`}
+                              >
+                                3
+                              </span>
+                              <span className="text-sm font-medium">Complete Metadata</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{metadataStepStatus}</span>
+                          </div>
+                          {!hasSamples ? (
+                            <p className="text-xs text-muted-foreground">Add samples first to unlock metadata completion.</p>
+                          ) : allMetadataComplete ? (
+                            <p className="text-xs text-muted-foreground">
+                              Metadata complete for all {totalSamples} sample{totalSamples !== 1 ? "s" : ""}.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-xs text-muted-foreground">
+                                {samplesWithMetadata}/{totalSamples} sample{totalSamples !== 1 ? "s" : ""} complete.
+                              </p>
+                              {isOwner && (
+                                <Link
+                                  href={`/studies/${id}/edit`}
+                                  className="text-xs font-medium text-primary hover:underline"
+                                >
+                                  Edit metadata
+                                </Link>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {study.submitted && (
+                  <div className="rounded-lg border p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      <div>
+                        <p className="font-medium">Registered with ENA</p>
+                        <p className="text-sm text-muted-foreground">
+                          {study.studyAccessionId && <span className="font-mono">{study.studyAccessionId}</span>}
+                          {study.submittedAt && <span className="ml-2">{formatDate(study.submittedAt)}</span>}
+                        </p>
+                      </div>
+                    </div>
+                    {study.studyAccessionId && (
+                      <a
+                        href="https://www.ebi.ac.uk/ena/submit/webin/report/studies"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline flex items-center gap-1"
+                      >
+                        View in Webin Portal
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
                   </div>
-                ))}
-              </div>
+                )}
+
+                {!study.submitted && study.readyForSubmission && !study.studyAccessionId && !study.testRegisteredAt && (
+                  <div className="rounded-lg border p-4 flex items-center gap-3">
+                    <Clock className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium">Awaiting Facility Review</p>
+                      <p className="text-sm text-muted-foreground">
+                        This study is marked as ready. The sequencing facility will review and submit to ENA.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-card rounded-lg border overflow-hidden">
+                  <div className="px-5 py-4">
+                    <h2 className="text-sm font-semibold flex items-center gap-2">
+                      <Clock className="h-4 w-4" />
+                      Status History
+                    </h2>
+                  </div>
+                  <div className="divide-y divide-border border-t">
+                    <div className="flex items-start gap-3 px-5 py-3">
+                      <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <BookOpen className="h-3.5 w-3.5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Study Created</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(study.createdAt)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {study.readyAt && (
+                      <div className="flex items-start gap-3 px-5 py-3">
+                        <div className="h-7 w-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
+                          <Send className="h-3.5 w-3.5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">Marked as Ready</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(study.readyAt)}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {study.submittedAt && (
+                      <div className="flex items-start gap-3 px-5 py-3">
+                        <div className="h-7 w-7 rounded-md bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">Submitted to ENA</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(study.submittedAt)}
+                            {study.studyAccessionId && (
+                              <span className="ml-2 font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                                {study.studyAccessionId}
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-card overflow-hidden">
+                  <div className="px-5 py-4">
+                    <h2 className="text-sm font-semibold">Study Snapshot</h2>
+                  </div>
+                  <div className="border-t">
+                    <table className="w-full text-sm">
+                      <tbody className="divide-y divide-border">
+                        <tr>
+                          <td className="px-5 py-3 text-muted-foreground">Samples</td>
+                          <td className="px-5 py-3 text-right font-medium">{totalSamples}</td>
+                        </tr>
+                        <tr>
+                          <td className="px-5 py-3 text-muted-foreground">Metadata</td>
+                          <td className="px-5 py-3 text-right font-medium">
+                            {samplesWithMetadata} / {totalSamples}
+                            <span className="ml-2 text-xs text-muted-foreground">({metadataCompletionPercent}%)</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="px-5 py-3 text-muted-foreground">Owner</td>
+                          <td className="px-5 py-3 text-right font-medium">{ownerDisplayName}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
             </div>
-          )}
+          </>
 
           {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
@@ -1151,7 +1374,7 @@ export default function StudyDetailPage({
             <div className="flex items-center justify-between px-5 py-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <FlaskConical className="h-4 w-4" />
-                Samples ({study.samples.length})
+                Samples ({studySamples.length})
               </h2>
               {!study.submitted && isOwner && (
                 <Button size="sm" variant="outline" asChild>
@@ -1162,7 +1385,7 @@ export default function StudyDetailPage({
               )}
             </div>
 
-            {study.samples.length === 0 ? (
+            {studySamples.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground border-t">
                 <FlaskConical className="h-10 w-10 mx-auto mb-2 opacity-50" />
                 <p>No samples in this study yet</p>
@@ -1176,8 +1399,8 @@ export default function StudyDetailPage({
               </div>
             ) : (
               <div className="divide-y divide-border border-t">
-                {study.samples.map((sample) => {
-                  const hasMetadata = sampleHasMetadata(sample);
+                {studySamples.map((sample) => {
+                  const hasMetadata = sampleHasStudyOverviewMetadata(sample);
                   return (
                     <div
                       key={sample.id}
@@ -1236,14 +1459,14 @@ export default function StudyDetailPage({
               </h2>
             </div>
 
-            {study.samples.length === 0 ? (
+            {studySamples.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground border-t">
                 <FlaskConical className="h-10 w-10 mx-auto mb-2 opacity-50" />
                 <p>No samples in this study yet</p>
               </div>
             ) : (
               <div className="divide-y divide-border border-t">
-                {study.samples.map((sample) => {
+                {studySamples.map((sample) => {
                   const hasFiles = sample.reads?.some(r => r.file1 || r.file2);
                   return (
                     <div key={sample.id} className="px-5 py-3">
@@ -1337,7 +1560,7 @@ export default function StudyDetailPage({
         {/* Pipelines Tab - admin only */}
         {isAdmin && totalSamples > 0 && (
           <TabsContent value="pipelines">
-            <StudyPipelinesSection studyId={study.id} samples={study.samples} />
+            <StudyPipelinesSection studyId={study.id} samples={studySamples} />
           </TabsContent>
         )}
 
@@ -1350,7 +1573,7 @@ export default function StudyDetailPage({
               hasTitle: Boolean(study.title && study.title.trim()),
               hasDescription: Boolean(study.description && study.description.trim()),
               hasSamples: totalSamples > 0,
-              allSamplesHaveOrganism: study.samples.every(s =>
+              allSamplesHaveOrganism: studySamples.every(s =>
                 s.taxId && s.taxId.trim()
               ),
               allSamplesHaveMetadata: allMetadataComplete,

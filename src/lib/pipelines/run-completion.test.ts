@@ -111,9 +111,13 @@ describe("run-completion", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       runFolder: "/tmp/run-1",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
       study: {
         samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
       },
+      order: null,
     });
     mocks.resolveOutputs.mockResolvedValue(resolved);
     mocks.saveRunResults.mockResolvedValue(undefined);
@@ -124,10 +128,58 @@ describe("run-completion", () => {
     expect(adapter.discoverOutputs).toHaveBeenCalledWith({
       runId: "run-1",
       outputDir: path.join("/tmp/run-1", "output"),
+      target: { type: "study", studyId: "study-1" },
       samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
     });
     expect(mocks.resolveOutputs).toHaveBeenCalledWith("mag", "run-1", discovered);
     expect(mocks.saveRunResults).toHaveBeenCalledWith("run-1", resolved);
+  });
+
+  it("uses order samples when processing an order-targeted run", async () => {
+    const discovered = {
+      files: [],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 0,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(discovered),
+    };
+
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-2",
+      runFolder: "/tmp/run-2",
+      targetType: "order",
+      studyId: null,
+      orderId: "order-9",
+      study: null,
+      order: {
+        samples: [{ id: "sample-9", sampleId: "ORDER-SAMPLE-9" }],
+      },
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 0,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await processCompletedPipelineRun("run-2", "fastq-checksum");
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledWith({
+      runId: "run-2",
+      outputDir: path.join("/tmp/run-2", "output"),
+      target: { type: "order", orderId: "order-9" },
+      samples: [{ id: "sample-9", sampleId: "ORDER-SAMPLE-9" }],
+    });
   });
 
   it("returns when run has no folder or no samples", async () => {
@@ -138,12 +190,20 @@ describe("run-completion", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValueOnce({
       id: "run-1",
       runFolder: null,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
       study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValueOnce({
       id: "run-1",
       runFolder: "/tmp/run-1",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
       study: { samples: [] },
+      order: null,
     });
 
     await processCompletedPipelineRun("run-1", "mag");

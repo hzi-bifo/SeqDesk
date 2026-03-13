@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
@@ -83,6 +84,7 @@ import {
   Hash,
   Loader2,
   MoreHorizontal,
+  Play,
   RefreshCw,
   Search,
   Upload,
@@ -116,6 +118,16 @@ type UploadMode = "read" | "artifact";
 type DetailView = "reads" | "artifacts";
 
 const CHUNK_SIZE = 5 * 1024 * 1024;
+
+interface OrderPipelineShortcut {
+  pipelineId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  input?: {
+    supportedScopes?: string[];
+  };
+}
 
 function formatFileSize(bytes?: number | null): string {
   if (!bytes) return "-";
@@ -212,12 +224,21 @@ export default function OrderSequencingPage({
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [orderPipelines, setOrderPipelines] = useState<OrderPipelineShortcut[]>([]);
   const [, setRelativeTimeTick] = useState(0);
 
   const orderId = resolvedParams.id;
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   const sampleOptions = useMemo(() => data?.samples ?? [], [data?.samples]);
+  const visibleOrderPipelines = useMemo(
+    () =>
+      orderPipelines.filter(
+        (pipeline) =>
+          pipeline.enabled && pipeline.input?.supportedScopes?.includes("order")
+      ),
+    [orderPipelines]
+  );
 
   const refreshSummary = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -246,6 +267,25 @@ export default function OrderSequencingPage({
     }
   }, [orderId]);
 
+  const refreshOrderPipelines = useCallback(async () => {
+    if (!isFacilityAdmin) {
+      setOrderPipelines([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/admin/settings/pipelines?enabled=true");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load order pipelines");
+      }
+      setOrderPipelines((payload?.pipelines as OrderPipelineShortcut[] | undefined) ?? []);
+    } catch (pipelineError) {
+      console.error("[Order Sequencing] Failed to load order pipelines:", pipelineError);
+      setOrderPipelines([]);
+    }
+  }, [isFacilityAdmin]);
+
   useEffect(() => {
     if (sessionStatus === "loading") {
       return;
@@ -258,6 +298,14 @@ export default function OrderSequencingPage({
 
     void refreshSummary();
   }, [isFacilityAdmin, refreshSummary, sessionStatus]);
+
+  useEffect(() => {
+    if (sessionStatus === "loading") {
+      return;
+    }
+
+    void refreshOrderPipelines();
+  }, [refreshOrderPipelines, sessionStatus]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -810,7 +858,15 @@ export default function OrderSequencingPage({
                 <FolderSearch className="mr-1.5 h-3.5 w-3.5" />
                 Scan Storage
               </Button>
-              <Button size="sm" variant="outline" onClick={() => refreshSummary({ silent: true })} disabled={refreshing}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void refreshSummary({ silent: true });
+                  void refreshOrderPipelines();
+                }}
+                disabled={refreshing}
+              >
                 {refreshing ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -825,6 +881,12 @@ export default function OrderSequencingPage({
                   <Hash className="mr-2 h-4 w-4" />
                 )}
                 Compute Hashes
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <Link href={`/orders/${orderId}/pipelines`}>
+                  <Play className="mr-2 h-4 w-4" />
+                  Order Pipelines
+                </Link>
               </Button>
             </div>
           </div>
@@ -855,6 +917,42 @@ export default function OrderSequencingPage({
             <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
+          ) : null}
+
+          {visibleOrderPipelines.length > 0 ? (
+            <Card className="border-border/70 bg-secondary/20">
+              <CardHeader className="pb-4">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Play className="h-4 w-4" />
+                  Pipelines
+                </CardTitle>
+                <CardDescription>
+                  Order-scoped utility pipelines for the linked sequencing files in this order.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleOrderPipelines.map((pipeline) => (
+                    <Link
+                      key={pipeline.pipelineId}
+                      href={`/orders/${orderId}/pipelines?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                      className="rounded-lg border bg-card px-4 py-3 transition hover:border-foreground/30 hover:bg-background"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{pipeline.name}</span>
+                        <Badge variant="outline">Pipeline</Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {pipeline.description}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Open a pipeline shortcut to select samples and start a run.
+                </div>
+              </CardContent>
+            </Card>
           ) : null}
 
           <div className="overflow-hidden rounded-xl border border-border bg-card">

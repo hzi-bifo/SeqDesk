@@ -218,6 +218,11 @@ export async function POST(
             userId: true,
           },
         },
+        order: {
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
@@ -227,7 +232,8 @@ export async function POST(
 
     if (
       session.user.role !== 'FACILITY_ADMIN' &&
-      run.study?.userId !== session.user.id
+      run.study?.userId !== session.user.id &&
+      run.order?.userId !== session.user.id
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

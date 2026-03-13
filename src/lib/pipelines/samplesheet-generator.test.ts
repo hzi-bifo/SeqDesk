@@ -108,7 +108,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
@@ -126,8 +126,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
-      sampleIds: ["sample-x"],
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-x"] },
       dataBasePath: "/db",
     });
 
@@ -136,7 +135,7 @@ describe("samplesheet-generator", () => {
         where: { studyId: "study-1", id: { in: ["sample-x"] } },
       })
     );
-    expect(result.errors).toEqual(["No samples found for the specified criteria"]);
+    expect(result.errors).toEqual(["No samples found for the specified pipeline target"]);
     expect(result.sampleCount).toBe(0);
   });
 
@@ -153,7 +152,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
@@ -180,7 +179,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/data/base",
     });
 
@@ -210,7 +209,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
@@ -261,7 +260,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("metaxpath");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
@@ -288,7 +287,7 @@ describe("samplesheet-generator", () => {
 
     const generator = new SamplesheetGenerator("mag");
     const result = await generator.generate({
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
@@ -315,7 +314,7 @@ describe("samplesheet-generator", () => {
     mocks.getPackageSamplesheet.mockReturnValueOnce(null);
 
     const noConfig = await generateSamplesheetFromConfig("mag", {
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
     expect(noConfig).toBeNull();
@@ -334,12 +333,41 @@ describe("samplesheet-generator", () => {
     });
 
     const generated = await generateSamplesheetFromConfig("mag", {
-      studyId: "study-1",
+      target: { type: "study", studyId: "study-1" },
       dataBasePath: "/db",
     });
 
     expect(generated).not.toBeNull();
     expect(generated?.sampleCount).toBe(1);
     expect(generated?.content).toContain("sample,r1,r2,platform,study,r1_full,mapped");
+  });
+
+  it("supports order targets and resolves study fields from the sample relation", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "S1",
+        reads: [{ file1: "reads/S1_R1.fastq.gz", file2: "reads/S1_R2.fastq.gz" }],
+        order: { id: "order-1", platform: "illumina", customFields: null },
+        study: { id: "study-99", title: "Linked Study" },
+      },
+    ]);
+
+    const generator = new SamplesheetGenerator("fastq-checksum");
+    const result = await generator.generate({
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      dataBasePath: "/db",
+    });
+
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orderId: "order-1", id: { in: ["sample-1"] } },
+      })
+    );
+    expect(mocks.db.study.findUnique).not.toHaveBeenCalled();
+    expect(result.errors).toEqual([]);
+    expect(result.sampleCount).toBe(1);
+    expect(result.content).toContain("Linked Study");
   });
 });

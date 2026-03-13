@@ -1,0 +1,91 @@
+{
+  "id": "simulate-reads",
+  "name": "Simulate Reads",
+  "description": "Generate dummy sequencing files for the samples in an order",
+  "category": "qc",
+  "version": "0.1.0",
+  "requires": {
+    "reads": false,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "data",
+      "name": "simulated_reads",
+      "description": "Generated FASTQ files linked back to the sample Read records",
+      "model": "Read",
+      "visibility": "admin",
+      "downloadable": false
+    },
+    {
+      "type": "report",
+      "name": "simulation_summary",
+      "description": "Run-level summary of generated dummy reads",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "order"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": false,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "title": "Simulation Mode",
+        "description": "Choose the dummy read profile to generate for the selected samples.",
+        "default": "shortReadPaired",
+        "enum": [
+          "shortReadPaired",
+          "shortReadSingle",
+          "longRead"
+        ]
+      },
+      "readCount": {
+        "type": "number",
+        "title": "Read Count",
+        "description": "Number of reads per sample. For long-read mode this is the number of long reads.",
+        "default": 1000
+      },
+      "readLength": {
+        "type": "number",
+        "title": "Read Length",
+        "description": "Read length for short-read modes, or target average length for long-read mode.",
+        "default": 150
+      },
+      "replaceExisting": {
+        "type": "boolean",
+        "title": "Replace Existing Reads",
+        "description": "Delete existing linked read files and replace them with the simulated outputs.",
+        "default": true
+      }
+    }
+  },
+  "defaultConfig": {
+    "mode": "shortReadPaired",
+    "readCount": 1000,
+    "readLength": 150,
+    "replaceExisting": true
+  },
+  "icon": "FileCode"
+}

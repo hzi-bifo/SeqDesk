@@ -9,20 +9,21 @@
  *
  * Usage:
  *   const generator = new SamplesheetGenerator('mag');
- *   const result = await generator.generate({ studyId, dataBasePath });
+ *   const result = await generator.generate({ target, dataBasePath });
  */
 
 import { db } from '@/lib/db';
 import { getPackageSamplesheet, type SamplesheetConfig as PackageSamplesheetConfig } from './package-loader';
 import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
+import type { PipelineTarget } from './types';
+import { getPipelineSampleWhere, isStudyTarget } from './target';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
 type PackageColumn = PackageSamplesheet['columns'][number];
 
 export interface GenerateOptions {
-  studyId: string;
-  sampleIds?: string[];
+  target: PipelineTarget;
   dataBasePath: string;
 }
 
@@ -60,8 +61,8 @@ function resolveSource(
       sampleId: string;
       reads: Array<{ file1: string | null; file2: string | null }>;
     };
-    study: { id: string; title?: string };
-    order: { platform?: string | null; customFields?: string | null } | null;
+    study: { id: string; title: string | null } | null;
+    order: { id?: string | null; platform?: string | null; customFields?: string | null } | null;
     dataBasePath: string;
   }
 ): string | null {
@@ -76,11 +77,15 @@ function resolveSource(
   }
 
   if (source === 'study.id') {
-    return study.id;
+    return study?.id || null;
   }
 
   if (source === 'study.title') {
-    return study.title || study.id;
+    return study?.title || study?.id || null;
+  }
+
+  if (source === 'order.id') {
+    return order?.id || null;
   }
 
   if (source === 'order.platform') {
@@ -181,7 +186,7 @@ export class SamplesheetGenerator {
    * Generate the samplesheet CSV content
    */
   async generate(options: GenerateOptions): Promise<GenerateResult> {
-    const { studyId, sampleIds, dataBasePath } = options;
+    const { target, dataBasePath } = options;
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -192,14 +197,8 @@ export class SamplesheetGenerator {
 
     const sheet = this.config.samplesheet;
 
-    // Fetch samples with related data
-    const whereClause: { studyId: string; id?: { in: string[] } } = { studyId };
-    if (sampleIds && sampleIds.length > 0) {
-      whereClause.id = { in: sampleIds };
-    }
-
     const samples = await db.sample.findMany({
-      where: whereClause,
+      where: getPipelineSampleWhere(target),
       include: {
         reads: true,
         order: {
@@ -209,24 +208,32 @@ export class SamplesheetGenerator {
             customFields: true,
           },
         },
+        study: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
       orderBy: { sampleId: 'asc' },
     });
 
     if (samples.length === 0) {
-      errors.push('No samples found for the specified criteria');
+      errors.push('No samples found for the specified pipeline target');
       return { content: '', sampleCount: 0, errors, warnings };
     }
 
-    // Get study info
-    const study = await db.study.findUnique({
-      where: { id: studyId },
-      select: { id: true, title: true },
-    });
+    let study: { id: string; title: string | null } | null = null;
+    if (isStudyTarget(target)) {
+      study = await db.study.findUnique({
+        where: { id: target.studyId },
+        select: { id: true, title: true },
+      });
 
-    if (!study) {
-      errors.push('Study not found');
-      return { content: '', sampleCount: 0, errors, warnings };
+      if (!study) {
+        errors.push('Study not found');
+        return { content: '', sampleCount: 0, errors, warnings };
+      }
     }
 
     // Generate rows
@@ -241,7 +248,7 @@ export class SamplesheetGenerator {
             file2: r.file2,
           })),
         },
-        study,
+        study: sample.study || study,
         order: sample.order,
         dataBasePath,
       };

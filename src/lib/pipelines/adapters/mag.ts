@@ -14,6 +14,7 @@ import { db } from '@/lib/db';
 import { mapPlatformForPipeline } from '../metadata-validation';
 import { resolveOrderPlatform } from '../order-platform';
 import { generateSamplesheetFromConfig } from '../samplesheet-generator';
+import { isStudyTarget } from '../target';
 import {
   PipelineAdapter,
   ValidationResult,
@@ -221,14 +222,20 @@ export const magAdapter: PipelineAdapter = {
   pipelineId: 'mag',
 
   async validateInputs(
-    studyId: string,
-    sampleIds?: string[]
+    target
   ): Promise<ValidationResult> {
     const issues: string[] = [];
 
-    const whereClause: { studyId: string; id?: { in: string[] } } = { studyId };
-    if (sampleIds && sampleIds.length > 0) {
-      whereClause.id = { in: sampleIds };
+    if (!isStudyTarget(target)) {
+      return {
+        valid: false,
+        issues: ['MAG can only run on study targets'],
+      };
+    }
+
+    const whereClause: { studyId: string; id?: { in: string[] } } = { studyId: target.studyId };
+    if (target.sampleIds && target.sampleIds.length > 0) {
+      whereClause.id = { in: target.sampleIds };
     }
 
     const samples = await db.sample.findMany({
@@ -262,12 +269,19 @@ export const magAdapter: PipelineAdapter = {
   },
 
   async generateSamplesheet(
-    options: SamplesheetOptions
+      options: SamplesheetOptions
   ): Promise<SamplesheetResult> {
+    if (!isStudyTarget(options.target)) {
+      return {
+        content: '',
+        sampleCount: 0,
+        errors: ['MAG can only run on study targets'],
+      };
+    }
+
     // Try using the declarative config from samplesheet.yaml first
     const configResult = await generateSamplesheetFromConfig('mag', {
-      studyId: options.studyId,
-      sampleIds: options.sampleIds,
+      target: options.target,
       dataBasePath: options.dataBasePath,
     });
 
@@ -282,7 +296,8 @@ export const magAdapter: PipelineAdapter = {
 
     // Fallback to custom code if no config or config failed
     // (This code is kept for backwards compatibility)
-    const { studyId, sampleIds, dataBasePath } = options;
+    const { studyId, sampleIds } = options.target;
+    const { dataBasePath } = options;
     const errors: string[] = [];
 
     const whereClause: { studyId: string; id?: { in: string[] } } = { studyId };

@@ -10,6 +10,8 @@
 // NOTE: Adapters do NOT write to the database. They return discovered artifacts
 // which are then processed by the Output Resolver.
 
+import type { PipelineTarget } from '@/lib/pipelines/types';
+
 /**
  * Result of validating pipeline inputs
  */
@@ -31,8 +33,7 @@ export interface SamplesheetResult {
  * Options for samplesheet generation
  */
 export interface SamplesheetOptions {
-  studyId: string;
-  sampleIds?: string[];  // If provided, only include these samples
+  target: PipelineTarget;
   dataBasePath: string;  // Base path for sequencing files
 }
 
@@ -70,6 +71,7 @@ export interface DiscoverOutputsResult {
 export interface DiscoverOutputsOptions {
   runId: string;
   outputDir: string;
+  target?: PipelineTarget;
   samples: Array<{
     id: string;        // Database ID
     sampleId: string;  // Sample identifier (e.g., "SAMP-001")
@@ -91,13 +93,11 @@ export interface PipelineAdapter {
   /**
    * Validate that all required inputs are available for running the pipeline.
    *
-   * @param studyId - The study to validate
-   * @param sampleIds - Optional list of specific samples to validate
+   * @param target - The study/order target to validate
    * @returns Validation result with any issues found
    */
   validateInputs(
-    studyId: string,
-    sampleIds?: string[]
+    target: PipelineTarget
   ): Promise<ValidationResult>;
 
   /**

@@ -8,14 +8,22 @@ const mocks = vi.hoisted(() => ({
     study: {
       findUnique: vi.fn(),
     },
+    order: {
+      findUnique: vi.fn(),
+    },
     siteSettings: {
       findUnique: vi.fn(),
     },
   },
+  getPackage: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/pipelines/package-loader", () => ({
+  getPackage: mocks.getPackage,
 }));
 
 import { mapPlatformForPipeline, validatePipelineMetadata } from "./metadata-validation";
@@ -25,6 +33,7 @@ describe("metadata-validation", () => {
     vi.clearAllMocks();
     mocks.db.pipelineConfig.findUnique.mockResolvedValue({ config: null });
     mocks.db.siteSettings.findUnique.mockResolvedValue({ enaTestMode: false });
+    mocks.getPackage.mockReturnValue(null);
   });
 
   it("returns a study-not-found error when study does not exist", async () => {
@@ -55,6 +64,77 @@ describe("metadata-validation", () => {
       {
         field: "samples",
         message: "No samples in study",
+        severity: "error",
+      },
+    ]);
+  });
+
+  it("returns an order-not-found error when the order target does not exist", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+
+    const result = await validatePipelineMetadata(
+      { type: "order", orderId: "order-1" },
+      "fastq-checksum"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      {
+        field: "order",
+        message: "Order not found",
+        severity: "error",
+      },
+    ]);
+  });
+
+  it("rejects order targets for packages with required study-scoped inputs", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        inputs: [
+          {
+            id: "study-accession",
+            scope: "study",
+            source: "study.studyAccessionId",
+            required: true,
+          },
+        ],
+      },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata(
+      { type: "order", orderId: "order-1" },
+      "study-bound"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      {
+        field: "study-accession",
+        message:
+          "STUDY-BOUND requires study-scoped input study.studyAccessionId and cannot run on an order target",
         severity: "error",
       },
     ]);

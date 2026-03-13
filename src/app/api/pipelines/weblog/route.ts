@@ -9,6 +9,7 @@ import { promisify } from 'util';
 // Import to trigger adapter registration
 import '@/lib/pipelines/adapters/mag';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
+import type { PipelineTarget } from '@/lib/pipelines/types';
 
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 const MAX_EVENT_PAYLOAD = 12000;
@@ -50,6 +51,16 @@ async function processCompletedRun(runId: string, pipelineId: string): Promise<v
           },
         },
       },
+      order: {
+        include: {
+          samples: {
+            select: {
+              id: true,
+              sampleId: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -58,7 +69,14 @@ async function processCompletedRun(runId: string, pipelineId: string): Promise<v
     return;
   }
 
-  const samples = run.study?.samples || [];
+  const target: PipelineTarget | null =
+    run.targetType === 'order' && run.orderId
+      ? { type: 'order', orderId: run.orderId }
+      : run.studyId
+        ? { type: 'study', studyId: run.studyId }
+        : null;
+
+  const samples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
   if (samples.length === 0) {
     console.log(`[Pipeline Weblog] Run ${runId} has no samples`);
     return;
@@ -69,6 +87,7 @@ async function processCompletedRun(runId: string, pipelineId: string): Promise<v
   const discovered = await adapter.discoverOutputs({
     runId,
     outputDir,
+    target: target || undefined,
     samples: samples.map((s) => ({ id: s.id, sampleId: s.sampleId })),
   });
 

@@ -139,6 +139,7 @@ export async function GET(request: NextRequest) {
         config: resolvedConfig,
         configSchema: extendedConfigSchema,
         defaultConfig: extendedDefaultConfig,
+        input: definition.input,
         visibility: definition.visibility,
         requires: definition.requires,
         outputs: definition.outputs,

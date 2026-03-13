@@ -13,11 +13,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { studyId, pipelineId, sampleIds } = body;
+    const { studyId, orderId, pipelineId, sampleIds } = body;
 
-    if (!studyId || !pipelineId) {
+    if ((!studyId && !orderId) || (studyId && orderId) || !pipelineId) {
       return NextResponse.json(
-        { error: 'studyId and pipelineId are required' },
+        { error: 'pipelineId and exactly one of studyId or orderId are required' },
         { status: 400 }
       );
     }
@@ -40,9 +40,8 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await validatePipelineMetadata(
-      studyId,
+      orderId ? { type: 'order', orderId, sampleIds: validatedSampleIds } : { type: 'study', studyId, sampleIds: validatedSampleIds },
       pipelineId,
-      validatedSampleIds
     );
 
     return NextResponse.json(result);

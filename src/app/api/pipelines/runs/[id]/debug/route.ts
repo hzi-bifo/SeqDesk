@@ -57,6 +57,25 @@ type DebugBundle = {
     errorTail: string | null;
     config: Record<string, unknown> | null;
   };
+  target: {
+    type: "study" | "order";
+    id: string;
+    title: string;
+    orderNumber?: string | null;
+    selectedSamples: Array<{
+      id: string;
+      sampleId: string;
+      readCount: number;
+      reads: Array<{
+        id: string;
+        file1: string | null;
+        file2: string | null;
+        checksum1: string | null;
+        checksum2: string | null;
+      }>;
+    }>;
+    selectedSampleCount: number;
+  } | null;
   study: {
     id: string;
     title: string;
@@ -253,14 +272,18 @@ function buildBundleText(bundle: DebugBundle): string {
   lines.push(`OutputPath: ${valueOrDash(bundle.run.outputPath)}`);
   lines.push(`ErrorPath: ${valueOrDash(bundle.run.errorPath)}`);
 
-  lines.push(section("StudyAndSamples"));
-  if (!bundle.study) {
-    lines.push("Study: -");
+  lines.push(section("TargetAndSamples"));
+  if (!bundle.target) {
+    lines.push("Target: -");
   } else {
-    lines.push(`StudyID: ${bundle.study.id}`);
-    lines.push(`StudyTitle: ${bundle.study.title}`);
-    lines.push(`SelectedSampleCount: ${bundle.study.selectedSampleCount}`);
-    for (const sample of bundle.study.selectedSamples) {
+    lines.push(`TargetType: ${bundle.target.type}`);
+    lines.push(`TargetID: ${bundle.target.id}`);
+    lines.push(`TargetTitle: ${bundle.target.title}`);
+    if (bundle.target.orderNumber) {
+      lines.push(`OrderNumber: ${bundle.target.orderNumber}`);
+    }
+    lines.push(`SelectedSampleCount: ${bundle.target.selectedSampleCount}`);
+    for (const sample of bundle.target.selectedSamples) {
       lines.push(`Sample: ${sample.sampleId} (${sample.id}) reads=${sample.readCount}`);
       for (const read of sample.reads) {
         lines.push(`  ReadID: ${read.id}`);
@@ -463,6 +486,29 @@ export async function GET(
     const run = await db.pipelineRun.findUnique({
       where: { id },
       include: {
+        order: {
+          select: {
+            id: true,
+            name: true,
+            orderNumber: true,
+            userId: true,
+            samples: {
+              select: {
+                id: true,
+                sampleId: true,
+                reads: {
+                  select: {
+                    id: true,
+                    file1: true,
+                    file2: true,
+                    checksum1: true,
+                    checksum2: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         study: {
           select: {
             id: true,
@@ -502,7 +548,8 @@ export async function GET(
 
     if (
       session.user.role !== "FACILITY_ADMIN" &&
-      run.study?.userId !== session.user.id
+      run.study?.userId !== session.user.id &&
+      run.order?.userId !== session.user.id
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -514,7 +561,10 @@ export async function GET(
         ? new Set(selectedSampleIds)
         : null;
 
-    const selectedSamples = (run.study?.samples || [])
+    const targetSamples =
+      run.targetType === "order" ? run.order?.samples || [] : run.study?.samples || [];
+
+    const selectedSamples = targetSamples
       .filter((sample) => !selectedSampleSet || selectedSampleSet.has(sample.id))
       .map((sample) => ({
         id: sample.id,
@@ -623,6 +673,25 @@ export async function GET(
         errorTail: run.errorTail,
         config: parseJson<Record<string, unknown>>(run.config),
       },
+      target:
+        run.targetType === "order" && run.order
+          ? {
+              type: "order",
+              id: run.order.id,
+              title: run.order.name ?? run.order.orderNumber,
+              orderNumber: run.order.orderNumber,
+              selectedSamples,
+              selectedSampleCount: selectedSamples.length,
+            }
+          : run.study
+            ? {
+                type: "study",
+                id: run.study.id,
+                title: run.study.title,
+                selectedSamples,
+                selectedSampleCount: selectedSamples.length,
+              }
+            : null,
       study: run.study
         ? {
             id: run.study.id,

@@ -17,6 +17,7 @@ import { db } from '@/lib/db';
 import { getPackage, type LoadedPackage, type PackageExecution } from './package-loader';
 import { createGenericAdapter } from './generic-adapter';
 import { getAdapter, registerAdapter, type PipelineAdapter } from './adapters/types';
+import type { PipelineTarget } from './types';
 
 // Extended execution type with paramMap and paramRules
 interface ExtendedPackageExecution extends PackageExecution {
@@ -47,8 +48,7 @@ export interface ExecutionSettings {
 export interface PrepareRunOptions {
   runId: string;
   pipelineId: string;
-  studyId: string;
-  sampleIds?: string[];
+  target: PipelineTarget;
   config: Record<string, unknown>;
   executionSettings: ExecutionSettings;
   userId: string;
@@ -613,8 +613,7 @@ export async function prepareGenericRun(
   const {
     runId,
     pipelineId,
-    studyId,
-    sampleIds,
+    target,
     config,
     executionSettings,
   } = options;
@@ -663,8 +662,7 @@ export async function prepareGenericRun(
 
     // Generate samplesheet
     const samplesheet = await adapter.generateSamplesheet({
-      studyId,
-      sampleIds,
+      target,
       dataBasePath: executionSettings.dataBasePath,
     });
 

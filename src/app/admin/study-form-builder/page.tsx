@@ -50,12 +50,15 @@ import {
   FIELD_TYPE_LABELS,
 } from "@/types/form-config";
 import { useModule } from "@/lib/modules";
+import {
+  STUDY_INFORMATION_SECTION_ID,
+  STUDY_METADATA_SECTION_ID,
+  getFixedStudySections,
+  normalizeStudyFormSchema,
+} from "@/lib/studies/fixed-sections";
 
 // Default groups for study forms
-const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = [
-  { id: "group_study_info", name: "Study Information", order: 0 },
-  { id: "group_metadata", name: "Metadata", order: 1 },
-];
+const DEFAULT_STUDY_GROUPS: FormFieldGroup[] = getFixedStudySections();
 
 const LEGACY_SUBMG_PER_SAMPLE_FIELDS = new Set([
   "collection date",
@@ -109,17 +112,9 @@ export default function StudyFormBuilderPage() {
   const lastPersistedSnapshotRef = useRef("");
   const saveInFlightRef = useRef(false);
 
-  // Group dialog state
-  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<FormFieldGroup | null>(null);
-  const [groupName, setGroupName] = useState("");
-  const [groupDescription, setGroupDescription] = useState("");
-
   // Delete confirmation dialogs
   const [deleteFieldDialogOpen, setDeleteFieldDialogOpen] = useState(false);
   const [fieldToDelete, setFieldToDelete] = useState<FormFieldDefinition | null>(null);
-  const [deleteGroupDialogOpen, setDeleteGroupDialogOpen] = useState(false);
-  const [groupToDelete, setGroupToDelete] = useState<FormFieldGroup | null>(null);
 
   // Import config confirmation dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -144,6 +139,20 @@ export default function StudyFormBuilderPage() {
   const [fieldGroupId, setFieldGroupId] = useState<string>("");
   const [fieldPerSample, setFieldPerSample] = useState(false);
   const [fieldAdminOnly, setFieldAdminOnly] = useState(false);
+  const facilityLockedFieldTypes = new Set<FieldType>(["mixs", "funding"]);
+
+  const canFieldBeFacilityOnly = (
+    field: Pick<FormFieldDefinition, "type" | "moduleSource" | "name">
+  ) => {
+    if (field.name === "_sample_association") return false;
+    if (field.moduleSource) return false;
+    return !facilityLockedFieldTypes.has(field.type);
+  };
+  const canCurrentFieldBeFacilityOnly = canFieldBeFacilityOnly({
+    type: fieldType,
+    moduleSource: editingField?.moduleSource,
+    name: fieldName.trim() || editingField?.name || "",
+  });
 
   // Fetch configuration
   useEffect(() => {
@@ -175,8 +184,12 @@ export default function StudyFormBuilderPage() {
             ];
           }
 
-          setFields(loadedFields);
-          setGroups(data.groups || DEFAULT_STUDY_GROUPS);
+          const normalized = normalizeStudyFormSchema({
+            fields: loadedFields,
+            groups: data.groups || DEFAULT_STUDY_GROUPS,
+          });
+          setFields(normalized.fields);
+          setGroups(normalized.groups);
         } else {
           // No config yet - start with Sample Association enabled
           setFields([{
@@ -226,22 +239,26 @@ export default function StudyFormBuilderPage() {
   };
 
   // Open dialog for new field
-  const handleAddField = (perSample: boolean = false, adminOnly: boolean = false) => {
+  const handleAddField = (
+    perSample: boolean = false,
+    adminOnly: boolean = false,
+    groupId?: string
+  ) => {
     resetFieldForm();
     setFieldPerSample(perSample);
     setFieldAdminOnly(adminOnly);
     if (!perSample && !adminOnly && groups.length > 0) {
       const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
-      setFieldGroupId(sortedGroups[0].id);
+      setFieldGroupId(groupId || sortedGroups[0].id);
     }
     setDialogOpen(true);
   };
 
   // Helper to add a suggested field
   const addSuggestedField = (template: Omit<FormFieldDefinition, "id" | "order">) => {
-    const nextOrder = template.perSample
-      ? fields.filter((f) => f.perSample).length
-      : fields.filter((f) => !f.perSample).length;
+    const nextOrder = fields.filter(
+      (f) => !!f.perSample === !!template.perSample && !!f.adminOnly === !!template.adminOnly
+    ).length;
     const newField: FormFieldDefinition = {
       ...template,
       id: `field_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -294,12 +311,29 @@ export default function StudyFormBuilderPage() {
       return;
     }
 
+    if (fieldAdminOnly && !canCurrentFieldBeFacilityOnly) {
+      setError("This field type must remain visible in the main study flow");
+      return;
+    }
+
     const targetSectionCount = fields.filter(
-      (f) => !!f.perSample === fieldPerSample && f.id !== editingField?.id
+      (f) =>
+        !!f.perSample === fieldPerSample &&
+        !!f.adminOnly === fieldAdminOnly &&
+        f.id !== editingField?.id
     ).length;
-    const order = editingField && editingField.perSample === fieldPerSample
+    const order =
+      editingField &&
+      editingField.perSample === fieldPerSample &&
+      !!editingField.adminOnly === fieldAdminOnly
       ? editingField.order ?? targetSectionCount
       : targetSectionCount;
+    const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
+    const shouldAssignUserSection =
+      !fieldPerSample && !fieldAdminOnly && name !== "_sample_association";
+    const assignedGroupId = shouldAssignUserSection
+      ? sortedGroups.find((group) => group.id === fieldGroupId)?.id || sortedGroups[0]?.id
+      : undefined;
 
     const newField: FormFieldDefinition = {
       id: editingField?.id || `field_${Date.now()}`,
@@ -313,7 +347,7 @@ export default function StudyFormBuilderPage() {
       placeholder: fieldPlaceholder.trim() || undefined,
       options: fieldType === "select" || fieldType === "multiselect" ? fieldOptions : undefined,
       order,
-      groupId: fieldGroupId || undefined,
+      groupId: assignedGroupId,
       adminOnly: fieldAdminOnly || undefined,
     };
 
@@ -344,14 +378,43 @@ export default function StudyFormBuilderPage() {
     setFieldToDelete(null);
   };
 
-  // Move field up/down within its section (study vs per-sample)
+  const toggleFieldAdminOnly = (fieldId: string) => {
+    const sortedGroups = [...groups].sort((a, b) => a.order - b.order);
+    setFields(fields.map((field) => {
+      if (field.id !== fieldId) return field;
+
+      const nextAdminOnly = !field.adminOnly;
+      if (nextAdminOnly && !canFieldBeFacilityOnly(field)) {
+        return field;
+      }
+      if (nextAdminOnly) {
+        return {
+          ...field,
+          adminOnly: true,
+          groupId: undefined,
+        };
+      }
+
+      return {
+        ...field,
+        adminOnly: false,
+        groupId:
+          !field.perSample && field.name !== "_sample_association"
+            ? field.groupId || sortedGroups[0]?.id
+            : undefined,
+      };
+    }));
+  };
+
+  // Move field up/down within its section.
   const handleMoveField = (
     fieldId: string,
     perSample: boolean,
+    adminOnly: boolean,
     direction: "up" | "down"
   ) => {
     const sectionFields = fields
-      .filter((f) => !!f.perSample === perSample)
+      .filter((f) => !!f.perSample === perSample && !!f.adminOnly === adminOnly)
       .sort((a, b) => a.order - b.order);
     const index = sectionFields.findIndex((f) => f.id === fieldId);
     if (index === -1) return;
@@ -381,76 +444,6 @@ export default function StudyFormBuilderPage() {
   // Remove option
   const handleRemoveOption = (index: number) => {
     setFieldOptions(fieldOptions.filter((_, i) => i !== index));
-  };
-
-  // Group management
-  const handleAddGroup = () => {
-    setEditingGroup(null);
-    setGroupName("");
-    setGroupDescription("");
-    setGroupDialogOpen(true);
-  };
-
-  const handleEditGroup = (group: FormFieldGroup) => {
-    setEditingGroup(group);
-    setGroupName(group.name);
-    setGroupDescription(group.description || "");
-    setGroupDialogOpen(true);
-  };
-
-  const handleSaveGroup = () => {
-    if (!groupName.trim()) {
-      setError("Group name is required");
-      return;
-    }
-
-    const newGroup: FormFieldGroup = {
-      id: editingGroup?.id || `group_${Date.now()}`,
-      name: groupName.trim(),
-      description: groupDescription.trim() || undefined,
-      order: editingGroup?.order ?? groups.length,
-    };
-
-    if (editingGroup) {
-      setGroups(groups.map((g) => (g.id === editingGroup.id ? newGroup : g)));
-    } else {
-      setGroups([...groups, newGroup]);
-    }
-
-    setGroupDialogOpen(false);
-    setError("");
-  };
-
-  // Open delete group dialog
-  const openDeleteGroupDialog = (group: FormFieldGroup) => {
-    setGroupToDelete(group);
-    setDeleteGroupDialogOpen(true);
-  };
-
-  // Delete group
-  const handleDeleteGroup = () => {
-    if (!groupToDelete) return;
-    setFields(fields.map((f) => (f.groupId === groupToDelete.id ? { ...f, groupId: undefined } : f)));
-    setGroups(groups.filter((g) => g.id !== groupToDelete.id));
-    setDeleteGroupDialogOpen(false);
-    setGroupToDelete(null);
-  };
-
-  const handleMoveGroup = (groupId: string, direction: "up" | "down") => {
-    const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
-    const currentIndex = orderedGroups.findIndex((group) => group.id === groupId);
-    if (currentIndex === -1) return;
-
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    if (targetIndex < 0 || targetIndex >= orderedGroups.length) return;
-
-    const reordered = [...orderedGroups];
-    [reordered[currentIndex], reordered[targetIndex]] = [
-      reordered[targetIndex],
-      reordered[currentIndex],
-    ];
-
-    setGroups(reordered.map((group, index) => ({ ...group, order: index })));
   };
 
   const persistConfiguration = useCallback(
@@ -582,9 +575,14 @@ export default function StudyFormBuilderPage() {
           };
         });
 
-        setPendingImport({
+        const normalized = normalizeStudyFormSchema({
           fields: normalizedFields,
           groups: normalizedGroups,
+        });
+
+        setPendingImport({
+          fields: normalized.fields,
+          groups: normalized.groups,
         });
         setImportDialogOpen(true);
       } catch {
@@ -650,11 +648,17 @@ export default function StudyFormBuilderPage() {
   const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
 
   const orderedStudyFields = visibleFields
-    .filter((f) => !f.perSample && f.name !== "_sample_association")
+    .filter((f) => !f.perSample && f.name !== "_sample_association" && !f.adminOnly)
+    .sort((a, b) => a.order - b.order);
+  const facilityStudyFields = visibleFields
+    .filter((f) => !f.perSample && f.name !== "_sample_association" && f.adminOnly)
     .sort((a, b) => a.order - b.order);
 
   const orderedPerSampleFields = visibleFields
-    .filter((f) => f.perSample)
+    .filter((f) => f.perSample && !f.adminOnly)
+    .sort((a, b) => a.order - b.order);
+  const facilityPerSampleFields = visibleFields
+    .filter((f) => f.perSample && f.adminOnly)
     .sort((a, b) => a.order - b.order);
 
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
@@ -662,6 +666,27 @@ export default function StudyFormBuilderPage() {
   const duplicateLegacyPerSampleFields = orderedPerSampleFields.filter((field) =>
     isLegacySubmgPerSampleFieldName(field.name)
   );
+  const sectionPreviewFields: Record<string, FormFieldDefinition[]> = {
+    [STUDY_INFORMATION_SECTION_ID]: orderedStudyFields.filter(
+      (field) => field.groupId === STUDY_INFORMATION_SECTION_ID
+    ),
+    [STUDY_METADATA_SECTION_ID]: orderedStudyFields.filter(
+      (field) => field.groupId === STUDY_METADATA_SECTION_ID
+    ),
+    "per-sample": orderedPerSampleFields,
+    facility: [...facilityStudyFields, ...facilityPerSampleFields],
+  };
+  const isSampleAssociationField =
+    fieldName.trim() === "_sample_association" || editingField?.name === "_sample_association";
+  const automaticFieldSectionLabel = fieldPerSample
+    ? fieldAdminOnly
+      ? "Facility Sample Fields"
+      : "Per-Sample tab"
+    : fieldAdminOnly
+      ? "Facility Fields tab"
+      : isSampleAssociationField
+        ? "Managed automatically"
+        : "";
 
   const removeLegacySubmgPerSampleFields = () => {
     setFields((currentFields) => {
@@ -729,10 +754,10 @@ export default function StudyFormBuilderPage() {
               Per-Sample
             </TabsTrigger>
             <TabsTrigger
-              value="groups"
+              value="facility"
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
             >
-              Groups
+              Facility Fields
             </TabsTrigger>
             <TabsTrigger
               value="settings"
@@ -788,165 +813,143 @@ export default function StudyFormBuilderPage() {
         </div>
       )}
 
-      {/* Form Groups */}
-      <TabsContent value="groups">
-      <GlassCard className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-base font-semibold">Form Groups (Steps)</h2>
-          <Button onClick={handleAddGroup} variant="outline" size="sm" className="bg-white">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Group
-          </Button>
+      <GlassCard className="mb-6 p-6">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">Current Study Overview Sections</h2>
+          <span className="text-xs text-muted-foreground">
+            Shared by study details, study editing, and the study sidebar
+          </span>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
-          Groups organize your study form into sections. Use the arrows to reorder.
+          These sections are fixed. Study-level user fields belong to either Study Information or Metadata,
+          while per-sample fields and facility-only fields are managed separately below.
         </p>
-
-        <div className="space-y-2">
-          {orderedGroups.map((group, index) => {
-            const groupFields = visibleFields
-              .filter((field) => field.groupId === group.id)
-              .sort((a, b) => a.order - b.order);
-            const fieldCount = groupFields.length;
-            return (
-              <div key={group.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border">
-                <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleMoveGroup(group.id, "up")}
-                    disabled={index === 0}
-                    className="p-1 hover:bg-muted rounded disabled:opacity-30"
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveGroup(group.id, "down")}
-                    disabled={index === orderedGroups.length - 1}
-                    className="p-1 hover:bg-muted rounded disabled:opacity-30"
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            {
+              id: STUDY_INFORMATION_SECTION_ID,
+              label: "Study Information",
+              description: "Core study fields shown in the main overview.",
+              fields: sectionPreviewFields[STUDY_INFORMATION_SECTION_ID] || [],
+              onAdd: () => handleAddField(false, false, STUDY_INFORMATION_SECTION_ID),
+              actionLabel: "Add study field",
+            },
+            {
+              id: STUDY_METADATA_SECTION_ID,
+              label: "Metadata",
+              description: "Environment and metadata fields shown in the main overview.",
+              fields: sectionPreviewFields[STUDY_METADATA_SECTION_ID] || [],
+              onAdd: () => handleAddField(false, false, STUDY_METADATA_SECTION_ID),
+              actionLabel: "Add metadata field",
+            },
+            {
+              id: "per-sample",
+              label: "Per-Sample",
+              description: "Shown in the study metadata table for each sample.",
+              fields: sectionPreviewFields["per-sample"] || [],
+              onAdd: () => handleAddField(true, false),
+              actionLabel: "Add sample field",
+            },
+            {
+              id: "facility",
+              label: "Facility Fields",
+              description: "Hidden from researchers and shown only to facility admins.",
+              fields: sectionPreviewFields.facility || [],
+              onAdd: () => undefined,
+              actionLabel: "",
+            },
+          ].map((section) => (
+            <div key={section.id} className="rounded-xl border border-border bg-background p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">{section.label}</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">{section.description}</p>
                 </div>
-                <GripVertical className="h-4 w-4 text-muted-foreground" />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{group.name}</span>
-                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                      {fieldCount} field{fieldCount !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  {group.description && (
-                    <p className="text-sm text-muted-foreground">{group.description}</p>
-                  )}
-                  {groupFields.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {groupFields.map((field) => (
-                        <span
-                          key={field.id}
-                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-xs"
-                        >
-                          <span>{field.label}</span>
-                          <span className="text-muted-foreground">
-                            {FIELD_TYPE_LABELS[field.type] || field.type}
-                          </span>
-                          {field.perSample && (
-                            <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
-                              per-sample
-                            </span>
-                          )}
-                          {field.adminOnly && (
-                            <span className="rounded bg-slate-200 px-1 py-0.5 text-[10px] text-slate-700">
-                              admin
-                            </span>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      No fields assigned to this group yet.
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon" onClick={() => handleEditGroup(group)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => openDeleteGroupDialog(group)}
-                    className="text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+                <span className="rounded-full bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                  {section.fields.length} field{section.fields.length === 1 ? "" : "s"}
+                </span>
               </div>
-            );
-          })}
-
-          {groups.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No groups defined. Add a group to organize your form fields.
-            </div>
-          )}
-        </div>
-      </GlassCard>
-
-      {(() => {
-        const unassignedFields = visibleFields.filter(
-          (field) => !field.groupId && !field.adminOnly
-        );
-
-        if (unassignedFields.length === 0 || groups.length === 0) return null;
-
-        return (
-          <GlassCard className="p-6">
-            <h2 className="text-base font-semibold mb-1">Fields Not Assigned to a Group</h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              These fields won&apos;t appear in grouped sections of the study form. Assign them to a group so they appear in the intended section.
-            </p>
-            <div className="space-y-2">
-              {unassignedFields.map((field) => (
-                <div
-                  key={field.id}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border"
-                >
-                  <div className="flex-1">
-                    <span className="font-medium text-sm">{field.label}</span>
-                    {field.perSample && (
-                      <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                        per-sample
+              <div className="mt-3 min-h-14 rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2">
+                {section.fields.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {section.fields.slice(0, 4).map((field) => (
+                      <span
+                        key={field.id}
+                        className={`rounded px-2 py-1 text-[10px] font-medium ${
+                          field.adminOnly
+                            ? "bg-slate-200 text-slate-700"
+                            : field.perSample
+                              ? "bg-amber-100 text-amber-700"
+                              : field.type === "mixs"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-background text-foreground"
+                        }`}
+                      >
+                        {field.label}
+                      </span>
+                    ))}
+                    {section.fields.length > 4 && (
+                      <span className="rounded bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                        +{section.fields.length - 4} more
                       </span>
                     )}
                   </div>
-                  <Select
-                    value=""
-                    onValueChange={(groupId) => {
-                      setFields(fields.map((f) =>
-                        f.id === field.id ? { ...f, groupId } : f
-                      ));
-                    }}
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {section.id === "facility"
+                      ? "No facility-only fields yet."
+                      : section.id === "per-sample"
+                        ? "No per-sample fields yet."
+                        : "No fields assigned yet."}
+                  </p>
+                )}
+              </div>
+              {section.id !== "facility" ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="bg-white"
+                    onClick={section.onAdd}
                   >
-                    <SelectTrigger className="w-[180px] h-8 text-xs">
-                      <SelectValue placeholder="Assign to group..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {orderedGroups.map((group) => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <Plus className="mr-2 h-4 w-4" />
+                    {section.actionLabel}
+                  </Button>
                 </div>
-              ))}
+              ) : (
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                    Hidden from users
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="bg-white"
+                      onClick={() => handleAddField(false, true)}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add study field
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="bg-white"
+                      onClick={() => handleAddField(true, true)}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add sample field
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-          </GlassCard>
-        );
-      })()}
-      </TabsContent>
+          ))}
+        </div>
+      </GlassCard>
 
       {/* Study Fields - filled once per study */}
       <TabsContent value="fields">
@@ -1027,7 +1030,7 @@ export default function StudyFormBuilderPage() {
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
-                    onClick={() => handleMoveField(field.id, false, "up")}
+                    onClick={() => handleMoveField(field.id, false, false, "up")}
                     disabled={index === 0}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
@@ -1035,7 +1038,7 @@ export default function StudyFormBuilderPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleMoveField(field.id, false, "down")}
+                    onClick={() => handleMoveField(field.id, false, false, "down")}
                     disabled={index === orderedStudyFields.length - 1}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
@@ -1049,27 +1052,17 @@ export default function StudyFormBuilderPage() {
                     <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                       {FIELD_TYPE_LABELS[field.type] || field.type}
                     </span>
-                    {field.groupId ? (
-                      <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                        {groups.find((g) => g.id === field.groupId)?.name || "Unknown"}
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                        No group
-                      </span>
-                    )}
+                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
+                      {orderedGroups.find((g) => g.id === field.groupId)?.name || orderedGroups[0]?.name}
+                    </span>
                   </div>
                 </div>
-                {!field.isSystem && (
+                {canFieldBeFacilityOnly(field) && (
                   <button
                     type="button"
-                    onClick={() => setFields(fields.map((f) => f.id === field.id ? { ...f, adminOnly: !f.adminOnly } : f))}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
-                      field.adminOnly
-                        ? "bg-slate-200 text-slate-700"
-                        : "bg-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted"
-                    }`}
-                    title={field.adminOnly ? "This field is facility-only. Click to make visible to researchers." : "Click to make this field facility-only"}
+                    onClick={() => toggleFieldAdminOnly(field.id)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted"
+                    title="Move this field to Facility Fields"
                   >
                     <Shield className="h-3 w-3" />
                     Facility only
@@ -1257,7 +1250,7 @@ export default function StudyFormBuilderPage() {
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
-                    onClick={() => handleMoveField(field.id, true, "up")}
+                    onClick={() => handleMoveField(field.id, true, false, "up")}
                     disabled={index === 0}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
@@ -1265,7 +1258,7 @@ export default function StudyFormBuilderPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleMoveField(field.id, true, "down")}
+                    onClick={() => handleMoveField(field.id, true, false, "down")}
                     disabled={index === orderedPerSampleFields.length - 1}
                     className="p-1 hover:bg-muted rounded disabled:opacity-30"
                   >
@@ -1294,16 +1287,12 @@ export default function StudyFormBuilderPage() {
                     <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
                   )}
                 </div>
-                {!field.isSystem && (
+                {canFieldBeFacilityOnly(field) && (
                   <button
                     type="button"
-                    onClick={() => setFields(fields.map((f) => f.id === field.id ? { ...f, adminOnly: !f.adminOnly } : f))}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
-                      field.adminOnly
-                        ? "bg-slate-200 text-slate-700"
-                        : "bg-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted"
-                    }`}
-                    title={field.adminOnly ? "This field is facility-only. Click to make visible to researchers." : "Click to make this field facility-only"}
+                    onClick={() => toggleFieldAdminOnly(field.id)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted"
+                    title="Move this field to Facility Fields"
                   >
                     <Shield className="h-3 w-3" />
                     Facility only
@@ -1480,6 +1469,197 @@ export default function StudyFormBuilderPage() {
       </GlassCard>
       </TabsContent>
 
+      <TabsContent value="facility">
+        <HelpBox title="What are facility fields?">
+          Facility fields are internal annotations used by the sequencing team. They stay hidden from researchers
+          and can be defined separately for the study record or for each linked sample.
+        </HelpBox>
+
+        <div className="space-y-4">
+          <GlassCard className="p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold">Study-Level Facility Fields</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Internal study metadata such as intake notes, review annotations, or coordination details.
+                </p>
+              </div>
+              <Button
+                onClick={() => handleAddField(false, true)}
+                variant="outline"
+                size="sm"
+                className="bg-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Internal Study Field
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {facilityStudyFields.map((field, index) => (
+                <div key={field.id} className="flex items-center gap-3 rounded-lg bg-muted/30 p-4">
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleMoveField(field.id, false, true, "up")}
+                      disabled={index === 0}
+                      className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMoveField(field.id, false, true, "down")}
+                      disabled={index === facilityStudyFields.length - 1}
+                      className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <GripVertical className="h-4 w-4 text-muted-foreground" />
+
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{field.label}</span>
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                        Hidden from users
+                      </span>
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                        Study-level
+                      </span>
+                    </div>
+                    {field.helpText && (
+                      <p className="mt-1 text-xs text-muted-foreground">{field.helpText}</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleFieldAdminOnly(field.id)}
+                    className="flex flex-shrink-0 items-center gap-1.5 rounded bg-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-300"
+                    title="Make this field visible to researchers again"
+                  >
+                    <Shield className="h-3 w-3" />
+                    Show to users
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openDeleteFieldDialog(field)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+              {facilityStudyFields.length === 0 && (
+                <div className="rounded-lg border border-dashed py-6 text-center text-muted-foreground">
+                  No internal study-level fields defined yet.
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          <GlassCard className="p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold">Per-Sample Facility Fields</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Internal sample annotations such as QC notes, processing status, or production tracking fields.
+                </p>
+              </div>
+              <Button
+                onClick={() => handleAddField(true, true)}
+                variant="outline"
+                size="sm"
+                className="bg-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Internal Sample Field
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {facilityPerSampleFields.map((field, index) => (
+                <div key={field.id} className="flex items-center gap-3 rounded-lg bg-muted/30 p-4">
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleMoveField(field.id, true, true, "up")}
+                      disabled={index === 0}
+                      className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMoveField(field.id, true, true, "down")}
+                      disabled={index === facilityPerSampleFields.length - 1}
+                      className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <GripVertical className="h-4 w-4 text-muted-foreground" />
+
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{field.label}</span>
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                        Hidden from users
+                      </span>
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                        Per-sample
+                      </span>
+                    </div>
+                    {field.helpText && (
+                      <p className="mt-1 text-xs text-muted-foreground">{field.helpText}</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleFieldAdminOnly(field.id)}
+                    className="flex flex-shrink-0 items-center gap-1.5 rounded bg-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-300"
+                    title="Make this field visible to researchers again"
+                  >
+                    <Shield className="h-3 w-3" />
+                    Show to users
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openDeleteFieldDialog(field)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+              {facilityPerSampleFields.length === 0 && (
+                <div className="rounded-lg border border-dashed py-6 text-center text-muted-foreground">
+                  No internal per-sample fields defined yet.
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        </div>
+      </TabsContent>
+
       {/* Settings Tab */}
       <TabsContent value="settings">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1567,7 +1747,23 @@ export default function StudyFormBuilderPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Field Type</Label>
-                <Select value={fieldType} onValueChange={(v) => setFieldType(v as FieldType)}>
+                <Select
+                  value={fieldType}
+                  onValueChange={(v) => {
+                    const nextType = v as FieldType;
+                    setFieldType(nextType);
+                    if (
+                      fieldAdminOnly &&
+                      !canFieldBeFacilityOnly({
+                        type: nextType,
+                        moduleSource: editingField?.moduleSource,
+                        name: fieldName.trim() || editingField?.name || "",
+                      })
+                    ) {
+                      setFieldAdminOnly(false);
+                    }
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -1584,20 +1780,33 @@ export default function StudyFormBuilderPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Group</Label>
-                <Select value={fieldGroupId || "none"} onValueChange={(v) => setFieldGroupId(v === "none" ? "" : v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select group..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No group</SelectItem>
-                    {orderedGroups.map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Section</Label>
+                {automaticFieldSectionLabel ? (
+                  <div className="flex h-10 items-center rounded-md border border-input bg-muted/30 px-3 text-sm text-muted-foreground">
+                    {automaticFieldSectionLabel}
+                  </div>
+                ) : (
+                  <Select
+                    value={fieldGroupId || orderedGroups[0]?.id || STUDY_INFORMATION_SECTION_ID}
+                    onValueChange={setFieldGroupId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select section..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {orderedGroups.map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {automaticFieldSectionLabel
+                    ? "This field is placed automatically based on its scope."
+                    : "Choose which fixed overview section users see this field under during study entry."}
+                </p>
               </div>
             </div>
 
@@ -1621,12 +1830,20 @@ export default function StudyFormBuilderPage() {
                   />
                   <span className="text-sm">Required</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer" title="Only visible to facility admins">
+                <label
+                  className={`flex items-center gap-2 ${(canCurrentFieldBeFacilityOnly || fieldAdminOnly) ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                  title={
+                    canCurrentFieldBeFacilityOnly || fieldAdminOnly
+                      ? "Only visible to facility admins"
+                      : "Reserved and module-managed fields must stay visible in the main study flow"
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={fieldAdminOnly}
                     onChange={(e) => setFieldAdminOnly(e.target.checked)}
                     className="rounded border-input h-4 w-4"
+                    disabled={!canCurrentFieldBeFacilityOnly && !fieldAdminOnly}
                   />
                   <span className="text-sm flex items-center gap-1">
                     <Shield className="h-3 w-3 text-slate-500" />
@@ -1682,6 +1899,11 @@ export default function StudyFormBuilderPage() {
             {fieldAdminOnly && (
               <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-600">
                 <strong>Facility-Only:</strong> This field is only visible to facility admins. Researchers will not see it.
+              </div>
+            )}
+            {!canCurrentFieldBeFacilityOnly && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
+                <strong>Main Flow Field:</strong> Reserved and module-managed fields must stay visible in the main study flow.
               </div>
             )}
 
@@ -1752,46 +1974,6 @@ export default function StudyFormBuilderPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Group Dialog */}
-      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editingGroup ? "Edit Group" : "Add Group"}</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="groupName">Group Name</Label>
-              <Input
-                id="groupName"
-                value={groupName}
-                onChange={(e) => setGroupName(e.target.value)}
-                placeholder="e.g., Study Details"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="groupDescription">Description</Label>
-              <Input
-                id="groupDescription"
-                value={groupDescription}
-                onChange={(e) => setGroupDescription(e.target.value)}
-                placeholder="e.g., Basic information about the study"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveGroup}>
-              {editingGroup ? "Update" : "Add"} Group
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Delete Field Confirmation Dialog */}
       <Dialog open={deleteFieldDialogOpen} onOpenChange={setDeleteFieldDialogOpen}>
         <DialogContent>
@@ -1816,29 +1998,6 @@ export default function StudyFormBuilderPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Group Confirmation Dialog */}
-      <Dialog open={deleteGroupDialogOpen} onOpenChange={setDeleteGroupDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Group</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete the group &quot;{groupToDelete?.name}&quot;? Fields in this group will become ungrouped.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setDeleteGroupDialogOpen(false);
-              setGroupToDelete(null);
-            }}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteGroup}>
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Group
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </PageContainer>
     {/* Hidden file input for import */}
     <input type="file" ref={importFileRef} accept=".json" onChange={handleImportFile} className="hidden" />

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "fs/promises";
+import os from "os";
+import path from "path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
@@ -13,6 +16,16 @@ const mocks = vi.hoisted(() => ({
     pipelineArtifact: {
       findFirst: vi.fn(),
       create: vi.fn(),
+    },
+    read: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    siteSettings: {
+      findUnique: vi.fn(),
     },
     pipelineRun: {
       update: vi.fn(),
@@ -42,8 +55,22 @@ const baseDiscovered = {
 };
 
 describe("output-resolver", () => {
+  let tempDir = "";
+
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.db.read.findMany.mockResolvedValue([]);
+    mocks.db.read.deleteMany.mockResolvedValue({});
+    mocks.db.read.create.mockResolvedValue({});
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ dataBasePath: null });
+  });
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-output-resolver-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("returns package-missing result when pipeline package is not loaded", async () => {
@@ -220,6 +247,158 @@ describe("output-resolver", () => {
     expect(result.success).toBe(true);
     expect(result.artifactsCreated).toBe(1);
     expect(mocks.db.pipelineArtifact.findFirst).toHaveBeenCalled();
+  });
+
+  it("writes sample read metadata for sample_reads outputs", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "checksums/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1" });
+    mocks.db.read.update.mockResolvedValue({});
+
+    const result = await resolveOutputs("fastq-checksum", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: "/tmp/sample-1.json",
+          sampleId: "sample-1",
+          outputId: "sample-checksums",
+          metadata: {
+            checksum1: "abc123",
+            checksum2: "def456",
+            readCount1: 120,
+            avgQuality1: 37.5,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.assembliesCreated).toBe(0);
+    expect(result.binsCreated).toBe(0);
+    expect(result.artifactsCreated).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(mocks.db.read.findFirst).toHaveBeenCalledWith({
+      where: { sampleId: "sample-1" },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: {
+        checksum1: "abc123",
+        checksum2: "def456",
+        readCount1: 120,
+        avgQuality1: 37.5,
+      },
+    });
+    expect(mocks.db.pipelineArtifact.create).not.toHaveBeenCalled();
+  });
+
+  it("copies generated FASTQ files into sequencing storage and replaces existing sample reads", async () => {
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    const storageDir = path.join(tempDir, "storage");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, "simulated", "order_order-1"), {
+      recursive: true,
+    });
+
+    const sourceFile1 = path.join(sourceDir, "sample-1_R1.fastq.gz");
+    const sourceFile2 = path.join(sourceDir, "sample-1_R2.fastq.gz");
+    const oldFile1 = path.join(storageDir, "simulated", "order_order-1", "old_R1.fastq.gz");
+    const oldFile2 = path.join(storageDir, "simulated", "order_order-1", "old_R2.fastq.gz");
+
+    await fs.writeFile(sourceFile1, "new-r1");
+    await fs.writeFile(sourceFile2, "new-r2");
+    await fs.writeFile(oldFile1, "old-r1");
+    await fs.writeFile(oldFile2, "old-r2");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-simulated-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ dataBasePath: storageDir });
+    mocks.db.read.findMany.mockResolvedValue([
+      {
+        id: "read-old",
+        file1: "simulated/order_order-1/old_R1.fastq.gz",
+        file2: "simulated/order_order-1/old_R2.fastq.gz",
+      },
+    ]);
+
+    const result = await resolveOutputs("simulate-reads", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: path.join(tempDir, "run-output", "manifests", "sample-1.json"),
+          sampleId: "sample-1",
+          outputId: "sample-simulated-reads",
+          metadata: {
+            file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+            file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
+            sourceFile1,
+            sourceFile2,
+            checksum1: "abc",
+            checksum2: "def",
+            readCount1: 1000,
+            readCount2: 1000,
+            replaceExisting: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
+      where: { sampleId: "sample-1" },
+    });
+    expect(mocks.db.read.create).toHaveBeenCalledWith({
+      data: {
+        sampleId: "sample-1",
+        file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+        file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
+        checksum1: "abc",
+        checksum2: "def",
+        readCount1: 1000,
+        readCount2: 1000,
+        avgQuality1: null,
+        avgQuality2: null,
+        fastqcReport1: null,
+        fastqcReport2: null,
+      },
+    });
+    await expect(
+      fs.readFile(path.join(storageDir, "simulated", "order_order-1", "sample-1_R1.fastq.gz"), "utf8")
+    ).resolves.toBe("new-r1");
+    await expect(
+      fs.readFile(path.join(storageDir, "simulated", "order_order-1", "sample-1_R2.fastq.gz"), "utf8")
+    ).resolves.toBe("new-r2");
+    await expect(fs.access(oldFile1)).rejects.toBeDefined();
+    await expect(fs.access(oldFile2)).rejects.toBeDefined();
   });
 
   it("collects handler errors and marks result as failed", async () => {

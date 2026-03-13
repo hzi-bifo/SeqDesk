@@ -1,0 +1,56 @@
+{
+  "id": "fastq-checksum",
+  "name": "FASTQ Checksum",
+  "description": "Compute MD5 checksums for linked FASTQ files from an order",
+  "category": "qc",
+  "version": "0.1.0",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "metric",
+      "name": "read_checksums",
+      "description": "MD5 checksum values written into canonical read fields",
+      "model": "Read",
+      "visibility": "admin",
+      "downloadable": false
+    },
+    {
+      "type": "report",
+      "name": "checksum_summary",
+      "description": "Run-level checksum summary report",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "order"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "defaultConfig": {},
+  "icon": "Hash"
+}

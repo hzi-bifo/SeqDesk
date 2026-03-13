@@ -425,8 +425,11 @@ export async function prepareMagRun(
     }
 
     const samplesheet = await adapter.generateSamplesheet({
-      studyId,
-      sampleIds,
+      target: {
+        type: 'study',
+        studyId,
+        sampleIds,
+      },
       dataBasePath: executionSettings.dataBasePath,
     });
 

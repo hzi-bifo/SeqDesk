@@ -280,11 +280,11 @@
   }
 
   .order-notes-wysiwyg .rsw-toolbar {
-    @apply flex items-center gap-0.5 border-border px-2 py-1.5;
+    @apply flex items-center gap-0.5 border-b border-border/40 px-2.5 py-1;
   }
 
   .order-notes-toolbar-sep {
-    @apply mx-0.5 h-4 w-px bg-border/60;
+    @apply mx-1 h-4 w-px bg-border/40;
   }
 
   .order-notes-wysiwyg .rsw-btn {
