@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -70,6 +71,10 @@ interface UpdateProgress {
   targetVersion?: string;
 }
 
+interface AccessSettingsResponse {
+  orderNotesEnabled?: boolean;
+}
+
 function formatDate(value?: string | Date | null): string {
   if (!value) return "-";
   const parsed = value instanceof Date ? value : new Date(value);
@@ -90,6 +95,9 @@ export default function SettingsPage() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateProgress | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [orderNotesEnabled, setOrderNotesEnabled] = useState(true);
+  const [loadingAccessSettings, setLoadingAccessSettings] = useState(false);
+  const [savingOrderNotesSetting, setSavingOrderNotesSetting] = useState(false);
 
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
@@ -160,6 +168,31 @@ export default function SettingsPage() {
       }
     } finally {
       setLoadingConfig(false);
+    }
+  }, []);
+
+  const fetchAccessSettings = useCallback(async (showToast = false) => {
+    setLoadingAccessSettings(true);
+    try {
+      const res = await fetch("/api/admin/settings/access");
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Failed to load workspace settings");
+      }
+
+      const data = (await res.json()) as AccessSettingsResponse;
+      setOrderNotesEnabled(data.orderNotesEnabled !== false);
+    } catch (error) {
+      console.error("Failed to load workspace settings:", error);
+      if (showToast) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to load workspace settings"
+        );
+      }
+    } finally {
+      setLoadingAccessSettings(false);
     }
   }, []);
 
@@ -236,6 +269,44 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const updateOrderNotesSetting = useCallback(
+    async (enabled: boolean) => {
+      const previousValue = orderNotesEnabled;
+      setOrderNotesEnabled(enabled);
+      setSavingOrderNotesSetting(true);
+
+      try {
+        const res = await fetch("/api/admin/settings/access", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            orderNotesEnabled: enabled,
+          }),
+        });
+
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(payload?.error || "Failed to save workspace settings");
+        }
+
+        toast.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
+      } catch (error) {
+        console.error("Failed to save workspace settings:", error);
+        setOrderNotesEnabled(previousValue);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to save workspace settings"
+        );
+      } finally {
+        setSavingOrderNotesSetting(false);
+      }
+    },
+    [orderNotesEnabled]
+  );
+
   const startUpdatePolling = useCallback(() => {
     if (updatePollRef.current) return;
     updatePollRef.current = setInterval(() => {
@@ -280,6 +351,7 @@ export default function SettingsPage() {
     await Promise.all([
       detectInstalledVersions(true),
       fetchConfigStatus(true),
+      fetchAccessSettings(true),
       checkForUpdates(true, true),
       fetchUpdateStatus(),
     ]);
@@ -288,6 +360,7 @@ export default function SettingsPage() {
   }, [
     checkForUpdates,
     detectInstalledVersions,
+    fetchAccessSettings,
     fetchConfigStatus,
     fetchUpdateStatus,
   ]);
@@ -297,6 +370,7 @@ export default function SettingsPage() {
       await Promise.all([
         detectInstalledVersions(),
         fetchConfigStatus(),
+        fetchAccessSettings(),
         checkForUpdates(true),
         fetchUpdateStatus(),
       ]);
@@ -305,6 +379,7 @@ export default function SettingsPage() {
   }, [
     checkForUpdates,
     detectInstalledVersions,
+    fetchAccessSettings,
     fetchConfigStatus,
     fetchUpdateStatus,
   ]);
@@ -494,6 +569,43 @@ export default function SettingsPage() {
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
+          </div>
+        </section>
+
+        <section className="bg-card rounded-xl border border-border overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-base font-semibold">Workspace Features</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Toggle order workspace tools that appear throughout the app
+            </p>
+          </div>
+
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">Order notes</p>
+                  {savingOrderNotesSetting && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Shows the shared markdown notepad on order pages and disables the notes API when turned off.
+                </p>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="text-xs text-muted-foreground">
+                  {orderNotesEnabled ? "Enabled" : "Disabled"}
+                </span>
+                <Switch
+                  checked={orderNotesEnabled}
+                  onCheckedChange={(checked) => void updateOrderNotesSetting(checked)}
+                  disabled={loadingAccessSettings || savingOrderNotesSetting}
+                  aria-label="Enable order notes"
+                />
+              </div>
+            </div>
           </div>
         </section>
 

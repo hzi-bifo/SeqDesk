@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -42,7 +42,6 @@ import {
   User,
   Mail,
   Building2,
-  ExternalLink,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -52,7 +51,6 @@ import {
   ChevronDown,
   Circle,
   Leaf,
-  Wallet,
   Table as TableIcon,
   Plus,
   Trash2,
@@ -79,6 +77,7 @@ import { SequencingTechFormRenderer } from "@/lib/field-types/sequencing-tech/Se
 import { useModule } from "@/lib/modules";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
+import { buildOrderProgressSteps } from "@/lib/orders/progress-steps";
 import type {
   SequencingTechSelection,
   SequencingKit,
@@ -119,6 +118,25 @@ interface SampleRow {
   sampleId: string;
   [key: string]: unknown;
 }
+
+const RESERVED_SAMPLE_ROW_KEYS = new Set([
+  "id",
+  "sampleId",
+  "sampleAlias",
+  "sample_alias",
+  "sampleTitle",
+  "sample_title",
+  "sampleDescription",
+  "sample_description",
+  "scientificName",
+  "scientific_name",
+  "taxId",
+  "tax_id",
+  "isNew",
+  "isDeleted",
+  "checklistData",
+  "checklistUnits",
+]);
 
 // Helper to navigate to adjacent cell
 function navigateToCell(
@@ -503,13 +521,6 @@ interface FormSchema {
   enabledMixsChecklists?: string[];
 }
 
-interface Step {
-  id: string;
-  title: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-}
-
 interface AIResult {
   valid: boolean;
   message: string;
@@ -519,6 +530,15 @@ interface AIResult {
 }
 
 export default function NewOrderPage() {
+  return <OrderWizardPage />;
+}
+
+export function OrderWizardPage({
+  forcedEditOrderId,
+}: {
+  forcedEditOrderId?: string;
+}) {
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -528,7 +548,7 @@ export default function NewOrderPage() {
   const { enabled: sequencingTechModuleEnabled } = useModule("sequencing-tech");
 
   // Edit mode - if edit param is present, we're editing an existing order
-  const editOrderId = searchParams.get("edit");
+  const editOrderId = forcedEditOrderId ?? searchParams.get("edit");
   const isEditMode = !!editOrderId;
   const [loadingOrder, setLoadingOrder] = useState(isEditMode);
   const [editOrderStatus, setEditOrderStatus] = useState<string | null>(null);
@@ -561,6 +581,7 @@ export default function NewOrderPage() {
 
   // Currently focused field for help panel (shared via context to sidebar)
   const { setFocusedField } = useFieldHelp();
+  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   // Samples state for the samples step
   const [samples, setSamples] = useState<SampleRow[]>([]);
@@ -599,9 +620,18 @@ export default function NewOrderPage() {
   const perSampleFields = useMemo(
     () =>
       (formSchema?.fields || [])
-        .filter((f) => f.visible && f.perSample)
+        .filter((f) => f.visible && f.perSample && !f.adminOnly)
         .sort((a, b) => a.order - b.order),
     [formSchema?.fields]
+  );
+  const adminOnlyPerSampleFields = useMemo(
+    () =>
+      isFacilityAdmin
+        ? (formSchema?.fields || [])
+            .filter((field) => field.visible && field.perSample && field.adminOnly)
+            .sort((a, b) => a.order - b.order)
+        : [],
+    [formSchema?.fields, isFacilityAdmin]
   );
 
   // Resolve barcode options from sequencing tech selection
@@ -723,7 +753,7 @@ export default function NewOrderPage() {
       sampleId: generateSampleId(),
     };
     // Initialize per-sample field values
-    for (const field of perSampleFields) {
+    for (const field of displayedSampleFields) {
       if (field.defaultValue !== undefined) {
         newSample[field.name] = field.defaultValue;
       } else if (field.type === "checkbox") {
@@ -777,7 +807,7 @@ export default function NewOrderPage() {
   );
 
   // Remove a sample row
-  const handleRemoveSample = (id: string) => {
+  const handleRemoveSample = useCallback((id: string) => {
     setSamples((prev) => {
       const newSamples = prev.filter((s) => s.id !== id);
       const expectedCount = fieldValues.numberOfSamples as number | undefined;
@@ -790,7 +820,7 @@ export default function NewOrderPage() {
       }
       return newSamples;
     });
-  };
+  }, [fieldValues.numberOfSamples]);
 
   // Update sample field value
   const handleSampleFieldChange = (sampleId: string, fieldName: string, value: unknown) => {
@@ -874,9 +904,28 @@ export default function NewOrderPage() {
       scientificName: normalizeCoreSampleValue(sample.scientific_name ?? sample.scientificName),
       taxId: normalizeCoreSampleValue(sample.tax_id ?? sample.taxId),
     };
-    const customFields: Record<string, unknown> = {};
+    const managedCustomFieldNames = new Set(
+      displayedSampleFields
+        .filter((field) => !mapPerSampleFieldToColumn(field.name))
+        .map((field) => field.name)
+    );
+    const customFields = Object.entries(sample).reduce<Record<string, unknown>>(
+      (acc, [key, value]) => {
+        const isEmptyValue =
+          value === undefined ||
+          value === null ||
+          value === "" ||
+          (Array.isArray(value) && value.length === 0);
+        if (isEmptyValue) return acc;
+        if (RESERVED_SAMPLE_ROW_KEYS.has(key)) return acc;
+        if (managedCustomFieldNames.has(key)) return acc;
+        acc[key] = value;
+        return acc;
+      },
+      {}
+    );
 
-    for (const field of perSampleFields) {
+    for (const field of displayedSampleFields) {
       const value = sample[field.name];
       const isEmptyValue =
         value === undefined ||
@@ -1124,7 +1173,6 @@ export default function NewOrderPage() {
   );
   const groups = allGroups.filter((group) => !hiddenGroupIds.has(group.id));
 
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const canEditSamples = !isEditMode || editOrderStatus === "DRAFT";
 
   // Get visible fields sorted by order (also filter by module state)
@@ -1188,7 +1236,6 @@ export default function NewOrderPage() {
 
   // Check if there's a MIxS field with available templates
   const mixsFieldDef = visibleFields.find((f) => f.type === "mixs");
-  const hasMixsField = mixsFieldDef && mixsTemplates.length > 0;
 
   // Get fields for a specific group (excluding MIxS fields which have their own step)
   const getFieldsForGroup = (groupId: string) => {
@@ -1217,86 +1264,113 @@ export default function NewOrderPage() {
     (f) => !f.groupId && f.type !== "mixs"
   );
 
-  // Build steps dynamically based on groups from the form schema
-  const buildSteps = (): Step[] => {
-    const steps: Step[] = [];
+  const steps = buildOrderProgressSteps({
+    fields: [...visibleFields, ...adminOnlyFields],
+    groups,
+    enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
+    includeFacilityFields: isFacilityAdmin,
+  }).map((step) => ({
+    id: step.id,
+    title: step.label,
+    description: step.description,
+    icon: iconMap[step.icon] || FileText,
+  }));
+  const currentStepParam = searchParams.get("step");
+  const editScope = searchParams.get("scope");
+  const facilityEditSteps = [
+    ...((isEditMode && isFacilityAdmin)
+      ? [
+          {
+            id: "_facility",
+            title: "Order Fields",
+            description: "Internal order-level facility fields",
+            icon: Shield,
+          },
+        ]
+      : []),
+    ...((isEditMode && isFacilityAdmin && samples.length > 0)
+      ? [
+          {
+            id: "samples",
+            title: "Sample Fields",
+            description: "Internal sample-level facility fields",
+            icon: TableIcon,
+          },
+        ]
+      : []),
+  ];
+  const isFacilityScopedEdit =
+    isEditMode &&
+    editScope === "facility" &&
+    facilityEditSteps.some((step) => step.id === currentStepParam);
+  const mainOrderSteps =
+    isEditMode && isFacilityAdmin
+      ? steps.filter((step) => step.id !== "_facility")
+      : steps;
+  const activeSteps = isFacilityScopedEdit ? facilityEditSteps : mainOrderSteps;
+  const currentStepId = steps[currentStep]?.id;
+  const currentVisibleStepIndex = Math.max(
+    0,
+    activeSteps.findIndex((step) => step.id === currentStepId)
+  );
+  const currentMainOrderStepIndex = Math.max(
+    0,
+    mainOrderSteps.findIndex((step) => step.id === currentStepId)
+  );
+  const displayedSampleFields = isFacilityScopedEdit
+    ? adminOnlyPerSampleFields
+    : perSampleFields;
+  const isSamplesStepActive = currentStepId === "samples";
 
-    // Add steps from groups that have visible fields
-    for (const group of groups) {
-      const groupFields = getFieldsForGroup(group.id);
-      if (groupFields.length > 0) {
-        steps.push({
-          id: group.id,
-          title: group.name,
-          description: group.description || "",
-          icon: iconMap[group.icon || "FileText"] || FileText,
-        });
-      }
-    }
+  const syncEditStepUrl = useCallback((stepId: string) => {
+    if (!isEditMode || !editOrderId) return;
 
-    // Add step for ungrouped fields (fields without a groupId)
-    if (ungroupedFields.length > 0) {
-      steps.push({
-        id: "_ungrouped",
-        title: "Additional Details",
-        description: "Other order information",
-        icon: ClipboardList,
-      });
-    }
+    const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+    const scopeSuffix = isFacilityScopedEdit ? "&scope=facility" : "";
+    const targetHref = pathname.startsWith(`/orders/${editOrderId}/edit`)
+      ? `/orders/${editOrderId}/edit?step=${stepId}${scopeSuffix}`
+      : `/orders/new?edit=${editOrderId}&step=${stepId}${scopeSuffix}`;
 
-    // MIxS metadata step (separate from other groups)
-    if (hasMixsField && mixsTemplates.length > 0) {
-      steps.push({
-        id: "mixs",
-        title: "Sample Metadata",
-        description: "Select MIxS environment checklist for your samples",
-        icon: Leaf,
-      });
-    }
+    if (currentHref === targetHref) return;
+    router.replace(targetHref);
+  }, [editOrderId, isEditMode, isFacilityScopedEdit, pathname, router, searchParams]);
 
-    // Samples step - add samples with per-sample fields in a table
-    steps.push({
-      id: "samples",
-      title: "Samples",
-      description: "Add your samples to this order",
-      icon: TableIcon,
-    });
+  const navigateToStepId = useCallback((stepId: string) => {
+    const stepIndex = steps.findIndex((step) => step.id === stepId);
+    if (stepIndex < 0) return;
 
-    // Facility-only fields step (only for admins)
-    if (adminOnlyFields.length > 0) {
-      steps.push({
-        id: "_facility",
-        title: "Facility Fields",
-        description: "Internal facility information",
-        icon: Shield,
-      });
-    }
+    setCurrentStep(stepIndex);
+    syncEditStepUrl(stepId);
+  }, [steps, syncEditStepUrl]);
 
-    // Always have review step
-    steps.push({
-      id: "review",
-      title: "Review",
-      description: "Review and submit your order",
-      icon: CheckCircle2,
-    });
-
-    return steps;
-  };
-
-  const steps = buildSteps();
-  const isSamplesStepActive = steps[currentStep]?.id === "samples";
-
-  // Navigate to a specific step if the URL has a ?step= param
-  const initialStepParam = searchParams.get("step");
-  const initialStepApplied = useRef(false);
+  // Keep the active wizard step synced with the route step param.
   useEffect(() => {
-    if (initialStepApplied.current || !initialStepParam || steps.length === 0) return;
-    const stepIndex = steps.findIndex((s) => s.id === initialStepParam);
-    if (stepIndex >= 0) {
+    if (!currentStepParam || steps.length === 0) return;
+    const stepIndex = steps.findIndex((step) => step.id === currentStepParam);
+    if (stepIndex >= 0 && stepIndex !== currentStep) {
       setCurrentStep(stepIndex);
-      initialStepApplied.current = true;
     }
-  }, [initialStepParam, steps]);
+  }, [currentStep, currentStepParam, steps]);
+
+  useEffect(() => {
+    if (!isEditMode || isFacilityScopedEdit || currentStepParam !== "_facility") {
+      return;
+    }
+
+    const fallbackStepId =
+      mainOrderSteps.find((step) => step.id === "review")?.id ??
+      mainOrderSteps[mainOrderSteps.length - 1]?.id;
+
+    if (fallbackStepId) {
+      navigateToStepId(fallbackStepId);
+    }
+  }, [
+    currentStepParam,
+    isEditMode,
+    isFacilityScopedEdit,
+    mainOrderSteps,
+    navigateToStepId,
+  ]);
 
   useEffect(() => {
     if (!isSamplesStepActive) return;
@@ -1488,6 +1562,57 @@ export default function NewOrderPage() {
   };
 
   const validateBeforeSubmit = () => {
+    if (isFacilityScopedEdit) {
+      for (const field of adminOnlyFields) {
+        const value = fieldValues[field.name];
+        if (field.required && isMissingRequiredValue(field, value)) {
+          setError(`${field.label} is required`);
+          return false;
+        }
+        const validationError = validateField(field, value);
+        if (validationError) {
+          setError(`${field.label}: ${validationError}`);
+          return false;
+        }
+      }
+
+      for (let i = 0; i < samples.length; i++) {
+        const sample = samples[i];
+        for (const field of displayedSampleFields) {
+          const value =
+            field.type === "organism"
+              ? sample.taxId || sample.tax_id
+              : sample[field.name];
+          if (field.required && isMissingRequiredValue(field, value)) {
+            setError(`Sample ${i + 1}: ${field.label} is required`);
+            return false;
+          }
+          const validationError = validateSampleField(field, value);
+          if (validationError) {
+            setError(`Sample ${i + 1}: ${field.label} ${validationError}`);
+            return false;
+          }
+        }
+      }
+
+      const aliasField = displayedSampleFields.find(
+        (field) => mapPerSampleFieldToColumn(field.name) === "sampleAlias"
+      );
+      if (aliasField) {
+        const aliases = samples
+          .map((sample) => String(sample[aliasField.name] ?? "").trim())
+          .filter(Boolean)
+          .map((alias) => alias.toLowerCase());
+        const duplicates = aliases.filter((alias, index) => aliases.indexOf(alias) !== index);
+        if (duplicates.length > 0) {
+          setError("Sample Alias values must be unique");
+          return false;
+        }
+      }
+
+      return true;
+    }
+
     // Order fields validation (required + simple validation)
     for (const field of visibleFields.filter((f) => f.type !== "mixs")) {
       const value = fieldValues[field.name];
@@ -1734,6 +1859,13 @@ export default function NewOrderPage() {
         }
 
         // Redirect to order detail page after edit
+        if (isFacilityScopedEdit) {
+          const facilitySubsection =
+            currentStepId === "samples" ? "sample-fields" : "order-fields";
+          router.push(`/orders/${orderId}?section=facility&subsection=${facilitySubsection}`);
+          return;
+        }
+
         router.push(`/orders/${orderId}`);
         return;
       }
@@ -1875,7 +2007,7 @@ export default function NewOrderPage() {
       // Validate required per-sample fields
       for (let i = 0; i < samples.length; i++) {
         const sample = samples[i];
-        for (const field of perSampleFields) {
+        for (const field of displayedSampleFields) {
           if (field.required) {
             // For organism fields, check taxId instead of the field name
             let value: unknown;
@@ -1896,7 +2028,7 @@ export default function NewOrderPage() {
         }
       }
 
-      const aliasField = perSampleFields.find(
+      const aliasField = displayedSampleFields.find(
         (field) => mapPerSampleFieldToColumn(field.name) === "sampleAlias"
       );
       if (aliasField) {
@@ -1932,6 +2064,23 @@ export default function NewOrderPage() {
       return true;
     }
 
+    if (stepId === "_facility") {
+      for (const field of adminOnlyFields) {
+        const value = fieldValues[field.name];
+        if (field.required && isMissingRequiredValue(field, value)) {
+          setFieldError(field.name, "Required");
+          return false;
+        }
+
+        const validationError = validateField(field, value);
+        if (validationError) {
+          setFieldError(field.name, validationError);
+          return false;
+        }
+      }
+      return true;
+    }
+
     // For group steps, validate fields in that group
     const fieldsToValidate = getFieldsForGroup(stepId);
 
@@ -1949,9 +2098,12 @@ export default function NewOrderPage() {
   };
 
   const nextStep = () => {
-    if (validateStep(steps[currentStep].id)) {
-      if (currentStep < steps.length - 1) {
-        const nextStepId = steps[currentStep + 1].id;
+    const currentMainOrderStep = mainOrderSteps[currentMainOrderStepIndex];
+    if (!currentMainOrderStep) return;
+
+    if (validateStep(currentMainOrderStep.id)) {
+      if (currentMainOrderStepIndex < mainOrderSteps.length - 1) {
+        const nextStepId = mainOrderSteps[currentMainOrderStepIndex + 1].id;
 
         // Pre-populate samples when entering the samples step
         if (nextStepId === "samples" && !samplesPrePopulated && !isEditMode) {
@@ -1966,16 +2118,16 @@ export default function NewOrderPage() {
           setSamplesPrePopulated(true);
         }
 
-        setCurrentStep(currentStep + 1);
+        navigateToStepId(nextStepId);
       }
     }
   };
 
   const prevStep = () => {
-    if (currentStep > 0) {
+    if (currentMainOrderStepIndex > 0) {
       setError("");
       setAcknowledgedAiWarnings(false); // Reset when going back to edit
-      setCurrentStep(currentStep - 1);
+      navigateToStepId(mainOrderSteps[currentMainOrderStepIndex - 1].id);
     }
   };
 
@@ -2597,25 +2749,35 @@ export default function NewOrderPage() {
     }
 
     // Delete column
-    cols.push({
-      id: "delete",
-      header: "",
-      size: 50,
-      cell: ({ row }) => (
-        <button
-          type="button"
-          onClick={() => handleRemoveSample(row.original.id)}
-          disabled={saving || !canEditSamples}
-          data-testid={`remove-sample-button-${row.index}`}
-          className="w-full h-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      ),
-    });
+    if (!isFacilityScopedEdit) {
+      cols.push({
+        id: "delete",
+        header: "",
+        size: 50,
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={() => handleRemoveSample(row.original.id)}
+            disabled={saving || !canEditSamples}
+            data-testid={`remove-sample-button-${row.index}`}
+            className="w-full h-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ),
+      });
+    }
 
     return cols;
-  }, [perSampleFields, saving, barcodeOptions, focusFieldWithScrollPreserved, canEditSamples]);
+  }, [
+    isFacilityScopedEdit,
+    perSampleFields,
+    saving,
+    barcodeOptions,
+    focusFieldWithScrollPreserved,
+    canEditSamples,
+    handleRemoveSample,
+  ]);
 
   // Update sample data from table
   // Supports both single field update: updateSampleData(rowIndex, columnId, value)
@@ -2664,9 +2826,9 @@ export default function NewOrderPage() {
   });
 
   // Check if any field is an organism field
-  const hasOrganismField = perSampleFields.some(f => f.type === "organism");
+  const hasOrganismField = displayedSampleFields.some(f => f.type === "organism");
   // Check if any field is a sample alias field
-  const hasSampleAliasField = perSampleFields.some(f =>
+  const hasSampleAliasField = displayedSampleFields.some(f =>
     f.name === "_sampleAlias" || f.name === "sample_alias" || f.name === "sampleAlias"
   );
 
@@ -2682,23 +2844,28 @@ export default function NewOrderPage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">
-              Add your samples below. Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
+              {isFacilityScopedEdit
+                ? "Update the internal per-sample facility fields below."
+                : "Add your samples below."}{" "}
+              Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
               <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd>, or arrow keys to navigate.
-              {perSampleFields.length > 0 && (
+              {displayedSampleFields.length > 0 && (
                 <span> Click column headers for field help.</span>
               )}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <ExcelToolbar
-              perSampleFields={perSampleFields}
-              samples={samples}
-              barcodeOptions={barcodeOptions}
-              onSamplesImported={handleSamplesImported}
-              disabled={saving || !canEditSamples}
-            />
+            {!isFacilityScopedEdit && (
+              <ExcelToolbar
+                perSampleFields={displayedSampleFields}
+                samples={samples}
+                barcodeOptions={barcodeOptions}
+                onSamplesImported={handleSamplesImported}
+                disabled={saving || !canEditSamples}
+              />
+            )}
             {/* Quick Actions Dropdown */}
-            {samples.length > 0 && (hasSampleAliasField || hasOrganismField) && (
+            {!isFacilityScopedEdit && samples.length > 0 && (hasSampleAliasField || hasOrganismField) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -2731,15 +2898,17 @@ export default function NewOrderPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <Button
-              onClick={handleAddSample}
-              size="sm"
-              disabled={saving || !canEditSamples}
-              data-testid="add-sample-button"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add Sample
-            </Button>
+            {!isFacilityScopedEdit && (
+              <Button
+                onClick={handleAddSample}
+                size="sm"
+                disabled={saving || !canEditSamples}
+                data-testid="add-sample-button"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Add Sample
+              </Button>
+            )}
           </div>
         </div>
 
@@ -2772,7 +2941,11 @@ export default function NewOrderPage() {
                     >
                       <div className="flex flex-col items-center gap-2">
                         <TableIcon className="h-8 w-8 text-muted-foreground/30" />
-                        <span>No samples yet. Click &quot;Add Row&quot; to add your first sample.</span>
+                        <span>
+                          {isFacilityScopedEdit
+                            ? "No samples are available for internal facility annotations yet."
+                            : "No samples yet. Click \"Add Row\" to add your first sample."}
+                        </span>
                       </div>
                     </td>
                   </tr>
@@ -2806,28 +2979,36 @@ export default function NewOrderPage() {
                 )}
               </tbody>
             </table>
-          </div>
+        </div>
           <div className="bg-muted/30 px-3 py-2 border-t flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleAddSample}
-              disabled={saving || !canEditSamples}
-              data-testid="add-row-button"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add Row
-            </Button>
+            {!isFacilityScopedEdit ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleAddSample}
+                disabled={saving || !canEditSamples}
+                data-testid="add-row-button"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Add Row
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Internal facility annotations
+              </span>
+            )}
             <span className="text-xs text-muted-foreground">
               {samples.length} sample{samples.length !== 1 ? "s" : ""}
-              {perSampleFields.length > 0 && ` • ${perSampleFields.length} field${perSampleFields.length !== 1 ? "s" : ""}`}
+              {displayedSampleFields.length > 0 && ` • ${displayedSampleFields.length} field${displayedSampleFields.length !== 1 ? "s" : ""}`}
             </span>
           </div>
         </div>
 
-        {perSampleFields.length === 0 && samples.length > 0 && (
+        {displayedSampleFields.length === 0 && samples.length > 0 && (
           <p className="text-sm text-muted-foreground">
-            No per-sample fields configured. Samples will be created with just their IDs.
+            {isFacilityScopedEdit
+              ? "No internal per-sample fields are configured yet."
+              : "No per-sample fields configured. Samples will be created with just their IDs."}
           </p>
         )}
       </div>
@@ -2836,7 +3017,8 @@ export default function NewOrderPage() {
 
   // Render step content
   const renderStepContent = () => {
-    const stepId = steps[currentStep].id;
+    const stepId = currentStepId;
+    if (!stepId) return null;
 
     // MIxS step
     if (stepId === "mixs") {
@@ -3137,11 +3319,6 @@ export default function NewOrderPage() {
     if (stepId === "_facility") {
       return (
         <div className="space-y-8">
-          <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3">
-            <p className="text-sm text-slate-600">
-              These fields are only visible to facility admins and will not be shown to researchers.
-            </p>
-          </div>
           {adminOnlyFields.map((field) => renderField(field, true))}
         </div>
       );
@@ -3204,18 +3381,41 @@ export default function NewOrderPage() {
     );
   }
 
+  const currentVisibleStep = activeSteps[currentVisibleStepIndex] || steps[currentStep];
+  const hasVisibleProgressBar = !isFacilityScopedEdit || activeSteps.length > 1;
+  const isLastVisibleStep = currentVisibleStepIndex >= activeSteps.length - 1;
+  const previousVisibleStep = currentVisibleStepIndex > 0
+    ? activeSteps[currentVisibleStepIndex - 1]
+    : null;
+  const nextVisibleStep = currentVisibleStepIndex < activeSteps.length - 1
+    ? activeSteps[currentVisibleStepIndex + 1]
+    : null;
+  const cancelHref = isFacilityScopedEdit && editOrderId
+    ? `/orders/${editOrderId}?section=facility`
+    : "/orders";
+
   return (
     <div className="p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold">New Sequencing Order</h1>
+          <h1 className="text-2xl font-semibold">
+            {isFacilityScopedEdit
+              ? "Edit Facility Fields"
+              : isEditMode
+                ? "Edit Order"
+                : "New Sequencing Order"}
+          </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Step {currentStep + 1} of {steps.length}
+            {isFacilityScopedEdit
+              ? activeSteps.length > 1
+                ? `Internal step ${currentVisibleStepIndex + 1} of ${activeSteps.length}`
+                : "Internal facility edit"
+              : `Step ${currentVisibleStepIndex + 1} of ${activeSteps.length}`}
           </p>
         </div>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/orders">
+          <Link href={cancelHref}>
             Cancel
           </Link>
         </Button>
@@ -3224,20 +3424,21 @@ export default function NewOrderPage() {
       {/* Content */}
       <div>
           {/* Progress bar with integrated steps */}
+          {hasVisibleProgressBar && (
           <div className="mb-6">
             <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
               {/* Progress fill */}
               <div
                 className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
-                style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
+                style={{ width: `${((currentVisibleStepIndex + 1) / activeSteps.length) * 100}%` }}
               />
               {/* Step labels */}
               <div className="relative h-full flex items-center">
-                {steps.map((step, index) => {
-                  const isCompleted = index < currentStep;
-                  const isCurrent = index === currentStep;
+                {activeSteps.map((step, index) => {
+                  const isCompleted = index < currentVisibleStepIndex;
+                  const isCurrent = index === currentVisibleStepIndex;
                   const isClickable = isCompleted;
-                  const isInFilledArea = index <= currentStep;
+                  const isInFilledArea = index <= currentVisibleStepIndex;
 
                   return (
                     <button
@@ -3246,11 +3447,11 @@ export default function NewOrderPage() {
                       onClick={() => {
                         if (isClickable) {
                           setError("");
-                          setCurrentStep(index);
+                          navigateToStepId(step.id);
                         }
                       }}
                       disabled={!isClickable}
-                      style={{ width: `${100 / steps.length}%` }}
+                      style={{ width: `${100 / activeSteps.length}%` }}
                       className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
                         isInFilledArea
                           ? "text-background"
@@ -3270,13 +3471,14 @@ export default function NewOrderPage() {
               </div>
             </div>
           </div>
+          )}
 
           {/* Main form content - full width, help is in sidebar */}
           <div>
             {/* Step header */}
             <div className="mb-6">
-              <h2 className="text-xl font-semibold">{steps[currentStep].title}</h2>
-              <p className="text-sm text-muted-foreground">{steps[currentStep].description}</p>
+              <h2 className="text-xl font-semibold">{currentVisibleStep.title}</h2>
+              <p className="text-sm text-muted-foreground">{currentVisibleStep.description}</p>
               {error && (
                 <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                   {error}
@@ -3289,16 +3491,32 @@ export default function NewOrderPage() {
 
           {/* Navigation buttons */}
           <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
-          <Button
-            variant="outline"
-            onClick={prevStep}
-            disabled={currentStep === 0 || saving}
-          >
-            <ChevronLeft className="h-4 w-4 mr-2" />
-            Previous
-          </Button>
+          {isFacilityScopedEdit && !previousVisibleStep ? (
+            <Button variant="outline" asChild>
+              <Link href={cancelHref}>
+                <ChevronLeft className="h-4 w-4 mr-2" />
+                Back to Facility Fields
+              </Link>
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (isFacilityScopedEdit && previousVisibleStep) {
+                  setError("");
+                  navigateToStepId(previousVisibleStep.id);
+                  return;
+                }
+                prevStep();
+              }}
+              disabled={(!isFacilityScopedEdit && currentMainOrderStepIndex === 0) || saving}
+            >
+              <ChevronLeft className="h-4 w-4 mr-2" />
+              Previous
+            </Button>
+          )}
 
-          {currentStep === steps.length - 1 ? (
+          {isLastVisibleStep ? (
             (() => {
               // Count AI issues on review step
               const aiIssueCount = Object.values(aiResults).filter(
@@ -3335,7 +3553,11 @@ export default function NewOrderPage() {
                     className="bg-amber-500 hover:bg-amber-600"
                   >
                     <AlertCircle className="h-4 w-4 mr-2" />
-                    {isEditMode ? "Update Anyway" : "Submit Anyway"}
+                    {isFacilityScopedEdit
+                      ? "Save Anyway"
+                      : isEditMode
+                        ? "Update Anyway"
+                        : "Submit Anyway"}
                   </Button>
                 );
               }
@@ -3343,12 +3565,28 @@ export default function NewOrderPage() {
               return (
                 <Button onClick={handleSubmit} data-testid="submit-order-button">
                   <Check className="h-4 w-4 mr-2" />
-                  {isEditMode ? "Update Order" : "Submit for Sequencing"}
+                  {isFacilityScopedEdit
+                    ? "Save Facility Fields"
+                    : isEditMode
+                      ? "Update Order"
+                      : "Submit for Sequencing"}
                 </Button>
               );
             })()
           ) : (
-            <Button onClick={nextStep} disabled={saving} data-testid="next-step-button">
+            <Button
+              onClick={() => {
+                if (isFacilityScopedEdit && nextVisibleStep) {
+                  if (validateStep(currentStepId)) {
+                    navigateToStepId(nextVisibleStep.id);
+                  }
+                  return;
+                }
+                nextStep();
+              }}
+              disabled={saving}
+              data-testid="next-step-button"
+            >
               Next
               <ChevronRight className="h-4 w-4 ml-2" />
             </Button>

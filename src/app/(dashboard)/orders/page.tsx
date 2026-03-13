@@ -511,7 +511,7 @@ export default function OrdersPage() {
           <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("name")}
-              className="col-span-4 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Order
               {sortField === "name" && (
@@ -520,7 +520,7 @@ export default function OrdersPage() {
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && (
@@ -654,7 +654,7 @@ export default function OrdersPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Order Info */}
-                    <div className="col-span-4 min-w-0">
+                    <div className="col-span-3 min-w-0">
                       {bulkEditMode ? (
                         <>
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -677,7 +677,7 @@ export default function OrdersPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-2">
+                    <div className="col-span-3 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
                         <span className={`text-xs font-medium ${statusConfig.color}`}>

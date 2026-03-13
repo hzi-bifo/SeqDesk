@@ -274,6 +274,75 @@
   }
 }
 
+@layer components {
+  .order-notes-wysiwyg .rsw-editor {
+    @apply h-full min-h-0 border-0 bg-transparent;
+  }
+
+  .order-notes-wysiwyg .rsw-toolbar {
+    @apply flex items-center gap-0.5 border-border px-2 py-1.5;
+  }
+
+  .order-notes-toolbar-sep {
+    @apply mx-0.5 h-4 w-px bg-border/60;
+  }
+
+  .order-notes-wysiwyg .rsw-btn {
+    @apply inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground;
+    height: 1.75rem !important;
+    width: 1.75rem !important;
+  }
+
+  .order-notes-wysiwyg .rsw-btn[data-active="true"] {
+    @apply bg-secondary text-foreground;
+  }
+
+  .order-notes-wysiwyg .rsw-separator {
+    @apply mx-0.5 border-border;
+  }
+
+  .order-notes-wysiwyg .rsw-ce {
+    @apply min-h-0 flex-1 overflow-y-auto bg-transparent px-3 py-3 text-sm leading-relaxed text-foreground;
+  }
+
+  .order-notes-wysiwyg .rsw-ce:focus {
+    outline: none;
+  }
+
+  .order-notes-wysiwyg .rsw-ce a {
+    @apply underline decoration-border underline-offset-2;
+  }
+
+  .order-notes-wysiwyg .rsw-ce ul {
+    @apply list-disc pl-5;
+  }
+
+  .order-notes-wysiwyg .rsw-ce ol {
+    @apply list-decimal pl-5;
+  }
+
+  .order-notes-wysiwyg .rsw-ce h1 {
+    @apply text-base font-semibold;
+  }
+
+  .order-notes-wysiwyg .rsw-ce h2 {
+    @apply text-sm font-semibold;
+  }
+
+  .order-notes-wysiwyg .rsw-ce pre {
+    @apply rounded-xl bg-muted px-3 py-2 text-xs;
+    white-space: pre-wrap;
+  }
+
+  .order-notes-wysiwyg .rsw-ce blockquote {
+    @apply border-l-2 border-border pl-3 text-muted-foreground;
+  }
+
+  .order-notes-wysiwyg .rsw-ce input[type="checkbox"] {
+    margin-right: 0.5rem;
+  }
+}
+
 /* Modern button hover effects */
 @layer utilities {
   .btn-hover {

@@ -3,6 +3,18 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
+function parseExtraSettings(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 // GET - retrieve access settings
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -19,14 +31,7 @@ export async function GET() {
       select: { extraSettings: true, postSubmissionInstructions: true },
     });
 
-    let extra: Record<string, unknown> = {};
-    if (settings?.extraSettings) {
-      try {
-        extra = JSON.parse(settings.extraSettings);
-      } catch {
-        extra = {};
-      }
-    }
+    const extra = parseExtraSettings(settings?.extraSettings);
 
     if (!isFacilityAdmin) {
       return NextResponse.json({
@@ -38,6 +43,7 @@ export async function GET() {
       departmentSharing: extra.departmentSharing ?? false,
       allowDeleteSubmittedOrders: extra.allowDeleteSubmittedOrders ?? false,
       allowUserAssemblyDownload: extra.allowUserAssemblyDownload ?? false,
+      orderNotesEnabled: extra.orderNotesEnabled ?? true,
       postSubmissionInstructions: settings?.postSubmissionInstructions ?? null,
     });
   } catch {
@@ -51,6 +57,7 @@ export async function GET() {
       departmentSharing: false,
       allowDeleteSubmittedOrders: false,
       allowUserAssemblyDownload: false,
+      orderNotesEnabled: true,
       postSubmissionInstructions: null,
     });
   }
@@ -70,6 +77,7 @@ export async function PUT(request: NextRequest) {
       departmentSharing,
       allowDeleteSubmittedOrders,
       allowUserAssemblyDownload,
+      orderNotesEnabled,
       postSubmissionInstructions,
     } = body;
 
@@ -78,14 +86,7 @@ export async function PUT(request: NextRequest) {
       where: { id: "singleton" },
     });
 
-    let extraSettings: Record<string, unknown> = {};
-    if (settings?.extraSettings) {
-      try {
-        extraSettings = JSON.parse(settings.extraSettings);
-      } catch {
-        extraSettings = {};
-      }
-    }
+    const extraSettings = parseExtraSettings(settings?.extraSettings);
 
     // Update the extraSettings (only if provided)
     if (departmentSharing !== undefined) {
@@ -96,6 +97,9 @@ export async function PUT(request: NextRequest) {
     }
     if (allowUserAssemblyDownload !== undefined) {
       extraSettings.allowUserAssemblyDownload = allowUserAssemblyDownload;
+    }
+    if (orderNotesEnabled !== undefined) {
+      extraSettings.orderNotesEnabled = orderNotesEnabled;
     }
 
     // Build update object

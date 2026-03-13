@@ -435,7 +435,7 @@ export default function AnalysisDashboardPage() {
                     <TableCell>
                       {run.study ? (
                         <Link
-                          href={`/studies/${run.study.id}?section=analysis`}
+                          href={`/studies/${run.study.id}?tab=pipelines`}
                           className="hover:underline"
                         >
                           {run.study.title}

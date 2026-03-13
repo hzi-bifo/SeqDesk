@@ -54,6 +54,7 @@ describe("/api/admin/settings/access", () => {
         departmentSharing: true,
         allowDeleteSubmittedOrders: true,
         allowUserAssemblyDownload: false,
+        orderNotesEnabled: true,
         postSubmissionInstructions: "Ship on dry ice",
       });
     });
@@ -100,6 +101,7 @@ describe("/api/admin/settings/access", () => {
         departmentSharing: false,
         allowDeleteSubmittedOrders: false,
         allowUserAssemblyDownload: false,
+        orderNotesEnabled: true,
         postSubmissionInstructions: null,
       });
     });
@@ -138,6 +140,7 @@ describe("/api/admin/settings/access", () => {
         extraSettings: JSON.stringify({
           departmentSharing: true,
           allowUserAssemblyDownload: false,
+          orderNotesEnabled: false,
           unrelated: { keep: true },
         }),
       });
@@ -167,6 +170,7 @@ describe("/api/admin/settings/access", () => {
         departmentSharing: true,
         allowUserAssemblyDownload: false,
         allowDeleteSubmittedOrders: true,
+        orderNotesEnabled: false,
         unrelated: { keep: true },
       });
       expect(args.update.postSubmissionInstructions).toBe("Updated instructions");
@@ -203,6 +207,44 @@ describe("/api/admin/settings/access", () => {
       expect(JSON.parse(args.update.extraSettings)).toEqual({
         allowDeleteSubmittedOrders: false,
         allowUserAssemblyDownload: true,
+      });
+    });
+
+    it("persists orderNotesEnabled while preserving unrelated settings", async () => {
+      mocks.getServerSession.mockResolvedValue({
+        user: {
+          id: "admin-1",
+          role: "FACILITY_ADMIN",
+        },
+      });
+      mocks.db.siteSettings.findUnique.mockResolvedValue({
+        extraSettings: JSON.stringify({
+          departmentSharing: true,
+          unrelated: { keep: true },
+        }),
+      });
+      mocks.db.siteSettings.upsert.mockResolvedValue({});
+
+      const response = await PUT(
+        new NextRequest("http://localhost:3000/api/admin/settings/access", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            orderNotesEnabled: false,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ success: true });
+
+      const args = mocks.db.siteSettings.upsert.mock.calls[0][0] as {
+        update: { extraSettings: string };
+      };
+      expect(JSON.parse(args.update.extraSettings)).toEqual({
+        departmentSharing: true,
+        orderNotesEnabled: false,
+        unrelated: { keep: true },
       });
     });
   });

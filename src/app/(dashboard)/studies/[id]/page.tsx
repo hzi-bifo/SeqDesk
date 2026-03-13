@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, use, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, use, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
   Dialog,
@@ -33,8 +31,6 @@ import {
   RotateCcw,
   Download,
   HardDrive,
-  FileText,
-  Save,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
@@ -181,21 +177,6 @@ function getTestExpirationStatus(registeredAt: string | null): { expired: boolea
   }
 }
 
-function formatRelativeTime(dateInput: string | Date) {
-  const date = new Date(dateInput);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
-
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value) return {};
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -317,6 +298,18 @@ function formatUnknownFieldValue(value: unknown): string {
   return String(value);
 }
 
+function normalizeStudyTab(tab: string | null): "overview" | "samples" | "reads" | "pipelines" | "ena" {
+  switch (tab) {
+    case "samples":
+    case "reads":
+    case "pipelines":
+    case "ena":
+      return tab;
+    default:
+      return "overview";
+  }
+}
+
 export default function StudyDetailPage({
   params,
 }: {
@@ -336,11 +329,6 @@ export default function StudyDetailPage({
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [studyFormFields, setStudyFormFields] = useState<FormFieldDefinition[]>([]);
   const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(DEFAULT_STUDY_GROUPS);
-
-  // Notes state
-  const [notesContent, setNotesContent] = useState("");
-  const [notesSaving, setNotesSaving] = useState(false);
-  const lastServerNotesRef = useRef("");
 
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -373,6 +361,7 @@ export default function StudyDetailPage({
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isDemoUser = session?.user?.isDemo === true;
   const apiStudyId = study?.id ?? id;
+  const currentTab = normalizeStudyTab(searchParams.get("tab"));
 
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;
@@ -439,43 +428,6 @@ export default function StudyDetailPage({
         setStudyFormGroups(DEFAULT_STUDY_GROUPS);
       });
   }, []);
-
-  // Sync notes content when server notes change, but do not clobber local unsaved edits.
-  useEffect(() => {
-    if (!study) return;
-    const incomingNotes = study.notes ?? "";
-    const hasUnsavedLocalChanges = notesContent !== lastServerNotesRef.current;
-
-    if (!hasUnsavedLocalChanges) {
-      setNotesContent(incomingNotes);
-    }
-
-    lastServerNotesRef.current = incomingNotes;
-  }, [study, notesContent]);
-
-  const handleSaveNotes = async () => {
-    if (!study || study.notesSupported === false) return;
-    setNotesSaving(true);
-    try {
-      const res = await fetch(`/api/studies/${apiStudyId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notesContent || null }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(typeof data.error === "string" ? data.error : "Failed to save notes");
-        return;
-      }
-      const updated = await res.json();
-      setStudy(updated);
-      toast.success("Notes saved");
-    } catch {
-      toast.error("Failed to save notes");
-    } finally {
-      setNotesSaving(false);
-    }
-  };
 
   const handleDeleteStudy = async () => {
     if (!study) return;
@@ -783,11 +735,9 @@ export default function StudyDetailPage({
     ? `${study.user.firstName} ${study.user.lastName}`
     : study.user.email;
   const samplesWithFiles = study.samples.filter(s => s.reads?.some(r => r.file1 || r.file2)).length;
-  const notesSupported = study.notesSupported !== false;
-
   return (
     <>
-      <Tabs value={searchParams.get("tab") || "overview"} onValueChange={(tab) => {
+      <Tabs value={currentTab} onValueChange={(tab) => {
         const url = tab === "overview" ? `/studies/${id}` : `/studies/${id}?tab=${tab}`;
         router.replace(url, { scroll: false });
       }}>
@@ -1388,58 +1338,6 @@ export default function StudyDetailPage({
         {isAdmin && totalSamples > 0 && (
           <TabsContent value="pipelines">
             <StudyPipelinesSection studyId={study.id} samples={study.samples} />
-          </TabsContent>
-        )}
-
-        {/* Notes Tab */}
-        {notesSupported && (
-          <TabsContent value="notes">
-            <div className="bg-card rounded-lg border p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Study Notes
-                </h2>
-                {(isOwner || isAdmin) && (
-                  <Button
-                    size="sm"
-                    onClick={handleSaveNotes}
-                    disabled={notesSaving || notesContent === (study.notes ?? "")}
-                  >
-                    {notesSaving ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-2" />
-                    )}
-                    Save
-                  </Button>
-                )}
-              </div>
-
-              {(isOwner || isAdmin) ? (
-                <Textarea
-                  value={notesContent}
-                  onChange={(e) => setNotesContent(e.target.value)}
-                  placeholder="Add notes about this study..."
-                  className="min-h-[200px] font-mono text-sm"
-                />
-              ) : (
-                <div className="min-h-[100px] rounded-lg border bg-muted/50 p-3 text-sm whitespace-pre-wrap">
-                  {study.notes || <span className="text-muted-foreground">No notes yet.</span>}
-                </div>
-              )}
-
-              {study.notesEditedBy && study.notesEditedAt && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  Last edited by{" "}
-                  {study.notesEditedBy.firstName && study.notesEditedBy.lastName
-                    ? `${study.notesEditedBy.firstName} ${study.notesEditedBy.lastName}`
-                    : study.notesEditedBy.email}
-                  {" · "}
-                  {formatRelativeTime(study.notesEditedAt)}
-                </p>
-              )}
-            </div>
           </TabsContent>
         )}
 

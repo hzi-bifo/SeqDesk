@@ -28,12 +28,15 @@ model User {
   usedInvite     AdminInvite?    @relation("InviteUser")
   createdInvites AdminInvite[]   @relation("InviteCreator")
   orders         Order[]
+  orderNotesEdited Order[]       @relation("OrderNotesEditor")
   statusNotes    StatusNote[]
   studies          Study[]         @relation("StudyOwner")
   studyNotesEdited Study[]         @relation("StudyNotesEditor")
   tickets          Ticket[]
   ticketMessages TicketMessage[]
   pipelineRuns   PipelineRun[]
+  sequencingArtifactsCreated SequencingArtifact[] @relation("SequencingArtifactCreator")
+  sequencingUploadsCreated   SequencingUpload[]   @relation("SequencingUploadCreator")
   department     Department?     @relation(fields: [departmentId], references: [id])
 }
 
@@ -54,6 +57,9 @@ model Order {
   generatedByE2E   Boolean      @default(false)
   status           String       @default("DRAFT")
   statusUpdatedAt  DateTime     @default(now())
+  notes            String?
+  notesEditedAt    DateTime?
+  notesEditedById  String?
   numberOfSamples  Int?
   contactName      String?
   contactEmail     String?
@@ -69,7 +75,10 @@ model Order {
   updatedAt        DateTime     @updatedAt
   userId           String
   user             User         @relation(fields: [userId], references: [id])
+  notesEditedBy    User?        @relation("OrderNotesEditor", fields: [notesEditedById], references: [id])
   samples          Sample[]
+  sequencingArtifacts SequencingArtifact[]
+  sequencingUploads   SequencingUpload[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
   tickets          Ticket[]     @relation("TicketOrder")
@@ -125,6 +134,8 @@ model Sample {
   checklistData         String?
   checklistUnits        String?
   customFields          String?
+  facilityStatus        String     @default("WAITING")
+  facilityStatusUpdatedAt DateTime?
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
   orderId               String
@@ -134,6 +145,8 @@ model Sample {
   preferredAssembly     Assembly?  @relation("PreferredAssembly", fields: [preferredAssemblyId], references: [id], onDelete: SetNull)
   bins                  Bin[]
   reads                 Read[]
+  sequencingArtifacts   SequencingArtifact[]
+  sequencingUploads     SequencingUpload[]
   study                 Study?     @relation(fields: [studyId], references: [id])
   order                 Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
@@ -177,6 +190,62 @@ model SequencingRun {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   reads          Read[]
+  sequencingArtifacts SequencingArtifact[]
+}
+
+model SequencingArtifact {
+  id             String         @id @default(cuid())
+  orderId        String
+  sampleId       String?
+  sequencingRunId String?
+  stage          String
+  artifactType   String
+  source         String
+  visibility     String         @default("facility")
+  path           String
+  originalName   String
+  size           BigInt?
+  checksum       String?
+  mimeType       String?
+  metadata       String?
+  createdById    String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sample         Sample?        @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  sequencingRun  SequencingRun? @relation(fields: [sequencingRunId], references: [id], onDelete: SetNull)
+  createdBy      User?          @relation("SequencingArtifactCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orderId, stage])
+  @@index([sampleId, stage])
+  @@index([sequencingRunId])
+}
+
+model SequencingUpload {
+  id               String   @id @default(cuid())
+  orderId          String
+  sampleId         String?
+  targetKind       String
+  targetRole       String
+  originalName     String
+  tempPath         String
+  finalPath        String?
+  expectedSize     BigInt
+  receivedSize     BigInt   @default(0)
+  status           String   @default("PENDING")
+  checksumProvided String?
+  checksumComputed String?
+  mimeType         String?
+  metadata         String?
+  createdById      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sample           Sample?  @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  createdBy        User     @relation("SequencingUploadCreator", fields: [createdById], references: [id])
+
+  @@index([orderId, status])
+  @@index([sampleId, status])
 }
 
 model Assembly {
