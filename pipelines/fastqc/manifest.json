@@ -1,0 +1,77 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "fastqc",
+    "name": "FastQC",
+    "version": "0.1.0",
+    "description": "Run FastQC quality control on linked FASTQ files in an order",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {}
+  },
+  "outputs": [
+    {
+      "id": "sample_qc_reports",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "fastqc",
+      "discovery": {
+        "pattern": "fastqc_reports/*_fastqc.html",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "sample_qc_data",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "fastqc",
+      "discovery": {
+        "pattern": "fastqc_reports/*_fastqc.zip",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "fastqc",
+      "discovery": {
+        "pattern": "summary/fastqc-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

@@ -128,7 +128,7 @@ export function buildOrderProgressSteps({
       id: "_facility",
       label: "Facility Fields",
       description: "Internal facility information",
-      icon: "Shield",
+      icon: "ClipboardPen",
       kind: "facility",
     });
   }

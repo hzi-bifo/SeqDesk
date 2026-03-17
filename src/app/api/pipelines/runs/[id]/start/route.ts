@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
@@ -11,6 +12,7 @@ import {
   isMacOsArmRuntime,
   resolveCondaBin,
 } from '@/lib/pipelines/runtime-platform';
+import { getLocalCondaCompatibilityBlockMessage } from '@/lib/pipelines/runtime-compatibility';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
@@ -276,13 +278,9 @@ export async function POST(
       useSlurm: executionSettings.useSlurm,
     });
 
-    // Get data base path from site settings
-    const siteSettings = await db.siteSettings.findUnique({
-      where: { id: 'singleton' },
-      select: { dataBasePath: true },
-    });
+    const resolvedDataBasePath = await getResolvedDataBasePath();
 
-    if (!siteSettings?.dataBasePath) {
+    if (!resolvedDataBasePath.dataBasePath) {
       return NextResponse.json(
         { error: 'Data base path not configured in settings' },
         { status: 400 }
@@ -309,27 +307,40 @@ export async function POST(
 
     const pipelineId = run.pipelineId;
     const isSubmgPipeline = pipelineId === 'submg';
+    const pkg = getPackage(pipelineId);
+
+    if (!pkg) {
+      return NextResponse.json(
+        { error: `Pipeline package not found: ${pipelineId}` },
+        { status: 400 }
+      );
+    }
+
     const runtimePlatform = await detectRuntimePlatform(executionSettings.condaPath);
     const runtimeDetails = `${runtimePlatform.raw} (${runtimePlatform.source})`;
 
-    if (
-      !isSubmgPipeline &&
-      executionSettings.runtimeMode === 'conda' &&
-      !executionSettings.useSlurm &&
-      isMacOsArmRuntime(runtimePlatform)
-    ) {
-      const message = `Conda runtime on macOS ARM is not supported for nf-core/mag (detected: ${runtimeDetails}; packages like bowtie2 are unavailable). Use a Linux/SLURM server instead.`;
+    const localCondaCompatibilityMessage =
+      !isSubmgPipeline
+        ? getLocalCondaCompatibilityBlockMessage({
+            manifest: pkg.manifest,
+            runtimeMode: executionSettings.runtimeMode,
+            useSlurm: executionSettings.useSlurm,
+            runtimePlatform,
+          })
+        : null;
+
+    if (localCondaCompatibilityMessage) {
       await db.pipelineRun.update({
         where: { id },
         data: {
           status: 'failed',
-          errorTail: message,
+          errorTail: localCondaCompatibilityMessage,
           completedAt: new Date(),
           statusSource: 'launcher',
           lastEventAt: new Date(),
         },
       });
-      return NextResponse.json({ error: message }, { status: 400 });
+      return NextResponse.json({ error: localCondaCompatibilityMessage }, { status: 400 });
     }
     if (executionSettings.useSlurm && isMacOsArmRuntime(runtimePlatform)) {
       console.warn(
@@ -385,15 +396,6 @@ export async function POST(
       });
     }
 
-    // Verify pipeline package exists
-    const pkg = getPackage(pipelineId);
-    if (!pkg) {
-      return NextResponse.json(
-        { error: `Pipeline package not found: ${pipelineId}` },
-        { status: 400 }
-      );
-    }
-
     // Prepare the run (generates config/scripts and staging files)
     const prepResult = isSubmgPipeline
       ? await prepareSubmgRun({
@@ -403,10 +405,10 @@ export async function POST(
           config,
           executionSettings: {
             ...executionSettings,
-            dataBasePath: siteSettings.dataBasePath,
+            dataBasePath: resolvedDataBasePath.dataBasePath,
             nextflowProfile: effectiveProfile,
           },
-          dataBasePath: siteSettings.dataBasePath,
+          dataBasePath: resolvedDataBasePath.dataBasePath,
         })
       : await prepareGenericRun({
           runId: run.id,
@@ -417,7 +419,7 @@ export async function POST(
           config,
           executionSettings: {
             ...executionSettings,
-            dataBasePath: siteSettings.dataBasePath,
+            dataBasePath: resolvedDataBasePath.dataBasePath,
             nextflowProfile: effectiveProfile,
           },
           userId: session.user.id,

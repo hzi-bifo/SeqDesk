@@ -51,6 +51,7 @@ import {
   ChevronDown,
   Circle,
   Leaf,
+  ClipboardPen,
   Table as TableIcon,
   Plus,
   Trash2,
@@ -58,7 +59,6 @@ import {
   AlertCircle,
   BookOpen,
   ArrowRight,
-  Shield,
 } from "lucide-react";
 import {
   FormFieldDefinition,
@@ -1249,6 +1249,7 @@ export function OrderWizardPage({
     FileText,
     Settings,
     ClipboardList,
+    ClipboardPen,
     CheckCircle2,
     Leaf,
     FlaskConical,
@@ -1284,7 +1285,7 @@ export function OrderWizardPage({
             id: "_facility",
             title: "Order Fields",
             description: "Internal order-level facility fields",
-            icon: Shield,
+            icon: ClipboardPen,
           },
         ]
       : []),
@@ -1303,6 +1304,7 @@ export function OrderWizardPage({
     isEditMode &&
     editScope === "facility" &&
     facilityEditSteps.some((step) => step.id === currentStepParam);
+  const canEditDisplayedSamples = canEditSamples || isFacilityScopedEdit;
   const mainOrderSteps =
     isEditMode && isFacilityAdmin
       ? steps.filter((step) => step.id !== "_facility")
@@ -1793,6 +1795,27 @@ export function OrderWizardPage({
         }
       }
 
+      if (isFacilityScopedEdit) {
+        for (const field of adminOnlyFields) {
+          const value = fieldValues[field.name];
+          const isEmptyValue =
+            value === undefined ||
+            value === null ||
+            value === "" ||
+            (Array.isArray(value) && value.length === 0);
+
+          if (field.isSystem && field.systemKey) {
+            systemFieldData[field.systemKey] = isEmptyValue ? null : value;
+          } else {
+            if (isEmptyValue) {
+              delete customFieldData[field.name];
+            } else {
+              customFieldData[field.name] = value;
+            }
+          }
+        }
+      }
+
       // Add MIxS checklist and selected fields to customFields (actual values collected per sample)
       if (selectedMixsChecklist) {
         customFieldData._mixsChecklist = selectedMixsChecklist;
@@ -1805,7 +1828,7 @@ export function OrderWizardPage({
       let orderId: string;
 
       if (isEditMode && editOrderId) {
-        if (!canEditSamples) {
+        if (!canEditSamples && !isFacilityScopedEdit) {
           systemFieldData.numberOfSamples = samples.length;
         }
 
@@ -1828,7 +1851,7 @@ export function OrderWizardPage({
         orderId = editOrderId;
 
         // Update samples for the order
-        if (samples.length > 0 && canEditSamples) {
+        if (samples.length > 0 && canEditDisplayedSamples) {
           const samplesToSave = samples.map((sample) => {
             const { coreSampleData, customFields } = buildSamplePayload(sample);
             return {
@@ -1850,11 +1873,14 @@ export function OrderWizardPage({
             body: JSON.stringify({
               samples: samplesToSave,
               checklist: selectedMixsChecklist || null,
+              facilityFieldsOnly: isFacilityScopedEdit,
             }),
           });
 
           if (!samplesRes.ok) {
-            console.error("Failed to save samples");
+            const data = await samplesRes.json().catch(() => null);
+            setError(data?.error || "Failed to save sample fields");
+            return;
           }
         }
 
@@ -2742,7 +2768,7 @@ export function OrderWizardPage({
         cell: cellComponent,
         meta: {
           field,
-          editable: !saving && canEditSamples,
+          editable: !saving && canEditDisplayedSamples,
         },
       };
       cols.push(col);
@@ -2776,6 +2802,7 @@ export function OrderWizardPage({
     barcodeOptions,
     focusFieldWithScrollPreserved,
     canEditSamples,
+    canEditDisplayedSamples,
     handleRemoveSample,
   ]);
 
@@ -2838,7 +2865,9 @@ export function OrderWizardPage({
       <div className="space-y-4">
         {!canEditSamples && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            This order is already submitted. Sample rows are read-only, but order fields can still be updated.
+            {isFacilityScopedEdit
+              ? `This order is already ${editOrderStatus === "COMPLETED" ? "completed" : "submitted"}. Core sample metadata is read-only, but facility sample fields remain editable here.`
+              : "This order is already submitted. Sample rows are read-only, but order fields can still be updated."}
           </div>
         )}
         <div className="flex items-center justify-between">

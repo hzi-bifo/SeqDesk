@@ -127,7 +127,7 @@ async function prepareRunDirectory(
   runNumber: string,
   pipelineRunDir: string
 ): Promise<string> {
-  const runFolder = path.join(pipelineRunDir, runNumber);
+  const runFolder = path.resolve(pipelineRunDir, runNumber);
 
   await fs.mkdir(runFolder, { recursive: true });
   await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
@@ -210,6 +210,12 @@ function buildRunConfig(
   // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
   sections.push(
     [
+      `profiles {`,
+      `  conda {`,
+      `    conda.enabled = true`,
+      `  }`,
+      `}`,
+      ``,
       `conda {`,
       `  channels = ['conda-forge', 'bioconda']`,
       `  createOptions = '--override-channels -c conda-forge -c bioconda'`,

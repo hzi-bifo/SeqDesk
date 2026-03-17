@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -62,12 +63,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Get data base path
-    const settings = await db.siteSettings.findUnique({
-      where: { id: "singleton" },
-      select: { dataBasePath: true },
-    });
+    const resolvedDataBasePath = await getResolvedDataBasePath();
 
-    if (!settings?.dataBasePath) {
+    if (!resolvedDataBasePath.dataBasePath) {
       return NextResponse.json(
         { error: "Data base path not configured" },
         { status: 400 }
@@ -82,11 +80,11 @@ export async function POST(request: NextRequest) {
       error?: string;
     }> = [];
 
-    const normalizedBasePath = path.resolve(settings.dataBasePath);
+    const normalizedBasePath = path.resolve(resolvedDataBasePath.dataBasePath);
 
     for (const relativePath of filePaths) {
       try {
-        const absolutePath = path.resolve(settings.dataBasePath, relativePath);
+        const absolutePath = path.resolve(resolvedDataBasePath.dataBasePath, relativePath);
 
         if (!isWithinBasePath(normalizedBasePath, absolutePath)) {
           results.push({

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 
 interface ReadinessResponse {
@@ -47,15 +47,12 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const [siteSettings, executionSettings] = await Promise.all([
-      db.siteSettings.findUnique({
-        where: { id: "singleton" },
-        select: { dataBasePath: true },
-      }),
+    const [resolvedDataBasePath, executionSettings] = await Promise.all([
+      getResolvedDataBasePath(),
       getExecutionSettings(),
     ]);
 
-    const dataBasePath = siteSettings?.dataBasePath?.trim() || "";
+    const dataBasePath = resolvedDataBasePath.dataBasePath?.trim() || "";
     const pipelineRunDir = executionSettings.pipelineRunDir?.trim() || "";
     const condaPath = executionSettings.condaPath?.trim() || "";
     const weblogUrl = executionSettings.weblogUrl?.trim() || "";

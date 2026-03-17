@@ -24,6 +24,16 @@ export const OutputType = z.enum([
   "artifact",
 ]);
 
+const PipelineSampleResultValueSchema = z
+  .object({
+    label: z.string().min(1).optional(),
+    path: z.string().regex(/^[a-zA-Z0-9_.]+$/),
+    whenPathExists: z.string().regex(/^[a-zA-Z0-9_.]+$/).optional(),
+    format: z.enum(["text", "hash_prefix"]).optional(),
+    truncate: z.number().int().min(1).max(64).optional(),
+  })
+  .strict();
+
 export const ManifestSchema = z
   .object({
     manifestVersion: z.number().int().min(1),
@@ -78,6 +88,12 @@ export const ManifestSchema = z
         version: z.string().min(1),
         profiles: z.array(z.string()),
         defaultParams: z.record(z.string(), z.unknown()),
+        runtime: z
+          .object({
+            allowMacOsArmConda: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
         paramMap: z.record(z.string(), z.string()).optional(),
         paramRules: z
           .array(
@@ -131,6 +147,19 @@ export const ManifestSchema = z
     schema_requirements: z
       .object({
         tables: z.array(z.string().min(1)),
+      })
+      .strict()
+      .optional(),
+    ui: z
+      .object({
+        sampleResult: z
+          .object({
+            columnLabel: z.string().min(1),
+            emptyText: z.string().min(1).optional(),
+            values: z.array(PipelineSampleResultValueSchema).min(1),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

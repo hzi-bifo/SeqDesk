@@ -61,6 +61,7 @@ import {
   getAvailableAssemblies,
   resolveAssemblySelection,
 } from "@/lib/pipelines/assembly-selection";
+import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 const AUTO_ASSEMBLY_SELECTION = "__auto__";
@@ -961,34 +962,7 @@ export function StudyPipelinesSection({
   } | null>(null);
   const [showDataFlow, setShowDataFlow] = useState(false);
 
-  // System ready state
-  const [systemReady, setSystemReady] = useState<{
-    ready: boolean;
-    summary: string;
-  } | null>(null);
-  const [checkingSystem, setCheckingSystem] = useState(true);
-
-  // Check system prerequisites on mount
-  useEffect(() => {
-    const checkSystem = async () => {
-      setCheckingSystem(true);
-      try {
-        const res = await fetch(
-          "/api/admin/settings/pipelines/check-prerequisites?quick=true"
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setSystemReady(data);
-        } else {
-          setSystemReady({ ready: false, summary: "Could not check system" });
-        }
-      } catch {
-        setSystemReady({ ready: false, summary: "Could not check system" });
-      }
-      setCheckingSystem(false);
-    };
-    checkSystem();
-  }, []);
+  const { systemReady, checkingSystem } = useQuickPrerequisiteStatus();
 
   useEffect(() => {
     setPreferredAssemblyBySample(initialPreferredAssemblyMap);

@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
 import { ensureWithinBase } from '@/lib/files';
+import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { PipelineOutput as DefinitionOutput } from './definitions';
 import { getPackage, PackageOutput } from './package-loader';
 import { DiscoveredFile, DiscoverOutputsResult } from './adapters/types';
@@ -303,12 +304,9 @@ async function updateSampleRead(
   const hasFileWriteback = Boolean(file1 && sourceFile1);
 
   if (hasFileWriteback) {
-    const settings = await db.siteSettings.findUnique({
-      where: { id: 'singleton' },
-      select: { dataBasePath: true },
-    });
+    const resolvedDataBasePath = await getResolvedDataBasePath();
 
-    if (!settings?.dataBasePath) {
+    if (!resolvedDataBasePath.dataBasePath) {
       return {
         success: false,
         error: `Sample read output ${file.name}: Data base path is not configured`,
@@ -316,14 +314,22 @@ async function updateSampleRead(
     }
 
     try {
-      await copyReadFileToStorage(settings.dataBasePath, file1!, sourceFile1!);
+      await copyReadFileToStorage(
+        resolvedDataBasePath.dataBasePath,
+        file1!,
+        sourceFile1!
+      );
 
       if (file2 && sourceFile2) {
-        await copyReadFileToStorage(settings.dataBasePath, file2, sourceFile2);
+        await copyReadFileToStorage(
+          resolvedDataBasePath.dataBasePath,
+          file2,
+          sourceFile2
+        );
       }
 
       if (replaceExisting) {
-        await replaceSampleReads(file.sampleId, settings.dataBasePath, {
+        await replaceSampleReads(file.sampleId, resolvedDataBasePath.dataBasePath, {
           file1: file1!,
           file2: file2 ?? null,
           checksum1: getStringMetadata(metadata, 'checksum1'),

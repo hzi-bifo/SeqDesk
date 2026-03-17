@@ -10,6 +10,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -23,12 +37,33 @@ import {
   FolderOpen,
   Hash,
   Loader2,
+  MoreHorizontal,
   Play,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
+
+function getApiErrorMessage(
+  payload: { error?: unknown; details?: unknown } | null,
+  fallback: string
+): string {
+  if (!payload) return fallback;
+  if (Array.isArray(payload.details) && payload.details.length > 0) {
+    return payload.details
+      .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+      .join("\n");
+  }
+  if (typeof payload.details === "string" && payload.details.trim()) {
+    return payload.details;
+  }
+  if (typeof payload.error === "string" && payload.error.trim()) {
+    return payload.error;
+  }
+  return fallback;
+}
 
 type PipelineConfigProperty = {
   type: string;
@@ -65,6 +100,8 @@ type PipelineRun = {
   pipelineId: string;
   pipelineName: string;
   status: string;
+  currentStep: string | null;
+  errorTail: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -90,6 +127,25 @@ function getStatusBadge(status: string) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
+}
+
+function getRunDetails(run: PipelineRun): string {
+  if (run.status === "failed" && run.errorTail?.trim()) {
+    return run.errorTail.trim();
+  }
+  if (run.currentStep?.trim()) {
+    return run.currentStep.trim();
+  }
+  if (run.status === "completed") {
+    return "Run completed successfully.";
+  }
+  if (run.status === "queued") {
+    return "Waiting for execution.";
+  }
+  if (run.status === "running") {
+    return "Pipeline is currently running.";
+  }
+  return "No additional details.";
 }
 
 function getReadinessIssues(
@@ -134,6 +190,9 @@ export default function OrderPipelinesPage({
   const [selectedSamples, setSelectedSamples] = useState<Set<string>>(new Set());
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
+  const [deletingRun, setDeletingRun] = useState(false);
+  const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -202,12 +261,29 @@ export default function OrderPipelinesPage({
     sequencingResponse.data,
     selectedSamples
   );
+  const hasActiveRuns = useMemo(
+    () =>
+      (runsResponse.data?.runs || []).some(
+        (run) => run.status === "queued" || run.status === "running"
+      ),
+    [runsResponse.data?.runs]
+  );
 
   const isLoading =
     sessionStatus === "loading" ||
     sequencingResponse.isLoading ||
     pipelinesResponse.isLoading ||
     runsResponse.isLoading;
+
+  useEffect(() => {
+    if (!hasActiveRuns) return;
+
+    const interval = window.setInterval(() => {
+      void Promise.all([sequencingResponse.mutate(), runsResponse.mutate()]);
+    }, 5000);
+
+    return () => window.clearInterval(interval);
+  }, [hasActiveRuns, sequencingResponse, runsResponse]);
 
   const handleToggleSample = (sampleId: string) => {
     setSelectedSamples((current) => {
@@ -241,7 +317,9 @@ export default function OrderPipelinesPage({
 
       const createPayload = await createResponse.json().catch(() => null);
       if (!createResponse.ok) {
-        throw new Error(createPayload?.error || "Failed to create pipeline run");
+        throw new Error(
+          getApiErrorMessage(createPayload, "Failed to create pipeline run")
+        );
       }
 
       const runId = createPayload?.run?.id as string | undefined;
@@ -254,7 +332,9 @@ export default function OrderPipelinesPage({
       });
       const startPayload = await startResponse.json().catch(() => null);
       if (!startResponse.ok) {
-        throw new Error(startPayload?.error || "Failed to start pipeline run");
+        throw new Error(
+          getApiErrorMessage(startPayload, "Failed to start pipeline run")
+        );
       }
 
       await Promise.all([
@@ -265,6 +345,36 @@ export default function OrderPipelinesPage({
       setError(runError instanceof Error ? runError.message : "Failed to start pipeline");
     } finally {
       setStartingPipelineId(null);
+    }
+  };
+
+  const handleDeleteRun = async () => {
+    if (!deleteTarget) return;
+
+    setDeletingRun(true);
+    setDeleteRunError(null);
+
+    try {
+      const response = await fetch(`/api/pipelines/runs/${deleteTarget.id}/delete`, {
+        method: "POST",
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setDeleteRunError(
+          getApiErrorMessage(payload, "Failed to delete run")
+        );
+        return;
+      }
+
+      setDeleteTarget(null);
+      await Promise.all([sequencingResponse.mutate(), runsResponse.mutate()]);
+    } catch (deleteError) {
+      setDeleteRunError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete run"
+      );
+    } finally {
+      setDeletingRun(false);
     }
   };
 
@@ -604,24 +714,96 @@ export default function OrderPipelinesPage({
                       No runs started for this order yet.
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {(runsResponse.data?.runs || []).map((run) => (
-                        <div
-                          key={run.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{run.pipelineName}</span>
-                              <span className="text-xs text-muted-foreground">{run.runNumber}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              Created {formatDateTime(run.createdAt)} · Completed {formatDateTime(run.completedAt)}
-                            </div>
-                          </div>
-                          {getStatusBadge(run.status)}
-                        </div>
-                      ))}
+                    <div className="overflow-hidden rounded-xl border border-border bg-card">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="border-b bg-muted/50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Run
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Pipeline
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Status
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Details
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Created
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Started
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                                Completed
+                              </th>
+                              <th className="w-[56px] px-3 py-2 text-right font-medium text-muted-foreground">
+                                Actions
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {(runsResponse.data?.runs || []).map((run) => (
+                              <tr key={run.id}>
+                                <td className="px-3 py-2 align-top">
+                                  <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
+                                    {run.runNumber}
+                                  </code>
+                                </td>
+                                <td className="px-3 py-2 align-top font-medium">
+                                  {run.pipelineName}
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  {getStatusBadge(run.status)}
+                                </td>
+                                <td className="max-w-[320px] px-3 py-2 align-top text-xs text-muted-foreground">
+                                  {getRunDetails(run)}
+                                </td>
+                                <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                                  {formatDateTime(run.createdAt)}
+                                </td>
+                                <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                                  {formatDateTime(run.startedAt)}
+                                </td>
+                                <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                                  {formatDateTime(run.completedAt)}
+                                </td>
+                                <td className="px-3 py-2 align-top text-right">
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label={`Actions for ${run.runNumber}`}
+                                      >
+                                        <MoreHorizontal className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        variant="destructive"
+                                        disabled={run.status === "running" || deletingRun}
+                                        onSelect={(event) => {
+                                          event.preventDefault();
+                                          setDeleteRunError(null);
+                                          setDeleteTarget(run);
+                                        }}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                        Delete run
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -630,6 +812,56 @@ export default function OrderPipelinesPage({
           </div>
         )}
       </div>
+
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteRunError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete run {deleteTarget?.runNumber}?</DialogTitle>
+            <DialogDescription>
+              This removes the run record, run folder, and related pipeline outputs.
+              If the run generated simulated reads that are still linked to the order,
+              those files will also be removed.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteRunError ? (
+            <p className="text-sm text-destructive">{deleteRunError}</p>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteRunError(null);
+              }}
+              disabled={deletingRun}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteRun}
+              disabled={deletingRun}
+            >
+              {deletingRun ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }

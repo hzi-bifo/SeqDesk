@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
     },
   },
   getPackage: vi.fn(),
+  getResolvedDataBasePath: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -40,6 +41,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("./package-loader", () => ({
   getPackage: mocks.getPackage,
+}));
+
+vi.mock("@/lib/files/data-base-path", () => ({
+  getResolvedDataBasePath: mocks.getResolvedDataBasePath,
 }));
 
 import { resolveOutputs, saveRunResults } from "./output-resolver";
@@ -62,7 +67,11 @@ describe("output-resolver", () => {
     mocks.db.read.findMany.mockResolvedValue([]);
     mocks.db.read.deleteMany.mockResolvedValue({});
     mocks.db.read.create.mockResolvedValue({});
-    mocks.db.siteSettings.findUnique.mockResolvedValue({ dataBasePath: null });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: null,
+      source: "none",
+      isImplicit: false,
+    });
   });
 
   beforeEach(async () => {
@@ -338,7 +347,11 @@ describe("output-resolver", () => {
         ],
       },
     });
-    mocks.db.siteSettings.findUnique.mockResolvedValue({ dataBasePath: storageDir });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: storageDir,
+      source: "database",
+      isImplicit: false,
+    });
     mocks.db.read.findMany.mockResolvedValue([
       {
         id: "read-old",

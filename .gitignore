@@ -55,6 +55,7 @@ next-env.d.ts
 /reads/
 /runs_out/
 /pipeline_output/
+/pipeline_runs/
 /pipeline_test_out/
 /null/
 /work/

@@ -45,6 +45,8 @@ export default function DataStoragePage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [dataBasePath, setDataBasePath] = useState("");
+  const [dataBasePathSource, setDataBasePathSource] = useState<string>("none");
+  const [dataBasePathIsImplicit, setDataBasePathIsImplicit] = useState(false);
   const [seqFilesConfig, setSeqFilesConfig] = useState<SequencingFilesConfig>({
     allowedExtensions: [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
     scanDepth: 2,
@@ -67,6 +69,8 @@ export default function DataStoragePage() {
       }
       const data = await res.json();
       setDataBasePath(data.dataBasePath || "");
+      setDataBasePathSource(typeof data.dataBasePathSource === "string" ? data.dataBasePathSource : "none");
+      setDataBasePathIsImplicit(Boolean(data.dataBasePathIsImplicit));
       if (data.config) {
         setSeqFilesConfig({
           ...data.config,
@@ -249,6 +253,8 @@ export default function DataStoragePage() {
                       value={dataBasePath}
                       onChange={(e) => {
                         setDataBasePath(e.target.value);
+                        setDataBasePathSource("manual");
+                        setDataBasePathIsImplicit(false);
                         setPathTestResult(null);
                       }}
                       placeholder="/data/sequencing"
@@ -269,6 +275,13 @@ export default function DataStoragePage() {
                     )}
                   </Button>
                 </div>
+
+                {dataBasePathIsImplicit && dataBasePathSource === "local-dev" && dataBasePath.trim() && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    Using the local macOS development fallback path <span className="font-mono">{dataBasePath}</span>.
+                    Save this form if you want to persist it in Site Settings.
+                  </div>
+                )}
 
                 {pathTestResult && (
                   <div
@@ -380,4 +393,3 @@ export default function DataStoragePage() {
     </PageContainer>
   );
 }
-

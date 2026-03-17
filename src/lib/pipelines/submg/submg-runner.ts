@@ -577,7 +577,7 @@ async function generateRunNumber(pipelineId: string): Promise<string> {
 }
 
 async function prepareRunDirectory(runNumber: string, pipelineRunDir: string): Promise<string> {
-  const runFolder = path.join(pipelineRunDir, runNumber);
+  const runFolder = path.resolve(pipelineRunDir, runNumber);
   await fs.mkdir(runFolder, { recursive: true });
   await fs.mkdir(path.join(runFolder, "logs"), { recursive: true });
   return runFolder;
