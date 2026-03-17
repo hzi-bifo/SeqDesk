@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { ensureWithinBase } from "@/lib/files";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -25,19 +26,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const settings = await db.siteSettings.findUnique({
-      where: { id: "singleton" },
-      select: { dataBasePath: true },
-    });
+    const resolvedDataBasePath = await getResolvedDataBasePath();
 
-    if (!settings?.dataBasePath) {
+    if (!resolvedDataBasePath.dataBasePath) {
       return NextResponse.json(
         { error: "Data base path not configured" },
         { status: 400 }
       );
     }
 
-    const resolvedBase = path.resolve(settings.dataBasePath);
+    const resolvedBase = path.resolve(resolvedDataBasePath.dataBasePath);
 
     let deletedCount = 0;
     let recordsRemoved = 0;

@@ -1,0 +1,55 @@
+{
+  "id": "fastqc",
+  "name": "FastQC",
+  "description": "Run FastQC quality control on linked FASTQ files from an order",
+  "category": "qc",
+  "version": "0.1.0",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "fastqc_reports",
+      "description": "Per-sample FastQC HTML quality reports",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "fastqc_summary",
+      "description": "Run-level pass/warn/fail summary",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "order"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "defaultConfig": {},
+  "icon": "CheckCircle"
+}

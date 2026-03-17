@@ -60,6 +60,22 @@ export interface PipelineConfigSchema {
   required?: string[];
 }
 
+export type PipelineSampleResultFormat = 'text' | 'hash_prefix';
+
+export interface PipelineSampleResultValue {
+  label?: string;
+  path: string;
+  whenPathExists?: string;
+  format?: PipelineSampleResultFormat;
+  truncate?: number;
+}
+
+export interface PipelineSampleResult {
+  columnLabel: string;
+  emptyText?: string;
+  values: PipelineSampleResultValue[];
+}
+
 export interface PipelineDefinition {
   id: string;
   name: string;
@@ -102,6 +118,7 @@ export interface PipelineDefinition {
   // Configuration schema for admin settings
   configSchema: PipelineConfigSchema;
   defaultConfig: Record<string, unknown>;
+  sampleResult?: PipelineSampleResult;
 
   // UI
   icon: string;

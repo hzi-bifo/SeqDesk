@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { resolveDataBasePathFromStoredValue } from "./data-base-path";
 
 export interface SequencingFilesConfig {
   allowedExtensions: string[];
@@ -45,8 +46,10 @@ export async function getSequencingFilesConfig(): Promise<{
     }
   }
 
+  const resolvedPath = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
+
   return {
-    dataBasePath: settings?.dataBasePath || null,
+    dataBasePath: resolvedPath.dataBasePath,
     config,
   };
 }

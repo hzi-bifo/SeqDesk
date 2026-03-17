@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -61,7 +62,9 @@ export async function POST(request: NextRequest) {
       select: { dataBasePath: true, extraSettings: true },
     });
 
-    if (!settings?.dataBasePath) {
+    const resolvedDataBasePath = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
+
+    if (!resolvedDataBasePath.dataBasePath) {
       return NextResponse.json(
         { error: "Data base path not configured" },
         { status: 400 }
@@ -69,7 +72,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify file exists
-    const absolutePath = path.join(settings.dataBasePath, filePath);
+    const absolutePath = path.join(resolvedDataBasePath.dataBasePath, filePath);
     try {
       await fs.access(absolutePath);
     } catch {

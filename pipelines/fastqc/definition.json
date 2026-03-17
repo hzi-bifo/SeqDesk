@@ -1,0 +1,77 @@
+{
+  "pipeline": "fastqc",
+  "name": "FastQC",
+  "description": "Quality control analysis for linked single-end or paired-end FASTQ files",
+  "version": "0.1.0",
+  "inputs": [
+    {
+      "id": "sample_reads",
+      "name": "Linked FASTQ files",
+      "description": "FASTQ files already linked to order samples",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to selected order samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_qc_reports",
+      "name": "Per-sample FastQC HTML report",
+      "description": "Interactive HTML quality report for each sample",
+      "fromStep": "fastqc",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review and download"
+    },
+    {
+      "id": "sample_qc_data",
+      "name": "Per-sample FastQC data archive",
+      "description": "Zip archive with detailed QC metrics per sample",
+      "fromStep": "fastqc",
+      "fileTypes": [
+        ".zip"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for downstream use"
+    },
+    {
+      "id": "summary",
+      "name": "FastQC summary",
+      "description": "Run-level summary of pass/warn/fail status across all samples",
+      "fromStep": "fastqc",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for provenance and download"
+    }
+  ],
+  "steps": [
+    {
+      "id": "fastqc",
+      "name": "Run FastQC",
+      "description": "Execute FastQC quality analysis on input reads",
+      "category": "qc",
+      "dependsOn": [],
+      "processMatchers": [
+        "RUN_FASTQC",
+        "SUMMARIZE_FASTQC"
+      ],
+      "tools": [
+        "fastqc"
+      ],
+      "outputs": [
+        "sample_qc_reports",
+        "sample_qc_data",
+        "summary"
+      ]
+    }
+  ]
+}

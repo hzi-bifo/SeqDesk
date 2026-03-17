@@ -14,6 +14,12 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
+import type {
+  PipelineParameterGroup,
+  SeqDeskDestination,
+  SeqDeskSource,
+} from './definitions';
+import type { PipelineSampleResult } from './types';
 
 // ============================================================================
 // Package Types
@@ -80,6 +86,9 @@ export interface PackageExecution {
   version: string;
   profiles: string[];
   defaultParams: Record<string, unknown>;
+  runtime?: {
+    allowMacOsArmConda?: boolean;
+  };
 }
 
 export interface PackageManifest {
@@ -107,6 +116,9 @@ export interface PackageManifest {
   outputs: PackageOutput[];
   schema_requirements?: {
     tables: string[];
+  };
+  ui?: {
+    sampleResult?: PipelineSampleResult;
   };
 }
 
@@ -719,13 +731,14 @@ export function packageToPipelineDefinition(packageId: string): PipelineDefiniti
     })),
     visibility: registry.visibility,
     input: {
-      supportedScopes: registry.input.supportedScopes as ('study' | 'samples' | 'sample')[],
+      supportedScopes: registry.input.supportedScopes as PipelineDefinition['input']['supportedScopes'],
       minSamples: registry.input.minSamples,
       perSample: registry.input.perSample,
     },
     samplesheet: registry.samplesheet as PipelineDefinition['samplesheet'],
     configSchema: registry.configSchema as PipelineDefinition['configSchema'],
     defaultConfig: registry.defaultConfig,
+    sampleResult: pkg.manifest.ui?.sampleResult,
     icon: registry.icon,
   };
 }
@@ -814,7 +827,7 @@ export function packageToDagData(packageId: string): DagData | null {
       order: 0,
       nodeType: 'input',
       fileTypes: input.fileTypes,
-      source: input.source as any,
+      source: input.source as SeqDeskSource | undefined,
       sourceDescription: input.sourceDescription,
     });
     // Connect to all root steps
@@ -858,7 +871,7 @@ export function packageToDagData(packageId: string): DagData | null {
       order: maxOrder + 1,
       nodeType: 'output',
       fileTypes: output.fileTypes,
-      destination: output.destination as any,
+      destination: output.destination as SeqDeskDestination | undefined,
       destinationField: output.destinationField,
       destinationDescription: output.destinationDescription,
     });
@@ -881,7 +894,7 @@ export function packageToDagData(packageId: string): DagData | null {
       version: definition.version,
       minNextflowVersion: definition.minNextflowVersion,
       authors: definition.authors,
-      parameterGroups: definition.parameterGroups as any,
+      parameterGroups: definition.parameterGroups as PipelineParameterGroup[] | undefined,
     },
   };
 }

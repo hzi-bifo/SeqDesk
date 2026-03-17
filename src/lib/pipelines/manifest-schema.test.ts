@@ -83,4 +83,51 @@ describe("manifest-schema", () => {
     ) as { keys: string[] } | undefined;
     expect(unknownKeyIssue?.keys).toContain("unknownRoot");
   });
+
+  it("accepts optional runtime compatibility flags for execution", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      execution: {
+        ...baseManifest.execution,
+        runtime: {
+          allowMacOsArmConda: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.execution.runtime?.allowMacOsArmConda).toBe(true);
+  });
+
+  it("accepts manifest-defined sample result previews", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      ui: {
+        sampleResult: {
+          columnLabel: "Checksums",
+          emptyText: "Not computed",
+          values: [
+            {
+              label: "R1",
+              path: "read.checksum1",
+              whenPathExists: "read.file1",
+              format: "hash_prefix",
+              truncate: 8,
+            },
+            {
+              label: "R2",
+              path: "read.checksum2",
+              whenPathExists: "read.file2",
+              format: "hash_prefix",
+              truncate: 8,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.ui?.sampleResult?.columnLabel).toBe("Checksums");
+    expect(result.data.ui?.sampleResult?.values).toHaveLength(2);
+  });
 });

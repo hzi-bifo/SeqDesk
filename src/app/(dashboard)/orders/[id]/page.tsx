@@ -22,6 +22,7 @@ import {
   ArrowLeft,
   Loader2,
   AlertCircle,
+  ClipboardPen,
   Clock,
   CheckCircle2,
   FileText,
@@ -30,7 +31,6 @@ import {
   BookOpen,
   FolderOpen,
   HardDrive,
-  Hash,
   Download,
   Eye,
   RefreshCw,
@@ -41,12 +41,18 @@ import {
   getOrderProgressAnchorId,
 } from "@/lib/orders/progress-steps";
 import {
+  getOrderProgressIndicatorClassName,
+  getOrderProgressIndicatorLabel,
+  type OrderProgressCompletionStatus,
+} from "@/lib/orders/progress-status";
+import {
   buildFacilityFieldSections,
   getFacilityFieldSubsectionAnchorId,
   isFacilityFieldSubsectionId,
 } from "@/lib/orders/facility-sections";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
+import { cn } from "@/lib/utils";
 
 const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
 
@@ -145,6 +151,32 @@ function renderOrderDeleteError(message: string): React.ReactNode {
       .
     </>
   );
+}
+
+function getFacilityStatusTone(status: OrderProgressCompletionStatus) {
+  switch (status) {
+    case "complete":
+      return {
+        cardBorder: "border-emerald-200",
+        headerBackground: "bg-emerald-50/60",
+        iconBadge: "bg-emerald-100 text-emerald-700",
+        statusBadge: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+    case "partial":
+      return {
+        cardBorder: "border-amber-200",
+        headerBackground: "bg-amber-50/60",
+        iconBadge: "bg-amber-100 text-amber-700",
+        statusBadge: "border-amber-200 bg-amber-50 text-amber-700",
+      };
+    default:
+      return {
+        cardBorder: "border-slate-200",
+        headerBackground: "bg-slate-50/50",
+        iconBadge: "bg-slate-200 text-slate-700",
+        statusBadge: "border-slate-200 bg-slate-50 text-slate-700",
+      };
+  }
 }
 
 function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): string {
@@ -824,6 +856,28 @@ export default function OrderDetailPage({
     order,
     includeFacilityFields: isFacilityAdmin,
   });
+  const orderFacilitySection =
+    facilitySections.find((section) => section.id === "order-fields") ?? null;
+  const sampleFacilitySection =
+    facilitySections.find((section) => section.id === "sample-fields") ?? null;
+  const orderFacilityTone = getFacilityStatusTone(orderFacilitySection?.status ?? "empty");
+  const sampleFacilityTone = getFacilityStatusTone(sampleFacilitySection?.status ?? "empty");
+  const isAdminOverview = isFacilityAdmin && activeSection === "overview";
+  const visibleGroupedOverviewSections = isAdminOverview
+    ? groupedOverviewSections.filter((section) => section.rows.length > 0)
+    : groupedOverviewSections;
+  const showUngroupedOverviewSection =
+    hasUngroupedStep &&
+    (!isAdminOverview ||
+      ungroupedOverviewRows.length > 0 ||
+      fallbackCustomRows.length > 0);
+  const showMixsOverviewSection =
+    hasMixsStep &&
+    (!isAdminOverview ||
+      Boolean(selectedMixsChecklist) ||
+      selectedMixsFields.length > 0);
+  const showSamplesOverviewSection =
+    !isAdminOverview || order.samples.length > 0;
 
   const renderStepHeader = (
     title: string,
@@ -882,7 +936,7 @@ export default function OrderDetailPage({
         </div>
       )}
           {/* Order Process - only when there are samples */}
-          {activeSection === "overview" && order.samples.length > 0 && (() => {
+          {activeSection === "overview" && !isFacilityAdmin && order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
             const allSamplesHaveFiles = order.samples.length > 0 && samplesWithFiles === order.samples.length;
             const canShowShippingInstructions = isSubmitted && Boolean(instructions?.trim());
@@ -1026,7 +1080,7 @@ export default function OrderDetailPage({
                 className="scroll-mt-20"
               />
               {/* Order entry fields in the same group flow as new order */}
-              {groupedOverviewSections.map((section) => (
+              {visibleGroupedOverviewSections.map((section) => (
                 <div
                   key={section.id}
                   id={getOrderProgressAnchorId(section.id)}
@@ -1052,7 +1106,7 @@ export default function OrderDetailPage({
                 </div>
               ))}
 
-              {hasUngroupedStep && (
+              {showUngroupedOverviewSection && (
                 <div
                   id={getOrderProgressAnchorId("_ungrouped")}
                   className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
@@ -1109,7 +1163,7 @@ export default function OrderDetailPage({
                 </div>
               )}
 
-              {hasMixsStep && (
+              {showMixsOverviewSection && (
                 <div
                   id={getOrderProgressAnchorId("mixs")}
                   className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
@@ -1141,61 +1195,63 @@ export default function OrderDetailPage({
               )}
 
               {/* Samples */}
-              <div
-                id={getOrderProgressAnchorId("samples")}
-                className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
-              >
-                {renderStepHeader(`Samples (${order.samples.length})`, "samples")}
-                {order.samples.length === 0 ? (
-                  <div className="px-5 py-8 text-center text-sm text-muted-foreground border-t">
-                    No samples added yet
-                  </div>
-                ) : (
-                  <div className="border-t">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted/50 border-b">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
-                            <th className="px-3 py-2 text-left font-medium">Sample ID</th>
-                            {visibleSampleFields.map((field) => (
-                              <th key={field.id} className="px-3 py-2 text-left font-medium">
-                                {field.label}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {order.samples.map((sample, index) => (
-                            <tr key={sample.id}>
-                              <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                              <td className="px-3 py-2">
-                                <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                                  {sample.sampleId}
-                                </code>
-                              </td>
-                              {visibleSampleFields.map((field) => {
-                                const rawValue = getSampleFieldRawValue(sample, field);
-                                const displayValue = formatSchemaFieldValue(field, rawValue);
-                                return (
-                                  <td key={field.id} className="px-3 py-2 align-top">
-                                    {displayValue === "Not specified" ? "-" : displayValue}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+              {showSamplesOverviewSection && (
+                <div
+                  id={getOrderProgressAnchorId("samples")}
+                  className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
+                >
+                  {renderStepHeader(`Samples (${order.samples.length})`, "samples")}
+                  {order.samples.length === 0 ? (
+                    <div className="px-5 py-8 text-center text-sm text-muted-foreground border-t">
+                      No samples added yet
                     </div>
-                    {visibleSampleFields.length === 0 && (
-                      <div className="px-5 py-3 text-sm text-muted-foreground border-t">
-                        No per-sample fields are configured. Sample IDs are shown above.
+                  ) : (
+                    <div className="border-t">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 border-b">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
+                              <th className="px-3 py-2 text-left font-medium">Sample ID</th>
+                              {visibleSampleFields.map((field) => (
+                                <th key={field.id} className="px-3 py-2 text-left font-medium">
+                                  {field.label}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {order.samples.map((sample, index) => (
+                              <tr key={sample.id}>
+                                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
+                                <td className="px-3 py-2">
+                                  <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                                    {sample.sampleId}
+                                  </code>
+                                </td>
+                                {visibleSampleFields.map((field) => {
+                                  const rawValue = getSampleFieldRawValue(sample, field);
+                                  const displayValue = formatSchemaFieldValue(field, rawValue);
+                                  return (
+                                    <td key={field.id} className="px-3 py-2 align-top">
+                                      {displayValue === "Not specified" ? "-" : displayValue}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                      {visibleSampleFields.length === 0 && (
+                        <div className="px-5 py-3 text-sm text-muted-foreground border-t">
+                          No per-sample fields are configured. Sample IDs are shown above.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Status History */}
               {order.statusNotes.length > 0 && (
@@ -1234,14 +1290,45 @@ export default function OrderDetailPage({
               {facilitySections.some((section) => section.id === "order-fields") && (
                 <div
                   id={getFacilityFieldSubsectionAnchorId("order-fields")}
-                  className="bg-card rounded-lg border border-slate-200 overflow-hidden mb-4 scroll-mt-20"
+                  className={cn(
+                    "bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20",
+                    orderFacilityTone.cardBorder
+                  )}
                 >
-                  <div className="flex items-start justify-between gap-3 border-b bg-slate-50/30 px-5 py-4">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-700">Order Fields</h3>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Internal order-level data maintained by the facility team.
-                      </p>
+                  <div
+                    className={cn(
+                      "flex items-start justify-between gap-3 border-b px-5 py-4",
+                      orderFacilityTone.headerBackground
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={cn("mt-0.5 rounded-md p-2", orderFacilityTone.iconBadge)}>
+                        <ClipboardPen className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold text-slate-700">Order Fields</h3>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "gap-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                              orderFacilityTone.statusBadge
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full",
+                                getOrderProgressIndicatorClassName(orderFacilitySection?.status ?? "empty")
+                              )}
+                              aria-hidden="true"
+                            />
+                            {getOrderProgressIndicatorLabel(orderFacilitySection?.status ?? "empty")}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Internal order-level data maintained by the facility team.
+                        </p>
+                      </div>
                     </div>
                     {canEditOrder && (
                       <Button size="sm" variant="outline" asChild>
@@ -1284,14 +1371,45 @@ export default function OrderDetailPage({
               {facilitySections.some((section) => section.id === "sample-fields") && (
                 <div
                   id={getFacilityFieldSubsectionAnchorId("sample-fields")}
-                  className="bg-card rounded-lg border border-slate-200 overflow-hidden scroll-mt-20"
+                  className={cn(
+                    "bg-card rounded-lg border overflow-hidden scroll-mt-20",
+                    sampleFacilityTone.cardBorder
+                  )}
                 >
-                  <div className="flex items-start justify-between gap-3 border-b bg-slate-50/30 px-5 py-4">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-700">Sample Fields</h3>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Internal sample-level fields tracked by the facility team.
-                      </p>
+                  <div
+                    className={cn(
+                      "flex items-start justify-between gap-3 border-b px-5 py-4",
+                      sampleFacilityTone.headerBackground
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={cn("mt-0.5 rounded-md p-2", sampleFacilityTone.iconBadge)}>
+                        <FlaskConical className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold text-slate-700">Sample Fields</h3>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "gap-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                              sampleFacilityTone.statusBadge
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full",
+                                getOrderProgressIndicatorClassName(sampleFacilitySection?.status ?? "empty")
+                              )}
+                              aria-hidden="true"
+                            />
+                            {getOrderProgressIndicatorLabel(sampleFacilitySection?.status ?? "empty")}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Internal sample-level fields tracked by the facility team.
+                        </p>
+                      </div>
                     </div>
                     {canEditOrder && (
                       <Button size="sm" variant="outline" asChild>
@@ -1354,7 +1472,7 @@ export default function OrderDetailPage({
             </>
           )}
 
-          {activeSection === "overview" && canEditOrder && (
+          {activeSection === "overview" && canEditOrder && !isFacilityAdmin && (
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
@@ -1367,34 +1485,6 @@ export default function OrderDetailPage({
                   <Link href={`/orders/${order.id}/edit`}>
                     <Pencil className="h-3.5 w-3.5 mr-1.5" />
                     Change Order Information
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {activeSection === "overview" && isFacilityAdmin && !isDemoUser && (
-            <div className="bg-card rounded-lg border overflow-hidden mt-4">
-              <div className="px-5 py-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold">Sequencing Data</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Track facility status, linked reads, QC reports, uploads, and integrity for this order.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {samplesWithFiles} of {order.samples.length} sample{order.samples.length === 1 ? "" : "s"} currently have linked reads.
-                  </p>
-                </div>
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={`/orders/${order.id}/sequencing`}>
-                    <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
-                    Open Sequencing Workspace
-                  </Link>
-                </Button>
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={`/orders/${order.id}/pipelines`}>
-                    <Hash className="h-3.5 w-3.5 mr-1.5" />
-                    Order Pipelines
                   </Link>
                 </Button>
               </div>

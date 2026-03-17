@@ -6,10 +6,15 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
     },
   },
+  resolveDataBasePathFromStoredValue: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("./data-base-path", () => ({
+  resolveDataBasePathFromStoredValue: mocks.resolveDataBasePathFromStoredValue,
 }));
 
 import { getSequencingFilesConfig } from "./sequencing-config";
@@ -17,6 +22,11 @@ import { getSequencingFilesConfig } from "./sequencing-config";
 describe("getSequencingFilesConfig", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: null,
+      source: "none",
+      isImplicit: false,
+    });
   });
 
   it("returns defaults when settings are missing", async () => {
@@ -51,6 +61,11 @@ describe("getSequencingFilesConfig", () => {
         },
       }),
     });
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: "/mnt/data",
+      source: "database",
+      isImplicit: false,
+    });
 
     const result = await getSequencingFilesConfig();
 
@@ -70,6 +85,11 @@ describe("getSequencingFilesConfig", () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       dataBasePath: "/mnt/data",
       extraSettings: "{bad-json",
+    });
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: "/mnt/data",
+      source: "database",
+      isImplicit: false,
     });
 
     const result = await getSequencingFilesConfig();

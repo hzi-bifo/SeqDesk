@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 import { ensureWithinBase } from "@/lib/files";
 import { buildSimulatedFastq } from "@/lib/simulation/fastq";
 import {
@@ -55,14 +56,16 @@ export async function POST(request: NextRequest) {
       select: { dataBasePath: true, extraSettings: true },
     });
 
-    if (!settings?.dataBasePath) {
+    const resolvedDataBasePath = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
+
+    if (!resolvedDataBasePath.dataBasePath) {
       return NextResponse.json(
         { error: "Data base path not configured" },
         { status: 400 }
       );
     }
 
-    const resolvedBase = path.resolve(settings.dataBasePath);
+    const resolvedBase = path.resolve(resolvedDataBasePath.dataBasePath);
 
     // Ensure base path is writable
     try {

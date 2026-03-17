@@ -31,6 +31,9 @@
     "profiles": [
       "conda"
     ],
+    "runtime": {
+      "allowMacOsArmConda": true
+    },
     "defaultParams": {}
   },
   "outputs": [
@@ -62,5 +65,27 @@
       "PipelineRun",
       "PipelineArtifact"
     ]
+  },
+  "ui": {
+    "sampleResult": {
+      "columnLabel": "Checksums",
+      "emptyText": "Not computed",
+      "values": [
+        {
+          "label": "R1",
+          "path": "read.checksum1",
+          "whenPathExists": "read.file1",
+          "format": "hash_prefix",
+          "truncate": 8
+        },
+        {
+          "label": "R2",
+          "path": "read.checksum2",
+          "whenPathExists": "read.file2",
+          "format": "hash_prefix",
+          "truncate": 8
+        }
+      ]
+    }
   }
 }

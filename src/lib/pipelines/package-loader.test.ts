@@ -114,6 +114,19 @@ function baseRegistry(id: string) {
 
 async function createManifestPackage(options: {
   id: string;
+  ui?: {
+    sampleResult?: {
+      columnLabel: string;
+      emptyText?: string;
+      values: Array<{
+        label?: string;
+        path: string;
+        whenPathExists?: string;
+        format?: "text" | "hash_prefix";
+        truncate?: number;
+      }>;
+    };
+  };
   outputs?: Array<{
     id: string;
     scope: "sample" | "study" | "order" | "run";
@@ -140,6 +153,7 @@ async function createManifestPackage(options: {
       ...baseManifest(options.id).files,
       parsers: options.parserFiles?.map((entry) => entry.file) ?? [],
     },
+    ui: options.ui,
     outputs,
   };
   await writeJson(path.join(packageDir, "manifest.json"), manifest);
@@ -284,5 +298,56 @@ describe("package-loader", () => {
 
     expect(parsers.size).toBe(0);
     expect(getPackageParsers("missing")).toEqual(new Map());
+  });
+
+  it("passes manifest-defined sample result previews into compatibility definitions", async () => {
+    await createManifestPackage({
+      id: "resultpipe",
+      ui: {
+        sampleResult: {
+          columnLabel: "Checksums",
+          emptyText: "Not computed",
+          values: [
+            {
+              label: "R1",
+              path: "read.checksum1",
+              whenPathExists: "read.file1",
+              format: "hash_prefix",
+              truncate: 8,
+            },
+            {
+              label: "R2",
+              path: "read.checksum2",
+              whenPathExists: "read.file2",
+              format: "hash_prefix",
+              truncate: 8,
+            },
+          ],
+        },
+      },
+    });
+
+    const definition = packageToPipelineDefinition("resultpipe");
+
+    expect(definition?.sampleResult).toEqual({
+      columnLabel: "Checksums",
+      emptyText: "Not computed",
+      values: [
+        {
+          label: "R1",
+          path: "read.checksum1",
+          whenPathExists: "read.file1",
+          format: "hash_prefix",
+          truncate: 8,
+        },
+        {
+          label: "R2",
+          path: "read.checksum2",
+          whenPathExists: "read.file2",
+          format: "hash_prefix",
+          truncate: 8,
+        },
+      ],
+    });
   });
 });

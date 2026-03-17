@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Dna, FlaskConical, Upload, Loader2, Play, AlertCircle, CheckCircle2, XCircle, AlertTriangle, ChevronDown, Settings, ExternalLink } from "lucide-react";
 import Link from "next/link";
+import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -123,32 +124,10 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
   const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
   const [loadingMetadata, setLoadingMetadata] = useState(false);
 
-  // Quick prerequisite check state (for disabling buttons)
-  const [systemReady, setSystemReady] = useState<{ ready: boolean; summary: string } | null>(null);
-  const [checkingSystem, setCheckingSystem] = useState(true);
+  const { systemReady, checkingSystem } = useQuickPrerequisiteStatus();
 
   // Pre-check metadata for all pipelines on mount
   const [metadataPrecheck, setMetadataPrecheck] = useState<Record<string, MetadataValidation>>({});
-
-  // Check system prerequisites on mount
-  useEffect(() => {
-    const checkSystem = async () => {
-      setCheckingSystem(true);
-      try {
-        const res = await fetch("/api/admin/settings/pipelines/check-prerequisites?quick=true");
-        if (res.ok) {
-          const data = await res.json();
-          setSystemReady(data);
-        } else {
-          setSystemReady({ ready: false, summary: "Could not check system" });
-        }
-      } catch {
-        setSystemReady({ ready: false, summary: "Could not check system" });
-      }
-      setCheckingSystem(false);
-    };
-    checkSystem();
-  }, []);
 
   const enabledPipelines: Pipeline[] = useMemo(
     () => pipelinesData?.pipelines || [],

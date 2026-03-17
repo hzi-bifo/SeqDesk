@@ -262,6 +262,7 @@ describe("generic-executor", () => {
 
     const nextflowConfig = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
     expect(nextflowConfig).toContain("conda {");
+    expect(nextflowConfig).toContain("conda.enabled = true");
 
     const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
     expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");
@@ -277,5 +278,41 @@ describe("generic-executor", () => {
         runFolder: result.runFolder,
       }),
     });
+  });
+
+  it("normalizes relative pipeline run directories to absolute paths", async () => {
+    const adapter = createAdapter();
+    const relativeRunDir = path.relative(process.cwd(), tempDir) || ".";
+
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-2",
+      pipelineId: "simulate-reads",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(relativeRunDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.runFolder).toBe(path.resolve(relativeRunDir, path.basename(result.runFolder!)));
+    expect(path.isAbsolute(result.runFolder!)).toBe(true);
+
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain(`STDOUT_LOG="${result.runFolder}/logs/pipeline.out"`);
+    expect(script).toContain(`STDERR_LOG="${result.runFolder}/logs/pipeline.err"`);
   });
 });

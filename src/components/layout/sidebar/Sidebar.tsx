@@ -133,7 +133,7 @@ export function Sidebar({ user, version }: SidebarProps) {
         </>
       )}
 
-      {/* Facility Settings - admin shortcut */}
+      {/* SeqDesk Settings - admin shortcut */}
       {showAdminControls && !isAdminPage && (
         <div className={cn("px-3 pb-1", collapsed && "px-2")}>
           <Link
@@ -143,10 +143,10 @@ export function Sidebar({ user, version }: SidebarProps) {
               "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
               collapsed ? "justify-center p-2" : "px-3 py-2"
             )}
-            title={collapsed ? "Facility Settings" : undefined}
+            title={collapsed ? "SeqDesk Settings" : undefined}
           >
             <Settings className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
-            {!collapsed && <span>Facility Settings</span>}
+            {!collapsed && <span>SeqDesk Settings</span>}
           </Link>
         </div>
       )}

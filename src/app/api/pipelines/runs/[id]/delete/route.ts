@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
+import { cleanupRunOutputData } from '@/lib/pipelines/run-delete';
 
 export async function POST(
   request: NextRequest,
@@ -27,6 +28,30 @@ export async function POST(
 
     const run = await db.pipelineRun.findUnique({
       where: { id },
+      include: {
+        study: {
+          select: {
+            id: true,
+            samples: {
+              select: {
+                id: true,
+                sampleId: true,
+              },
+            },
+          },
+        },
+        order: {
+          select: {
+            id: true,
+            samples: {
+              select: {
+                id: true,
+                sampleId: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!run) {
@@ -38,6 +63,28 @@ export async function POST(
         { error: 'Cannot delete a running run. Cancel it first.' },
         { status: 400 }
       );
+    }
+
+    const target =
+      run.targetType === 'order' && run.orderId
+        ? { type: 'order' as const, orderId: run.orderId }
+        : run.studyId
+          ? { type: 'study' as const, studyId: run.studyId }
+          : null;
+
+    if (target) {
+      const samples =
+        run.targetType === 'order'
+          ? run.order?.samples || []
+          : run.study?.samples || [];
+
+      await cleanupRunOutputData({
+        runId: id,
+        pipelineId: run.pipelineId,
+        runFolder: run.runFolder,
+        target,
+        samples,
+      });
     }
 
     // Delete related records that don't cascade automatically

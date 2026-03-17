@@ -2,10 +2,12 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -189,6 +191,8 @@ export default function OrderSequencingPage({
   params: Promise<{ id: string }>;
 }) {
   const resolvedParams = use(params);
+  const searchParams = useSearchParams();
+  const activePipelineId = searchParams.get("pipeline");
   const { data: session, status: sessionStatus } = useSession();
   const [data, setData] = useState<OrderSequencingSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -842,6 +846,18 @@ export default function OrderSequencingPage({
     return null;
   }
 
+  if (activePipelineId) {
+    return (
+      <PageContainer>
+        <OrderPipelineView
+          orderId={orderId}
+          pipelineId={activePipelineId}
+          samples={data.samples}
+        />
+      </PageContainer>
+    );
+  }
+
   return (
     <>
       <PageContainer>
@@ -919,41 +935,7 @@ export default function OrderSequencingPage({
             </div>
           ) : null}
 
-          {visibleOrderPipelines.length > 0 ? (
-            <Card className="border-border/70 bg-secondary/20">
-              <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Play className="h-4 w-4" />
-                  Pipelines
-                </CardTitle>
-                <CardDescription>
-                  Order-scoped utility pipelines for the linked sequencing files in this order.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleOrderPipelines.map((pipeline) => (
-                    <Link
-                      key={pipeline.pipelineId}
-                      href={`/orders/${orderId}/pipelines?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
-                      className="rounded-lg border bg-card px-4 py-3 transition hover:border-foreground/30 hover:bg-background"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{pipeline.name}</span>
-                        <Badge variant="outline">Pipeline</Badge>
-                      </div>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {pipeline.description}
-                      </p>
-                    </Link>
-                  ))}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Open a pipeline shortcut to select samples and start a run.
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
+          {/* Pipeline shortcuts removed — pipelines are now accessible via sidebar sub-items */}
 
           <div className="overflow-hidden rounded-xl border border-border bg-card">
 

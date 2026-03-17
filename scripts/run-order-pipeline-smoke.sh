@@ -29,17 +29,18 @@ if ! conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
 fi
 
 require_env_command() {
-  local command_name="$1"
-  if ! conda run -n "$ENV_NAME" bash -lc "command -v '$command_name' >/dev/null 2>&1"; then
-    echo "Conda environment '$ENV_NAME' is missing required command: $command_name" >&2
+  local label="$1"
+  shift
+  if ! conda run -n "$ENV_NAME" "$@" >/dev/null 2>&1; then
+    echo "Conda environment '$ENV_NAME' is missing required command: $label" >&2
     exit 1
   fi
 }
 
-require_env_command nextflow
-require_env_command java
-require_env_command node
-require_env_command md5sum
+require_env_command nextflow nextflow -version
+require_env_command java java -version
+require_env_command node node -v
+require_env_command md5sum md5sum --version
 
 TMP_DIR="$(mktemp -d)"
 

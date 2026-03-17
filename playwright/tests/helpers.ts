@@ -205,7 +205,9 @@ export async function createAndSubmitOrder(
   await expect(page.getByRole("dialog")).toContainText("Order Submitted");
   await page.getByRole("button", { name: /view order/i }).click();
 
-  await expect(page).toHaveURL(/\/orders\/.+/);
+  await expect
+    .poll(() => new URL(page.url()).pathname)
+    .toMatch(/^\/orders\/(?!new$)[^/]+$/);
   const url = new URL(page.url());
   return { orderPath: url.pathname };
 }

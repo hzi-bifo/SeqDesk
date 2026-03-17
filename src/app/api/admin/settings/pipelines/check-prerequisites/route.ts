@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
+import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { checkAllPrerequisites, quickPrerequisiteCheck } from '@/lib/pipelines/prerequisite-check';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 
@@ -20,21 +20,17 @@ export async function GET(request: Request) {
     // Get execution settings
     const executionSettings = await getExecutionSettings();
 
-    // Get data base path from site settings
-    const siteSettings = await db.siteSettings.findUnique({
-      where: { id: 'singleton' },
-      select: { dataBasePath: true },
-    });
+    const resolvedDataBasePath = await getResolvedDataBasePath();
 
     if (quick) {
       console.log('[Prerequisites Check] Quick check with settings:', {
         condaPath: executionSettings.condaPath,
         pipelineRunDir: executionSettings.pipelineRunDir,
-        dataBasePath: siteSettings?.dataBasePath,
+        dataBasePath: resolvedDataBasePath.dataBasePath,
       });
       const result = await quickPrerequisiteCheck(
         executionSettings,
-        siteSettings?.dataBasePath || undefined
+        resolvedDataBasePath.dataBasePath || undefined
       );
       console.log('[Prerequisites Check] Quick result:', result);
       return NextResponse.json(result);
@@ -42,7 +38,7 @@ export async function GET(request: Request) {
 
     const result = await checkAllPrerequisites(
       executionSettings,
-      siteSettings?.dataBasePath || undefined
+      resolvedDataBasePath.dataBasePath || undefined
     );
 
     return NextResponse.json(result);

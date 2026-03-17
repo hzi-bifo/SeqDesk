@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 
 export interface SequencingFilesConfig {
   allowedExtensions: string[];
@@ -53,13 +54,21 @@ export async function GET() {
       }
     }
 
+    const resolvedDataBasePath = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
+
     return NextResponse.json({
-      dataBasePath: settings?.dataBasePath || "",
+      dataBasePath: resolvedDataBasePath.dataBasePath || "",
+      configuredDataBasePath: settings?.dataBasePath || "",
+      dataBasePathSource: resolvedDataBasePath.source,
+      dataBasePathIsImplicit: resolvedDataBasePath.isImplicit,
       config,
     });
   } catch {
     return NextResponse.json({
       dataBasePath: "",
+      configuredDataBasePath: "",
+      dataBasePathSource: "none",
+      dataBasePathIsImplicit: false,
       config: DEFAULT_CONFIG,
     });
   }

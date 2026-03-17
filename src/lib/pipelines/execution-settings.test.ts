@@ -7,10 +7,15 @@ const mocks = vi.hoisted(() => ({
       upsert: vi.fn(),
     },
   },
+  loadConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/config/loader", () => ({
+  loadConfig: mocks.loadConfig,
 }));
 
 import {
@@ -31,6 +36,13 @@ function makeSettings(overrides?: Partial<ExecutionSettings>): ExecutionSettings
 describe("execution-settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.loadConfig.mockReturnValue({
+      config: {
+        pipelines: {},
+      },
+      sources: {},
+      loadedAt: new Date("2026-03-13T00:00:00Z"),
+    });
   });
 
   it("returns defaults when site settings are missing", async () => {
@@ -70,6 +82,46 @@ describe("execution-settings", () => {
     expect(result.condaPath).toBe("/opt/conda");
     expect(result.runtimeMode).toBe("conda");
     expect(result.pipelineRunDir).toBe(DEFAULT_EXECUTION_SETTINGS.pipelineRunDir);
+  });
+
+  it("prefers file/env execution config over database settings", async () => {
+    mocks.loadConfig.mockReturnValue({
+      config: {
+        pipelines: {
+          execution: {
+            mode: "local",
+            runDirectory: "/Users/pmu15/testdata/pipeline_runs",
+            conda: {
+              path: "/opt/homebrew/Caskroom/miniconda/base",
+              environment: "seqdesk-pipelines",
+            },
+          },
+        },
+      },
+      sources: {
+        "pipelines.execution.mode": "file",
+        "pipelines.execution.runDirectory": "file",
+        "pipelines.execution.conda.path": "file",
+        "pipelines.execution.conda.environment": "file",
+      },
+      loadedAt: new Date("2026-03-13T00:00:00Z"),
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        pipelineExecution: {
+          useSlurm: true,
+          pipelineRunDir: "/db/runs",
+          condaPath: "/db/conda",
+        },
+      }),
+    });
+
+    const result = await getExecutionSettings();
+
+    expect(result.useSlurm).toBe(false);
+    expect(result.pipelineRunDir).toBe("/Users/pmu15/testdata/pipeline_runs");
+    expect(result.condaPath).toBe("/opt/homebrew/Caskroom/miniconda/base");
+    expect(result.condaEnv).toBe("seqdesk-pipelines");
   });
 
   it("saveExecutionSettings creates pipelineExecution payload when none exists", async () => {
