@@ -64,8 +64,8 @@ jobs:
       - name: Run public installer (headless)
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
-            bash -s -- -y --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
         run: |
@@ -85,8 +85,8 @@ jobs:
       - name: Reconfigure public install in place
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
-            bash -s -- -y --reconfigure --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$RECONFIG_CONFIG"
+          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --reconfigure --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$RECONFIG_CONFIG"
 
       - name: Validate reconfigured config values
         run: |
@@ -328,8 +328,8 @@ jobs:
       - name: Run public installer with PM2
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" curl -fsSL https://seqdesk.com/install.sh | \
-            bash -s -- -y --without-pipelines --use-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --without-pipelines --use-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
         run: |
