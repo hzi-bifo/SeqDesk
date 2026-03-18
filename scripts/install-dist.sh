@@ -9,6 +9,7 @@
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
 #   SEQDESK_VERSION=x.x.x          - Specific version (default: latest)
+#   SEQDESK_API=https://.../api    - Advanced: override release metadata endpoint
 #   SEQDESK_WITH_PIPELINES=1       - Install pipeline dependencies (Conda + Nextflow)
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
 #   SEQDESK_SKIP_DEPS=1            - Deprecated (ignored in distribution installer)
@@ -60,7 +61,7 @@ NC='\033[0m'
 # Config
 SEQDESK_DIR="${SEQDESK_DIR:-./seqdesk}"
 SEQDESK_VERSION="${SEQDESK_VERSION:-}"
-SEQDESK_API="https://www.seqdesk.com/api"
+SEQDESK_API="${SEQDESK_API:-https://www.seqdesk.com/api}"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
