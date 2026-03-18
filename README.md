@@ -1,6 +1,7 @@
 # SeqDesk
 
 [![CI](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml)
+[![Playwright E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/playwright.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/playwright.yml)
 [![Install Smoke (Ubuntu)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-smoke-ubuntu.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-smoke-ubuntu.yml)
 [![Install Twincore Instance (Alma Linux)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-twincore-alma.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-twincore-alma.yml)
 [![codecov](https://codecov.io/gh/hzi-bifo/SeqDesk/branch/main/graph/badge.svg?token=SMQXMDYACH)](https://codecov.io/gh/hzi-bifo/SeqDesk)
@@ -147,7 +148,8 @@ Notes:
 
 ## UI E2E Coverage
 
-Local Playwright coverage is tracked separately from the Codecov percentage shown above.
+Codecov now tracks repository source coverage across `src/**`.
+Playwright browser coverage is still tracked separately from the Codecov percentage shown above, and the badge above reports the E2E workflow status.
 Current local UI E2E coverage includes:
 
 | Area | Covered Flows |
