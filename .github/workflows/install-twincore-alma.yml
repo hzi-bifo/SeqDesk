@@ -45,6 +45,7 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/server-twincore.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-twincore.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-twincore.config.json" >> "$GITHUB_ENV"
+          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/store-smoke-twincore.json" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -79,25 +80,11 @@ jobs:
       - name: Validate installed config values
         run: |
           set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const filePath = process.argv[1];
-            const expectedPort = Number(process.argv[2]);
-            const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$CANARY_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
 
-            if (config?.pipelines?.enabled !== false) {
-              console.error("Expected pipelines.enabled to be false");
-              process.exit(1);
-            }
-
-            const actualPort = Number(config?.app?.port);
-            if (actualPort !== expectedPort) {
-              console.error(`Expected app.port=${expectedPort}, got ${String(config?.app?.port)}`);
-              process.exit(1);
-            }
-          ' "$CANARY_DIR/seqdesk.config.json" "$PORT"
-
-      - name: Start canary app and wait for auth providers endpoint
+      - name: Verify canary app startup, auth flows, and pipeline store
         run: |
           set -euo pipefail
           cd "$CANARY_DIR"
@@ -125,10 +112,6 @@ jobs:
             tail -n 200 "$SERVER_LOG" || true
             exit 1
           fi
-
-      - name: Assert credentials provider exists
-        run: |
-          set -euo pipefail
           node -e '
             const fs = require("fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -137,6 +120,21 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --pipeline-ids "mag,submg" \
+            --result-file "$STORE_SMOKE_JSON"
 
       - name: Upload canary install artifacts
         if: always()
@@ -148,6 +146,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
+            ${{ env.STORE_SMOKE_JSON }}
           if-no-files-found: warn
           retention-days: 14
 
