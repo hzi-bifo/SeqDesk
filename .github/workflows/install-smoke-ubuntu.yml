@@ -6,7 +6,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-public-release-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build release tarball
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION"
+          mkdir -p "$RUNNER_TEMP/public-release-tarball"
+          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RUNNER_TEMP/public-release-tarball/"
+
+      - name: Upload public release tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ runner.temp }}/public-release-tarball/*
+          if-no-files-found: error
+          retention-days: 14
+
   public-installer-ubuntu:
+    needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -39,6 +73,34 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/public-server.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/public-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/public-release-artifact" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/public-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8791" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/public-release-server.log" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Prepare mock release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI smoke test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
 
       - name: Create infrastructure JSON
         run: |
@@ -64,7 +126,22 @@ jobs:
       - name: Run public installer (headless)
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
             -y --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
@@ -85,7 +162,22 @@ jobs:
       - name: Reconfigure public install in place
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
             -y --reconfigure --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$RECONFIG_CONFIG"
 
       - name: Validate reconfigured config values
@@ -147,6 +239,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -280,6 +373,7 @@ jobs:
           retention-days: 14
 
   public-installer-ubuntu-pm2:
+    needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -312,6 +406,34 @@ jobs:
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/public-pm2-seqdesk.config.json" >> "$GITHUB_ENV"
           echo "PM2_INFO=$RUNNER_TEMP/public-pm2-info.txt" >> "$GITHUB_ENV"
           echo "PM2_HOME=$RUNNER_TEMP/public-pm2-home" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/public-release-artifact" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/public-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8792" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/public-pm2-release-server.log" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Prepare mock release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI smoke test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
 
       - name: Create infrastructure JSON
         run: |
@@ -328,7 +450,22 @@ jobs:
       - name: Run public installer with PM2
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
             -y --without-pipelines --use-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
@@ -409,6 +546,7 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PM2_INFO }}
+            ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 14
 
