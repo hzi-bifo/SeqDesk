@@ -232,6 +232,25 @@ jobs:
             }
           ' "$PROVIDERS_JSON"
 
+      - name: Verify researcher login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+
+      - name: Verify admin login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
+
       - name: Upload install smoke artifacts (public installer)
         if: always()
         uses: actions/upload-artifact@v4
@@ -352,6 +371,25 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
+
+      - name: Verify researcher login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+
+      - name: Verify admin login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
 
       - name: Install source registry pipeline and verify loader exposure
         run: |
@@ -529,6 +567,25 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
+
+      - name: Verify researcher login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+
+      - name: Verify admin login works
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
 
       - name: Capture PM2 logs
         if: always()
