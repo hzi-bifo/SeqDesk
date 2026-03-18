@@ -81,7 +81,7 @@ export function getSampleResultPreview(
 
       return hasDisplayValue(getValueAtPath(sample, descriptor.whenPathExists));
     })
-    .map((descriptor) => {
+    .map<SampleResultPreviewItem | null>((descriptor) => {
       const formatted = formatPreviewValue(
         getValueAtPath(sample, descriptor.path),
         descriptor,
@@ -91,10 +91,14 @@ export function getSampleResultPreview(
         return null;
       }
 
-      return {
-        label: descriptor.label,
-        value: formatted,
-      };
+      return descriptor.label
+        ? {
+            label: descriptor.label,
+            value: formatted,
+          }
+        : {
+            value: formatted,
+          };
     })
     .filter((item): item is SampleResultPreviewItem => item !== null);
 

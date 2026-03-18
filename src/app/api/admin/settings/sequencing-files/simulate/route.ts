@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       simulationTemplateDir: "",
     };
 
-    if (settings.extraSettings) {
+    if (settings?.extraSettings) {
       try {
         const extra = asRecord(JSON.parse(settings.extraSettings) as unknown);
         const sequencingFiles = asRecord(extra.sequencingFiles);
