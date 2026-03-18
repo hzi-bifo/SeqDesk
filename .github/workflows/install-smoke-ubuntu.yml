@@ -24,6 +24,9 @@ jobs:
         run: npm ci
 
       - name: Build release tarball
+        env:
+          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
