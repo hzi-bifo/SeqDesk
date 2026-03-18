@@ -191,7 +191,7 @@ jobs:
             --file "$INSTALL_DIR/seqdesk.config.json" \
             --expected-port "$RECONFIG_PORT"
 
-      - name: Start app and wait for auth providers endpoint
+      - name: Verify public app startup and auth flows
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
@@ -219,10 +219,6 @@ jobs:
             tail -n 200 "$SERVER_LOG" || true
             exit 1
           fi
-
-      - name: Assert credentials provider exists
-        run: |
-          set -euo pipefail
           node -e '
             const fs = require("fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -231,19 +227,11 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
-
-      - name: Verify researcher login works
-        run: |
-          set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
             --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
             --email "user@example.com" \
             --password "user" \
             --expected-role "RESEARCHER"
-
-      - name: Verify admin login works
-        run: |
-          set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
             --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
             --email "admin@example.com" \
@@ -331,7 +319,7 @@ jobs:
             --file "$INSTALL_DIR/seqdesk.config.json" \
             --expected-port "$PORT"
 
-      - name: Start app and wait for auth providers endpoint
+      - name: Verify source app startup, auth flows, and pipeline store
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
@@ -359,10 +347,6 @@ jobs:
             tail -n 200 "$SERVER_LOG" || true
             exit 1
           fi
-
-      - name: Assert credentials provider exists
-        run: |
-          set -euo pipefail
           node -e '
             const fs = require("fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -371,29 +355,17 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
-
-      - name: Verify researcher login works
-        run: |
-          set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "user@example.com" \
             --password "user" \
             --expected-role "RESEARCHER"
-
-      - name: Verify admin login works
-        run: |
-          set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
-
-      - name: Install source registry pipeline and verify loader exposure
-        run: |
-          set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --pipeline-ids "mag,submg" \
