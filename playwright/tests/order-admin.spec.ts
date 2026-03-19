@@ -4,6 +4,7 @@ import {
   deleteCurrentOrder,
   getOrderSampleIds,
   setAllowDeleteSubmittedOrders,
+  withAllowDeleteSubmittedOrdersLock,
 } from "./helpers";
 
 test.setTimeout(60000);
@@ -17,7 +18,7 @@ test("admin can create and submit an order", async ({ page }) => {
     { volume: "70", concentration: "28" },
   ]);
 
-  await expect(page.getByText(orderName)).toBeVisible();
+  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "70", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "28", exact: true })).toBeVisible();
@@ -66,8 +67,9 @@ test("admin can create a study from their own order samples", async ({ page }) =
   }
 
   await expect(page).toHaveURL(/\/studies\/.+/);
-  await expect(page.getByText(studyTitle)).toBeVisible();
-  await page.getByRole("tab", { name: /samples/i }).click();
+  await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Open Samples", exact: true }).click();
+  await expect(page).toHaveURL(/\/studies\/.+\?tab=samples/);
   await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
   for (const sampleId of sampleIds) {
     await expect(page.getByText(sampleId)).toBeVisible();
@@ -92,52 +94,61 @@ test("admin can see researcher orders in all orders list", async ({ browser, pag
   const searchInput = page.getByPlaceholder("Search orders...");
   await searchInput.fill(orderName);
 
-  const orderLink = page.locator(`a[href="${orderPath}"]`).first();
+  const orderLink = page.locator(`a[href="${orderPath}"]:visible`).first();
   await expect(orderLink).toBeVisible();
-  const orderRow = page.locator("div").filter({ has: orderLink }).first();
+  const orderRow = page
+    .locator("div.divide-y.divide-border > div")
+    .filter({ has: orderLink })
+    .first();
   await expect(orderRow).toContainText(orderName);
   await expect(orderRow).toContainText("Submitted");
 });
 
 test("admin cannot delete submitted orders when Data Handling disables it", async ({ page }) => {
-  const orderName = `Admin Protected Delete ${Date.now()}`;
+  await withAllowDeleteSubmittedOrdersLock(async () => {
+    const orderName = `Admin Protected Delete ${Date.now()}`;
 
-  await setAllowDeleteSubmittedOrders(page, false);
-  await createAndSubmitOrder(page, orderName, [
-    { volume: "51", concentration: "19" },
-  ]);
-
-  await deleteCurrentOrder(page);
-
-  await expect(
-    page.getByText("Deletion of submitted orders is disabled. Enable it in"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /settings > data handling/i }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/\/orders\/.+/);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
-  await expect(page.getByText(orderName).first()).toBeVisible();
-});
-
-test("admin can delete submitted orders when Data Handling enables it", async ({ page }) => {
-  const orderName = `Admin Allowed Delete ${Date.now()}`;
-
-  await setAllowDeleteSubmittedOrders(page, true);
-
-  try {
+    await setAllowDeleteSubmittedOrders(page, false);
     await createAndSubmitOrder(page, orderName, [
-      { volume: "58", concentration: "21" },
+      { volume: "51", concentration: "19" },
     ]);
 
     await deleteCurrentOrder(page);
 
-    await expect(page).toHaveURL("/orders");
+    await expect(
+      page.getByText("Deletion of submitted orders is disabled. Enable it in"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /settings > data handling/i }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/orders\/.+/);
+    await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+    await expect(page.getByText(orderName).first()).toBeVisible();
+  });
+});
 
-    const searchInput = page.getByPlaceholder("Search orders...");
-    await searchInput.fill(orderName);
-    await expect(page.getByText("No orders match your filters")).toBeVisible();
-  } finally {
-    await setAllowDeleteSubmittedOrders(page, false);
-  }
+test("admin can delete submitted orders when Data Handling enables it", async ({ page }) => {
+  await withAllowDeleteSubmittedOrdersLock(async () => {
+    const orderName = `Admin Allowed Delete ${Date.now()}`;
+
+    await setAllowDeleteSubmittedOrders(page, true);
+
+    try {
+      await createAndSubmitOrder(page, orderName, [
+        { volume: "58", concentration: "21" },
+      ]);
+
+      await deleteCurrentOrder(page);
+
+      await expect
+        .poll(() => new URL(page.url()).pathname, { timeout: 15000 })
+        .toBe("/orders");
+
+      const searchInput = page.getByPlaceholder("Search orders...");
+      await searchInput.fill(orderName);
+      await expect(page.getByText("No orders match your filters")).toBeVisible();
+    } finally {
+      await setAllowDeleteSubmittedOrders(page, false);
+    }
+  });
 });

@@ -44,7 +44,11 @@ export default defineConfig({
         storageState: "playwright/.auth/researcher.json",
       },
       dependencies: ["setup", "chromium-config-admin"],
-      testIgnore: [/.*admin\.spec\.ts/, /.*form-config-roundtrip\.spec\.ts/],
+      testIgnore: [
+        /.*admin\.spec\.ts/,
+        /.*form-config-roundtrip\.spec\.ts/,
+        /.*demo-flow\.spec\.ts/,
+      ],
     },
     {
       name: "chromium-admin",

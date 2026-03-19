@@ -4,6 +4,7 @@ import {
   deleteCurrentOrder,
   getOrderSampleIds,
   setAllowDeleteSubmittedOrders,
+  withAllowDeleteSubmittedOrdersLock,
 } from "./helpers";
 
 test.setTimeout(240000);
@@ -91,65 +92,73 @@ async function deletePipelineRun(page: Page, runId: string) {
 }
 
 test("admin can run simulate reads from sequencing workspace", async ({ page }) => {
-  const orderName = `Playwright Simulate Reads ${Date.now()}`;
-  const originalAllowDeleteSetting = await getAllowDeleteSubmittedOrdersState(page);
-  let orderPath: string | null = null;
-  let runId: string | null = null;
+  await withAllowDeleteSubmittedOrdersLock(async () => {
+    const orderName = `Playwright Simulate Reads ${Date.now()}`;
+    const originalAllowDeleteSetting = await getAllowDeleteSubmittedOrdersState(page);
+    let orderPath: string | null = null;
+    let runId: string | null = null;
 
-  try {
-    await setAllowDeleteSubmittedOrders(page, true);
+    try {
+      await setAllowDeleteSubmittedOrders(page, true);
 
-    const created = await createAndSubmitOrder(page, orderName, [
-      { volume: "44", concentration: "18" },
-    ]);
-    orderPath = created.orderPath;
-    const orderId = orderPath.split("/").at(-1);
-    expect(orderId).toBeTruthy();
+      const created = await createAndSubmitOrder(page, orderName, [
+        { volume: "44", concentration: "18" },
+      ]);
+      orderPath = created.orderPath;
+      const orderId = orderPath.split("/").at(-1);
+      expect(orderId).toBeTruthy();
 
-    const sampleIds = await getOrderSampleIds(page);
-    expect(sampleIds).toHaveLength(1);
+      const sampleIds = await getOrderSampleIds(page);
+      expect(sampleIds).toHaveLength(1);
 
-    await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-    await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible();
-    await expect(
-      page.getByText(/Generate dummy .* files for the samples in an order/i),
-    ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Pipeline Configuration" })).toBeVisible();
-    await page.getByLabel("Read Count").fill("42");
+      await page.goto(`${orderPath}/pipelines?pipeline=simulate-reads`);
+      await expect(page.getByRole("heading", { name: "Order Pipelines" })).toBeVisible();
+      await expect(page.getByText("Simulate Reads").first()).toBeVisible();
+      await expect(
+        page.getByText(/Generate dummy .* files for the samples in an order/i).first(),
+      ).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Pipeline Configuration" })).toBeVisible();
+      await page.getByLabel("Read Count").fill("42");
 
-    const runAllButton = page.getByRole("button", { name: /Run All Ready \(1\)/i });
-    await expect(runAllButton).toBeEnabled({ timeout: 90000 });
-    await runAllButton.click();
+      const startPipelineButton = page.getByRole("button", { name: "Start Pipeline" });
+      await expect(startPipelineButton).toBeEnabled({ timeout: 90000 });
+      await startPipelineButton.click();
 
-    const run = await waitForPipelineRunToComplete(
-      page,
-      orderId as string,
-      "simulate-reads",
-    );
-    runId = run.id;
+      const run = await waitForPipelineRunToComplete(
+        page,
+        orderId as string,
+        "simulate-reads",
+      );
+      runId = run.id;
 
-    const runDetails = await getPipelineRunDetails(page, run.id);
-    expect(runDetails.config?.readCount).toBe(42);
+      const runDetails = await getPipelineRunDetails(page, run.id);
+      expect(runDetails.config?.readCount).toBe(42);
 
-    await expect(page.getByText(run.runNumber)).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+      const runRow = page.locator("tbody tr").filter({
+        has: page.getByText(run.runNumber, { exact: true }),
+      }).first();
+      await expect(runRow).toBeVisible({ timeout: 15000 });
+      await expect(runRow.getByRole("cell").nth(2)).toContainText("Completed");
 
-    await page.goto(`${orderPath}/sequencing`);
-    await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
-    await expect(
-      page.getByText("Paired FASTQ linked", { exact: true }),
-    ).toBeVisible({ timeout: 30000 });
-  } finally {
-    if (runId) {
-      await deletePipelineRun(page, runId);
+      await page.goto(`${orderPath}/sequencing`);
+      await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
+      await expect(
+        page.getByText("Paired FASTQ linked", { exact: true }),
+      ).toBeVisible({ timeout: 30000 });
+    } finally {
+      if (runId) {
+        await deletePipelineRun(page, runId);
+      }
+
+      if (orderPath) {
+        await page.goto(orderPath);
+        await deleteCurrentOrder(page);
+        await expect
+          .poll(() => new URL(page.url()).pathname, { timeout: 15000 })
+          .toBe("/orders");
+      }
+
+      await setAllowDeleteSubmittedOrders(page, originalAllowDeleteSetting);
     }
-
-    if (orderPath) {
-      await page.goto(orderPath);
-      await deleteCurrentOrder(page);
-      await expect(page).toHaveURL("/orders");
-    }
-
-    await setAllowDeleteSubmittedOrders(page, originalAllowDeleteSetting);
-  }
+  });
 });
