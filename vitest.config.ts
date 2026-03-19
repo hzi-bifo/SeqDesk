@@ -42,7 +42,6 @@ export default defineConfig({
     fileParallelism: !serialExecution,
     maxConcurrency: serialExecution ? 1 : 5,
     coverage: {
-      all: true,
       provider: "v8",
       reporter: ["text", "text-summary", "lcov", "json-summary"],
       reportsDirectory: "coverage",

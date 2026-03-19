@@ -90,13 +90,11 @@ export async function goToNewOrderSamplesStep(
   orderName: string,
   sampleCount: number,
 ) {
-  await page.goto("/orders");
+  await page.goto("/orders/new");
+  await expect(page).toHaveURL(/\/orders\/new/);
   await expect(
-    page.getByRole("heading", { name: /^(My Orders|All Orders)$/ }),
-  ).toBeVisible();
-
-  await page.getByRole("link", { name: "New Order" }).first().click();
-  await expect(page.getByRole("heading", { name: "New Sequencing Order" })).toBeVisible();
+    page.getByRole("heading", { name: "New Sequencing Order" }),
+  ).toBeVisible({ timeout: 15000 });
 
   await page.getByTestId("order-field-name").fill(orderName);
   await page.getByTestId("order-field-numberOfSamples").fill(String(sampleCount));
@@ -343,12 +341,16 @@ export async function withResearcherPage<T>(
 }
 
 export async function continueToReviewFromDetailPage(page: Page) {
+  const sequencingStepHeading = page.getByRole("heading", {
+    name: /Sequencing (Information|Parameters)/,
+  });
+
   for (let i = 0; i < 5; i++) {
     if (await page.getByText("Ready to update").isVisible()) {
       return;
     }
 
-    if (await page.getByRole("heading", { name: "Sequencing Parameters" }).isVisible()) {
+    if (await sequencingStepHeading.isVisible()) {
       const sequencingTechHeading = page.getByRole("heading", { name: "Illumina", level: 3 });
       const platformField = page.getByTestId("order-field-platform");
 
