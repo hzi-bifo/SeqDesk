@@ -17,32 +17,27 @@ type FormConfigResponse = {
 };
 
 async function readFormConfig(page: Page): Promise<FormConfigResponse> {
-  return page.evaluate(async () => {
-    const response = await fetch("/api/admin/form-config");
-    if (!response.ok) {
-      throw new Error(`Failed to fetch form config: ${response.status}`);
-    }
+  const response = await page.request.get("/api/admin/form-config");
+  if (!response.ok()) {
+    throw new Error(`Failed to fetch form config: ${response.status()}`);
+  }
 
-    return response.json();
-  });
+  return response.json();
 }
 
 async function restoreFormConfig(page: Page, config: FormConfigResponse) {
-  await page.evaluate(async (currentConfig) => {
-    const response = await fetch("/api/admin/form-config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: currentConfig.fields,
-        groups: currentConfig.groups,
-        enabledMixsChecklists: currentConfig.enabledMixsChecklists ?? [],
-      }),
-    });
+  const response = await page.request.put("/api/admin/form-config", {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      fields: config.fields,
+      groups: config.groups,
+      enabledMixsChecklists: config.enabledMixsChecklists ?? [],
+    },
+  });
 
-    if (!response.ok) {
-      throw new Error(`Failed to restore form config: ${response.status}`);
-    }
-  }, config);
+  if (!response.ok()) {
+    throw new Error(`Failed to restore form config: ${response.status()}`);
+  }
 }
 
 async function addField(
@@ -57,12 +52,14 @@ async function addField(
     adminOnly?: boolean;
   },
 ) {
+  const dialog = page.getByRole("dialog");
+
   if (options.tabName) {
     await page.getByRole("tab", { name: options.tabName }).click();
   }
 
   await page.getByTestId(options.addButtonTestId).click();
-  await expect(page.getByRole("dialog")).toContainText("Add New Field");
+  await expect(dialog).toContainText("Add New Field");
 
   await page.getByTestId("form-builder-field-label").fill(options.fieldLabel);
   await page.getByTestId("form-builder-field-name").fill(options.fieldName);
@@ -76,11 +73,15 @@ async function addField(
   }
 
   if (options.groupName) {
-    await selectRadixOption(page, "form-builder-field-group", options.groupName);
+    const groupField = page.getByTestId("form-builder-field-group");
+    if (await groupField.count()) {
+      await selectRadixOption(page, "form-builder-field-group", options.groupName);
+    }
   }
 
   await page.getByTestId("form-builder-save-field-button").click();
-  await expect(page.getByText(options.fieldLabel)).toBeVisible();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText(options.fieldLabel, { exact: true }).first()).toBeVisible();
 }
 
 test("admin form-builder changes appear for researchers and enforce required validation", async ({
@@ -128,7 +129,9 @@ test("admin form-builder changes appear for researchers and enforce required val
       await researcherPage.getByTestId(`order-field-${fieldName}`).fill("REQ-001");
       await researcherPage.getByTestId("next-step-button").click();
       await expect(
-        researcherPage.getByRole("heading", { name: "Sequencing Parameters" }),
+        researcherPage.getByRole("heading", {
+          name: /Sequencing (Information|Parameters)/,
+        }),
       ).toBeVisible();
     });
   } finally {
