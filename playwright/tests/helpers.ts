@@ -1,9 +1,21 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { expect, type Browser, type Locator, type Page } from "@playwright/test";
 
 export type SampleInput = {
   volume: string;
   concentration: string;
 };
+
+const allowDeleteSettingsLockPath = path.join(
+  os.tmpdir(),
+  "seqdesk-playwright-allow-delete-settings.lock",
+);
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function findSampleField(
   page: Page,
@@ -134,8 +146,21 @@ export async function selectRadixOption(
   testId: string,
   optionName: RegExp | string,
 ) {
-  await page.getByTestId(testId).click();
-  await page.getByRole("option", { name: optionName }).click();
+  const trigger = page.getByTestId(testId);
+  const currentText = (await trigger.textContent())?.trim() || "";
+  const alreadySelected =
+    typeof optionName === "string"
+      ? currentText.includes(optionName)
+      : optionName.test(currentText);
+
+  if (alreadySelected) {
+    return;
+  }
+
+  await trigger.click();
+  const listbox = page.locator('[role="listbox"]').last();
+  await expect(listbox).toBeVisible();
+  await listbox.getByRole("option", { name: optionName }).first().click({ force: true });
 }
 
 export async function selectBarcodeIfAvailable(page: Page, rowIndex: number, optionIndex = 0) {
@@ -206,6 +231,10 @@ export async function createAndSubmitOrder(
   await expect
     .poll(() => new URL(page.url()).pathname)
     .toMatch(/^\/orders\/(?!new$)[^/]+$/);
+  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: new RegExp(`Samples \\(${samples.length}\\)`) }),
+  ).toBeVisible();
   const url = new URL(page.url());
   return { orderPath: url.pathname };
 }
@@ -256,6 +285,42 @@ export async function setAllowDeleteSubmittedOrders(page: Page, enabled: boolean
   }
 }
 
+export async function withAllowDeleteSubmittedOrdersLock<T>(
+  run: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      await fs.mkdir(allowDeleteSettingsLockPath);
+      break;
+    } catch (error) {
+      const isAlreadyLocked =
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "EEXIST";
+
+      if (!isAlreadyLocked) {
+        throw error;
+      }
+
+      if (Date.now() - startedAt > 60000) {
+        throw new Error(
+          "Timed out waiting for the allowDeleteSubmittedOrders Playwright lock",
+        );
+      }
+
+      await wait(250);
+    }
+  }
+
+  try {
+    return await run();
+  } finally {
+    await fs.rm(allowDeleteSettingsLockPath, { recursive: true, force: true });
+  }
+}
+
 export async function deleteCurrentOrder(page: Page) {
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Delete Order");
@@ -269,12 +334,19 @@ export async function deleteCurrentOrder(page: Page) {
 }
 
 export async function getOrderSampleIds(page: Page): Promise<string[]> {
-  const sampleIdCells = page.locator("code.text-xs.bg-muted");
-  const count = await sampleIdCells.count();
+  await expect(
+    page.getByRole("heading", { name: /Samples \(\d+\)/ }),
+  ).toBeVisible();
+
+  const sampleRows = page.locator("table tbody tr");
+  await expect(sampleRows.first()).toBeVisible();
+  const count = await sampleRows.count();
   const sampleIds: string[] = [];
 
   for (let i = 0; i < count; i++) {
-    const text = (await sampleIdCells.nth(i).textContent())?.trim();
+    const text = (
+      await sampleRows.nth(i).getByRole("cell").nth(1).textContent()
+    )?.trim();
     if (text?.startsWith("S-")) {
       sampleIds.push(text);
     }

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -170,9 +171,6 @@ export async function POST(request: NextRequest) {
       customFields,
     } = body;
 
-    // Generate unique order number
-    const orderNumber = await generateOrderNumber();
-
     // Get user profile for contact info
     const user = await db.user.findUnique({
       where: { id: session.user.id },
@@ -184,30 +182,57 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const order = await db.order.create({
-      data: {
-        orderNumber,
-        name: name?.trim() || null,
-        numberOfSamples: numberOfSamples ? parseInt(numberOfSamples, 10) : null,
-        // Contact info from user profile
-        contactName: user ? `${user.firstName} ${user.lastName}` : null,
-        contactEmail: user?.email || null,
-        contactPhone: null,
-        billingAddress: user?.institution || null,
-        platform: platform || null,
-        instrumentModel: instrumentModel?.trim() || null,
-        librarySelection: librarySelection || null,
-        libraryStrategy: libraryStrategy || null,
-        librarySource: librarySource || null,
-        // Custom fields from form builder
-        customFields: customFields ? JSON.stringify(customFields) : null,
-        userId: session.user.id,
-        generatedByE2E,
-        status: "DRAFT",
-      },
-    });
+    const orderData = {
+      name: name?.trim() || null,
+      numberOfSamples: numberOfSamples ? parseInt(numberOfSamples, 10) : null,
+      // Contact info from user profile
+      contactName: user ? `${user.firstName} ${user.lastName}` : null,
+      contactEmail: user?.email || null,
+      contactPhone: null,
+      billingAddress: user?.institution || null,
+      platform: platform || null,
+      instrumentModel: instrumentModel?.trim() || null,
+      librarySelection: librarySelection || null,
+      libraryStrategy: libraryStrategy || null,
+      librarySource: librarySource || null,
+      // Custom fields from form builder
+      customFields: customFields ? JSON.stringify(customFields) : null,
+      userId: session.user.id,
+      generatedByE2E,
+      status: "DRAFT" as const,
+    };
 
-    return NextResponse.json(order, { status: 201 });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const orderNumber = await generateOrderNumber();
+
+      try {
+        const order = await db.order.create({
+          data: {
+            orderNumber,
+            ...orderData,
+          },
+        });
+
+        return NextResponse.json(order, { status: 201 });
+      } catch (error) {
+        const isOrderNumberConflict =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002" &&
+          Array.isArray(error.meta?.target) &&
+          error.meta.target.includes("orderNumber");
+
+        if (isOrderNumberConflict) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return NextResponse.json(
+      { error: "Failed to create unique order number" },
+      { status: 500 },
+    );
   } catch (error) {
     console.error("Error creating order:", error);
     return NextResponse.json(

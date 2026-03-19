@@ -27,7 +27,7 @@ test("researcher can create and submit an order", async ({ page }) => {
   await createAndSubmitOrder(page, orderName, [
     { volume: "50", concentration: "25" },
   ]);
-  await expect(page.getByText(orderName)).toBeVisible();
+  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "50", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "25", exact: true })).toBeVisible();
@@ -41,7 +41,7 @@ test("researcher can create an order with multiple samples", async ({ page }) =>
     { volume: "40", concentration: "15" },
   ]);
 
-  await expect(page.getByText(orderName)).toBeVisible();
+  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
   const sampleRows = page.locator("tbody tr");
   await expect(sampleRows).toHaveCount(2);
@@ -90,7 +90,7 @@ test("researcher can edit submitted order information", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/orders\/[^/]+$/);
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
-  await expect(page.getByText(updatedName)).toBeVisible();
+  await expect(page.getByRole("main").getByText(updatedName, { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (1)" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "55", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "22", exact: true })).toBeVisible();
@@ -109,13 +109,16 @@ test("submitted order appears on the orders list with sample count", async ({ pa
   const searchInput = page.getByPlaceholder("Search orders...");
   await searchInput.fill(orderName);
 
-  const orderLink = page.locator(`a[href="${orderPath}"]`).first();
+  const orderLink = page.locator(`a[href="${orderPath}"]:visible`).first();
   await expect(orderLink).toBeVisible();
 
-  const orderRow = page.locator("div").filter({ has: orderLink }).first();
+  const orderRow = page
+    .locator("div.divide-y.divide-border > div")
+    .filter({ has: orderLink })
+    .first();
   await expect(orderRow).toContainText(orderName);
   await expect(orderRow).toContainText("Submitted");
-  await expect(orderRow).toContainText("2");
+  await expect(orderRow.locator("span.text-sm.text-muted-foreground.tabular-nums").first()).toHaveText("2");
 });
 
 test("submitted order can be marked as sent", async ({ page }) => {
@@ -183,8 +186,9 @@ test("researcher can create a study from order samples", async ({ page }) => {
   }
 
   await expect(page).toHaveURL(/\/studies\/.+/);
-  await expect(page.getByText(studyTitle)).toBeVisible();
-  await page.getByRole("tab", { name: /samples/i }).click();
+  await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Open Samples", exact: true }).click();
+  await expect(page).toHaveURL(/\/studies\/.+\?tab=samples/);
   await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
   for (const sampleId of sampleIds) {
     await expect(page.getByText(sampleId)).toBeVisible();
