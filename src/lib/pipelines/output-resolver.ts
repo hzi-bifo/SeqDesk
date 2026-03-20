@@ -116,6 +116,7 @@ async function replaceSampleReads(
     avgQuality2: number | null | undefined;
     fastqcReport1: string | null | undefined;
     fastqcReport2: string | null | undefined;
+    pipelineRunId?: string | null;
   }
 ): Promise<void> {
   const existingReads = await db.read.findMany({
@@ -151,6 +152,7 @@ async function replaceSampleReads(
       avgQuality2: readData.avgQuality2 ?? null,
       fastqcReport1: readData.fastqcReport1 ?? null,
       fastqcReport2: readData.fastqcReport2 ?? null,
+      pipelineRunId: readData.pipelineRunId ?? null,
     },
   });
 }
@@ -288,7 +290,6 @@ async function updateSampleRead(
   runId: string,
   output: DefinitionOutput
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
-  void runId;
   void output;
 
   if (!file.sampleId) {
@@ -311,6 +312,21 @@ async function updateSampleRead(
         success: false,
         error: `Sample read output ${file.name}: Data base path is not configured`,
       };
+    }
+
+    // Check if sample already has read files linked
+    const existingRead = await db.read.findFirst({
+      where: { sampleId: file.sampleId },
+      select: { id: true, file1: true },
+      orderBy: { id: 'asc' },
+    });
+    const sampleAlreadyHasReads = Boolean(existingRead?.file1);
+
+    // When replaceExisting is off and the sample already has reads, keep the
+    // existing read files and source untouched. The pipeline output stays in
+    // the run folder as an artifact but doesn't become active.
+    if (!replaceExisting && sampleAlreadyHasReads) {
+      return { success: true, skipped: true };
     }
 
     try {
@@ -340,15 +356,49 @@ async function updateSampleRead(
           avgQuality2: getNumberMetadata(metadata, 'avgQuality2'),
           fastqcReport1: getStringMetadata(metadata, 'fastqcReport1'),
           fastqcReport2: getStringMetadata(metadata, 'fastqcReport2'),
+          pipelineRunId: runId,
         });
         return { success: true };
       }
+
+      // No existing reads — create a new Read record with the pipeline output
+      if (!existingRead) {
+        await db.read.create({
+          data: {
+            sampleId: file.sampleId,
+            file1: file1!,
+            file2: file2 ?? null,
+            checksum1: getStringMetadata(metadata, 'checksum1') ?? null,
+            checksum2: getStringMetadata(metadata, 'checksum2') ?? null,
+            readCount1: getNumberMetadata(metadata, 'readCount1') ?? null,
+            readCount2: getNumberMetadata(metadata, 'readCount2') ?? null,
+            avgQuality1: getNumberMetadata(metadata, 'avgQuality1') ?? null,
+            avgQuality2: getNumberMetadata(metadata, 'avgQuality2') ?? null,
+            fastqcReport1: getStringMetadata(metadata, 'fastqcReport1') ?? null,
+            fastqcReport2: getStringMetadata(metadata, 'fastqcReport2') ?? null,
+            pipelineRunId: runId,
+          },
+        });
+        return { success: true };
+      }
+
+      // Existing read without files — update it with the new file paths
+      await db.read.update({
+        where: { id: existingRead.id },
+        data: {
+          file1: file1!,
+          file2: file2 ?? null,
+          pipelineRunId: runId,
+        },
+      });
+      return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       return { success: false, error: `Failed to materialize sample reads: ${msg}` };
     }
   }
 
+  // Metadata-only update (no file writeback) — e.g., checksums, QC reports
   const read = await db.read.findFirst({
     where: { sampleId: file.sampleId },
     select: { id: true },
@@ -363,13 +413,6 @@ async function updateSampleRead(
   }
 
   const data: Record<string, string | number | null> = {};
-
-  if (file1 !== undefined) {
-    data.file1 = file1;
-  }
-  if (file2 !== undefined) {
-    data.file2 = file2;
-  }
 
   for (const key of ['checksum1', 'checksum2', 'fastqcReport1', 'fastqcReport2'] as const) {
     const value = getStringMetadata(metadata, key);

@@ -86,6 +86,12 @@ async function loadOrderWithSequencing(orderId: string) {
               readCount2: true,
               fastqcReport1: true,
               fastqcReport2: true,
+              pipelineRunId: true,
+              pipelineRun: {
+                select: {
+                  runNumber: true,
+                },
+              },
               sequencingRun: {
                 select: {
                   id: true,
@@ -343,6 +349,8 @@ export async function getOrderSequencingSummary(
             fileSize2: null,
             fastqcReport1: read.fastqcReport1,
             fastqcReport2: read.fastqcReport2,
+            pipelineRunId: read.pipelineRunId,
+            pipelineRunNumber: read.pipelineRun?.runNumber ?? null,
           }
         : null,
       integrityStatus,

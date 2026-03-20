@@ -20,6 +20,12 @@ interface PipelineRunSummary {
   status: PipelineRunStatus;
 }
 
+/** Pipelines whose results become invalid when no reads are linked to samples. */
+const READ_DEPENDENT_PIPELINES = new Set([
+  "fastq-checksum",
+  "fastqc",
+]);
+
 const cache = new Map<string, OrderPipelineDefinition[]>();
 
 export function getOrderPipelineProgressStatuses(
@@ -113,24 +119,45 @@ export function useOrderPipelines(
 
     const refresh = async () => {
       try {
-        const [definitions, runsRes] = await Promise.all([
+        const [definitions, runsRes, seqRes] = await Promise.all([
           fetchOrderPipelineDefinitions(),
           fetch(`/api/pipelines/runs?orderId=${orderId}&limit=200`),
+          fetch(`/api/orders/${orderId}/sequencing`),
         ]);
 
         const runsPayload = runsRes.ok
           ? (await runsRes.json()) as { runs?: PipelineRunSummary[] }
           : null;
+        const seqPayload = seqRes.ok
+          ? (await seqRes.json()) as { summary?: { readsLinkedSamples: number } }
+          : null;
+        const hasLinkedReads = (seqPayload?.summary?.readsLinkedSamples ?? 0) > 0;
         const statusByPipeline = getOrderPipelineProgressStatuses(
           runsPayload?.runs ?? []
         );
 
+        // Pipelines that require linked reads (input.requiresReads or
+        // outputs targeting sample_reads) should show "empty" when no
+        // reads are linked, even if past runs exist.
+        const readDependentPipelines = new Set(
+          definitions
+            .filter((p) => READ_DEPENDENT_PIPELINES.has(p.pipelineId))
+            .map((p) => p.pipelineId)
+        );
+
         if (!cancelled) {
           setFetchedPipelines(
-            definitions.map((pipeline) => ({
-              ...pipeline,
-              status: statusByPipeline[pipeline.pipelineId] ?? "empty",
-            }))
+            definitions.map((pipeline) => {
+              let status = statusByPipeline[pipeline.pipelineId] ?? "empty";
+              if (
+                !hasLinkedReads &&
+                readDependentPipelines.has(pipeline.pipelineId) &&
+                status === "complete"
+              ) {
+                status = "empty";
+              }
+              return { ...pipeline, status };
+            })
           );
         }
       } catch {

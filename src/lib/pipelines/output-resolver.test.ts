@@ -402,6 +402,7 @@ describe("output-resolver", () => {
         avgQuality2: null,
         fastqcReport1: null,
         fastqcReport2: null,
+        pipelineRunId: "run-id",
       },
     });
     await expect(
@@ -412,6 +413,211 @@ describe("output-resolver", () => {
     ).resolves.toBe("new-r2");
     await expect(fs.access(oldFile1)).rejects.toBeDefined();
     await expect(fs.access(oldFile2)).rejects.toBeDefined();
+  });
+
+  it("skips file copy and read update when replaceExisting is false and sample already has reads", async () => {
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    const storageDir = path.join(tempDir, "storage");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, "simulated", "order_order-1"), {
+      recursive: true,
+    });
+
+    const sourceFile1 = path.join(sourceDir, "sample-1_R1.fastq.gz");
+    const sourceFile2 = path.join(sourceDir, "sample-1_R2.fastq.gz");
+    await fs.writeFile(sourceFile1, "new-r1");
+    await fs.writeFile(sourceFile2, "new-r2");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-simulated-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: storageDir,
+      source: "database",
+      isImplicit: false,
+    });
+    // Sample already has reads from a previous run
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-existing",
+      file1: "simulated/order_order-1/old_R1.fastq.gz",
+    });
+
+    const result = await resolveOutputs("simulate-reads", "run-2", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: path.join(tempDir, "run-output", "manifests", "sample-1.json"),
+          sampleId: "sample-1",
+          outputId: "sample-simulated-reads",
+          metadata: {
+            file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+            file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
+            sourceFile1,
+            sourceFile2,
+            replaceExisting: false,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    // Should NOT copy files, create, or update the read
+    expect(mocks.db.read.create).not.toHaveBeenCalled();
+    expect(mocks.db.read.update).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+    // The storage dir should NOT have the new files
+    await expect(
+      fs.access(path.join(storageDir, "simulated", "order_order-1", "sample-1_R1.fastq.gz"))
+    ).rejects.toBeDefined();
+  });
+
+  it("creates read when replaceExisting is false but sample has no existing reads", async () => {
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    const storageDir = path.join(tempDir, "storage");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, "simulated", "order_order-1"), {
+      recursive: true,
+    });
+
+    const sourceFile1 = path.join(sourceDir, "sample-1_R1.fastq.gz");
+    await fs.writeFile(sourceFile1, "new-r1");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-simulated-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: storageDir,
+      source: "database",
+      isImplicit: false,
+    });
+    // No existing reads
+    mocks.db.read.findFirst.mockResolvedValue(null);
+
+    const result = await resolveOutputs("simulate-reads", "run-1", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: path.join(tempDir, "run-output", "manifests", "sample-1.json"),
+          sampleId: "sample-1",
+          outputId: "sample-simulated-reads",
+          metadata: {
+            file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+            sourceFile1,
+            replaceExisting: false,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    // Should create a new read since none exists
+    expect(mocks.db.read.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sampleId: "sample-1",
+        file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+        pipelineRunId: "run-1",
+      }),
+    });
+  });
+
+  it("replaceExisting=true overwrites existing reads and sets new pipelineRunId", async () => {
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    const storageDir = path.join(tempDir, "storage");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, "simulated", "order_order-1"), {
+      recursive: true,
+    });
+
+    const sourceFile1 = path.join(sourceDir, "sample-1_R1.fastq.gz");
+    await fs.writeFile(sourceFile1, "new-r1");
+
+    const oldFile1 = path.join(storageDir, "simulated", "order_order-1", "old_R1.fastq.gz");
+    await fs.writeFile(oldFile1, "old-r1");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-simulated-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: storageDir,
+      source: "database",
+      isImplicit: false,
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-existing",
+      file1: "simulated/order_order-1/old_R1.fastq.gz",
+    });
+    mocks.db.read.findMany.mockResolvedValue([
+      {
+        id: "read-existing",
+        file1: "simulated/order_order-1/old_R1.fastq.gz",
+        file2: null,
+      },
+    ]);
+
+    const result = await resolveOutputs("simulate-reads", "run-2", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: path.join(tempDir, "run-output", "manifests", "sample-1.json"),
+          sampleId: "sample-1",
+          outputId: "sample-simulated-reads",
+          metadata: {
+            file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+            sourceFile1,
+            replaceExisting: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    // Should delete old reads and create new one with new pipelineRunId
+    expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
+      where: { sampleId: "sample-1" },
+    });
+    expect(mocks.db.read.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sampleId: "sample-1",
+        file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+        pipelineRunId: "run-2",
+      }),
+    });
   });
 
   it("collects handler errors and marks result as failed", async () => {
