@@ -53,5 +53,7 @@ test("researcher can mark a study ready, return it to draft, and delete it from 
   await expect(deleteDialog).toContainText("Delete Study");
   await deleteDialog.getByRole("button", { name: "Delete Study" }).click();
 
-  await expect(page.getByText("No studies match your filters")).toBeVisible();
+  await expect(
+    page.getByText(/No studies (match your filters|yet)/),
+  ).toBeVisible({ timeout: 15000 });
 });

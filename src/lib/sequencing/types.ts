@@ -19,6 +19,8 @@ export interface SequencingReadSummary {
   checksum2: string | null;
   readCount1: number | null;
   readCount2: number | null;
+  fileSize1: number | null;
+  fileSize2: number | null;
   fastqcReport1: string | null;
   fastqcReport2: string | null;
 }

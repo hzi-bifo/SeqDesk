@@ -300,11 +300,6 @@ export async function POST(
       console.warn('[Start Pipeline] WARNING: condaPath is not configured - nextflow may not be found');
     }
 
-    const effectiveProfile = resolveEffectiveProfile(executionSettings.nextflowProfile);
-    const profileParts = effectiveProfile
-      ? effectiveProfile.split(',').map((p) => p.trim()).filter(Boolean)
-      : [];
-
     const pipelineId = run.pipelineId;
     const isSubmgPipeline = pipelineId === 'submg';
     const pkg = getPackage(pipelineId);
@@ -315,6 +310,11 @@ export async function POST(
         { status: 400 }
       );
     }
+
+    const effectiveProfile = resolveEffectiveProfile(executionSettings.nextflowProfile);
+    const profileParts = effectiveProfile
+      ? effectiveProfile.split(',').map((p) => p.trim()).filter(Boolean)
+      : [];
 
     const runtimePlatform = await detectRuntimePlatform(executionSettings.condaPath);
     const runtimeDetails = `${runtimePlatform.raw} (${runtimePlatform.source})`;
@@ -368,9 +368,10 @@ export async function POST(
     }
 
     const condaBin = await resolveCondaBin(executionSettings.condaPath);
-    if (!condaBin && !executionSettings.useSlurm && !isSubmgPipeline) {
+    const nextflowAvailable = await commandExists('nextflow');
+    if (!condaBin && !nextflowAvailable && !executionSettings.useSlurm && !isSubmgPipeline) {
       const message =
-        'Conda profile selected but conda was not found. Configure a conda path or install conda.';
+        'Neither conda nor nextflow were found. Configure a conda path, or install nextflow on the host.';
       await db.pipelineRun.update({
         where: { id },
         data: {
@@ -382,6 +383,11 @@ export async function POST(
         },
       });
       return NextResponse.json({ error: message }, { status: 400 });
+    }
+    if (!condaBin && nextflowAvailable && !executionSettings.useSlurm && !isSubmgPipeline) {
+      console.warn(
+        '[Start Pipeline] Conda not found, but nextflow is available directly. Proceeding without conda bootstrap.'
+      );
     }
     if (!condaBin && executionSettings.useSlurm) {
       console.warn(

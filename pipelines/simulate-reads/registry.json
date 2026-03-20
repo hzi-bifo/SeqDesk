@@ -4,6 +4,7 @@
   "description": "Generate dummy sequencing files for the samples in an order",
   "category": "qc",
   "version": "0.1.0",
+  "sortOrder": 1,
   "requires": {
     "reads": false,
     "assemblies": false,

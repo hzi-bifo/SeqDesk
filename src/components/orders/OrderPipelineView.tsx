@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,11 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { getSampleResultPreview } from "@/lib/pipelines/sample-result";
 import type { PipelineSampleResult } from "@/lib/pipelines/types";
 import {
   AlertCircle,
-  CheckCircle2,
   Clock,
   Loader2,
   MoreHorizontal,
@@ -54,6 +56,14 @@ function getApiErrorMessage(
   return fallback;
 }
 
+type ConfigSchemaProperty = {
+  type: string;
+  title?: string;
+  description?: string;
+  enum?: string[];
+  default?: unknown;
+};
+
 type AdminPipeline = {
   pipelineId: string;
   name: string;
@@ -63,6 +73,9 @@ type AdminPipeline = {
   config: Record<string, unknown>;
   defaultConfig: Record<string, unknown>;
   sampleResult?: PipelineSampleResult;
+  configSchema?: {
+    properties?: Record<string, ConfigSchemaProperty>;
+  };
   input: {
     supportedScopes: string[];
     perSample: {
@@ -177,15 +190,19 @@ interface OrderPipelineViewProps {
   orderId: string;
   pipelineId: string;
   samples: OrderSequencingSummaryResponse["samples"];
+  onRunCompleted?: () => void;
+  onSampleDataChanged?: () => void;
 }
 
 export function OrderPipelineView({
   orderId,
   pipelineId,
   samples,
+  onRunCompleted,
+  onSampleDataChanged,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
-  const [runningSampleIds, setRunningSampleIds] = useState<Set<string>>(new Set());
+  const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -223,6 +240,45 @@ export function OrderPipelineView({
     () => allRuns.some((run) => run.status === "queued" || run.status === "running"),
     [allRuns]
   );
+
+  // Derive running sample IDs from active pipeline runs + pending API calls
+  const runningSampleIds = useMemo(() => {
+    const ids = new Set(pendingRunSampleIds);
+    for (const run of allRuns) {
+      if (run.status === "queued" || run.status === "running") {
+        if (run.inputSampleIds) {
+          try {
+            const parsed = JSON.parse(run.inputSampleIds) as string[];
+            for (const id of parsed) ids.add(id);
+          } catch {
+            // inputSampleIds might be comma-separated
+            for (const id of run.inputSampleIds.split(",")) {
+              const trimmed = id.trim();
+              if (trimmed) ids.add(trimmed);
+            }
+          }
+        }
+      }
+    }
+    return ids;
+  }, [allRuns, pendingRunSampleIds]);
+
+  // Detect when a previously active run transitions to "completed" and notify parent
+  const prevActiveRunIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const currentActiveIds = new Set(
+      allRuns
+        .filter((r) => r.status === "queued" || r.status === "running")
+        .map((r) => r.id)
+    );
+    const justCompleted = [...prevActiveRunIdsRef.current].some(
+      (id) => !currentActiveIds.has(id) && allRuns.some((r) => r.id === id && r.status === "completed")
+    );
+    if (justCompleted) {
+      onRunCompleted?.();
+    }
+    prevActiveRunIdsRef.current = currentActiveIds;
+  }, [allRuns, onRunCompleted]);
 
   const filteredRuns = useMemo(
     () =>
@@ -313,8 +369,8 @@ export function OrderPipelineView({
     async (runId: string) => {
       setDeletingRun(true);
       try {
-        const res = await fetch(`/api/pipelines/runs/${runId}`, {
-          method: "DELETE",
+        const res = await fetch(`/api/pipelines/runs/${runId}/delete`, {
+          method: "POST",
         });
         if (!res.ok) {
           const payload = await res.json().catch(() => null);
@@ -343,9 +399,9 @@ export function OrderPipelineView({
 
   const handleRunSingle = useCallback(
     async (sampleId: string) => {
-      setRunningSampleIds((prev) => new Set(prev).add(sampleId));
+      setPendingRunSampleIds((prev) => new Set(prev).add(sampleId));
       await runPipeline([sampleId]);
-      setRunningSampleIds((prev) => {
+      setPendingRunSampleIds((prev) => {
         const next = new Set(prev);
         next.delete(sampleId);
         return next;
@@ -360,6 +416,58 @@ export function OrderPipelineView({
     await runPipeline(readySamples.map((s) => s.id));
     setRunningAll(false);
   }, [readySamples, runPipeline]);
+
+  const handleResolveOutputs = useCallback(
+    async (runId: string) => {
+      setError("");
+      try {
+        const res = await fetch(`/api/pipelines/runs/${runId}/resolve-outputs`, {
+          method: "POST",
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(
+            getApiErrorMessage(payload, "Failed to re-resolve outputs")
+          );
+        }
+        onSampleDataChanged?.();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to re-resolve outputs");
+      }
+    },
+    [onSampleDataChanged]
+  );
+
+  const handleClearSampleResult = useCallback(
+    async (sampleId: string) => {
+      if (!pipeline?.sampleResult) return;
+      setError("");
+      const fields = pipeline.sampleResult.values
+        .map((v) => {
+          const parts = v.path.split(".");
+          return parts.length === 2 && parts[0] === "read" ? parts[1] : null;
+        })
+        .filter((f): f is string => f !== null);
+
+      if (fields.length === 0) return;
+
+      try {
+        const res = await fetch(`/api/orders/${orderId}/sequencing/reads`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sampleId, clearFields: fields }),
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(getApiErrorMessage(payload, "Failed to clear result"));
+        }
+        onSampleDataChanged?.();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to clear result");
+      }
+    },
+    [orderId, pipeline?.sampleResult, onSampleDataChanged]
+  );
 
   if (pipelinesResponse.isLoading) {
     return (
@@ -378,7 +486,7 @@ export function OrderPipelineView({
   }
 
   const sampleResultConfig = pipeline.sampleResult;
-  const columnCount = sampleResultConfig ? 6 : 5;
+  const columnCount = sampleResultConfig ? 5 : 4;
 
   return (
     <div className="space-y-6">
@@ -444,6 +552,86 @@ export function OrderPipelineView({
         </div>
       )}
 
+      {/* Pipeline settings */}
+      {pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
+        ([, s]) => s.enum || s.type === "boolean" || s.type === "number"
+      ) && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-medium">Settings</h3>
+          <div className="flex flex-wrap items-end gap-4">
+            {Object.entries(pipeline.configSchema.properties).map(([key, schema]) => {
+              const value = localConfig[key] ?? schema.default;
+
+              if (schema.enum) {
+                const ENUM_LABELS: Record<string, string> = {
+                  shortReadPaired: "Paired-end",
+                  shortReadSingle: "Single-end",
+                  longRead: "Long read",
+                };
+                return (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-xs">{schema.title || key}</Label>
+                    <Select
+                      value={String(value ?? "")}
+                      onValueChange={(v) => setLocalConfig((prev) => ({ ...prev, [key]: v }))}
+                    >
+                      <SelectTrigger className="h-8 w-[160px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {schema.enum.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {ENUM_LABELS[opt] || opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              }
+
+              if (schema.type === "boolean") {
+                return (
+                  <div key={key} className="flex items-center gap-2 pb-1">
+                    <Checkbox
+                      id={`config-${key}`}
+                      checked={!!value}
+                      onCheckedChange={(checked) =>
+                        setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
+                      }
+                    />
+                    <Label htmlFor={`config-${key}`} className="text-xs">
+                      {schema.title || key}
+                    </Label>
+                  </div>
+                );
+              }
+
+              if (schema.type === "number") {
+                return (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-xs">{schema.title || key}</Label>
+                    <Input
+                      type="number"
+                      className="h-8 w-[120px] text-xs"
+                      value={value != null ? String(value) : ""}
+                      onChange={(e) =>
+                        setLocalConfig((prev) => ({
+                          ...prev,
+                          [key]: e.target.value ? Number(e.target.value) : undefined,
+                        }))
+                      }
+                    />
+                  </div>
+                );
+              }
+
+              return null;
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Sample table */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <table className="w-full text-sm">
@@ -455,9 +643,6 @@ export function OrderPipelineView({
               </th>
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Reads
-              </th>
-              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
-                Status
               </th>
               {sampleResultConfig ? (
                 <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
@@ -505,36 +690,33 @@ export function OrderPipelineView({
                       </Badge>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    {ready ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Ready
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs text-amber-700">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        {reason}
-                      </span>
-                    )}
-                  </td>
                   {sampleResultConfig ? (
                     <td className="px-4 py-3">
                       {sampleResultPreview && sampleResultPreview.items.length > 0 ? (
-                        <div className="space-y-1">
-                          {sampleResultPreview.items.map((item) => (
-                            <div
-                              key={`${item.label ?? "value"}-${item.value}`}
-                              className="text-xs"
-                            >
-                              {item.label ? (
-                                <span className="mr-1.5 text-muted-foreground">
-                                  {item.label}
-                                </span>
-                              ) : null}
-                              <span className="font-mono">{item.value}</span>
-                            </div>
-                          ))}
+                        <div className="flex items-start gap-1.5">
+                          <div className="space-y-1">
+                            {sampleResultPreview.items.map((item) => (
+                              <div
+                                key={`${item.label ?? "value"}-${item.value}`}
+                                className="text-xs"
+                              >
+                                {item.label ? (
+                                  <span className="mr-1.5 text-muted-foreground">
+                                    {item.label}
+                                  </span>
+                                ) : null}
+                                <span className="font-mono">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            title="Clear result"
+                            onClick={() => void handleClearSampleResult(sample.id)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">
@@ -544,35 +726,42 @@ export function OrderPipelineView({
                     </td>
                   ) : null}
                   <td className="px-4 py-3 text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!ready || isRunning || initialCheckPending || systemBlocked}
-                      onClick={() => void handleRunSingle(sample.id)}
-                      title={systemBlocked ? systemReady?.summary : undefined}
-                    >
-                      {initialCheckPending ? (
-                        <>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Checking...
-                        </>
-                      ) : isRunning ? (
-                        <>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Running...
-                        </>
-                      ) : systemBlocked ? (
-                        <>
-                          <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
-                          Blocked
-                        </>
-                      ) : (
-                        <>
-                          <Play className="mr-1.5 h-3.5 w-3.5" />
-                          Run
-                        </>
-                      )}
-                    </Button>
+                    {initialCheckPending ? (
+                      <Button size="sm" variant="outline" disabled>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Checking...
+                      </Button>
+                    ) : isRunning ? (
+                      <Button size="sm" variant="outline" disabled>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Running...
+                      </Button>
+                    ) : ready ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={systemBlocked}
+                        onClick={() => void handleRunSingle(sample.id)}
+                        title={systemBlocked ? systemReady?.summary : undefined}
+                      >
+                        {systemBlocked ? (
+                          <>
+                            <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
+                            Blocked
+                          </>
+                        ) : (
+                          <>
+                            <Play className="mr-1.5 h-3.5 w-3.5" />
+                            Run
+                          </>
+                        )}
+                      </Button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-amber-700">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        {reason}
+                      </span>
+                    )}
                   </td>
                 </tr>
               );
@@ -680,8 +869,11 @@ export function OrderPipelineView({
                         className="transition-colors hover:bg-secondary/20"
                       >
                         <td className="px-4 py-3 align-top">
-                          <code className="rounded bg-muted px-2 py-0.5 text-xs font-mono">
-                            {run.runNumber}
+                          <code
+                            className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
+                            title={run.runNumber}
+                          >
+                            #{run.runNumber.split("-").pop()}
                           </code>
                         </td>
                         <td className="px-4 py-3 align-top">
@@ -740,6 +932,17 @@ export function OrderPipelineView({
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {(run.status === "completed" || run.status === "failed") && (
+                                <DropdownMenuItem
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void handleResolveOutputs(run.id);
+                                  }}
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  Re-resolve outputs
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 variant="destructive"
                                 disabled={run.status === "running" || deletingRun}

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
+import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -81,6 +87,10 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  Clock,
+  Download,
+  Eye,
+  FlaskConical,
   FolderOpen,
   FolderSearch,
   Hash,
@@ -193,6 +203,7 @@ export default function OrderSequencingPage({
   const resolvedParams = use(params);
   const searchParams = useSearchParams();
   const activePipelineId = searchParams.get("pipeline");
+  const activeView = searchParams.get("view");
   const { data: session, status: sessionStatus } = useSession();
   const [data, setData] = useState<OrderSequencingSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -230,6 +241,29 @@ export default function OrderSequencingPage({
   const [uploading, setUploading] = useState(false);
   const [orderPipelines, setOrderPipelines] = useState<OrderPipelineShortcut[]>([]);
   const [, setRelativeTimeTick] = useState(0);
+  const [inspectOpen, setInspectOpen] = useState(false);
+  const [inspectLoading, setInspectLoading] = useState(false);
+
+  const [inspectFilePath, setInspectFilePath] = useState<string>("");
+  const [inspectData, setInspectData] = useState<{
+    fileName: string;
+    lines: string[];
+    truncated: boolean;
+    readCount: number | null;
+    error: string | null;
+  } | null>(null);
+
+  const [analysisRuns, setAnalysisRuns] = useState<Array<{
+    id: string;
+    pipelineId: string;
+    status: string;
+    runNumber: string;
+    createdAt: string;
+    completedAt: string | null;
+    startedBy?: { name: string | null } | null;
+    inputSampleIds?: string | null;
+  }>>([]);
+  const [analysisRunsLoading, setAnalysisRunsLoading] = useState(false);
 
   const orderId = resolvedParams.id;
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -243,6 +277,27 @@ export default function OrderSequencingPage({
       ),
     [orderPipelines]
   );
+
+  // Fetch pipeline runs for analysis overview
+  useEffect(() => {
+    if (activeView !== "analysis" || !isFacilityAdmin) return;
+    let cancelled = false;
+    setAnalysisRunsLoading(true);
+    fetch(`/api/pipelines/runs?orderId=${orderId}&limit=200`)
+      .then((res) => res.json())
+      .then((payload) => {
+        if (!cancelled) {
+          setAnalysisRuns((payload?.runs ?? []) as typeof analysisRuns);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAnalysisRuns([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAnalysisRunsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeView, orderId, isFacilityAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshSummary = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -268,6 +323,46 @@ export default function OrderSequencingPage({
       } else {
         setRefreshing(false);
       }
+    }
+  }, [orderId]);
+
+  const handleInspectFile = useCallback(async (filePath: string) => {
+    setInspectFilePath(filePath);
+    setInspectLoading(true);
+    setInspectData(null);
+    setInspectOpen(true);
+    try {
+      const res = await fetch(
+        `/api/orders/${orderId}/files/inspect?path=${encodeURIComponent(filePath)}&lines=20`
+      );
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInspectData({
+          fileName: filePath.split("/").pop() ?? filePath,
+          lines: [],
+          truncated: false,
+          readCount: null,
+          error: payload?.error ?? "Failed to inspect file",
+        });
+      } else {
+        setInspectData({
+          fileName: payload.fileName,
+          lines: payload.preview?.lines ?? [],
+          truncated: payload.preview?.truncated ?? false,
+          readCount: payload.readCount,
+          error: payload.preview?.error ?? null,
+        });
+      }
+    } catch {
+      setInspectData({
+        fileName: filePath.split("/").pop() ?? filePath,
+        lines: [],
+        truncated: false,
+        readCount: null,
+        error: "Failed to inspect file",
+      });
+    } finally {
+      setInspectLoading(false);
     }
   }, [orderId]);
 
@@ -846,6 +941,140 @@ export default function OrderSequencingPage({
     return null;
   }
 
+  if (activeView === "discover" && !activePipelineId) {
+    return (
+      <PageContainer>
+        <SequencingDiscoverView
+          orderId={orderId}
+          samples={data.samples}
+          canManage={canManage}
+          dataBasePathConfigured={data.dataBasePathConfigured}
+          onDataChanged={() => void refreshSummary({ silent: true })}
+        />
+      </PageContainer>
+    );
+  }
+
+  if (activeView === "analysis" && !activePipelineId) {
+    // Group runs by pipeline
+    const runsByPipeline = new Map<string, typeof analysisRuns>();
+    for (const run of analysisRuns) {
+      const existing = runsByPipeline.get(run.pipelineId);
+      if (existing) {
+        existing.push(run);
+      } else {
+        runsByPipeline.set(run.pipelineId, [run]);
+      }
+    }
+
+    return (
+      <PageContainer>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-xl font-semibold">Analysis</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Pipeline overview for this order
+            </p>
+          </div>
+
+          {analysisRunsLoading && visibleOrderPipelines.length === 0 ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading pipelines...
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {visibleOrderPipelines.map((pipeline) => {
+                const runs = runsByPipeline.get(pipeline.pipelineId) ?? [];
+                const completedRuns = runs.filter((r) => r.status === "completed");
+                const activeRuns = runs.filter(
+                  (r) => r.status === "running" || r.status === "queued" || r.status === "pending"
+                );
+                const failedRuns = runs.filter((r) => r.status === "failed");
+                const latestRun = runs[0]; // API returns newest first
+
+                return (
+                  <Link
+                    key={pipeline.pipelineId}
+                    href={`/orders/${orderId}/sequencing?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                    className="block"
+                  >
+                    <Card className="hover:bg-muted/30 transition-colors cursor-pointer">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            <FlaskConical className="h-4 w-4 text-muted-foreground" />
+                            {pipeline.name}
+                          </CardTitle>
+                          <div className="flex items-center gap-2">
+                            {activeRuns.length > 0 && (
+                              <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                Running
+                              </Badge>
+                            )}
+                            {activeRuns.length === 0 && completedRuns.length > 0 && (
+                              <Badge variant="secondary" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                                <CheckCircle2 className="mr-1 h-3 w-3" />
+                                Completed
+                              </Badge>
+                            )}
+                            {activeRuns.length === 0 && completedRuns.length === 0 && failedRuns.length > 0 && (
+                              <Badge variant="secondary" className="text-xs bg-red-50 text-red-700 border-red-200">
+                                <AlertCircle className="mr-1 h-3 w-3" />
+                                Failed
+                              </Badge>
+                            )}
+                            {runs.length === 0 && (
+                              <Badge variant="outline" className="text-xs text-muted-foreground">
+                                Not run yet
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <CardDescription>{pipeline.description}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>{runs.length} run{runs.length !== 1 ? "s" : ""} total</span>
+                          {completedRuns.length > 0 && (
+                            <span className="text-emerald-600">{completedRuns.length} completed</span>
+                          )}
+                          {failedRuns.length > 0 && (
+                            <span className="text-red-600">{failedRuns.length} failed</span>
+                          )}
+                          {latestRun && (
+                            <>
+                              <span className="text-border">|</span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                Last run: {formatRelativeTime(latestRun.createdAt)}
+                                {latestRun.startedBy?.name && (
+                                  <> by {latestRun.startedBy.name}</>
+                                )}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                );
+              })}
+              {visibleOrderPipelines.length === 0 && (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No pipelines configured for this order.
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </div>
+      </PageContainer>
+    );
+  }
+
   if (activePipelineId) {
     return (
       <PageContainer>
@@ -853,6 +1082,8 @@ export default function OrderSequencingPage({
           orderId={orderId}
           pipelineId={activePipelineId}
           samples={data.samples}
+          onRunCompleted={() => void refreshSummary({ silent: true })}
+          onSampleDataChanged={() => void refreshSummary({ silent: true })}
         />
       </PageContainer>
     );
@@ -1154,33 +1385,125 @@ export default function OrderSequencingPage({
 
                     {/* Reads */}
                     <div className="col-span-3 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full shrink-0",
-                            getSequencingIntegrityIndicatorClassName(sample.integrityStatus)
-                          )}
-                          aria-hidden="true"
-                        />
-                        <span className="text-sm truncate">{getReadSummary(sample)}</span>
-                      </div>
-                      {(sample.read?.file1 || sample.read?.file2) ? (
-                        <p className="text-xs text-muted-foreground mt-0.5 ml-4 truncate">
-                          {[sample.read?.file1, sample.read?.file2].filter(Boolean).map((f) => (f as string).split("/").pop()).join(", ")}
-                        </p>
+                      {sample.hasReads ? (
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button type="button" className="text-left w-full group">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={cn(
+                                    "h-2 w-2 rounded-full shrink-0",
+                                    getSequencingIntegrityIndicatorClassName(sample.integrityStatus)
+                                  )}
+                                  aria-hidden="true"
+                                />
+                                <span className="text-sm truncate group-hover:underline">{getReadSummary(sample)}</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5 ml-4 truncate">
+                                {[sample.read?.file1, sample.read?.file2].filter(Boolean).map((f) => (f as string).split("/").pop()).join(", ")}
+                              </p>
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto max-w-md text-xs p-0" align="start">
+                            <div className="divide-y divide-border">
+                              {sample.read?.file1 && (
+                                <div className="px-3 py-2.5">
+                                  <div className="flex items-center justify-between gap-3 mb-1">
+                                    <p className="font-medium">R1</p>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                                      onClick={() => void handleInspectFile(sample.read!.file1!)}
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Inspect
+                                    </button>
+                                  </div>
+                                  <p className="font-mono text-[11px] text-muted-foreground break-all leading-relaxed">
+                                    {(sample.read.file1).split("/").pop()}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1.5 text-muted-foreground">
+                                    {sample.read.fileSize1 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        {formatFileSize(sample.read.fileSize1)}
+                                      </span>
+                                    )}
+                                    {sample.read.readCount1 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        {sample.read.readCount1.toLocaleString()} reads
+                                      </span>
+                                    )}
+                                    {sample.read.checksum1 && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 font-mono" title={sample.read.checksum1}>
+                                        {sample.read.checksum1.slice(0, 8)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              {sample.read?.file2 && (
+                                <div className="px-3 py-2.5">
+                                  <div className="flex items-center justify-between gap-3 mb-1">
+                                    <p className="font-medium">R2</p>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                                      onClick={() => void handleInspectFile(sample.read!.file2!)}
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Inspect
+                                    </button>
+                                  </div>
+                                  <p className="font-mono text-[11px] text-muted-foreground break-all leading-relaxed">
+                                    {(sample.read.file2).split("/").pop()}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1.5 text-muted-foreground">
+                                    {sample.read.fileSize2 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        {formatFileSize(sample.read.fileSize2)}
+                                      </span>
+                                    )}
+                                    {sample.read.readCount2 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        {sample.read.readCount2.toLocaleString()} reads
+                                      </span>
+                                    )}
+                                    {sample.read.checksum2 && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 font-mono" title={sample.read.checksum2}>
+                                        {sample.read.checksum2.slice(0, 8)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       ) : (
-                        <p className="text-xs text-muted-foreground mt-0.5 ml-4">No linked files</p>
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full shrink-0",
+                                getSequencingIntegrityIndicatorClassName(sample.integrityStatus)
+                              )}
+                              aria-hidden="true"
+                            />
+                            <span className="text-sm truncate">{getReadSummary(sample)}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5 ml-4">No linked files</p>
+                        </>
                       )}
                     </div>
 
                     {/* QC / Reports */}
                     <div className="col-span-2 min-w-0">
                       <span className="text-sm">{getReportSummary(sample)}</span>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {sample.artifactCount > 0
-                          ? artifactStageLabel(sample.latestArtifactStage)
-                          : "No sample reports yet"}
-                      </p>
+                      {sample.artifactCount > 0 && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {artifactStageLabel(sample.latestArtifactStage)}
+                        </p>
+                      )}
                     </div>
 
                     {/* Updated */}
@@ -1945,6 +2268,65 @@ export default function OrderSequencingPage({
               Upload File
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Inspect file preview dialog */}
+      <Dialog open={inspectOpen} onOpenChange={setInspectOpen}>
+        <DialogContent className="max-w-2xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">
+              {inspectData?.fileName ?? "Inspecting file..."}
+            </DialogTitle>
+            <DialogDescription>
+              {inspectData?.readCount != null
+                ? `${inspectData.readCount.toLocaleString()} reads total — showing first ${Math.floor((inspectData?.lines?.length ?? 0) / 4)} reads`
+                : "File preview"}
+            </DialogDescription>
+          </DialogHeader>
+          {inspectLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : inspectData?.error ? (
+            <div className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {inspectData.error}
+            </div>
+          ) : inspectData?.lines && inspectData.lines.length > 0 ? (
+            <div className="min-w-0">
+              <div className="rounded-md border bg-secondary/30 max-h-[60vh] overflow-auto">
+                <pre className="p-3 text-[11px] leading-relaxed font-mono whitespace-pre">
+                  {inspectData.lines.join("\n")}
+                </pre>
+              </div>
+              {inspectData.truncated && (
+                <p className="mt-2 text-xs text-muted-foreground text-center">
+                  Showing first {Math.floor(inspectData.lines.length / 4)} reads (file truncated)
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No preview available
+            </p>
+          )}
+          {!inspectLoading && !inspectData?.error && inspectFilePath && (
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+              >
+                <a
+                  href={`/api/files/download?path=${encodeURIComponent(inspectFilePath)}`}
+                  download
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  Download
+                </a>
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </>

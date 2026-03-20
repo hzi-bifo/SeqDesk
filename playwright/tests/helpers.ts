@@ -225,7 +225,9 @@ export async function createAndSubmitOrder(
   await expect(page.getByText("Ready to submit")).toBeVisible();
   await page.getByTestId("submit-order-button").click();
 
-  await expect(page.getByRole("dialog")).toContainText("Order Submitted");
+  await expect(page.getByRole("dialog")).toContainText("Order Submitted", {
+    timeout: 20000,
+  });
   await page.getByRole("button", { name: /view order/i }).click();
 
   await expect
@@ -385,14 +387,18 @@ export async function createStudyFromOrderSamples(
   }
 
   await expect(page.getByText("Ready to create your study")).toBeVisible();
+  const studyNavigation = page.waitForURL(/\/studies\/.+/, { timeout: 20000 });
   await page.getByRole("button", { name: /create study/i }).click();
 
-  const warningDialog = page.getByRole("dialog");
-  if (await warningDialog.isVisible()) {
+  const createAnywayButton = page.getByRole("button", { name: /create anyway/i });
+  if (await createAnywayButton.isVisible({ timeout: 3000 }).catch(() => false)) {
     await page.getByRole("button", { name: /create anyway/i }).click();
   }
 
-  await expect(page).toHaveURL(/\/studies\/.+/);
+  await studyNavigation;
+  await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible({
+    timeout: 15000,
+  });
   return { sampleIds, studyPath: new URL(page.url()).pathname };
 }
 

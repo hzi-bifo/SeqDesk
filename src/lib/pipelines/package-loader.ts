@@ -185,6 +185,7 @@ export interface RegistryConfig {
   description: string;
   category: 'analysis' | 'submission' | 'qc';
   version: string;
+  sortOrder?: number;
   website?: string;
   requires: Record<string, boolean>;
   outputs: RegistryOutput[];
@@ -614,19 +615,28 @@ export function getPackage(packageId: string): LoadedPackage | undefined {
 }
 
 /**
- * Get all loaded pipeline packages
+ * Get all loaded pipeline packages, sorted by registry sortOrder (then name).
  */
 export function getAllPackages(): LoadedPackage[] {
   scanPackages();
-  return Array.from(packageCache.values());
+  return Array.from(packageCache.values()).sort(compareBySortOrder);
 }
 
 /**
- * Get all package IDs
+ * Get all package IDs, sorted by registry sortOrder (then name).
  */
 export function getAllPackageIds(): string[] {
   scanPackages();
-  return Array.from(packageCache.keys());
+  return Array.from(packageCache.values())
+    .sort(compareBySortOrder)
+    .map((pkg) => pkg.id);
+}
+
+function compareBySortOrder(a: LoadedPackage, b: LoadedPackage): number {
+  const orderA = a.registry.sortOrder ?? 999;
+  const orderB = b.registry.sortOrder ?? 999;
+  if (orderA !== orderB) return orderA - orderB;
+  return a.registry.name.localeCompare(b.registry.name);
 }
 
 /**

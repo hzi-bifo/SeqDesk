@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   db: {
     order: {
       findUnique: vi.fn(),
+      update: vi.fn(),
       delete: vi.fn(),
     },
     siteSettings: {
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     },
     statusNote: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
     },
     sampleSet: {
@@ -42,7 +44,7 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
-import { DELETE } from "./route";
+import { DELETE, PUT } from "./route";
 
 describe("DELETE /api/orders/[id]", () => {
   beforeEach(() => {
@@ -167,5 +169,38 @@ describe("DELETE /api/orders/[id]", () => {
     expect(mocks.db.order.delete).toHaveBeenCalledWith({
       where: { id: "order-1" },
     });
+  });
+});
+
+describe("PUT /api/orders/[id]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("treats empty request bodies as a no-op update", async () => {
+    const existingOrder = {
+      id: "order-1",
+      userId: "user-1",
+      status: "SUBMITTED",
+      name: "Existing order",
+    };
+
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "user-1",
+        role: "RESEARCHER",
+      },
+    });
+    mocks.db.order.findUnique.mockResolvedValue(existingOrder);
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "PUT" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject(existingOrder);
+    expect(mocks.db.order.update).not.toHaveBeenCalled();
+    expect(mocks.db.statusNote.create).not.toHaveBeenCalled();
   });
 });

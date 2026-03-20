@@ -59,6 +59,15 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Install Nextflow
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://get.nextflow.io | bash
+          mv nextflow "$HOME/.local/bin/nextflow"
+          chmod +x "$HOME/.local/bin/nextflow"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nextflow" -version
+
       - name: Run Playwright tests
         run: npm run test:e2e
 

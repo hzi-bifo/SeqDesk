@@ -1,3 +1,4 @@
+import { stat } from "fs/promises";
 import * as path from "path";
 import type { FileMatchSuggestion } from "@/lib/files";
 import {
@@ -338,6 +339,8 @@ export async function getOrderSequencingSummary(
             checksum2: read.checksum2,
             readCount1: read.readCount1,
             readCount2: read.readCount2,
+            fileSize1: null,
+            fileSize2: null,
             fastqcReport1: read.fastqcReport1,
             fastqcReport2: read.fastqcReport2,
           }
@@ -355,6 +358,32 @@ export async function getOrderSequencingSummary(
       artifacts,
     };
   });
+
+  // Resolve file sizes in parallel for samples that have reads
+  if (configResult.dataBasePath) {
+    const basePath = configResult.dataBasePath;
+    await Promise.all(
+      rows.map(async (row) => {
+        if (!row.read) return;
+        const files = [
+          { key: "fileSize1" as const, filePath: row.read.file1 },
+          { key: "fileSize2" as const, filePath: row.read.file2 },
+        ];
+        await Promise.all(
+          files.map(async ({ key, filePath }) => {
+            if (!filePath || !row.read) return;
+            try {
+              const resolved = path.resolve(basePath, filePath);
+              const stats = await stat(resolved);
+              row.read[key] = stats.size;
+            } catch {
+              // File may not exist on disk
+            }
+          })
+        );
+      })
+    );
+  }
 
   return {
     orderId: order.id,

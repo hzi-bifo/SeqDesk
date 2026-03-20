@@ -4,6 +4,7 @@
   "description": "Run FastQC quality control on linked FASTQ files from an order",
   "category": "qc",
   "version": "0.1.0",
+  "sortOrder": 3,
   "requires": {
     "reads": true,
     "assemblies": false,

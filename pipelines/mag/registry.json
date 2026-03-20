@@ -4,6 +4,7 @@
   "description": "Metagenome assembly and binning using nf-core/mag",
   "category": "analysis",
   "version": "3.0.0",
+  "sortOrder": 10,
   "website": "https://nf-co.re/mag",
   "requires": {
     "reads": true,

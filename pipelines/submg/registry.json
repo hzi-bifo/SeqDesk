@@ -4,6 +4,7 @@
   "description": "Submit study data, reads, assemblies, and bins to ENA using submg",
   "category": "submission",
   "version": "1.0.0",
+  "sortOrder": 20,
   "website": "https://github.com/ttubb/submg",
   "requires": {
     "reads": true,
