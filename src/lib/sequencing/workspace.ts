@@ -87,6 +87,7 @@ async function loadOrderWithSequencing(orderId: string) {
               fastqcReport1: true,
               fastqcReport2: true,
               pipelineRunId: true,
+              pipelineSources: true,
               pipelineRun: {
                 select: {
                   runNumber: true,
@@ -351,6 +352,10 @@ export async function getOrderSequencingSummary(
             fastqcReport2: read.fastqcReport2,
             pipelineRunId: read.pipelineRunId,
             pipelineRunNumber: read.pipelineRun?.runNumber ?? null,
+            pipelineSources: read.pipelineSources
+              ? (() => { try { return JSON.parse(read.pipelineSources); } catch { return null; } })()
+              : null,
+            filesMissing: false, // resolved below after stat checks
           }
         : null,
       integrityStatus,
@@ -377,18 +382,25 @@ export async function getOrderSequencingSummary(
           { key: "fileSize1" as const, filePath: row.read.file1 },
           { key: "fileSize2" as const, filePath: row.read.file2 },
         ];
+        let anyLinked = false;
+        let anyMissing = false;
         await Promise.all(
           files.map(async ({ key, filePath }) => {
             if (!filePath || !row.read) return;
+            anyLinked = true;
             try {
               const resolved = path.resolve(basePath, filePath);
               const stats = await stat(resolved);
               row.read[key] = stats.size;
             } catch {
-              // File may not exist on disk
+              // File does not exist on disk
+              anyMissing = true;
             }
           })
         );
+        if (row.read) {
+          row.read.filesMissing = anyLinked && anyMissing;
+        }
       })
     );
   }

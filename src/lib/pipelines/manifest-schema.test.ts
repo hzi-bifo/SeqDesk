@@ -130,4 +130,34 @@ describe("manifest-schema", () => {
     expect(result.data.ui?.sampleResult?.columnLabel).toBe("Checksums");
     expect(result.data.ui?.sampleResult?.values).toHaveLength(2);
   });
+
+  it("accepts filename format in sample result previews", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      ui: {
+        sampleResult: {
+          columnLabel: "QC Reports",
+          emptyText: "Not generated",
+          values: [
+            {
+              label: "R1",
+              path: "read.fastqcReport1",
+              whenPathExists: "read.file1",
+              format: "filename",
+            },
+            {
+              label: "R2",
+              path: "read.fastqcReport2",
+              whenPathExists: "read.file2",
+              format: "filename",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.ui?.sampleResult?.columnLabel).toBe("QC Reports");
+    expect(result.data.ui?.sampleResult?.values[0].format).toBe("filename");
+  });
 });

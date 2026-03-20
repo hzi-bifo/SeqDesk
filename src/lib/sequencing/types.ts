@@ -25,6 +25,9 @@ export interface SequencingReadSummary {
   fastqcReport2: string | null;
   pipelineRunId: string | null;
   pipelineRunNumber: string | null;
+  pipelineSources: Record<string, string> | null;
+  /** True when linked read files no longer exist on disk */
+  filesMissing: boolean;
 }
 
 export interface SequencingArtifactSummary {

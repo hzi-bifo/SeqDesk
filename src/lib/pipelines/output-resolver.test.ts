@@ -272,7 +272,7 @@ describe("output-resolver", () => {
         ],
       },
     });
-    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1" });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1", pipelineSources: null });
     mocks.db.read.update.mockResolvedValue({});
 
     const result = await resolveOutputs("fastq-checksum", "run-id", {
@@ -301,7 +301,7 @@ describe("output-resolver", () => {
     expect(result.errors).toEqual([]);
     expect(mocks.db.read.findFirst).toHaveBeenCalledWith({
       where: { sampleId: "sample-1" },
-      select: { id: true },
+      select: { id: true, pipelineSources: true },
       orderBy: { id: "asc" },
     });
     expect(mocks.db.read.update).toHaveBeenCalledWith({
@@ -311,9 +311,121 @@ describe("output-resolver", () => {
         checksum2: "def456",
         readCount1: 120,
         avgQuality1: 37.5,
+        pipelineSources: '{"fastq-checksum":"run-id"}',
       },
     });
     expect(mocks.db.pipelineArtifact.create).not.toHaveBeenCalled();
+  });
+
+  it("writes fastqcReport paths to sample reads for fastqc pipeline", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample_fastqc_reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "fastqc_reports/*_R1_fastqc.html" },
+          },
+          {
+            id: "sample_qc_reports",
+            scope: "sample",
+            destination: "run_artifact",
+            type: "artifact",
+            discovery: { pattern: "fastqc_reports/*_fastqc.html" },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1", pipelineSources: '{"simulate-reads":"old-run"}' });
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    const result = await resolveOutputs("fastqc", "fastqc-run-1", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1_fastqc_reads",
+          path: "/data/fastqc_reports/sample-1_R1_fastqc.html",
+          sampleId: "sample-1",
+          outputId: "sample_fastqc_reads",
+          metadata: {
+            fastqcReport1: "/data/fastqc_reports/sample-1_R1_fastqc.html",
+            fastqcReport2: "/data/fastqc_reports/sample-1_R2_fastqc.html",
+          },
+        },
+        {
+          type: "artifact",
+          name: "sample-1_R1_fastqc.html",
+          path: "/data/fastqc_reports/sample-1_R1_fastqc.html",
+          sampleId: "sample-1",
+          outputId: "sample_qc_reports",
+          metadata: { readEnd: "R1", format: "html" },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.artifactsCreated).toBe(1);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: {
+        fastqcReport1: "/data/fastqc_reports/sample-1_R1_fastqc.html",
+        fastqcReport2: "/data/fastqc_reports/sample-1_R2_fastqc.html",
+        pipelineSources: '{"simulate-reads":"old-run","fastqc":"fastqc-run-1"}',
+      },
+    });
+  });
+
+  it("merges fastqc pipelineSources with existing checksum sources", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample_fastqc_reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "fastqc_reports/*_R1_fastqc.html" },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      pipelineSources: '{"simulate-reads":"sr-run","fastq-checksum":"ck-run"}',
+    });
+    mocks.db.read.update.mockResolvedValue({});
+
+    const result = await resolveOutputs("fastqc", "qc-run-2", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "s1_fastqc_reads",
+          path: "/data/s1_R1_fastqc.html",
+          sampleId: "s1",
+          outputId: "sample_fastqc_reads",
+          metadata: {
+            fastqcReport1: "/data/s1_R1_fastqc.html",
+            fastqcReport2: null,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: {
+        fastqcReport1: "/data/s1_R1_fastqc.html",
+        fastqcReport2: null,
+        pipelineSources: '{"simulate-reads":"sr-run","fastq-checksum":"ck-run","fastqc":"qc-run-2"}',
+      },
+    });
   });
 
   it("copies generated FASTQ files into sequencing storage and replaces existing sample reads", async () => {
@@ -352,6 +464,7 @@ describe("output-resolver", () => {
       source: "database",
       isImplicit: false,
     });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-old", file1: "simulated/order_order-1/old_R1.fastq.gz", pipelineSources: null });
     mocks.db.read.findMany.mockResolvedValue([
       {
         id: "read-old",
@@ -403,6 +516,7 @@ describe("output-resolver", () => {
         fastqcReport1: null,
         fastqcReport2: null,
         pipelineRunId: "run-id",
+        pipelineSources: '{"simulate-reads":"run-id"}',
       },
     });
     await expect(
@@ -450,6 +564,7 @@ describe("output-resolver", () => {
     mocks.db.read.findFirst.mockResolvedValue({
       id: "read-existing",
       file1: "simulated/order_order-1/old_R1.fastq.gz",
+      pipelineSources: null,
     });
 
     const result = await resolveOutputs("simulate-reads", "run-2", {
@@ -579,6 +694,7 @@ describe("output-resolver", () => {
     mocks.db.read.findFirst.mockResolvedValue({
       id: "read-existing",
       file1: "simulated/order_order-1/old_R1.fastq.gz",
+      pipelineSources: null,
     });
     mocks.db.read.findMany.mockResolvedValue([
       {
@@ -1470,6 +1586,153 @@ describe("output-resolver", () => {
         }),
       },
     });
+  });
+
+  it("falls back to findFirst without pipelineSources when column does not exist (metadata path)", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample_checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+          },
+        ],
+      },
+    });
+    // First call (with pipelineSources) fails, second call (without) succeeds
+    mocks.db.read.findFirst
+      .mockRejectedValueOnce(new Error("Unknown field pipelineSources"))
+      .mockResolvedValueOnce({ id: "read-1" });
+    mocks.db.read.update.mockResolvedValue({});
+
+    const result = await resolveOutputs("fastq-checksum", "ck-run-1", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "s1.json",
+          path: "/data/s1.json",
+          sampleId: "s1",
+          outputId: "sample_checksums",
+          metadata: {
+            checksum1: "abc123",
+            checksum2: "def456",
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    // Should have retried findFirst without pipelineSources
+    expect(mocks.db.read.findFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: expect.objectContaining({
+        checksum1: "abc123",
+        checksum2: "def456",
+      }),
+    });
+  });
+
+  it("retries metadata update without pipelineSources when column does not exist in DB", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample_checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      pipelineSources: null,
+    });
+    // First update (with pipelineSources) fails, second (without) succeeds
+    mocks.db.read.update
+      .mockRejectedValueOnce(new Error("Unknown field pipelineSources"))
+      .mockResolvedValueOnce({});
+
+    const result = await resolveOutputs("fastq-checksum", "ck-run-1", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "s1.json",
+          path: "/data/s1.json",
+          sampleId: "s1",
+          outputId: "sample_checksums",
+          metadata: {
+            checksum1: "abc123",
+            checksum2: null,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.read.update).toHaveBeenCalledTimes(2);
+    // Second call should NOT include pipelineSources
+    const secondCall = mocks.db.read.update.mock.calls[1][0];
+    expect(secondCall.data).toEqual({
+      checksum1: "abc123",
+      checksum2: null,
+    });
+    expect(secondCall.data).not.toHaveProperty("pipelineSources");
+  });
+
+  it("falls back to findFirst without pipelineSources when column does not exist (file-writeback path)", async () => {
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    await fs.mkdir(sourceDir, { recursive: true });
+    const src1 = path.join(sourceDir, "s1_R1.fastq.gz");
+    await fs.writeFile(src1, "read1-content");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "reads",
+            scope: "sample",
+            destination: "sample_reads",
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: tempDir,
+    });
+    // First call (with pipelineSources) fails, second call (without) succeeds
+    mocks.db.read.findFirst
+      .mockRejectedValueOnce(new Error("Unknown field pipelineSources"))
+      .mockResolvedValueOnce(null);
+    mocks.db.read.create.mockResolvedValue({});
+
+    const result = await resolveOutputs("simulate-reads", "sr-run-1", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "s1_reads",
+          path: src1,
+          sampleId: "s1",
+          outputId: "reads",
+          metadata: {
+            file1: "orders/s1/s1_R1.fastq.gz",
+            sourceFile1: src1,
+            replaceExisting: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.read.findFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.db.read.create).toHaveBeenCalled();
   });
 
   it("saves run results with errors and warnings arrays", async () => {

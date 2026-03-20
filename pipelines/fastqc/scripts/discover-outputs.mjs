@@ -74,6 +74,35 @@ async function main() {
     errors.push("FastQC summary file was not produced");
   }
 
+  // Emit metadata-only entries to write fastqcReport1/fastqcReport2 to Read model
+  const htmlBySample = new Map();
+  for (const f of files) {
+    if (f.outputId !== "sample_qc_reports" || !f.sampleId) continue;
+    const readEnd = f.metadata?.readEnd;
+    if (!readEnd) continue;
+    if (!htmlBySample.has(f.sampleId)) {
+      htmlBySample.set(f.sampleId, { id: f.sampleId, name: f.sampleName });
+    }
+    const entry = htmlBySample.get(f.sampleId);
+    if (readEnd === "R1") entry.report1 = f.path;
+    if (readEnd === "R2") entry.report2 = f.path;
+  }
+  for (const [sampleId, entry] of htmlBySample) {
+    files.push({
+      type: "artifact",
+      name: `${entry.name}_fastqc_reads`,
+      path: entry.report1 || entry.report2,
+      sampleId,
+      sampleName: entry.name,
+      fromStep: "fastqc",
+      outputId: "sample_fastqc_reads",
+      metadata: {
+        fastqcReport1: entry.report1 || null,
+        fastqcReport2: entry.report2 || null,
+      },
+    });
+  }
+
   const reportsFound = files.filter((f) => f.outputId === "sample_qc_reports").length;
 
   const summary = {
