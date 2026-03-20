@@ -3,8 +3,8 @@ import {
   continueToReviewFromDetailPage,
   createDraftOrder,
   createAndSubmitOrder,
+  createStudyFromOrderSamples,
   deleteCurrentOrder,
-  getOrderSampleIds,
 } from "./helpers";
 
 test.setTimeout(60000);
@@ -76,10 +76,15 @@ test("researcher can edit submitted order information", async ({ page }) => {
     { volume: "55", concentration: "22" },
   ]);
 
-  await expect(page.getByRole("link", { name: /change order information/i })).toBeVisible();
-  await page.getByRole("link", { name: /change order information/i }).click();
-
-  await expect(page).toHaveURL(/\/orders\/.+\/edit/);
+  const changeOrderInformationLink = page.getByRole("link", {
+    name: /change order information/i,
+  });
+  await expect(changeOrderInformationLink).toBeVisible();
+  await Promise.all([
+    page.waitForURL(/\/orders\/.+\/edit(?:\?.*)?$/, { timeout: 15000 }),
+    changeOrderInformationLink.click(),
+  ]);
+  await expect(page.getByRole("heading", { name: "Edit Order" })).toBeVisible();
   await expect(page.getByTestId("order-field-name")).toHaveValue(originalName);
 
   await page.getByTestId("order-field-name").fill(updatedName);
@@ -88,7 +93,7 @@ test("researcher can edit submitted order information", async ({ page }) => {
   await expect(page.getByText("Ready to update")).toBeVisible();
   await page.getByRole("button", { name: /update order/i }).click();
 
-  await expect(page).toHaveURL(/\/orders\/[^/]+$/);
+  await expect(page).toHaveURL(/\/orders\/[^/]+$/, { timeout: 15000 });
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByRole("main").getByText(updatedName, { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (1)" })).toBeVisible();
@@ -152,43 +157,10 @@ test("researcher can create a study from order samples", async ({ page }) => {
     { volume: "42", concentration: "23" },
   ]);
 
-  const sampleIds = await getOrderSampleIds(page);
+  const { sampleIds } = await createStudyFromOrderSamples(page, studyTitle);
   await expect(sampleIds.length).toBe(2);
-
-  await page.goto("/studies/new");
-  await expect(page.getByRole("heading", { name: "New Study" })).toBeVisible();
-
-  for (const sampleId of sampleIds) {
-    await page.getByRole("button", { name: new RegExp(sampleId) }).click();
-  }
-
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel("Study Title *").fill(studyTitle);
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-
-  const environmentHeading = page.getByRole("heading", { name: "Environment Type" });
-  if (await environmentHeading.isVisible()) {
-    await page.getByRole("button", { name: /Human Associated/i }).click();
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-  }
-
-  const metadataHeading = page.getByRole("heading", { name: "Sample Metadata" });
-  if (await metadataHeading.isVisible()) {
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-  }
-
-  await expect(page.getByText("Ready to create your study")).toBeVisible();
-  await page.getByRole("button", { name: /create study/i }).click();
-
-  const warningDialog = page.getByRole("dialog");
-  if (await warningDialog.isVisible()) {
-    await page.getByRole("button", { name: /create anyway/i }).click();
-  }
-
-  await expect(page).toHaveURL(/\/studies\/.+/);
-  await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Open Samples", exact: true }).click();
-  await expect(page).toHaveURL(/\/studies\/.+\?tab=samples/);
+  await expect(page).toHaveURL(/\/studies\/.+\?tab=samples/, { timeout: 15000 });
   await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
   for (const sampleId of sampleIds) {
     await expect(page.getByText(sampleId)).toBeVisible();

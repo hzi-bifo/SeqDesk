@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  ClipboardPen,
+  Building2,
   FileText,
   FlaskConical,
   HardDrive,
   Send,
-  Shield,
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -84,7 +83,7 @@ export function SidebarEntityNav({
       key: "facility",
       label: "Facility Fields",
       href: entityId ? `/studies/${entityId}/facility` : undefined,
-      icon: Shield,
+      icon: Building2,
       show: showAdminControls && studyFacilitySections.length > 0,
     },
     { key: "samples", label: "Samples", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: FlaskConical, show: true },
@@ -119,10 +118,11 @@ export function SidebarEntityNav({
       key: "facility",
       label: "Facility Fields",
       href: entityId ? `/orders/${entityId}?section=facility` : undefined,
-      icon: ClipboardPen,
+      icon: Building2,
       show: showAdminControls && !!facilityStep,
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls && !isDemoUser },
+    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && !isDemoUser && orderPipelines.length > 0 },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;
@@ -166,7 +166,12 @@ export function SidebarEntityNav({
       );
     }
     if (item.key === "sequencing") {
-      return currentOrderSubview === "sequencing" || currentOrderSubview === "files" || (!currentOrderSubview && currentOrderSection === "reads");
+      const hasPipelineParam = !!searchParams.get("pipeline");
+      const hasAnalysisView = searchParams.get("view") === "analysis";
+      return (currentOrderSubview === "sequencing" && !hasPipelineParam && !hasAnalysisView) || currentOrderSubview === "files" || (!currentOrderSubview && currentOrderSection === "reads");
+    }
+    if (item.key === "analysis") {
+      return currentOrderSubview === "sequencing" && (!!searchParams.get("pipeline") || searchParams.get("view") === "analysis");
     }
     return false;
   };
@@ -178,10 +183,7 @@ export function SidebarEntityNav({
         .map((item) => {
           const isActive = getIsActive(item);
           const isDisabled = !hasEntity;
-          const topLevelIndicatorStatus =
-            activeTab === "orders" && item.key === "facility"
-              ? facilityStep?.status
-              : undefined;
+
           const shouldShowOrderSubitems =
             !collapsed &&
             activeTab === "orders" &&
@@ -206,10 +208,15 @@ export function SidebarEntityNav({
             item.key === "facility" &&
             !!entityId &&
             facilitySections.length > 0;
-          const shouldShowSequencingSubitems =
+          const shouldShowSequencingDataSubitems =
             !collapsed &&
             activeTab === "orders" &&
             item.key === "sequencing" &&
+            !!entityId;
+          const shouldShowSequencingSubitems =
+            !collapsed &&
+            activeTab === "orders" &&
+            item.key === "analysis" &&
             !!entityId &&
             orderPipelines.length > 0;
 
@@ -255,21 +262,6 @@ export function SidebarEntityNav({
             >
               <item.icon className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
               {!collapsed && <span className="flex-1">{item.label}</span>}
-              {!collapsed && topLevelIndicatorStatus && (
-                <>
-                  <span
-                    className={cn(
-                      "h-2 w-2 rounded-full shadow-sm",
-                      getOrderProgressIndicatorClassName(topLevelIndicatorStatus),
-                      isActive && "ring-2 ring-background"
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span className="sr-only">
-                    {getOrderProgressIndicatorLabel(topLevelIndicatorStatus)}
-                  </span>
-                </>
-              )}
             </Link>
           );
 
@@ -287,6 +279,7 @@ export function SidebarEntityNav({
           if (
             !shouldShowOrderSubitems &&
             !shouldShowFacilitySubitems &&
+            !shouldShowSequencingDataSubitems &&
             !shouldShowSequencingSubitems &&
             !shouldShowStudyOverviewSubitems &&
             !shouldShowStudyFacilitySubitems
@@ -441,6 +434,37 @@ export function SidebarEntityNav({
                   })}
                 </div>
               )}
+              {shouldShowSequencingDataSubitems && (() => {
+                const seqSubItems = [
+                  { id: "overview", label: "Overview", href: `/orders/${entityId}/sequencing` },
+                  { id: "discover", label: "Associate", href: `/orders/${entityId}/sequencing?view=discover` },
+                ];
+                return (
+                  <div className="ml-5 border-l border-border/70 pl-2">
+                    {seqSubItems.map((sub) => {
+                      const isSubActive =
+                        sub.id === "discover"
+                          ? currentOrderSubview === "sequencing" && searchParams.get("view") === "discover"
+                          : currentOrderSubview === "sequencing" && !searchParams.get("view") && !searchParams.get("pipeline");
+                      return (
+                        <Link
+                          key={sub.id}
+                          href={sub.href}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                            isSubActive
+                              ? "bg-secondary text-foreground font-medium"
+                              : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                          )}
+                        >
+                          <span className="h-2 w-2 rounded-full shadow-sm bg-slate-300" aria-hidden="true" />
+                          <span className="truncate">{sub.label}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {shouldShowSequencingSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {orderPipelines.map((pipeline) => {

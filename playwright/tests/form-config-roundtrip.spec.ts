@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import {
+  createDraftOrder,
   fillSampleFieldIfPresent,
   fillRequiredSampleRow,
   goToNewOrderSamplesStep,
@@ -81,6 +82,12 @@ async function addField(
 
   await page.getByTestId("form-builder-save-field-button").click();
   await expect(dialog).not.toBeVisible();
+
+  // Admin-only fields appear in the Facility Fields tab, not the current tab
+  if (options.adminOnly) {
+    await page.getByRole("tab", { name: "Facility Fields" }).click();
+  }
+
   await expect(page.getByText(options.fieldLabel, { exact: true }).first()).toBeVisible();
 }
 
@@ -235,6 +242,52 @@ test("required per-sample fields added by admins appear in the sample table and 
       await researcherPage.getByTestId("next-step-button").click();
       await expect(researcherPage.getByText("Ready to submit")).toBeVisible();
     });
+  } finally {
+    await restoreFormConfig(page, originalConfig);
+  }
+});
+
+test("facility fields added in admin form-builder appear on existing order facility edit page", async ({
+  page,
+}) => {
+  await page.goto("/admin/form-builder");
+  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
+
+  const originalConfig = await readFormConfig(page);
+  const uniqueSuffix = Date.now();
+  const fieldLabel = `Playwright Facility Order Field ${uniqueSuffix}`;
+  const fieldName = `pw_facility_order_${uniqueSuffix}`;
+
+  try {
+    // Go to Facility Fields tab and add an internal order field
+    await page.getByRole("tab", { name: "Facility Fields" }).click();
+    await expect(page.getByRole("heading", { name: "Order-Level Facility Fields" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Add Internal Order Field" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Add New Field");
+
+    await page.getByTestId("form-builder-field-label").fill(fieldLabel);
+    await page.getByTestId("form-builder-field-name").fill(fieldName);
+    await page.getByTestId("form-builder-save-field-button").click();
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByText(fieldLabel, { exact: true }).first()).toBeVisible();
+
+    await page.getByTestId("form-builder-save-config-button").click();
+    await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+
+    // Create a draft order via API
+    const { orderId } = await createDraftOrder(page, `Facility Test ${uniqueSuffix}`, 1);
+
+    // Navigate to the order's facility section and click Edit Order Fields
+    await page.goto(`/orders/${orderId}?section=facility`);
+    await page.getByRole("link", { name: "Edit Order Fields" }).click();
+
+    // The facility field should appear in the edit form
+    await expect(page.getByTestId(`order-field-${fieldName}`)).toBeVisible();
+
+    // Fill the field to verify it is interactive
+    await page.getByTestId(`order-field-${fieldName}`).fill("facility-test-value");
   } finally {
     await restoreFormConfig(page, originalConfig);
   }

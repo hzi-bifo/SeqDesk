@@ -65,6 +65,24 @@ type OrderDetailResponse = {
   };
 };
 
+type OrderUpdateBody = {
+  name?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  billingAddress?: string | null;
+  platform?: string | null;
+  instrumentModel?: string | null;
+  librarySelection?: string | null;
+  libraryStrategy?: string | null;
+  librarySource?: string | null;
+  numberOfSamples?: string | number | null;
+  customFields?: unknown;
+  status?: string;
+  statusNote?: string | null;
+  markSamplesSent?: boolean;
+};
+
 async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailResponse | null> {
   const order = await db.order.findUnique({
     where: { id },
@@ -220,7 +238,7 @@ export async function PUT(
     }
 
     const { id } = await params;
-    const body = await request.json();
+    const body = (await request.json().catch(() => ({}))) as OrderUpdateBody;
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
     // Check if order exists and user has permission
@@ -280,7 +298,7 @@ export async function PUT(
     // Build update data
     const updateData: Record<string, unknown> = {};
 
-    if (name !== undefined) updateData.name = name.trim();
+    if (name !== undefined) updateData.name = typeof name === "string" ? name.trim() : null;
     if (contactName !== undefined) updateData.contactName = contactName?.trim() || null;
     if (contactEmail !== undefined) updateData.contactEmail = contactEmail?.trim() || null;
     if (contactPhone !== undefined) updateData.contactPhone = contactPhone?.trim() || null;
@@ -290,7 +308,12 @@ export async function PUT(
     if (librarySelection !== undefined) updateData.librarySelection = librarySelection || null;
     if (libraryStrategy !== undefined) updateData.libraryStrategy = libraryStrategy || null;
     if (librarySource !== undefined) updateData.librarySource = librarySource || null;
-    if (numberOfSamples !== undefined) updateData.numberOfSamples = numberOfSamples ? parseInt(numberOfSamples, 10) : null;
+    if (numberOfSamples !== undefined) {
+      updateData.numberOfSamples =
+        numberOfSamples === null || numberOfSamples === ""
+          ? null
+          : parseInt(String(numberOfSamples), 10);
+    }
     if (customFields !== undefined) updateData.customFields = customFields ? JSON.stringify(customFields) : null;
 
     // Status change handling

@@ -4,6 +4,7 @@
   "description": "Compute MD5 checksums for linked FASTQ files from an order",
   "category": "qc",
   "version": "0.1.0",
+  "sortOrder": 2,
   "requires": {
     "reads": true,
     "assemblies": false,

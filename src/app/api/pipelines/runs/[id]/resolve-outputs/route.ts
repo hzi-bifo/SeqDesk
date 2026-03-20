@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { getAdapter } from '@/lib/pipelines/adapters';
+import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import '@/lib/pipelines/adapters/mag';
+import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
 import path from 'path';
 import { isDemoSession } from '@/lib/demo/server';
@@ -77,7 +78,14 @@ export async function POST(
       );
     }
 
-    const adapter = getAdapter(run.pipelineId);
+    let adapter = getAdapter(run.pipelineId);
+    if (!adapter) {
+      const genericAdapter = createGenericAdapter(run.pipelineId);
+      if (genericAdapter) {
+        registerAdapter(genericAdapter);
+        adapter = genericAdapter;
+      }
+    }
     if (!adapter) {
       return NextResponse.json(
         { error: `No adapter found for pipeline: ${run.pipelineId}` },
