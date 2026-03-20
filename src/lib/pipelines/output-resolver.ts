@@ -34,8 +34,22 @@ export interface ResolveResult {
 type DestinationHandler = (
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput
+  output: DefinitionOutput,
+  pipelineId: string
 ) => Promise<{ success: boolean; error?: string }>;
+
+function mergePipelineSource(
+  existing: string | null | undefined,
+  pipelineId: string,
+  runId: string
+): string {
+  let sources: Record<string, string> = {};
+  if (existing) {
+    try { sources = JSON.parse(existing); } catch { /* ignore */ }
+  }
+  sources[pipelineId] = runId;
+  return JSON.stringify(sources);
+}
 
 function getStringMetadata(
   metadata: Record<string, unknown> | undefined,
@@ -117,6 +131,7 @@ async function replaceSampleReads(
     fastqcReport1: string | null | undefined;
     fastqcReport2: string | null | undefined;
     pipelineRunId?: string | null;
+    pipelineSources?: string | null;
   }
 ): Promise<void> {
   const existingReads = await db.read.findMany({
@@ -153,6 +168,7 @@ async function replaceSampleReads(
       fastqcReport1: readData.fastqcReport1 ?? null,
       fastqcReport2: readData.fastqcReport2 ?? null,
       pipelineRunId: readData.pipelineRunId ?? null,
+      pipelineSources: readData.pipelineSources ?? null,
     },
   });
 }
@@ -163,7 +179,8 @@ async function replaceSampleReads(
 async function createAssembly(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput
+  output: DefinitionOutput,
+  _pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   void output;
 
@@ -206,7 +223,8 @@ async function createAssembly(
 async function createBin(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput
+  output: DefinitionOutput,
+  _pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   void output;
 
@@ -251,7 +269,8 @@ async function createBin(
 async function createArtifact(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput
+  output: DefinitionOutput,
+  _pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   try {
     // Check if artifact already exists for this run + path
@@ -288,7 +307,8 @@ async function createArtifact(
 async function updateSampleRead(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput
+  output: DefinitionOutput,
+  pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   void output;
 
@@ -315,11 +335,20 @@ async function updateSampleRead(
     }
 
     // Check if sample already has read files linked
-    const existingRead = await db.read.findFirst({
-      where: { sampleId: file.sampleId },
-      select: { id: true, file1: true },
-      orderBy: { id: 'asc' },
-    });
+    let existingRead: { id: string; file1: string | null; pipelineSources?: string | null } | null = null;
+    try {
+      existingRead = await db.read.findFirst({
+        where: { sampleId: file.sampleId },
+        select: { id: true, file1: true, pipelineSources: true },
+        orderBy: { id: 'asc' },
+      });
+    } catch {
+      existingRead = await db.read.findFirst({
+        where: { sampleId: file.sampleId },
+        select: { id: true, file1: true },
+        orderBy: { id: 'asc' },
+      });
+    }
     const sampleAlreadyHasReads = Boolean(existingRead?.file1);
 
     // When replaceExisting is off and the sample already has reads, keep the
@@ -344,6 +373,10 @@ async function updateSampleRead(
         );
       }
 
+      const newSources = mergePipelineSource(
+        existingRead?.pipelineSources ?? null, pipelineId, runId
+      );
+
       if (replaceExisting) {
         await replaceSampleReads(file.sampleId, resolvedDataBasePath.dataBasePath, {
           file1: file1!,
@@ -357,6 +390,7 @@ async function updateSampleRead(
           fastqcReport1: getStringMetadata(metadata, 'fastqcReport1'),
           fastqcReport2: getStringMetadata(metadata, 'fastqcReport2'),
           pipelineRunId: runId,
+          pipelineSources: newSources,
         });
         return { success: true };
       }
@@ -377,6 +411,7 @@ async function updateSampleRead(
             fastqcReport1: getStringMetadata(metadata, 'fastqcReport1') ?? null,
             fastqcReport2: getStringMetadata(metadata, 'fastqcReport2') ?? null,
             pipelineRunId: runId,
+            pipelineSources: newSources,
           },
         });
         return { success: true };
@@ -389,6 +424,7 @@ async function updateSampleRead(
           file1: file1!,
           file2: file2 ?? null,
           pipelineRunId: runId,
+          pipelineSources: newSources,
         },
       });
       return { success: true };
@@ -399,11 +435,21 @@ async function updateSampleRead(
   }
 
   // Metadata-only update (no file writeback) — e.g., checksums, QC reports
-  const read = await db.read.findFirst({
-    where: { sampleId: file.sampleId },
-    select: { id: true },
-    orderBy: { id: 'asc' },
-  });
+  let read: { id: string; pipelineSources?: string | null } | null = null;
+  try {
+    read = await db.read.findFirst({
+      where: { sampleId: file.sampleId },
+      select: { id: true, pipelineSources: true },
+      orderBy: { id: 'asc' },
+    });
+  } catch {
+    // Fallback: pipelineSources column may not exist yet
+    read = await db.read.findFirst({
+      where: { sampleId: file.sampleId },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+  }
 
   if (!read) {
     return {
@@ -432,6 +478,13 @@ async function updateSampleRead(
     return { success: true, skipped: true };
   }
 
+  // Track which pipeline run produced this metadata
+  try {
+    data.pipelineSources = mergePipelineSource(read.pipelineSources ?? null, pipelineId, runId);
+  } catch {
+    // pipelineSources may not be available yet — continue without it
+  }
+
   try {
     await db.read.update({
       where: { id: read.id },
@@ -439,6 +492,21 @@ async function updateSampleRead(
     });
     return { success: true };
   } catch (error) {
+    // If pipelineSources column doesn't exist, retry without it
+    if (data.pipelineSources !== undefined) {
+      try {
+        const { pipelineSources: _ps, ...dataWithoutSources } = data;
+        if (Object.keys(dataWithoutSources).length > 0) {
+          await db.read.update({
+            where: { id: read.id },
+            data: dataWithoutSources,
+          });
+          return { success: true };
+        }
+      } catch {
+        // Fall through to error
+      }
+    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: `Failed to update sample read metadata: ${msg}` };
   }
@@ -569,7 +637,7 @@ export async function resolveOutputs(
         id: file.type,
         name: file.name,
         fromStep: file.fromStep || 'unknown',
-      });
+      }, pipelineId);
     if (artifactResult.success) {
       result.artifactsCreated++;
     }
@@ -589,7 +657,7 @@ export async function resolveOutputs(
     }
 
     // Execute the handler
-    const handlerResult = await handler(file, runId, output);
+    const handlerResult = await handler(file, runId, output, pipelineId);
 
     if (handlerResult.success) {
       switch (destination) {

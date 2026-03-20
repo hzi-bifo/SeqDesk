@@ -53,7 +53,13 @@ function formatPreviewValue(
   let text = typeof value === "string" ? value.trim() : String(value);
   const format = descriptor.format ?? "text";
 
-  if (format === "hash_prefix") {
+  if (format === "filename") {
+    // Extract just the filename from a path
+    const lastSlash = text.lastIndexOf("/");
+    if (lastSlash >= 0) {
+      text = text.slice(lastSlash + 1);
+    }
+  } else if (format === "hash_prefix") {
     const truncate = descriptor.truncate ?? 8;
     if (text.length > truncate) {
       text = `${text.slice(0, truncate)}...`;

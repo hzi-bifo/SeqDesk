@@ -41,10 +41,19 @@ process CALCULATE_CHECKSUMS {
     """
     mkdir -p checksums summary
 
+    if [ ! -f "${fastq_1}" ]; then
+      echo "ERROR: FASTQ file not found: ${fastq_1}" >&2
+      exit 1
+    fi
+
     MD5_1=\$(md5sum "${fastq_1}" | awk '{print \$1}')
     MD5_2=""
 
     if [ -n "${fastq2Value}" ]; then
+      if [ ! -f "${fastq_2}" ]; then
+        echo "ERROR: FASTQ file not found: ${fastq_2}" >&2
+        exit 1
+      fi
       MD5_2=\$(md5sum "${fastq_2}" | awk '{print \$1}')
     fi
 

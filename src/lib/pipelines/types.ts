@@ -60,7 +60,7 @@ export interface PipelineConfigSchema {
   required?: string[];
 }
 
-export type PipelineSampleResultFormat = 'text' | 'hash_prefix';
+export type PipelineSampleResultFormat = 'text' | 'hash_prefix' | 'filename';
 
 export interface PipelineSampleResultValue {
   label?: string;

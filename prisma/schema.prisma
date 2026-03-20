@@ -169,6 +169,7 @@ model Read {
   sampleId                  String
   sequencingRunId           String?
   pipelineRunId             String?
+  pipelineSources           String?
   sequencingRun             SequencingRun? @relation(fields: [sequencingRunId], references: [id])
   pipelineRun               PipelineRun?   @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
   sample                    Sample         @relation(fields: [sampleId], references: [id], onDelete: Cascade)

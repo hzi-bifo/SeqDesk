@@ -32,6 +32,14 @@ async function main() {
         continue;
       }
 
+      const ck1 = (parsed.checksum1 || "").trim();
+      const ck2 = (parsed.checksum2 || "").trim();
+
+      if (!ck1) {
+        errors.push(`Sample ${sampleCode}: checksum1 is empty (FASTQ file may not exist)`);
+        continue;
+      }
+
       files.push({
         type: "artifact",
         name: entry,
@@ -41,8 +49,8 @@ async function main() {
         fromStep: "checksum",
         outputId: "sample_checksums",
         metadata: {
-          checksum1: parsed.checksum1 || null,
-          checksum2: parsed.checksum2 || null,
+          checksum1: ck1,
+          checksum2: ck2 || null,
         },
       });
     }

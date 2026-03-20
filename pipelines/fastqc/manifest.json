@@ -57,6 +57,17 @@
       }
     },
     {
+      "id": "sample_fastqc_reads",
+      "scope": "sample",
+      "destination": "sample_reads",
+      "type": "artifact",
+      "fromStep": "fastqc",
+      "discovery": {
+        "pattern": "fastqc_reports/*_R1_fastqc.html",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
       "id": "summary",
       "scope": "run",
       "destination": "run_artifact",
@@ -73,5 +84,25 @@
       "PipelineRun",
       "PipelineArtifact"
     ]
+  },
+  "ui": {
+    "sampleResult": {
+      "columnLabel": "QC Reports",
+      "emptyText": "Not generated",
+      "values": [
+        {
+          "label": "R1",
+          "path": "read.fastqcReport1",
+          "whenPathExists": "read.file1",
+          "format": "filename"
+        },
+        {
+          "label": "R2",
+          "path": "read.fastqcReport2",
+          "whenPathExists": "read.file2",
+          "format": "filename"
+        }
+      ]
+    }
   }
 }

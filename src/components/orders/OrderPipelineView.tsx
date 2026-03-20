@@ -780,9 +780,16 @@ export function OrderPipelineView({
                   </td>
                   <td className="px-4 py-3">
                     {sample.read?.file1 ? (
-                      <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50">
-                        {sample.read.file2 ? "Paired-end" : "Single-end"}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50">
+                          {sample.read.file2 ? "Paired-end" : "Single-end"}
+                        </Badge>
+                        {sample.read.filesMissing && (
+                          <Badge variant="outline" className="text-orange-700 border-orange-200 bg-orange-50">
+                            Stale
+                          </Badge>
+                        )}
+                      </div>
                     ) : (
                       <Badge variant="outline" className="text-amber-700 border-amber-200 bg-amber-50">
                         No reads
@@ -804,9 +811,14 @@ export function OrderPipelineView({
                                     {item.label}
                                   </span>
                                 ) : null}
-                                <span className="font-mono">{item.value}</span>
+                                <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
                               </div>
                             ))}
+                            {sample.read?.filesMissing && (
+                              <div className="text-xs text-orange-600">
+                                Source files deleted
+                              </div>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -818,36 +830,59 @@ export function OrderPipelineView({
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">
-                          {sampleResultConfig.emptyText ?? "No result yet"}
-                        </span>
+                        <div className="space-y-0.5">
+                          <span className="text-xs text-muted-foreground">
+                            {sampleResultConfig.emptyText ?? "No result yet"}
+                          </span>
+                          {sample.read?.filesMissing && (
+                            <div className="text-xs text-orange-600">
+                              Source files deleted
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                   ) : null}
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className={cn(
-                        "text-xs transition-colors hover:text-foreground hover:underline",
-                        sample.read?.pipelineRunNumber
-                          ? "font-mono text-muted-foreground"
-                          : "text-muted-foreground"
-                      )}
-                      onClick={() =>
-                        setChangeSourceSample({
-                          id: sample.id,
-                          sampleId: sample.sampleId,
-                          currentRunId: sample.read?.pipelineRunId ?? null,
-                        })
-                      }
-                    >
-                      {sample.read?.pipelineRunNumber
-                        ? sample.read.pipelineRunNumber
-                        : sample.read
-                          ? "Manual"
-                          : "Not linked"}
-                    </button>
-                  </td>
+                  {(() => {
+                    // Per-pipeline source: check pipelineSources map first, fall back to pipelineRunId
+                    const sourceRunId =
+                      sample.read?.pipelineSources?.[pipelineId] ??
+                      sample.read?.pipelineRunId ??
+                      null;
+                    const sourceRun = sourceRunId
+                      ? allRuns.find((r) => r.id === sourceRunId)
+                      : null;
+                    const sourceLabel = sourceRun?.runNumber
+                      ?? (sourceRunId ? sample.read?.pipelineRunNumber : null);
+
+                    return (
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className={cn(
+                            "text-xs transition-colors hover:text-foreground hover:underline",
+                            sourceLabel
+                              ? "font-mono text-muted-foreground"
+                              : "text-muted-foreground"
+                          )}
+                          onClick={() =>
+                            setChangeSourceSample({
+                              id: sample.id,
+                              sampleId: sample.sampleId,
+                              currentRunId: sourceRunId,
+                            })
+                          }
+                        >
+                          {sourceLabel
+                            ? sourceLabel
+                            : sample.read
+                              ? "Manual"
+                              : "Not linked"}
+                        </button>
+                      </td>
+                    );
+                  })()}
+
                   <td className="px-4 py-3 text-right">
                     {initialCheckPending ? (
                       <Button size="sm" variant="outline" disabled>
@@ -1318,7 +1353,7 @@ export function OrderPipelineView({
               Change Source
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Select which pipeline run provides reads for{" "}
+              Select which pipeline run provides results for{" "}
               <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
                 {changeSourceSample.sampleId}
               </code>
