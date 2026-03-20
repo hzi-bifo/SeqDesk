@@ -256,7 +256,7 @@ describe("generic-executor", () => {
     expect(script).toContain("--verbose");
     expect(script).not.toContain("--runType");
     expect(script).not.toContain("--blank");
-    expect(script).not.toContain("--falseValue");
+    expect(script).toContain("--falseValue false");
     expect(script).toContain("--full-mode");
     expect(script).toContain("--limit 10");
 

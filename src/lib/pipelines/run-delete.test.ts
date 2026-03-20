@@ -4,7 +4,22 @@ const mocks = vi.hoisted(() => ({
   db: {
     read: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    pipelineRun: {
+      count: vi.fn(),
+      findMany: vi.fn(),
+      delete: vi.fn(),
+    },
+    pipelineRunStep: {
+      deleteMany: vi.fn(),
+    },
+    pipelineArtifact: {
+      deleteMany: vi.fn(),
     },
   },
   dataBasePath: {
@@ -63,7 +78,16 @@ describe("run-delete", () => {
     vi.clearAllMocks();
     mocks.fs.rm.mockResolvedValue(undefined);
     mocks.db.read.findFirst.mockResolvedValue(null);
+    mocks.db.read.findMany.mockResolvedValue([]);
     mocks.db.read.delete.mockResolvedValue({});
+    mocks.db.read.deleteMany.mockResolvedValue({ count: 0 });
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.read.updateMany.mockResolvedValue({ count: 0 });
+    mocks.db.pipelineRun.count.mockResolvedValue(0);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.delete.mockResolvedValue({});
+    mocks.db.pipelineRunStep.deleteMany.mockResolvedValue({});
+    mocks.db.pipelineArtifact.deleteMany.mockResolvedValue({});
     mocks.dataBasePath.getResolvedDataBasePath.mockResolvedValue({
       dataBasePath: "/data/sequencing",
     });
@@ -187,5 +211,228 @@ describe("run-delete", () => {
 
     expect(mocks.fs.rm).not.toHaveBeenCalled();
     expect(mocks.db.read.delete).not.toHaveBeenCalled();
+  });
+
+  it("cascade-deletes dependent pipeline runs when reads are deleted", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+              file2: "simulated/order_order-1/S1_R2.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockImplementation((id: string) => {
+      if (id === "simulate-reads") {
+        return {
+          manifest: { outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }] },
+        };
+      }
+      if (id === "fastq-checksum") {
+        return {
+          manifest: { outputs: [{ id: "checksums", destination: "sample_reads" }] },
+        };
+      }
+      return null;
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "simulated/order_order-1/S1_R1.fastq.gz",
+      file2: "simulated/order_order-1/S1_R2.fastq.gz",
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      { id: "checksum-run-1", pipelineId: "fastq-checksum", runFolder: "/tmp/checksum-run-1" },
+    ]);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    // The read should be deleted
+    expect(mocks.db.read.delete).toHaveBeenCalledWith({ where: { id: "read-1" } });
+    // Dependent FASTQ Checksum run should be cascade-deleted
+    expect(mocks.db.pipelineRunStep.deleteMany).toHaveBeenCalledWith({
+      where: { pipelineRunId: "checksum-run-1" },
+    });
+    expect(mocks.db.pipelineArtifact.deleteMany).toHaveBeenCalledWith({
+      where: { pipelineRunId: "checksum-run-1" },
+    });
+    expect(mocks.db.pipelineRun.delete).toHaveBeenCalledWith({
+      where: { id: "checksum-run-1" },
+    });
+  });
+
+  it("falls back to bulk delete when discovery succeeds but reads don't match", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+              file2: "simulated/order_order-1/S1_R2.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    // Read has different file paths — discovery-based cleanup won't match
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "manual/S1_R1.fastq.gz",
+      file2: "manual/S1_R2.fastq.gz",
+    });
+    mocks.db.read.findMany.mockResolvedValue([
+      { id: "read-1", file1: "manual/S1_R1.fastq.gz", file2: "manual/S1_R2.fastq.gz" },
+    ]);
+    mocks.db.read.deleteMany.mockResolvedValue({ count: 1 });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    // Discovery-based cleanup should NOT have deleted the read (paths don't match)
+    expect(mocks.db.read.delete).not.toHaveBeenCalled();
+    // Fallback should have kicked in since this is the last run
+    expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
+      where: { sampleId: { in: ["sample-1"] } },
+    });
+    // Data files should be cleaned up via fallback
+    expect(mocks.fs.rm).toHaveBeenCalledWith(
+      "/data/sequencing/manual/S1_R1.fastq.gz",
+      { force: true }
+    );
+  });
+
+  it("falls back to bulk delete when discovery throws an error", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockRejectedValue(new Error("manifests dir missing")),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findMany.mockResolvedValue([
+      { id: "read-1", file1: "simulated/S1_R1.fastq.gz", file2: null },
+    ]);
+    mocks.db.read.deleteMany.mockResolvedValue({ count: 1 });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    // Fallback should delete reads
+    expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
+      where: { sampleId: { in: ["sample-1"] } },
+    });
+  });
+
+  it("clears checksum fields when deleting a FASTQ Checksum run (discovery path)", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_checksums",
+            sampleId: "sample-1",
+            metadata: {
+              checksum1: "abc123",
+              checksum2: "def456",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1" });
+    mocks.db.read.update.mockResolvedValue({});
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "fastq-checksum",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    // Should null out checksum fields, NOT delete the Read
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: { checksum1: null, checksum2: null },
+    });
+    expect(mocks.db.read.delete).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("clears checksum fields via fallback when deleting last FASTQ Checksum run", async () => {
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(null);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(null);
+    mocks.db.read.updateMany.mockResolvedValue({ count: 2 });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "fastq-checksum",
+      runFolder: null,
+      target: { type: "order", orderId: "order-1" },
+      samples: [
+        { id: "sample-1", sampleId: "S1" },
+        { id: "sample-2", sampleId: "S2" },
+      ],
+    });
+
+    // Should null out checksum fields on all samples, NOT delete reads
+    expect(mocks.db.read.updateMany).toHaveBeenCalledWith({
+      where: { sampleId: { in: ["sample-1", "sample-2"] } },
+      data: { checksum1: null, checksum2: null },
+    });
+    expect(mocks.db.read.delete).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
   });
 });

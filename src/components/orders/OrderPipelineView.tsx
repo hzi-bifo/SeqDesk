@@ -20,11 +20,14 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { getSampleResultPreview } from "@/lib/pipelines/sample-result";
 import type { PipelineSampleResult } from "@/lib/pipelines/types";
 import {
   AlertCircle,
   Clock,
+  Info,
   Loader2,
   MoreHorizontal,
   Play,
@@ -95,6 +98,7 @@ type PipelineRun = {
   progress: number | null;
   inputSampleIds: string | null;
   errorTail?: string | null;
+  config?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -208,6 +212,17 @@ export function OrderPipelineView({
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [detailRun, setDetailRun] = useState<PipelineRun | null>(null);
+  const [changeSourceSample, setChangeSourceSample] = useState<{
+    id: string;
+    sampleId: string;
+    currentRunId?: string | null;
+  } | null>(null);
+  const [changingSource, setChangingSource] = useState(false);
   const {
     systemReady,
     checkingSystem,
@@ -378,14 +393,69 @@ export function OrderPipelineView({
         }
         await runsResponse.mutate();
         setDeleteTarget(null);
+        onSampleDataChanged?.();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to delete run");
       } finally {
         setDeletingRun(false);
       }
     },
-    [runsResponse]
+    [runsResponse, onSampleDataChanged]
   );
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedRunIds.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      for (const runId of selectedRunIds) {
+        const res = await fetch(`/api/pipelines/runs/${runId}/delete`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(getApiErrorMessage(payload, "Failed to delete run"));
+        }
+      }
+      await runsResponse.mutate();
+      setSelectedRunIds(new Set());
+      setShowBulkDeleteConfirm(false);
+      onSampleDataChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete runs");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [selectedRunIds, runsResponse, onSampleDataChanged]);
+
+  // Deletable runs are those not currently running
+  const deletableFilteredRuns = useMemo(
+    () => filteredRuns.filter((r) => r.status !== "running"),
+    [filteredRuns]
+  );
+
+  const allFilteredSelected =
+    deletableFilteredRuns.length > 0 &&
+    deletableFilteredRuns.every((r) => selectedRunIds.has(r.id));
+
+  const toggleSelectAll = useCallback(() => {
+    if (allFilteredSelected) {
+      setSelectedRunIds(new Set());
+    } else {
+      setSelectedRunIds(new Set(deletableFilteredRuns.map((r) => r.id)));
+    }
+  }, [allFilteredSelected, deletableFilteredRuns]);
+
+  const toggleSelectRun = useCallback((runId: string) => {
+    setSelectedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!hasActiveRuns) return;
@@ -417,26 +487,6 @@ export function OrderPipelineView({
     setRunningAll(false);
   }, [readySamples, runPipeline]);
 
-  const handleResolveOutputs = useCallback(
-    async (runId: string) => {
-      setError("");
-      try {
-        const res = await fetch(`/api/pipelines/runs/${runId}/resolve-outputs`, {
-          method: "POST",
-        });
-        const payload = await res.json().catch(() => null);
-        if (!res.ok) {
-          throw new Error(
-            getApiErrorMessage(payload, "Failed to re-resolve outputs")
-          );
-        }
-        onSampleDataChanged?.();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to re-resolve outputs");
-      }
-    },
-    [onSampleDataChanged]
-  );
 
   const handleClearSampleResult = useCallback(
     async (sampleId: string) => {
@@ -469,6 +519,52 @@ export function OrderPipelineView({
     [orderId, pipeline?.sampleResult, onSampleDataChanged]
   );
 
+  const completedRunsForSample = useMemo(() => {
+    if (!changeSourceSample) return [];
+    return allRuns.filter((run) => {
+      if (run.status !== "completed") return false;
+      // null means "all samples" — the run covered the entire order
+      if (!run.inputSampleIds) return true;
+      try {
+        const ids = JSON.parse(run.inputSampleIds) as string[];
+        return Array.isArray(ids) && ids.includes(changeSourceSample.id);
+      } catch {
+        return false;
+      }
+    });
+  }, [allRuns, changeSourceSample]);
+
+  const handleChangeSource = useCallback(
+    async (runId: string) => {
+      if (!changeSourceSample) return;
+      setChangingSource(true);
+      setError("");
+      try {
+        const res = await fetch(
+          `/api/pipelines/runs/${runId}/resolve-outputs/sample`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sampleId: changeSourceSample.id }),
+          }
+        );
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(
+            getApiErrorMessage(payload, "Failed to change source")
+          );
+        }
+        onSampleDataChanged?.();
+        setChangeSourceSample(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to change source");
+      } finally {
+        setChangingSource(false);
+      }
+    },
+    [changeSourceSample, onSampleDataChanged]
+  );
+
   if (pipelinesResponse.isLoading) {
     return (
       <div className="flex min-h-[200px] items-center justify-center">
@@ -486,7 +582,7 @@ export function OrderPipelineView({
   }
 
   const sampleResultConfig = pipeline.sampleResult;
-  const columnCount = sampleResultConfig ? 5 : 4;
+  const columnCount = (sampleResultConfig ? 5 : 4) + 1; // +1 for Source column
 
   return (
     <div className="space-y-6">
@@ -593,7 +689,7 @@ export function OrderPipelineView({
               if (schema.type === "boolean") {
                 return (
                   <div key={key} className="flex items-center gap-2 pb-1">
-                    <Checkbox
+                    <Switch
                       id={`config-${key}`}
                       checked={!!value}
                       onCheckedChange={(checked) =>
@@ -649,6 +745,9 @@ export function OrderPipelineView({
                   {sampleResultConfig.columnLabel}
                 </th>
               ) : null}
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                Source
+              </th>
               <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">
                 Action
               </th>
@@ -725,6 +824,30 @@ export function OrderPipelineView({
                       )}
                     </td>
                   ) : null}
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className={cn(
+                        "text-xs transition-colors hover:text-foreground hover:underline",
+                        sample.read?.pipelineRunNumber
+                          ? "font-mono text-muted-foreground"
+                          : "text-muted-foreground"
+                      )}
+                      onClick={() =>
+                        setChangeSourceSample({
+                          id: sample.id,
+                          sampleId: sample.sampleId,
+                          currentRunId: sample.read?.pipelineRunId ?? null,
+                        })
+                      }
+                    >
+                      {sample.read?.pipelineRunNumber
+                        ? sample.read.pipelineRunNumber
+                        : sample.read
+                          ? "Manual"
+                          : "Not linked"}
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-right">
                     {initialCheckPending ? (
                       <Button size="sm" variant="outline" disabled>
@@ -783,40 +906,81 @@ export function OrderPipelineView({
       {/* Pipeline Runs table */}
       <div>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">
-            Pipeline Runs
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium">Pipeline Runs</h2>
             {allRuns.length > 0 && (
-              <span className="ml-1.5 text-muted-foreground">({allRuns.length})</span>
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {allRuns.length}
+              </span>
             )}
-          </h2>
+          </div>
           {allRuns.length > 0 && (
             <div className="flex items-center gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-8 w-[160px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                      {opt.value !== "all" && statusCounts[opt.value] ? (
-                        <span className="ml-1 text-muted-foreground">
-                          ({statusCounts[opt.value]})
-                        </span>
-                      ) : null}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {statusFilter !== "all" && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setStatusFilter("all")}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
+              {selectMode ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedRunIds.size} selected
+                  </span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setShowBulkDeleteConfirm(true)}
+                    disabled={bulkDeleting || selectedRunIds.size === 0}
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setSelectMode(false);
+                      setSelectedRunIds(new Set());
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setSelectMode(true)}
+                  >
+                    Select
+                  </Button>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="h-8 w-[160px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                          {opt.value !== "all" && statusCounts[opt.value] ? (
+                            <span className="ml-1 text-muted-foreground">
+                              ({statusCounts[opt.value]})
+                            </span>
+                          ) : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {statusFilter !== "all" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setStatusFilter("all")}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -832,6 +996,15 @@ export function OrderPipelineView({
               <table className="w-full text-sm">
                 <thead className="border-b bg-secondary/30">
                   <tr>
+                    {selectMode && (
+                      <th className="w-[40px] px-3 py-2.5">
+                        <Checkbox
+                          checked={allFilteredSelected && deletableFilteredRuns.length > 0}
+                          onCheckedChange={toggleSelectAll}
+                          aria-label="Select all runs"
+                        />
+                      </th>
+                    )}
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                       Run
                     </th>
@@ -866,8 +1039,21 @@ export function OrderPipelineView({
                     return (
                       <tr
                         key={run.id}
-                        className="transition-colors hover:bg-secondary/20"
+                        className={cn(
+                          "transition-colors hover:bg-secondary/20",
+                          selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
+                        )}
                       >
+                        {selectMode && (
+                          <td className="px-3 py-3 align-top">
+                            <Checkbox
+                              checked={selectedRunIds.has(run.id)}
+                              onCheckedChange={() => toggleSelectRun(run.id)}
+                              disabled={run.status === "running"}
+                              aria-label={`Select run ${run.runNumber}`}
+                            />
+                          </td>
+                        )}
                         <td className="px-4 py-3 align-top">
                           <code
                             className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
@@ -932,17 +1118,15 @@ export function OrderPipelineView({
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              {(run.status === "completed" || run.status === "failed") && (
-                                <DropdownMenuItem
-                                  onSelect={(event) => {
-                                    event.preventDefault();
-                                    void handleResolveOutputs(run.id);
-                                  }}
-                                >
-                                  <RefreshCw className="h-4 w-4" />
-                                  Re-resolve outputs
-                                </DropdownMenuItem>
-                              )}
+                              <DropdownMenuItem
+                                onSelect={(event) => {
+                                  event.preventDefault();
+                                  setDetailRun(run);
+                                }}
+                              >
+                                <Info className="h-4 w-4" />
+                                View details
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 variant="destructive"
                                 disabled={run.status === "running" || deletingRun}
@@ -963,7 +1147,7 @@ export function OrderPipelineView({
                   {filteredRuns.length === 0 && statusFilter !== "all" && (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={selectMode ? 9 : 8}
                         className="px-4 py-8 text-center text-muted-foreground"
                       >
                         No {statusFilter} runs found.
@@ -1010,6 +1194,231 @@ export function OrderPipelineView({
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                 )}
                 Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Bulk delete confirmation dialog */}
+      {/* Run details modal */}
+      {detailRun && (() => {
+        let parsedConfig: Record<string, unknown> | null = null;
+        try {
+          parsedConfig = detailRun.config ? JSON.parse(detailRun.config) : null;
+        } catch { /* ignore */ }
+
+        const ENUM_LABELS: Record<string, string> = {
+          shortReadPaired: "Paired-end",
+          shortReadSingle: "Single-end",
+          longRead: "Long read",
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
+              <h3 className="text-base font-semibold">
+                Run Details
+                <code className="ml-2 rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
+                  {detailRun.runNumber}
+                </code>
+              </h3>
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Status:</span>
+                  {getStatusBadge(detailRun.status)}
+                </div>
+                <div className="flex gap-2">
+                  <span className="text-muted-foreground">Started:</span>
+                  <span>{formatDateTime(detailRun.startedAt || detailRun.createdAt)}</span>
+                </div>
+                {detailRun.completedAt && (
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground">Completed:</span>
+                    <span>{formatDateTime(detailRun.completedAt)}</span>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <span className="text-muted-foreground">Duration:</span>
+                  <span>
+                    {detailRun.status === "running"
+                      ? formatDuration(detailRun.startedAt, null)
+                      : formatDuration(detailRun.startedAt, detailRun.completedAt)}
+                  </span>
+                </div>
+                {detailRun.user && (
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground">Started by:</span>
+                    <span>
+                      {[detailRun.user.firstName, detailRun.user.lastName]
+                        .filter(Boolean)
+                        .join(" ") || detailRun.user.email}
+                    </span>
+                  </div>
+                )}
+                {parsedConfig && Object.keys(parsedConfig).length > 0 && (
+                  <>
+                    <div className="border-t pt-3">
+                      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Settings
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {Object.entries(parsedConfig).map(([key, value]) => {
+                        const schemaProp = pipeline?.configSchema?.properties?.[key];
+                        const label = schemaProp?.title || key;
+                        let displayValue: string;
+                        if (typeof value === "boolean") {
+                          displayValue = value ? "Yes" : "No";
+                        } else if (typeof value === "string" && ENUM_LABELS[value]) {
+                          displayValue = ENUM_LABELS[value];
+                        } else {
+                          displayValue = String(value ?? "-");
+                        }
+                        return (
+                          <div key={key} className="contents">
+                            <span className="text-muted-foreground">{label}:</span>
+                            <span className="font-mono text-xs">{displayValue}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                {detailRun.errorTail && (
+                  <>
+                    <div className="border-t pt-3">
+                      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Error
+                      </span>
+                    </div>
+                    <pre className="max-h-40 overflow-auto rounded bg-muted p-3 text-xs font-mono text-destructive">
+                      {detailRun.errorTail}
+                    </pre>
+                  </>
+                )}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDetailRun(null)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {/* Change source modal */}
+      {changeSourceSample && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
+            <h3 className="text-base font-semibold">
+              Change Source
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Select which pipeline run provides reads for{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                {changeSourceSample.sampleId}
+              </code>
+            </p>
+            {completedRunsForSample.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No completed runs available for this sample.
+              </p>
+            ) : (
+              <div className="mt-4 max-h-64 space-y-1 overflow-y-auto">
+                {completedRunsForSample.map((run) => {
+                  const isCurrent = run.id === changeSourceSample.currentRunId;
+                  return (
+                    <button
+                      key={run.id}
+                      type="button"
+                      disabled={changingSource}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                        isCurrent
+                          ? "border-primary/40 bg-primary/5"
+                          : "hover:bg-muted/50"
+                      )}
+                      onClick={() => {
+                        if (!isCurrent) void handleChangeSource(run.id);
+                      }}
+                    >
+                      <div>
+                        <span className="font-mono text-xs font-medium">
+                          {run.runNumber}
+                        </span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {formatDateTime(run.completedAt || run.createdAt)}
+                        </span>
+                        {run.user && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {getUserDisplay(run)}
+                          </span>
+                        )}
+                      </div>
+                      {isCurrent && (
+                        <Badge variant="outline" className="ml-2 text-[10px]">
+                          Current
+                        </Badge>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setChangeSourceSample(null)}
+                disabled={changingSource}
+              >
+                {changingSource ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  "Close"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
+            <h3 className="text-base font-semibold">Delete Pipeline Runs</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <strong>{selectedRunIds.size}</strong> run{selectedRunIds.size !== 1 ? "s" : ""}?
+              This action cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                disabled={bulkDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={bulkDeleting}
+                onClick={() => void handleBulkDelete()}
+              >
+                {bulkDeleting ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? "s" : ""}
               </Button>
             </div>
           </div>

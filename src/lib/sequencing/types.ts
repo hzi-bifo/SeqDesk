@@ -23,6 +23,8 @@ export interface SequencingReadSummary {
   fileSize2: number | null;
   fastqcReport1: string | null;
   fastqcReport2: string | null;
+  pipelineRunId: string | null;
+  pipelineRunNumber: string | null;
 }
 
 export interface SequencingArtifactSummary {

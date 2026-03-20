@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -59,6 +60,24 @@ export function SidebarEntityNav({
   );
   const facilityStep = orderFormSteps.find((step) => step.id === "_facility");
   const detailOrderSteps = orderFormSteps.filter((step) => step.id !== "_facility");
+
+  // Fetch sequencing association status for the associate sub-item indicator
+  const [seqAssocStatus, setSeqAssocStatus] = useState<"none" | "partial" | "complete">("none");
+  useEffect(() => {
+    if (entityType !== "order" || !entityId || !showAdminControls) return;
+    let cancelled = false;
+    fetch(`/api/orders/${entityId}/sequencing`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.summary) return;
+        const { totalSamples, readsLinkedSamples } = data.summary;
+        if (totalSamples === 0 || readsLinkedSamples === 0) setSeqAssocStatus("none");
+        else if (readsLinkedSamples >= totalSamples) setSeqAssocStatus("complete");
+        else setSeqAssocStatus("partial");
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [entityType, entityId, showAdminControls, pathname]);
   const isEntityRoute = pathname.startsWith("/orders") || pathname.startsWith("/studies");
 
   // Derive active tab from URL
@@ -457,7 +476,12 @@ export function SidebarEntityNav({
                               : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                           )}
                         >
-                          <span className="h-2 w-2 rounded-full shadow-sm bg-slate-300" aria-hidden="true" />
+                          <span className={cn(
+                            "h-2 w-2 rounded-full shadow-sm",
+                            sub.id === "discover"
+                              ? seqAssocStatus === "complete" ? "bg-emerald-500" : seqAssocStatus === "partial" ? "bg-amber-500" : "bg-slate-300"
+                              : "bg-slate-300"
+                          )} aria-hidden="true" />
                           <span className="truncate">{sub.label}</span>
                         </Link>
                       );

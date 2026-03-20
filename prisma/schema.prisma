@@ -168,7 +168,9 @@ model Read {
   fastqcReport2             String?
   sampleId                  String
   sequencingRunId           String?
+  pipelineRunId             String?
   sequencingRun             SequencingRun? @relation(fields: [sequencingRunId], references: [id])
+  pipelineRun               PipelineRun?   @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
   sample                    Sample         @relation(fields: [sampleId], references: [id], onDelete: Cascade)
 }
 
@@ -348,6 +350,7 @@ model PipelineRun {
   // Track outputs created by this run
   assembliesCreated Assembly[]
   binsCreated       Bin[]
+  readsCreated      Read[]
   steps             PipelineRunStep[]
   events            PipelineRunEvent[]
   artifacts         PipelineArtifact[]

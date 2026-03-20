@@ -55,8 +55,6 @@ async function main() {
           file2: file2Name ? path.join(relativeDir, file2Name) : null,
           sourceFile1: path.join(payload.outputDir, "reads", file1Name),
           sourceFile2: file2Name ? path.join(payload.outputDir, "reads", file2Name) : null,
-          checksum1: parsed.checksum1 || null,
-          checksum2: parsed.checksum2 || null,
           readCount1: parsed.readCount1 ?? null,
           readCount2: parsed.readCount2 ?? null,
           replaceExisting: parsed.replaceExisting !== false,

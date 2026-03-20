@@ -398,8 +398,11 @@ function buildPipelineFlags(
       if (value === true) {
         // Boolean true -> add flag
         flags.push(trimmedFlag);
-      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
-        // Boolean false/null/undefined -> skip
+      } else if (value === false) {
+        // Boolean false -> pass explicitly so Nextflow overrides its default
+        flags.push(`${trimmedFlag} false`);
+      } else if (value === null || value === undefined || isBlankString(value)) {
+        // null/undefined/blank -> skip
         continue;
       } else {
         // Other values -> add flag with value
@@ -418,7 +421,9 @@ function buildPipelineFlags(
 
       if (value === true) {
         flags.push(`--${key}`);
-      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
+      } else if (value === false) {
+        flags.push(`--${key} false`);
+      } else if (value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
         flags.push(`--${key} ${value}`);
@@ -431,7 +436,9 @@ function buildPipelineFlags(
 
       if (value === true) {
         flags.push(`--${key}`);
-      } else if (value === false || value === null || value === undefined || isBlankString(value)) {
+      } else if (value === false) {
+        flags.push(`--${key} false`);
+      } else if (value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
         flags.push(`--${key} ${value}`);
