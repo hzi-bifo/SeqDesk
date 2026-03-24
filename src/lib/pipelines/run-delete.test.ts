@@ -161,6 +161,21 @@ describe("run-delete", () => {
     });
   });
 
+  it("returns early when the pipeline package is unknown", async () => {
+    mocks.packageLoader.getPackage.mockReturnValue(null);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "missing-pipeline",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.pipelineRun.findMany).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+  });
+
   it("does not delete reads when the sample has been relinked since the run completed", async () => {
     const adapter = {
       discoverOutputs: vi.fn().mockResolvedValue({
@@ -211,6 +226,104 @@ describe("run-delete", () => {
 
     expect(mocks.fs.rm).not.toHaveBeenCalled();
     expect(mocks.db.read.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not delete reads when another run is the active source", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+              file2: "simulated/order_order-1/S1_R2.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: {
+          assembliesFound: 0,
+          binsFound: 0,
+          artifactsFound: 1,
+          reportsFound: 0,
+        },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample_simulated_reads",
+            destination: "sample_reads",
+          },
+        ],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "simulated/order_order-1/S1_R1.fastq.gz",
+      file2: "simulated/order_order-1/S1_R2.fastq.gz",
+      pipelineRunId: "run-2",
+      pipelineSources: '{"simulate-reads":"run-2"}',
+    });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.fs.rm).not.toHaveBeenCalled();
+    expect(mocks.db.read.delete).not.toHaveBeenCalled();
+  });
+
+  it("ignores invalid pipeline source metadata and falls back to pipelineRunId", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_checksums",
+            sampleId: "sample-1",
+            metadata: {
+              checksum1: "abc123",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+        outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      pipelineRunId: "run-1",
+      pipelineSources: "{invalid-json",
+    });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "fastq-checksum",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: { checksum1: null },
+    });
   });
 
   it("cascade-deletes dependent pipeline runs when reads are deleted", async () => {
@@ -533,5 +646,256 @@ describe("run-delete", () => {
     });
 
     expect(mocks.db.read.update).not.toHaveBeenCalled();
+  });
+
+  it("registers a generic adapter when no pipeline adapter exists", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+              file2: "simulated/order_order-1/S1_R2.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(null);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "simulated/order_order-1/S1_R1.fastq.gz",
+      file2: "simulated/order_order-1/S1_R2.fastq.gz",
+      pipelineRunId: "run-1",
+      pipelineSources: null,
+    });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.genericAdapter.createGenericAdapter).toHaveBeenCalledWith("simulate-reads");
+    expect(mocks.adapters.registerAdapter).toHaveBeenCalledWith(adapter);
+    expect(mocks.db.read.delete).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+    });
+  });
+
+  it("ignores discovered files that are not declared sample read outputs", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "unrelated_output",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([{ inputSampleIds: null }]);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.read.findFirst).not.toHaveBeenCalled();
+    expect(mocks.db.read.delete).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("does not clean up outputs for packages that do not write sample reads", async () => {
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "assembly", destination: "assemblies" }],
+      },
+    });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "assembly-pipeline",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.pipelineRun.findMany).not.toHaveBeenCalled();
+    expect(mocks.adapters.getAdapter).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("treats invalid selected sample metadata on overlapping runs as overlapping", async () => {
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(null);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(null);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([{ inputSampleIds: '{"sample":"bad"}' }]);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: null,
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.read.findMany).not.toHaveBeenCalled();
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("clears fastqc metadata via fallback without cascading dependent runs", async () => {
+    mocks.packageLoader.getPackage.mockImplementation((id: string) => {
+      if (id === "fastqc") {
+        return {
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_fastqc_reads", destination: "sample_reads" }],
+          },
+        };
+      }
+      if (id === "fastq-checksum") {
+        return {
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+          },
+        };
+      }
+      return null;
+    });
+    mocks.adapters.getAdapter.mockReturnValue(null);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(null);
+    mocks.db.read.updateMany.mockResolvedValue({ count: 1 });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "fastqc",
+      runFolder: null,
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.read.updateMany).toHaveBeenCalledWith({
+      where: { sampleId: { in: ["sample-1"] } },
+      data: {
+        fastqcReport1: null,
+        fastqcReport2: null,
+        readCount1: null,
+        readCount2: null,
+        avgQuality1: null,
+        avgQuality2: null,
+      },
+    });
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalled();
+  });
+
+  it("cascade-deletes dependent runs for study-scoped cleanup", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/study_study-1/S1_R1.fastq.gz",
+              file2: null,
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockImplementation((id: string) => {
+      if (id === "simulate-reads") {
+        return {
+          manifest: {
+            inputs: [],
+            outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+          },
+        };
+      }
+      if (id === "fastq-checksum") {
+        return {
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+          },
+        };
+      }
+      return null;
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "simulated/study_study-1/S1_R1.fastq.gz",
+      file2: null,
+      pipelineRunId: "run-1",
+      pipelineSources: '{"simulate-reads":"run-1"}',
+    });
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "checksum-run-1",
+          pipelineId: "fastq-checksum",
+          runFolder: "/tmp/checksum-run-1",
+          inputSampleIds: '["sample-1"]',
+        },
+      ]);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "study", studyId: "study-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.pipelineRun.findMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        pipelineId: { not: "simulate-reads" },
+        id: { not: "run-1" },
+        studyId: "study-1",
+      },
+      select: { id: true, pipelineId: true, runFolder: true, inputSampleIds: true },
+    });
+    expect(mocks.db.pipelineRun.delete).toHaveBeenCalledWith({
+      where: { id: "checksum-run-1" },
+    });
   });
 });
