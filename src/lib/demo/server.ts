@@ -837,18 +837,42 @@ async function destroyWorkspaceByRecord(
   });
   const studyIds = studies.map((study) => study.id);
 
+  // Find all orders owned by the researcher to clean up dependent records
+  const orders = await tx.order.findMany({
+    where: { userId: workspace.userId },
+    select: { id: true },
+  });
+  const orderIds = orders.map((o) => o.id);
+
+  // Find all samples in those orders to clean up reads
+  const samples = orderIds.length > 0
+    ? await tx.sample.findMany({
+        where: { orderId: { in: orderIds } },
+        select: { id: true },
+      })
+    : [];
+  const sampleIds = samples.map((s) => s.id);
+
+  // Delete reads linked to demo samples (blocks sample cascade)
+  if (sampleIds.length > 0) {
+    await tx.read.deleteMany({ where: { sampleId: { in: sampleIds } } });
+  }
+
   await tx.statusNote.deleteMany({ where: { userId: { in: userIds } } });
   await tx.ticketMessage.deleteMany({ where: { userId: { in: userIds } } });
   await tx.ticket.deleteMany({ where: { userId: { in: userIds } } });
-  await tx.order.deleteMany({ where: { userId: workspace.userId } });
 
+  // Delete pipeline runs linked to orders or studies or users
   const pipelineRunWhere: Prisma.PipelineRunWhereInput = {
     OR: [
       { userId: { in: userIds } },
       ...(studyIds.length > 0 ? [{ studyId: { in: studyIds } }] : []),
+      ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
     ],
   };
   await tx.pipelineRun.deleteMany({ where: pipelineRunWhere });
+
+  await tx.order.deleteMany({ where: { userId: workspace.userId } });
   await tx.study.deleteMany({ where: { userId: workspace.userId } });
   await tx.demoWorkspace.deleteMany({ where: { id: workspace.id } });
   await tx.user.deleteMany({

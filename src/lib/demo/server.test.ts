@@ -31,7 +31,11 @@ const mocks = vi.hoisted(() => ({
     },
     order: {
       create: vi.fn(),
+      findMany: vi.fn(),
       deleteMany: vi.fn(),
+    },
+    sample: {
+      findMany: vi.fn(),
     },
     statusNote: {
       create: vi.fn(),
@@ -168,6 +172,9 @@ describe("demo workspace server helpers", () => {
     mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
     mocks.db.study.findMany.mockResolvedValue([]);
 
+    mocks.db.order.findMany.mockResolvedValue([]);
+    mocks.db.sample.findMany.mockResolvedValue([]);
+    mocks.db.read.deleteMany = vi.fn().mockResolvedValue({ count: 0 });
     mocks.db.statusNote.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.ticketMessage.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.pipelineRun.deleteMany.mockResolvedValue({ count: 0 });
