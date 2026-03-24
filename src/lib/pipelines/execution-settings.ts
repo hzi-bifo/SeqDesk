@@ -16,6 +16,8 @@ export interface ExecutionSettings {
   pipelineRunDir: string;
   weblogUrl: string;
   weblogSecret: string;
+  /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
+  skipConda?: boolean;
 }
 
 export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {

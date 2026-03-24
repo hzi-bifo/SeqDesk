@@ -31,6 +31,9 @@
     "profiles": [
       "conda"
     ],
+    "runtime": {
+      "allowMacOsArmLocal": true
+    },
     "defaultParams": {}
   },
   "outputs": [
