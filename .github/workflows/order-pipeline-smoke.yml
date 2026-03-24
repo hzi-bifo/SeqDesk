@@ -1,0 +1,126 @@
+name: Order Pipeline Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_github_hosted:
+        description: Run the smoke test on GitHub-hosted Ubuntu first
+        required: true
+        default: true
+        type: boolean
+      run_self_hosted:
+        description: Run the same smoke test on the Twincore self-hosted runner after GitHub-hosted passes
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  github_hosted:
+    if: ${{ inputs.run_github_hosted }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-gh
+      PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-gh
+      NXF_HOME: ${{ runner.temp }}/.nextflow-gh
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
+      - name: Create pipeline Conda environment
+        run: |
+          conda create -y -n "$PIPELINE_CONDA_ENV" \
+            --override-channels \
+            -c conda-forge \
+            -c bioconda \
+            python=3.11 \
+            openjdk=17 \
+            nodejs \
+            coreutils \
+            nextflow \
+            nf-core
+
+      - name: Run order pipeline smoke
+        run: bash scripts/run-order-pipeline-smoke.sh --keep-temp
+
+      - name: Upload smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-pipeline-smoke-github-hosted
+          path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup Conda environment
+        if: ${{ always() }}
+        run: |
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          rm -rf "$PIPELINE_SMOKE_TMPDIR" "$NXF_HOME"
+
+  self_hosted:
+    needs: github_hosted
+    if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
+    runs-on: [self-hosted, linux, twincore, alma]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-twincore
+      PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-twincore
+      NXF_HOME: ${{ runner.temp }}/.nextflow-twincore
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
+      - name: Create pipeline Conda environment
+        run: |
+          conda create -y -n "$PIPELINE_CONDA_ENV" \
+            --override-channels \
+            -c conda-forge \
+            -c bioconda \
+            python=3.11 \
+            openjdk=17 \
+            nodejs \
+            coreutils \
+            nextflow \
+            nf-core
+
+      - name: Run order pipeline smoke
+        run: bash scripts/run-order-pipeline-smoke.sh --keep-temp
+
+      - name: Upload smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-pipeline-smoke-self-hosted
+          path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup Conda environment
+        if: ${{ always() }}
+        run: |
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          rm -rf "$PIPELINE_SMOKE_TMPDIR" "$NXF_HOME"

@@ -234,12 +234,34 @@ describe("run-delete", () => {
     mocks.packageLoader.getPackage.mockImplementation((id: string) => {
       if (id === "simulate-reads") {
         return {
-          manifest: { outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }] },
+          manifest: {
+            inputs: [],
+            outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+          },
         };
       }
       if (id === "fastq-checksum") {
         return {
-          manifest: { outputs: [{ id: "checksums", destination: "sample_reads" }] },
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+          },
+        };
+      }
+      if (id === "fastqc") {
+        return {
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_fastqc_reads", destination: "sample_reads" }],
+          },
+        };
+      }
+      if (id === "simulate-reads-dependent") {
+        return {
+          manifest: {
+            inputs: [],
+            outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+          },
         };
       }
       return null;
@@ -249,10 +271,31 @@ describe("run-delete", () => {
       id: "read-1",
       file1: "simulated/order_order-1/S1_R1.fastq.gz",
       file2: "simulated/order_order-1/S1_R2.fastq.gz",
+      pipelineRunId: "run-1",
+      pipelineSources: '{"simulate-reads":"run-1"}',
     });
-    mocks.db.pipelineRun.findMany.mockResolvedValue([
-      { id: "checksum-run-1", pipelineId: "fastq-checksum", runFolder: "/tmp/checksum-run-1" },
-    ]);
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "checksum-run-1",
+          pipelineId: "fastq-checksum",
+          runFolder: "/tmp/checksum-run-1",
+          inputSampleIds: null,
+        },
+        {
+          id: "fastqc-run-1",
+          pipelineId: "fastqc",
+          runFolder: "/tmp/fastqc-run-1",
+          inputSampleIds: '["sample-2"]',
+        },
+        {
+          id: "producer-run-1",
+          pipelineId: "simulate-reads-dependent",
+          runFolder: "/tmp/producer-run-1",
+          inputSampleIds: null,
+        },
+      ]);
 
     await cleanupRunOutputData({
       runId: "run-1",
@@ -273,6 +316,12 @@ describe("run-delete", () => {
     });
     expect(mocks.db.pipelineRun.delete).toHaveBeenCalledWith({
       where: { id: "checksum-run-1" },
+    });
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalledWith({
+      where: { id: "fastqc-run-1" },
+    });
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalledWith({
+      where: { id: "producer-run-1" },
     });
   });
 
@@ -382,11 +431,16 @@ describe("run-delete", () => {
 
     mocks.packageLoader.getPackage.mockReturnValue({
       manifest: {
+        inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
         outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
       },
     });
     mocks.adapters.getAdapter.mockReturnValue(adapter);
-    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1" });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      pipelineRunId: null,
+      pipelineSources: '{"fastq-checksum":"run-1"}',
+    });
     mocks.db.read.update.mockResolvedValue({});
 
     await cleanupRunOutputData({
@@ -404,17 +458,20 @@ describe("run-delete", () => {
     });
     expect(mocks.db.read.delete).not.toHaveBeenCalled();
     expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalled();
   });
 
   it("clears checksum fields via fallback when deleting last FASTQ Checksum run", async () => {
     mocks.packageLoader.getPackage.mockReturnValue({
       manifest: {
+        inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
         outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
       },
     });
     mocks.adapters.getAdapter.mockReturnValue(null);
     mocks.genericAdapter.createGenericAdapter.mockReturnValue(null);
     mocks.db.read.updateMany.mockResolvedValue({ count: 2 });
+    mocks.db.pipelineRun.findMany.mockResolvedValueOnce([]);
 
     await cleanupRunOutputData({
       runId: "run-1",
@@ -434,5 +491,47 @@ describe("run-delete", () => {
     });
     expect(mocks.db.read.delete).not.toHaveBeenCalled();
     expect(mocks.db.read.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not clear metadata fields when a newer run is the active source", async () => {
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_checksums",
+            sampleId: "sample-1",
+            metadata: {
+              checksum1: "abc123",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+        outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+      },
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      pipelineRunId: null,
+      pipelineSources: '{"fastq-checksum":"run-2"}',
+    });
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "fastq-checksum",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.db.read.update).not.toHaveBeenCalled();
   });
 });
