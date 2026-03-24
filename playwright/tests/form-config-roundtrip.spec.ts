@@ -17,6 +17,21 @@ type FormConfigResponse = {
   enabledMixsChecklists?: string[];
 };
 
+function normalizeFormConfigSnapshot(config: FormConfigResponse) {
+  return JSON.stringify({
+    fields: config.fields,
+    groups: config.groups,
+    enabledMixsChecklists: config.enabledMixsChecklists ?? [],
+  });
+}
+
+function configHasField(config: FormConfigResponse, fieldName: string) {
+  return config.fields.some((field) => {
+    if (!field || typeof field !== "object") return false;
+    return "name" in field && field.name === fieldName;
+  });
+}
+
 async function readFormConfig(page: Page): Promise<FormConfigResponse> {
   const response = await page.request.get("/api/admin/form-config");
   if (!response.ok()) {
@@ -38,6 +53,26 @@ async function restoreFormConfig(page: Page, config: FormConfigResponse) {
 
   if (!response.ok()) {
     throw new Error(`Failed to restore form config: ${response.status()}`);
+  }
+
+  const expectedSnapshot = normalizeFormConfigSnapshot(config);
+  await expect
+    .poll(async () => normalizeFormConfigSnapshot(await readFormConfig(page)), {
+      timeout: 15000,
+    })
+    .toBe(expectedSnapshot);
+}
+
+async function saveFormConfig(page: Page, fieldName?: string) {
+  await page.getByTestId("form-builder-save-config-button").click();
+  await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+
+  if (fieldName) {
+    await expect
+      .poll(async () => configHasField(await readFormConfig(page), fieldName), {
+        timeout: 15000,
+      })
+      .toBe(true);
   }
 }
 
@@ -119,8 +154,7 @@ test("admin form-builder changes appear for researchers and enforce required val
       required: true,
     });
 
-    await page.getByTestId("form-builder-save-config-button").click();
-    await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+    await saveFormConfig(page, fieldName);
 
     await withResearcherPage(browser, async (researcherPage) => {
       await researcherPage.goto("/orders/new");
@@ -174,8 +208,7 @@ test("facility-only order fields stay hidden from researchers and appear for adm
       adminOnly: true,
     });
 
-    await page.getByTestId("form-builder-save-config-button").click();
-    await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+    await saveFormConfig(page, fieldName);
 
     await page.goto("/orders/new");
     await expect(page.getByRole("button", { name: "Facility Fields" })).toBeVisible();
@@ -223,8 +256,7 @@ test("required per-sample fields added by admins appear in the sample table and 
       required: true,
     });
 
-    await page.getByTestId("form-builder-save-config-button").click();
-    await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+    await saveFormConfig(page, fieldName);
 
     await withResearcherPage(browser, async (researcherPage) => {
       await goToNewOrderSamplesStep(researcherPage, `Sample Config ${uniqueSuffix}`, 1);
@@ -273,8 +305,7 @@ test("facility fields added in admin form-builder appear on existing order facil
     await expect(dialog).not.toBeVisible();
     await expect(page.getByText(fieldLabel, { exact: true }).first()).toBeVisible();
 
-    await page.getByTestId("form-builder-save-config-button").click();
-    await expect(page.getByTestId("form-builder-save-config-button")).toContainText("Saved");
+    await saveFormConfig(page, fieldName);
 
     // Create a draft order via API
     const { orderId } = await createDraftOrder(page, `Facility Test ${uniqueSuffix}`, 1);
@@ -282,6 +313,8 @@ test("facility fields added in admin form-builder appear on existing order facil
     // Navigate to the order's facility section and click Edit Order Fields
     await page.goto(`/orders/${orderId}?section=facility`);
     await page.getByRole("link", { name: "Edit Order Fields" }).click();
+    await page.waitForURL(new RegExp(`/orders/${orderId}/edit\\?step=_facility(?:&scope=facility)?`));
+    await expect(page.getByRole("heading", { name: "Edit Facility Fields" })).toBeVisible();
 
     // The facility field should appear in the edit form
     await expect(page.getByTestId(`order-field-${fieldName}`)).toBeVisible();
