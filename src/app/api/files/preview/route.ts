@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
+import { generateDemoFastqcReport } from "@/lib/demo/fastqc-report-template";
 import fs from "fs/promises";
 import path from "path";
 
@@ -14,10 +15,31 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
+ * For demo sessions, serve a generated FastQC report instead of reading from disk.
+ * Parses the sample name and read direction from the path.
+ */
+function serveDemoFastqcReport(filePath: string): NextResponse | null {
+  // Match paths like .../fastqc_reports/SampleName_R1_fastqc.html
+  const match = filePath.match(/\/([^/]+)_(R[12])_fastqc\.html$/);
+  if (!match) return null;
+  const [, sampleName, direction] = match;
+  const html = generateDemoFastqcReport(sampleName, direction as "R1" | "R2");
+  return new NextResponse(html, {
+    headers: {
+      "Content-Type": "text/html",
+      "Content-Length": String(Buffer.byteLength(html)),
+      "Content-Security-Policy": "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+/**
  * GET /api/files/preview?path=/absolute/path/to/report.html
  *
  * Serves pipeline output files (HTML reports, etc.) for in-browser viewing.
  * Validates that the file belongs to a pipeline run the user has access to.
+ * In demo mode, serves generated reports instead of reading from disk.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -27,7 +49,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (isDemoSession(session)) {
-      return new NextResponse("Preview is disabled in the public demo.", {
+      const { searchParams } = new URL(request.url);
+      const demoPath = searchParams.get("path");
+      if (demoPath) {
+        const demoResponse = serveDemoFastqcReport(demoPath);
+        if (demoResponse) return demoResponse;
+      }
+      return new NextResponse("Preview is not available for this file in the demo.", {
         status: 403,
       });
     }
