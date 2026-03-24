@@ -160,9 +160,9 @@ function DashboardContent({
         )}
 
         {!user.isDemo ? <UpdateBanner /> : null}
-        {user.isDemo ? (
+        {user.isDemo && !embeddedMode ? (
           <DemoBanner
-            embeddedMode={embeddedMode}
+            embeddedMode={false}
             demoExperience={user.demoExperience === "facility" ? "facility" : "researcher"}
           />
         ) : null}
