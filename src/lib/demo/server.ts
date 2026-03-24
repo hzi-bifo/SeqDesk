@@ -1054,14 +1054,27 @@ export async function bootstrapDemoWorkspace(
       await destroyWorkspaceByToken(normalizedToken);
     }
 
-    const created = await createDemoWorkspaceInternal(normalizedToken);
-    return {
-      created: true,
-      expiresAt: created.expiresAt,
-      token: created.token,
-      userId: getDemoUserIdForExperience(created, demoExperience),
-      workspaceId: created.workspaceId,
-    };
+    try {
+      const created = await createDemoWorkspaceInternal(normalizedToken);
+      return {
+        created: true,
+        expiresAt: created.expiresAt,
+        token: created.token,
+        userId: getDemoUserIdForExperience(created, demoExperience),
+        workspaceId: created.workspaceId,
+      };
+    } catch (error) {
+      // Retry once after a harder cleanup — handles partial destroy or race conditions
+      await destroyWorkspaceByToken(normalizedToken).catch(() => {});
+      const created = await createDemoWorkspaceInternal(normalizedToken);
+      return {
+        created: true,
+        expiresAt: created.expiresAt,
+        token: created.token,
+        userId: getDemoUserIdForExperience(created, demoExperience),
+        workspaceId: created.workspaceId,
+      };
+    }
   }
 
   const created = await createDemoWorkspaceInternal();
