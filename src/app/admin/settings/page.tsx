@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
   Clock3,
   Download,
   HardDrive,
+  Info,
   Loader2,
   RefreshCw,
   Send,
@@ -83,6 +85,8 @@ function formatDate(value?: string | Date | null): string {
 }
 
 export default function SettingsPage() {
+  const { data: session } = useSession();
+  const isDemo = !!session?.user?.isDemo;
   const [detectedVersions, setDetectedVersions] = useState<ToolVersions>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
   const [versionsLoaded, setVersionsLoaded] = useState(false);
@@ -486,6 +490,19 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {isDemo && (
+        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 flex items-start gap-3">
+          <Info className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-900">Demo mode</p>
+            <p className="text-xs text-blue-700 mt-0.5">
+              Settings are read-only in the public demo. In a real installation, you can configure infrastructure paths, update the platform, and manage access controls here.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className={isDemo ? "pointer-events-none opacity-60 select-none" : ""}>
       <div className="bg-card rounded-xl border border-border mb-6">
         <div className="px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
@@ -1014,6 +1031,7 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+      </div>
       </div>
     </PageContainer>
   );
