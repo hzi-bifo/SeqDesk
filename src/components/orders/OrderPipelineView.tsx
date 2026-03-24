@@ -664,14 +664,21 @@ export function OrderPipelineView({
                   shortReadSingle: "Single-end",
                   longRead: "Long read",
                 };
+                const fieldId = `config-${key}`;
                 return (
                   <div key={key} className="space-y-1">
-                    <Label className="text-xs">{schema.title || key}</Label>
+                    <Label className="text-xs" htmlFor={fieldId}>
+                      {schema.title || key}
+                    </Label>
                     <Select
                       value={String(value ?? "")}
                       onValueChange={(v) => setLocalConfig((prev) => ({ ...prev, [key]: v }))}
                     >
-                      <SelectTrigger className="h-8 w-[160px] text-xs">
+                      <SelectTrigger
+                        id={fieldId}
+                        aria-label={schema.title || key}
+                        className="h-8 w-[160px] text-xs"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -687,16 +694,17 @@ export function OrderPipelineView({
               }
 
               if (schema.type === "boolean") {
+                const fieldId = `config-${key}`;
                 return (
                   <div key={key} className="flex items-center gap-2 pb-1">
                     <Switch
-                      id={`config-${key}`}
+                      id={fieldId}
                       checked={!!value}
                       onCheckedChange={(checked) =>
                         setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
                       }
                     />
-                    <Label htmlFor={`config-${key}`} className="text-xs">
+                    <Label htmlFor={fieldId} className="text-xs">
                       {schema.title || key}
                     </Label>
                   </div>
@@ -704,10 +712,14 @@ export function OrderPipelineView({
               }
 
               if (schema.type === "number") {
+                const fieldId = `config-${key}`;
                 return (
                   <div key={key} className="space-y-1">
-                    <Label className="text-xs">{schema.title || key}</Label>
+                    <Label className="text-xs" htmlFor={fieldId}>
+                      {schema.title || key}
+                    </Label>
                     <Input
+                      id={fieldId}
                       type="number"
                       className="h-8 w-[120px] text-xs"
                       value={value != null ? String(value) : ""}

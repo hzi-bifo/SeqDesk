@@ -164,10 +164,10 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       expect(runDetails.config?.readCount).toBe(42);
 
       const runRow = page.locator("tbody tr").filter({
-        has: page.getByText(run.runNumber, { exact: true }),
+        has: page.getByText(`#${run.runNumber.split("-").pop()}`, { exact: true }),
       }).first();
       await expect(runRow).toBeVisible({ timeout: 15000 });
-      await expect(runRow.getByRole("cell").nth(2)).toContainText("Completed");
+      await expect(runRow.getByText("Completed", { exact: true })).toBeVisible();
 
       await page.goto(`${orderPath}/sequencing`);
       await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
