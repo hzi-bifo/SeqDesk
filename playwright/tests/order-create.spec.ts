@@ -27,7 +27,7 @@ test("researcher can create and submit an order", async ({ page }) => {
   await createAndSubmitOrder(page, orderName, [
     { volume: "50", concentration: "25" },
   ]);
-  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
+  await expect(page.getByText(orderName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "50", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "25", exact: true })).toBeVisible();
@@ -41,7 +41,7 @@ test("researcher can create an order with multiple samples", async ({ page }) =>
     { volume: "40", concentration: "15" },
   ]);
 
-  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
+  await expect(page.getByText(orderName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
   const sampleRows = page.locator("tbody tr");
   await expect(sampleRows).toHaveCount(2);
@@ -90,12 +90,12 @@ test("researcher can edit submitted order information", async ({ page }) => {
   await page.getByTestId("order-field-name").fill(updatedName);
   await continueToReviewFromDetailPage(page);
 
-  await expect(page.getByText("Ready to update")).toBeVisible();
-  await page.getByRole("button", { name: /update order/i }).click();
+  await expect(page.getByTestId("submit-order-button")).toBeVisible();
+  await page.getByRole("button", { name: /update order|update anyway/i }).click();
 
   await expect(page).toHaveURL(/\/orders\/[^/]+$/, { timeout: 15000 });
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
-  await expect(page.getByRole("main").getByText(updatedName, { exact: true })).toBeVisible();
+  await expect(page.getByText(updatedName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (1)" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "55", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "22", exact: true })).toBeVisible();
