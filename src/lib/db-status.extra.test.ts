@@ -70,4 +70,14 @@ describe("checkDatabaseStatus additional cases", () => {
       error: "boom",
     });
   });
+
+  it("stringifies non-Error throws", async () => {
+    mocks.db.siteSettings.findUnique.mockRejectedValue("plain failure");
+
+    await expect(checkDatabaseStatus()).resolves.toEqual({
+      exists: false,
+      configured: false,
+      error: "plain failure",
+    });
+  });
 });
