@@ -197,6 +197,7 @@ interface OrderPipelineViewProps {
   samples: OrderSequencingSummaryResponse["samples"];
   onRunCompleted?: () => void;
   onSampleDataChanged?: () => void;
+  isDemo?: boolean;
 }
 
 export function OrderPipelineView({
@@ -205,6 +206,7 @@ export function OrderPipelineView({
   samples,
   onRunCompleted,
   onSampleDataChanged,
+  isDemo,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
@@ -606,9 +608,9 @@ export function OrderPipelineView({
             <>
               <Button
                 size="sm"
-                disabled={readySamples.length === 0 || runningAll || systemBlocked}
+                disabled={readySamples.length === 0 || runningAll || systemBlocked || !!isDemo}
                 onClick={handleRunAllReady}
-                title={systemBlocked ? systemReady?.summary : undefined}
+                title={isDemo ? "Pipeline execution is disabled in the demo" : systemBlocked ? systemReady?.summary : undefined}
               >
                 {runningAll ? (
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -934,9 +936,9 @@ export function OrderPipelineView({
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={systemBlocked}
+                        disabled={systemBlocked || !!isDemo}
                         onClick={() => void handleRunSingle(sample.id)}
-                        title={systemBlocked ? systemReady?.summary : undefined}
+                        title={isDemo ? "Disabled in demo" : systemBlocked ? systemReady?.summary : undefined}
                       >
                         {systemBlocked ? (
                           <>
@@ -997,7 +999,7 @@ export function OrderPipelineView({
                     size="sm"
                     className="h-7 text-xs"
                     onClick={() => setShowBulkDeleteConfirm(true)}
-                    disabled={bulkDeleting || selectedRunIds.size === 0}
+                    disabled={bulkDeleting || selectedRunIds.size === 0 || !!isDemo}
                   >
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                     Delete
@@ -1198,17 +1200,19 @@ export function OrderPipelineView({
                                 <Info className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={run.status === "running" || deletingRun}
-                                onSelect={(event) => {
-                                  event.preventDefault();
-                                  setDeleteTarget(run);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                Delete run
-                              </DropdownMenuItem>
+                              {!isDemo && (
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={run.status === "running" || deletingRun}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    setDeleteTarget(run);
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete run
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </td>

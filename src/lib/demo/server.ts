@@ -94,8 +94,8 @@ function createOrderNumber(prefix: string, index: number): string {
   return `DEMO-${prefix}-${String(index).padStart(3, "0")}`;
 }
 
-function createRunNumber(prefix: string): string {
-  return `MAG-${prefix}-001`;
+function createRunNumber(prefix: string, pipeline = "MAG", index = 1): string {
+  return `${pipeline}-${prefix}-${String(index).padStart(3, "0")}`;
 }
 
 function createSampleId(
@@ -415,6 +415,106 @@ async function createDemoWorkspaceInternal(
         },
       },
     });
+
+    // ── Order-scoped pipeline demo data for submitted order ──────────
+    const simRunAt = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const ckRunAt = new Date(now.getTime() - 90 * 60 * 1000);
+    const qcRunAt = new Date(now.getTime() - 60 * 60 * 1000);
+
+    const simRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "SIMULATE-READS"),
+        pipelineId: "simulate-reads",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        orderId: submittedOrder.id,
+        userId: facilityAdmin.id,
+        inputSampleIds: JSON.stringify(submittedOrder.samples.map((s) => s.id)),
+        config: JSON.stringify({ readCount: 1000, readLength: 150, mode: "paired" }),
+        runFolder: `${demoRoot}/runs/simulate-reads-demo`,
+        queuedAt: new Date(simRunAt.getTime() - 60_000),
+        startedAt: simRunAt,
+        completedAt: new Date(simRunAt.getTime() + 15 * 60_000),
+        lastEventAt: new Date(simRunAt.getTime() + 15 * 60_000),
+        statusSource: "process",
+        results: JSON.stringify({ note: "Demo seeded simulate-reads run." }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: new Date(simRunAt.getTime() + 15 * 60_000),
+      },
+    });
+
+    const ckRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "FASTQ-CHECKSUM"),
+        pipelineId: "fastq-checksum",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        orderId: submittedOrder.id,
+        userId: facilityAdmin.id,
+        inputSampleIds: JSON.stringify(submittedOrder.samples.map((s) => s.id)),
+        config: JSON.stringify({}),
+        runFolder: `${demoRoot}/runs/fastq-checksum-demo`,
+        queuedAt: new Date(ckRunAt.getTime() - 60_000),
+        startedAt: ckRunAt,
+        completedAt: new Date(ckRunAt.getTime() + 5 * 60_000),
+        lastEventAt: new Date(ckRunAt.getTime() + 5 * 60_000),
+        statusSource: "process",
+        results: JSON.stringify({ note: "Demo seeded fastq-checksum run." }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: new Date(ckRunAt.getTime() + 5 * 60_000),
+      },
+    });
+
+    const qcRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "FASTQC"),
+        pipelineId: "fastqc",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        orderId: submittedOrder.id,
+        userId: facilityAdmin.id,
+        inputSampleIds: JSON.stringify(submittedOrder.samples.map((s) => s.id)),
+        config: JSON.stringify({}),
+        runFolder: `${demoRoot}/runs/fastqc-demo`,
+        queuedAt: new Date(qcRunAt.getTime() - 60_000),
+        startedAt: qcRunAt,
+        completedAt: new Date(qcRunAt.getTime() + 10 * 60_000),
+        lastEventAt: new Date(qcRunAt.getTime() + 10 * 60_000),
+        statusSource: "process",
+        results: JSON.stringify({ note: "Demo seeded fastqc run." }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: new Date(qcRunAt.getTime() + 10 * 60_000),
+      },
+    });
+
+    const pipelineSources = JSON.stringify({
+      "simulate-reads": simRun.id,
+      "fastq-checksum": ckRun.id,
+      fastqc: qcRun.id,
+    });
+
+    // Create reads for submitted order samples with full pipeline output
+    const sampleAliases = ["GR-01", "GR-02", "GR-03"];
+    for (let i = 0; i < submittedOrder.samples.length; i++) {
+      const s = submittedOrder.samples[i];
+      const alias = sampleAliases[i] ?? s.sampleId;
+      await tx.read.create({
+        data: {
+          sampleId: s.id,
+          file1: `${demoRoot}/reads/${alias}_R1.fastq.gz`,
+          file2: `${demoRoot}/reads/${alias}_R2.fastq.gz`,
+          checksum1: `a1b2c3d4e5f6${String(i + 1).padStart(4, "0")}demo1234`,
+          checksum2: `f6e5d4c3b2a1${String(i + 1).padStart(4, "0")}demo5678`,
+          fastqcReport1: `${demoRoot}/runs/fastqc-demo/fastqc_reports/${alias}_R1_fastqc.html`,
+          fastqcReport2: `${demoRoot}/runs/fastqc-demo/fastqc_reports/${alias}_R2_fastqc.html`,
+          pipelineRunId: simRun.id,
+          pipelineSources,
+        },
+      });
+    }
 
     const completedOrder = await tx.order.create({
       data: {

@@ -1084,6 +1084,7 @@ export default function OrderSequencingPage({
           samples={data.samples}
           onRunCompleted={() => void refreshSummary({ silent: true })}
           onSampleDataChanged={() => void refreshSummary({ silent: true })}
+          isDemo={!!session?.user?.isDemo}
         />
       </PageContainer>
     );

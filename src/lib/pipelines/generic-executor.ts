@@ -43,6 +43,8 @@ export interface ExecutionSettings {
   dataBasePath: string;
   weblogUrl?: string;
   weblogSecret?: string;
+  /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
+  skipConda?: boolean;
 }
 
 export interface PrepareRunOptions {
