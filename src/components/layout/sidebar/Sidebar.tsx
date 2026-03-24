@@ -37,7 +37,7 @@ export function Sidebar({ user, version }: SidebarProps) {
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const isDemoUser = user.isDemo === true;
   const isFacilityDemoUser = user.demoExperience === "facility";
-  const showAdminControls = isFacilityAdmin && !isFacilityDemoUser;
+  const showAdminControls = isFacilityAdmin;
 
   const isAdminPage = pathname.startsWith("/admin") || pathname.startsWith("/messages");
 
