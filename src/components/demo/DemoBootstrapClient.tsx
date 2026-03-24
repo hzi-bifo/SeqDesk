@@ -74,7 +74,12 @@ export function DemoBootstrapClient({
 
     const bootstrap = async () => {
       try {
+        // In non-embedded mode without a workspace key, skip bootstrap if
+        // already authenticated with the correct experience.
+        // In embedded mode we always re-bootstrap because the other iframe
+        // may have overwritten the shared session cookie.
         if (
+          !embedded &&
           !workspace &&
           status === "authenticated" &&
           session?.user?.isDemo &&

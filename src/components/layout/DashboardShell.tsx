@@ -89,6 +89,35 @@ function DashboardContent({
   const pageTitle = derivePageTitle(pathname, section);
   const selectorType = isOrdersView ? "orders" : isStudiesView ? "studies" : null;
 
+  // In embedded demo mode, reclaim the session cookie when the iframe becomes
+  // visible again.  The other demo tab may have overwritten the shared
+  // next-auth session cookie while this tab was hidden.
+  useEffect(() => {
+    if (!embeddedMode || !user.isDemo || !user.demoExperience) {
+      return;
+    }
+
+    const experience = user.demoExperience;
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      // Fire-and-forget: re-bootstrap to reclaim the cookie for this experience
+      void fetch("/api/demo/bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ demoExperience: experience }),
+      }).catch(() => {
+        // Silently ignore — the user will still see whatever was last rendered
+      });
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [embeddedMode, user.isDemo, user.demoExperience]);
+
   return (
     <>
       <Sidebar user={user} version={version} />
@@ -167,6 +196,12 @@ function DashboardContent({
           />
         ) : null}
         <main>{children}</main>
+
+        {user.isDemo && (
+          <div className="fixed bottom-3 right-3 z-50 rounded-full bg-foreground/75 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-background shadow-lg backdrop-blur-sm select-none pointer-events-none">
+            DEMO
+          </div>
+        )}
       </div>
     </>
   );
