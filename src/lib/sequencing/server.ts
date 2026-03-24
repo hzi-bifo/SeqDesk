@@ -32,3 +32,18 @@ export async function requireFacilityAdminSequencingSession(): Promise<Session> 
 
   return session;
 }
+
+/** Read-only variant that allows demo users to view sequencing data. */
+export async function requireFacilityAdminSequencingReadSession(): Promise<Session> {
+  const session = await getServerSession(authOptions);
+
+  if (!session) {
+    throw new SequencingApiError(401, "Unauthorized");
+  }
+
+  if (session.user.role !== "FACILITY_ADMIN") {
+    throw new SequencingApiError(403, "Only facility admins can manage sequencing data");
+  }
+
+  return session;
+}
