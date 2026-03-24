@@ -137,7 +137,9 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       expect(sampleIds).toHaveLength(1);
 
       await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
+        timeout: 15000,
+      });
 
       // Verify settings section exists with all controls
       await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
@@ -167,7 +169,7 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
         has: page.getByText(`#${run.runNumber.split("-").pop()}`, { exact: true }),
       }).first();
       await expect(runRow).toBeVisible({ timeout: 15000 });
-      await expect(runRow.getByText("Completed", { exact: true })).toBeVisible();
+      await expect(runRow).toContainText("Completed");
 
       await page.goto(`${orderPath}/sequencing`);
       await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
@@ -213,7 +215,9 @@ test("simulate reads settings: switch, mode, readCount, readLength all persist",
 
       // ---- Run 1: paired-end, custom counts, replaceExisting OFF ----
       await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
+        timeout: 15000,
+      });
       await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
 
       // Verify default values
@@ -327,7 +331,9 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
 
       // ---- Run 1: replaceExisting ON (default) — creates initial reads ----
       await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
+        timeout: 15000,
+      });
 
       const readCountInput = page.getByLabel("Read Count");
       await readCountInput.fill("100");

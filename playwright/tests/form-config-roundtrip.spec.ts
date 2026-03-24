@@ -32,6 +32,8 @@ function configHasField(config: FormConfigResponse, fieldName: string) {
   });
 }
 
+let baselineConfig: FormConfigResponse | null = null;
+
 async function readFormConfig(page: Page): Promise<FormConfigResponse> {
   const response = await page.request.get("/api/admin/form-config");
   if (!response.ok()) {
@@ -126,13 +128,29 @@ async function addField(
   await expect(page.getByText(options.fieldLabel, { exact: true }).first()).toBeVisible();
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.goto("/admin/form-builder");
+  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
+  baselineConfig = await readFormConfig(page);
+});
+
+test.afterEach(async ({ page }) => {
+  if (!baselineConfig) return;
+
+  try {
+    await page.goto("/orders");
+  } catch {
+    // Ignore navigation issues and still attempt API-level restore.
+  }
+
+  await restoreFormConfig(page, baselineConfig);
+  baselineConfig = null;
+});
+
 test("admin form-builder changes appear for researchers and enforce required validation", async ({
   browser,
   page,
 }) => {
-  await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
-
   const originalConfig = await readFormConfig(page);
   const groupName =
     originalConfig.groups.find((group) => group.name === "Order Details")?.name
@@ -184,9 +202,6 @@ test("facility-only order fields stay hidden from researchers and appear for adm
   browser,
   page,
 }) => {
-  await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
-
   const originalConfig = await readFormConfig(page);
   const groupName =
     originalConfig.groups.find((group) => group.name === "Order Details")?.name
@@ -221,7 +236,7 @@ test("facility-only order fields stay hidden from researchers and appear for adm
     await expect(page.getByTestId(`order-field-${fieldName}`)).toBeVisible();
     await page.getByTestId(`order-field-${fieldName}`).fill("admin-only");
     await page.getByTestId("next-step-button").click();
-    await expect(page.getByText("Ready to submit")).toBeVisible();
+    await expect(page.getByTestId("submit-order-button")).toBeVisible();
 
     await withResearcherPage(browser, async (researcherPage) => {
       await researcherPage.goto("/orders/new");
@@ -239,9 +254,6 @@ test("required per-sample fields added by admins appear in the sample table and 
   browser,
   page,
 }) => {
-  await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
-
   const originalConfig = await readFormConfig(page);
   const uniqueSuffix = Date.now();
   const fieldLabel = `Playwright Sample Field ${uniqueSuffix}`;
@@ -272,7 +284,7 @@ test("required per-sample fields added by admins appear in the sample table and 
 
       await fillSampleFieldIfPresent(researcherPage, 0, [fieldName], "configured sample value");
       await researcherPage.getByTestId("next-step-button").click();
-      await expect(researcherPage.getByText("Ready to submit")).toBeVisible();
+      await expect(researcherPage.getByTestId("submit-order-button")).toBeVisible();
     });
   } finally {
     await restoreFormConfig(page, originalConfig);
@@ -282,9 +294,6 @@ test("required per-sample fields added by admins appear in the sample table and 
 test("facility fields added in admin form-builder appear on existing order facility edit page", async ({
   page,
 }) => {
-  await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
-
   const originalConfig = await readFormConfig(page);
   const uniqueSuffix = Date.now();
   const fieldLabel = `Playwright Facility Order Field ${uniqueSuffix}`;

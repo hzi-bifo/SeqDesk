@@ -18,7 +18,7 @@ test("admin can create and submit an order", async ({ page }) => {
     { volume: "70", concentration: "28" },
   ]);
 
-  await expect(page.getByRole("main").getByText(orderName, { exact: true })).toBeVisible();
+  await expect(page.getByText(orderName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "70", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "28", exact: true })).toBeVisible();

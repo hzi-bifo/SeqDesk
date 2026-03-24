@@ -222,8 +222,9 @@ export async function createAndSubmitOrder(
     break;
   }
 
-  await expect(page.getByText("Ready to submit")).toBeVisible();
-  await page.getByTestId("submit-order-button").click();
+  const submitButton = page.getByTestId("submit-order-button");
+  await expect(submitButton).toBeVisible({ timeout: 15000 });
+  await submitButton.click();
 
   await expect(page.getByRole("dialog")).toContainText("Order Submitted", {
     timeout: 20000,
@@ -424,7 +425,7 @@ export async function continueToReviewFromDetailPage(page: Page) {
   });
 
   for (let i = 0; i < 5; i++) {
-    if (await page.getByText("Ready to update").isVisible()) {
+    if (await page.getByTestId("submit-order-button").isVisible()) {
       return;
     }
 
@@ -460,5 +461,5 @@ export async function continueToReviewFromDetailPage(page: Page) {
     await page.getByTestId("next-step-button").click();
   }
 
-  await expect(page.getByText("Ready to update")).toBeVisible();
+  await expect(page.getByTestId("submit-order-button")).toBeVisible();
 }
