@@ -599,7 +599,15 @@ export function OrderPipelineView({
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {initialCheckPending ? (
+          {isDemo ? (
+            <Badge
+              variant="outline"
+              className="border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-700"
+            >
+              <Info className="mr-1.5 h-3.5 w-3.5" />
+              Demo mode — pipeline execution is view-only
+            </Badge>
+          ) : initialCheckPending ? (
             <Button size="sm" disabled>
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               Checking env...
@@ -608,9 +616,9 @@ export function OrderPipelineView({
             <>
               <Button
                 size="sm"
-                disabled={readySamples.length === 0 || runningAll || systemBlocked || !!isDemo}
+                disabled={readySamples.length === 0 || runningAll || systemBlocked}
                 onClick={handleRunAllReady}
-                title={isDemo ? "Pipeline execution is disabled in the demo" : systemBlocked ? systemReady?.summary : undefined}
+                title={systemBlocked ? systemReady?.summary : undefined}
               >
                 {runningAll ? (
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -652,8 +660,8 @@ export function OrderPipelineView({
         </div>
       )}
 
-      {/* Pipeline settings */}
-      {pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
+      {/* Pipeline settings — hidden in demo mode */}
+      {!isDemo && pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
         ([, s]) => s.enum || s.type === "boolean" || s.type === "number"
       ) && (
         <div className="rounded-xl border border-border bg-card p-4">
