@@ -34,6 +34,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Setup Miniconda for PostgreSQL tools
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
       - name: Configure canary paths
         run: |
           echo "PORT=18887" >> "$GITHUB_ENV"
@@ -46,10 +52,73 @@ jobs:
           echo "STORE_SMOKE_JSON=$RUNNER_TEMP/store-smoke-twincore.json" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-twincore-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-twincore.log" >> "$GITHUB_ENV"
+          echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools" >> "$GITHUB_ENV"
+
+      - name: Install user-space PostgreSQL tools
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          rm -rf "$PG_TOOLCHAIN_DIR"
+          conda create -y -p "$PG_TOOLCHAIN_DIR" --override-channels -c conda-forge postgresql
+          echo "$PG_TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
       - name: Ensure PostgreSQL database
         run: |
           set -euo pipefail
+
+          find_pg_bin_dir() {
+            local candidate=""
+
+            if command -v initdb >/dev/null 2>&1 && command -v pg_ctl >/dev/null 2>&1; then
+              dirname "$(command -v initdb)"
+              return 0
+            fi
+
+            if command -v pg_config >/dev/null 2>&1; then
+              candidate="$(pg_config --bindir 2>/dev/null || true)"
+              if [ -n "$candidate" ] && [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ]; then
+                echo "$candidate"
+                return 0
+              fi
+            fi
+
+            for candidate in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin; do
+              if [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ]; then
+                echo "$candidate"
+                return 0
+              fi
+            done
+
+            return 1
+          }
+
+          create_seqdesk_database() {
+            local port="$1"
+            local admin_user="$2"
+            local admin_password="${3:-}"
+
+            if [ -n "$admin_password" ]; then
+              export PGPASSWORD="$admin_password"
+            else
+              unset PGPASSWORD || true
+            fi
+
+            psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "DO \$\$ BEGIN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD'; END \$\$;"
+            if ! psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+              psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER"
+            fi
+          }
+
+          wait_for_postgres() {
+            local port="$1"
+            for _ in $(seq 1 30); do
+              if pg_isready -h "$DB_HOST" -p "$port" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
 
           if pg_isready -h "$DB_HOST" -p "$DB_PORT" >/dev/null 2>&1 && \
              PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1" >/dev/null 2>&1; then
@@ -57,35 +126,51 @@ jobs:
             exit 0
           fi
 
-          if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
-            echo "PostgreSQL provisioning requires either an existing local seqdesk database or local initdb/pg_ctl binaries on this self-hosted runner."
-            echo "This workflow no longer uses sudo. Pre-create the database or install PostgreSQL server tools for unprivileged startup."
-            exit 1
+          PG_BIN_DIR="$(find_pg_bin_dir || true)"
+          if [ -n "$PG_BIN_DIR" ]; then
+            rm -rf "$PGDATA_DIR"
+            "$PG_BIN_DIR/initdb" -D "$PGDATA_DIR" -U postgres -A trust >/dev/null
+            {
+              echo "listen_addresses = '127.0.0.1'"
+              echo "port = $FALLBACK_DB_PORT"
+            } >> "$PGDATA_DIR/postgresql.conf"
+            "$PG_BIN_DIR/pg_ctl" -D "$PGDATA_DIR" -l "$PG_LOG" start
+
+            wait_for_postgres "$FALLBACK_DB_PORT"
+            create_seqdesk_database "$FALLBACK_DB_PORT" postgres
+
+            echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
+            echo "USE_EPHEMERAL_POSTGRES=1" >> "$GITHUB_ENV"
+            echo "PG_CTL_BIN=$PG_BIN_DIR/pg_ctl" >> "$GITHUB_ENV"
+            echo "Provisioned PostgreSQL via temporary user-space cluster on port $FALLBACK_DB_PORT."
+            exit 0
           fi
 
-          rm -rf "$PGDATA_DIR"
-          initdb -D "$PGDATA_DIR" -U postgres -A trust >/dev/null
-          {
-            echo "listen_addresses = '127.0.0.1'"
-            echo "port = $FALLBACK_DB_PORT"
-          } >> "$PGDATA_DIR/postgresql.conf"
-          pg_ctl -D "$PGDATA_DIR" -l "$PG_LOG" start
+          if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+            PG_CONTAINER_NAME="seqdesk-twincore-pg-${GITHUB_RUN_ID}"
+            podman rm -f "$PG_CONTAINER_NAME" >/dev/null 2>&1 || true
+            podman run -d \
+              --name "$PG_CONTAINER_NAME" \
+              -e POSTGRES_USER=postgres \
+              -e POSTGRES_PASSWORD=postgres \
+              -e POSTGRES_DB=postgres \
+              -p "$FALLBACK_DB_PORT:5432" \
+              docker.io/library/postgres:16 >/dev/null
 
-          for _ in $(seq 1 30); do
-            if pg_isready -h "$DB_HOST" -p "$FALLBACK_DB_PORT" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
+            wait_for_postgres "$FALLBACK_DB_PORT"
+            create_seqdesk_database "$FALLBACK_DB_PORT" postgres postgres
 
-          psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -c "DO \$\$ BEGIN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD'; END \$\$;"
-          if ! psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
-            psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER"
+            echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
+            echo "USE_EPHEMERAL_POSTGRES_CONTAINER=1" >> "$GITHUB_ENV"
+            echo "PG_CONTAINER_NAME=$PG_CONTAINER_NAME" >> "$GITHUB_ENV"
+            echo "PG_CONTAINER_RUNTIME=podman" >> "$GITHUB_ENV"
+            echo "Provisioned PostgreSQL via rootless Podman container on port $FALLBACK_DB_PORT."
+            exit 0
           fi
 
-          echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
-          echo "USE_EPHEMERAL_POSTGRES=1" >> "$GITHUB_ENV"
-          echo "Provisioned PostgreSQL via temporary user-space cluster on port $FALLBACK_DB_PORT."
+          echo "PostgreSQL provisioning requires one of: an existing local seqdesk database, the user-space PostgreSQL toolchain from Miniconda, or a rootless podman runtime on this self-hosted runner."
+          echo "This workflow no longer uses sudo or Docker."
+          exit 1
 
       - name: Create infrastructure JSON
         run: |
@@ -194,8 +279,13 @@ jobs:
       - name: Cleanup canary directory
         if: always()
         run: |
-          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ]; then
-            pg_ctl -D "$PGDATA_DIR" stop -m fast || true
+          if [ "${USE_EPHEMERAL_POSTGRES_CONTAINER:-0}" = "1" ] && [ -n "${PG_CONTAINER_NAME:-}" ] && [ -n "${PG_CONTAINER_RUNTIME:-}" ]; then
+            "$PG_CONTAINER_RUNTIME" logs "$PG_CONTAINER_NAME" > "$PG_LOG" 2>&1 || true
+            "$PG_CONTAINER_RUNTIME" rm -f "$PG_CONTAINER_NAME" >/dev/null 2>&1 || true
+          fi
+          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
+            "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
             rm -rf "$PGDATA_DIR"
           fi
+          rm -rf "${PG_TOOLCHAIN_DIR:-}"
           rm -rf "$CANARY_DIR"
