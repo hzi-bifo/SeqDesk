@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOrderSequencingSummary } from "@/lib/sequencing/workspace";
 import {
-  requireFacilityAdminSequencingSession,
+  requireFacilityAdminSequencingReadSession,
   SequencingApiError,
 } from "@/lib/sequencing/server";
 
@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireFacilityAdminSequencingSession();
+    await requireFacilityAdminSequencingReadSession();
     const { id } = await params;
     const summary = await getOrderSequencingSummary(id);
     return NextResponse.json(summary);
