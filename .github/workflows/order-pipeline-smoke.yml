@@ -1,4 +1,4 @@
-name: Order Pipeline Smoke
+name: Order Pipeline End-to-End Smoke
 
 on:
   workflow_dispatch:
@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   github_hosted:
+    name: Order Pipeline E2E (GitHub-hosted)
     if: ${{ inputs.run_github_hosted }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -28,6 +29,8 @@ jobs:
     env:
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-gh
       PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-gh
+      PIPELINE_SMOKE_RUNNER_LABEL: github-hosted
+      PIPELINE_SMOKE_WORKFLOW_LABEL: Order Pipeline End-to-End Smoke
       NXF_HOME: ${{ runner.temp }}/.nextflow-gh
 
     steps:
@@ -53,14 +56,21 @@ jobs:
             nextflow \
             nf-core
 
-      - name: Run order pipeline smoke
+      - name: Run order pipeline end-to-end smoke
         run: bash scripts/run-order-pipeline-smoke.sh --keep-temp
 
-      - name: Upload smoke artifacts
-        if: ${{ failure() }}
+      - name: Publish order pipeline summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f "$PIPELINE_SMOKE_TMPDIR/ORDER_PIPELINE_SMOKE_SUMMARY.md" ]]; then
+            cat "$PIPELINE_SMOKE_TMPDIR/ORDER_PIPELINE_SMOKE_SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload order pipeline outputs
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: order-pipeline-smoke-github-hosted
+          name: order-pipeline-e2e-github-hosted
           path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
           if-no-files-found: ignore
           retention-days: 14
@@ -72,6 +82,7 @@ jobs:
           rm -rf "$PIPELINE_SMOKE_TMPDIR" "$NXF_HOME"
 
   self_hosted:
+    name: Order Pipeline E2E (Self-hosted Twincore)
     needs: github_hosted
     if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
     runs-on: [self-hosted, linux, twincore, alma]
@@ -82,6 +93,8 @@ jobs:
     env:
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-twincore
       PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-twincore
+      PIPELINE_SMOKE_RUNNER_LABEL: self-hosted-twincore
+      PIPELINE_SMOKE_WORKFLOW_LABEL: Order Pipeline End-to-End Smoke
       NXF_HOME: ${{ runner.temp }}/.nextflow-twincore
 
     steps:
@@ -107,14 +120,21 @@ jobs:
             nextflow \
             nf-core
 
-      - name: Run order pipeline smoke
+      - name: Run order pipeline end-to-end smoke
         run: bash scripts/run-order-pipeline-smoke.sh --keep-temp
 
-      - name: Upload smoke artifacts
-        if: ${{ failure() }}
+      - name: Publish order pipeline summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f "$PIPELINE_SMOKE_TMPDIR/ORDER_PIPELINE_SMOKE_SUMMARY.md" ]]; then
+            cat "$PIPELINE_SMOKE_TMPDIR/ORDER_PIPELINE_SMOKE_SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload order pipeline outputs
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: order-pipeline-smoke-self-hosted
+          name: order-pipeline-e2e-self-hosted
           path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
           if-no-files-found: ignore
           retention-days: 14
