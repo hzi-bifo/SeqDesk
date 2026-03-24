@@ -132,7 +132,8 @@ describe("DashboardShell", () => {
       </DashboardShell>
     );
 
-    expect(screen.getByTestId("demo-banner").textContent).toContain("embedded-facility");
+    // Demo banner is hidden in embedded mode (landing page handles reset externally)
+    expect(screen.queryByTestId("demo-banner")).toBeNull();
     expect(screen.queryByTestId("update-banner")).toBeNull();
     expect(document.body.dataset.demoEmbedded).toBe("true");
     expect(mocks.postDemoFrameMessage).toHaveBeenCalledWith("seqdesk-demo-ready", {
