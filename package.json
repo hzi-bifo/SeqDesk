@@ -21,6 +21,7 @@
     "pipeline:monitor": "tsx scripts/pipeline-monitor.ts",
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once",
     "pipeline:smoke:checksum": "bash scripts/run-fastq-checksum-smoke.sh",
+    "pipeline:smoke:fastqc": "bash scripts/run-fastqc-smoke.sh",
     "pipeline:smoke:order": "bash scripts/run-order-pipeline-smoke.sh",
     "test": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run",
     "test:fast": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run",

@@ -6,6 +6,20 @@ import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
 import { cleanupRunOutputData } from '@/lib/pipelines/run-delete';
 
+function parseSelectedSampleIds(value: string | null): string[] | null {
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== 'string')) {
+      return null;
+    }
+    return parsed as string[];
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -72,11 +86,18 @@ export async function POST(
           ? { type: 'study' as const, studyId: run.studyId }
           : null;
 
-    if (target) {
-      const samples =
+    if (target && ['completed', 'failed', 'cancelled'].includes(run.status)) {
+      const selectedSampleIds = parseSelectedSampleIds(run.inputSampleIds);
+      const selectedSampleIdSet = selectedSampleIds
+        ? new Set(selectedSampleIds)
+        : null;
+      const targetSamples =
         run.targetType === 'order'
           ? run.order?.samples || []
           : run.study?.samples || [];
+      const samples = selectedSampleIdSet
+        ? targetSamples.filter((sample) => selectedSampleIdSet.has(sample.id))
+        : targetSamples;
 
       await cleanupRunOutputData({
         runId: id,

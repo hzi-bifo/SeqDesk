@@ -42,7 +42,13 @@ require_env_command java java -version
 require_env_command node node -v
 require_env_command md5sum md5sum --version
 
-TMP_DIR="$(mktemp -d)"
+if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
+  TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
+  rm -rf "$TMP_DIR"
+  mkdir -p "$TMP_DIR"
+else
+  TMP_DIR="$(mktemp -d)"
+fi
 
 cleanup() {
   if [[ "$KEEP_TEMP" -eq 0 ]]; then
@@ -54,8 +60,10 @@ trap cleanup EXIT
 
 SIM_SAMPLESHEET="$TMP_DIR/sim-samplesheet.csv"
 CHECKSUM_SAMPLESHEET="$TMP_DIR/checksum-samplesheet.csv"
+FASTQC_SAMPLESHEET="$TMP_DIR/fastqc-samplesheet.csv"
 SIM_OUT="$TMP_DIR/sim-output"
 CHECKSUM_OUT="$TMP_DIR/checksum-output"
+FASTQC_OUT="$TMP_DIR/fastqc-output"
 
 cat > "$SIM_SAMPLESHEET" <<'EOF'
 sample_id,order_id
@@ -114,7 +122,39 @@ done
 grep -q 'SAMPLE_A' "$CHECKSUM_OUT/summary/checksum-summary.tsv"
 grep -q 'SAMPLE_B' "$CHECKSUM_OUT/summary/checksum-summary.tsv"
 
-echo "Order pipeline smoke test passed."
+cat > "$FASTQC_SAMPLESHEET" <<EOF
+sample_id,fastq_1,fastq_2
+SAMPLE_A,$SIM_OUT/reads/SAMPLE_A_R1.fastq.gz,$SIM_OUT/reads/SAMPLE_A_R2.fastq.gz
+SAMPLE_B,$SIM_OUT/reads/SAMPLE_B_R1.fastq.gz,$SIM_OUT/reads/SAMPLE_B_R2.fastq.gz
+EOF
+
+echo "Running fastqc with Conda env '$ENV_NAME'..."
+conda run -n "$ENV_NAME" nextflow run pipelines/fastqc/workflow/main.nf \
+  -with-conda \
+  --input "$FASTQC_SAMPLESHEET" \
+  --outdir "$FASTQC_OUT"
+
+for path in \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_A_R1_fastqc.html" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_A_R1_fastqc.zip" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_A_R2_fastqc.html" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_A_R2_fastqc.zip" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_B_R1_fastqc.html" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_B_R1_fastqc.zip" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_B_R2_fastqc.html" \
+  "$FASTQC_OUT/fastqc_reports/SAMPLE_B_R2_fastqc.zip" \
+  "$FASTQC_OUT/summary/fastqc-summary.tsv"; do
+  if [[ ! -f "$path" ]]; then
+    echo "Missing expected FastQC output: $path" >&2
+    echo "Temporary run directory: $TMP_DIR" >&2
+    exit 1
+  fi
+done
+
+grep -q 'SAMPLE_A' "$FASTQC_OUT/summary/fastqc-summary.tsv"
+grep -q 'SAMPLE_B' "$FASTQC_OUT/summary/fastqc-summary.tsv"
+
+echo "Order pipeline smoke test passed (simulate-reads, fastq-checksum, fastqc)."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

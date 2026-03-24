@@ -39,7 +39,6 @@ require_env_command() {
 
 require_env_command nextflow nextflow -version
 require_env_command java java -version
-require_env_command md5sum md5sum --version
 
 if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
   TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
@@ -58,7 +57,7 @@ cleanup() {
 trap cleanup EXIT
 
 READS_DIR="$TMP_DIR/reads"
-OUTPUT_DIR="$TMP_DIR/checksum-output"
+OUTPUT_DIR="$TMP_DIR/fastqc-output"
 SAMPLESHEET="$TMP_DIR/samplesheet.csv"
 
 mkdir -p "$READS_DIR"
@@ -105,34 +104,31 @@ SINGLE_A,$READS_DIR/SINGLE_A_R1.fastq.gz,
 PAIRED_B,$READS_DIR/PAIRED_B_R1.fastq.gz,$READS_DIR/PAIRED_B_R2.fastq.gz
 EOF
 
-echo "Running fastq-checksum with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/fastq-checksum/workflow/main.nf \
+echo "Running fastqc with Conda env '$ENV_NAME'..."
+conda run -n "$ENV_NAME" nextflow run pipelines/fastqc/workflow/main.nf \
+  -with-conda \
   --input "$SAMPLESHEET" \
   --outdir "$OUTPUT_DIR"
 
 for path in \
-  "$OUTPUT_DIR/checksums/SINGLE_A.json" \
-  "$OUTPUT_DIR/checksums/PAIRED_B.json" \
-  "$OUTPUT_DIR/summary/checksum-summary.tsv"; do
+  "$OUTPUT_DIR/fastqc_reports/SINGLE_A_R1_fastqc.html" \
+  "$OUTPUT_DIR/fastqc_reports/SINGLE_A_R1_fastqc.zip" \
+  "$OUTPUT_DIR/fastqc_reports/PAIRED_B_R1_fastqc.html" \
+  "$OUTPUT_DIR/fastqc_reports/PAIRED_B_R1_fastqc.zip" \
+  "$OUTPUT_DIR/fastqc_reports/PAIRED_B_R2_fastqc.html" \
+  "$OUTPUT_DIR/fastqc_reports/PAIRED_B_R2_fastqc.zip" \
+  "$OUTPUT_DIR/summary/fastqc-summary.tsv"; do
   if [[ ! -f "$path" ]]; then
-    echo "Missing expected checksum output: $path" >&2
+    echo "Missing expected FastQC output: $path" >&2
     echo "Temporary run directory: $TMP_DIR" >&2
     exit 1
   fi
 done
 
-EXPECTED_SINGLE_A_R1="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/SINGLE_A_R1.fastq.gz" | awk '{print $1}')"
-EXPECTED_PAIRED_B_R1="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/PAIRED_B_R1.fastq.gz" | awk '{print $1}')"
-EXPECTED_PAIRED_B_R2="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/PAIRED_B_R2.fastq.gz" | awk '{print $1}')"
+grep -q 'SINGLE_A' "$OUTPUT_DIR/summary/fastqc-summary.tsv"
+grep -q 'PAIRED_B' "$OUTPUT_DIR/summary/fastqc-summary.tsv"
 
-grep -q "\"checksum1\":\"$EXPECTED_SINGLE_A_R1\"" "$OUTPUT_DIR/checksums/SINGLE_A.json"
-grep -q '"checksum2":""' "$OUTPUT_DIR/checksums/SINGLE_A.json"
-grep -q "\"checksum1\":\"$EXPECTED_PAIRED_B_R1\"" "$OUTPUT_DIR/checksums/PAIRED_B.json"
-grep -q "\"checksum2\":\"$EXPECTED_PAIRED_B_R2\"" "$OUTPUT_DIR/checksums/PAIRED_B.json"
-grep -q "SINGLE_A" "$OUTPUT_DIR/summary/checksum-summary.tsv"
-grep -q "PAIRED_B" "$OUTPUT_DIR/summary/checksum-summary.tsv"
-
-echo "FASTQ checksum smoke test passed."
+echo "FASTQC smoke test passed."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

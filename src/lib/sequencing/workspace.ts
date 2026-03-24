@@ -636,6 +636,8 @@ async function upsertSampleReadAssignment(
         checksum1: options?.checksum1 ?? undefined,
         checksum2: options?.checksum2 ?? undefined,
         sequencingRunId: options?.sequencingRunId ?? undefined,
+        pipelineRunId: null,
+        pipelineSources: null,
       },
     });
   } else if (file1 || file2) {
@@ -647,6 +649,8 @@ async function upsertSampleReadAssignment(
         checksum1: options?.checksum1 ?? null,
         checksum2: options?.checksum2 ?? null,
         sequencingRunId: options?.sequencingRunId ?? null,
+        pipelineRunId: null,
+        pipelineSources: null,
       },
     });
   }
@@ -735,6 +739,8 @@ export async function assignOrderSequencingReads(
             checksum1: null,
             checksum2: null,
             sequencingRunId: null,
+            pipelineRunId: null,
+            pipelineSources: null,
           },
         });
       }
