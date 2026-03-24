@@ -934,8 +934,8 @@ async function cleanupOrphanedDemoRecords(token: string): Promise<void> {
       await tx.order.deleteMany({ where: { id: { in: orderIds } } });
     }
 
-    // Clean up orphaned demo users by email pattern
-    await tx.user.deleteMany({
+    // Clean up orphaned demo users and their studies
+    const orphanedUsers = await tx.user.findMany({
       where: {
         isDemo: true,
         AND: [
@@ -943,7 +943,27 @@ async function cleanupOrphanedDemoRecords(token: string): Promise<void> {
           { email: { contains: token.slice(0, 6) } },
         ],
       },
+      select: { id: true },
     });
+
+    if (orphanedUsers.length > 0) {
+      const orphanUserIds = orphanedUsers.map((u) => u.id);
+      // Delete pipeline runs linked to orphaned users' studies
+      const orphanStudies = await tx.study.findMany({
+        where: { userId: { in: orphanUserIds } },
+        select: { id: true },
+      });
+      if (orphanStudies.length > 0) {
+        await tx.pipelineRun.deleteMany({
+          where: { studyId: { in: orphanStudies.map((s) => s.id) } },
+        });
+      }
+      await tx.study.deleteMany({ where: { userId: { in: orphanUserIds } } });
+      await tx.demoWorkspace.deleteMany({
+        where: { OR: [{ userId: { in: orphanUserIds } }, { adminUserId: { in: orphanUserIds } }] },
+      });
+      await tx.user.deleteMany({ where: { id: { in: orphanUserIds } } });
+    }
   });
 
   console.log(`[Demo Cleanup] Orphan cleanup completed for prefix ${prefix}`);
