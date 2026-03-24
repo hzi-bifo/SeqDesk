@@ -897,6 +897,58 @@ async function destroyWorkspaceByToken(token: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Last-resort cleanup: delete orphaned demo records by token-derived patterns.
+ * This handles the case where the workspace record was deleted but orders/users
+ * remain in the database (e.g., from a partial destroy in older code).
+ */
+async function cleanupOrphanedDemoRecords(token: string): Promise<void> {
+  const prefix = token.slice(0, 6).toUpperCase();
+  const orderNumberPrefix = `DEMO-${prefix}-`;
+  const emailSuffix = "@seqdesk.local";
+
+  await db.$transaction(async (tx) => {
+    // Find orphaned orders by order number pattern
+    const orphanedOrders = await tx.order.findMany({
+      where: { orderNumber: { startsWith: orderNumberPrefix } },
+      select: { id: true, userId: true },
+    });
+
+    if (orphanedOrders.length > 0) {
+      const orderIds = orphanedOrders.map((o) => o.id);
+      const userIds = [...new Set(orphanedOrders.map((o) => o.userId))];
+
+      // Clean up samples' reads
+      const samples = await tx.sample.findMany({
+        where: { orderId: { in: orderIds } },
+        select: { id: true },
+      });
+      if (samples.length > 0) {
+        await tx.read.deleteMany({ where: { sampleId: { in: samples.map((s) => s.id) } } });
+      }
+
+      // Clean up pipeline runs referencing these orders
+      await tx.pipelineRun.deleteMany({ where: { orderId: { in: orderIds } } });
+      await tx.statusNote.deleteMany({ where: { userId: { in: userIds } } });
+      await tx.ticket.deleteMany({ where: { orderId: { in: orderIds } } });
+      await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+    }
+
+    // Clean up orphaned demo users by email pattern
+    await tx.user.deleteMany({
+      where: {
+        isDemo: true,
+        AND: [
+          { email: { endsWith: emailSuffix } },
+          { email: { contains: token.slice(0, 6) } },
+        ],
+      },
+    });
+  });
+
+  console.log(`[Demo Cleanup] Orphan cleanup completed for prefix ${prefix}`);
+}
+
 async function refreshWorkspace(workspaceId: string): Promise<Date> {
   const refreshedExpiry = addHours(new Date(), DEMO_SESSION_TTL_HOURS);
   await db.demoWorkspace.update({
@@ -1064,8 +1116,10 @@ export async function bootstrapDemoWorkspace(
         workspaceId: created.workspaceId,
       };
     } catch (error) {
-      // Retry once after a harder cleanup — handles partial destroy or race conditions
+      // Retry once after cleaning up orphaned records by token prefix
+      console.warn("[Demo Bootstrap] Create failed, attempting orphan cleanup:", error);
       await destroyWorkspaceByToken(normalizedToken).catch(() => {});
+      await cleanupOrphanedDemoRecords(normalizedToken);
       const created = await createDemoWorkspaceInternal(normalizedToken);
       return {
         created: true,
