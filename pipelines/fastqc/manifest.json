@@ -97,13 +97,15 @@
           "label": "R1",
           "path": "read.fastqcReport1",
           "whenPathExists": "read.file1",
-          "format": "filename"
+          "format": "filename",
+          "previewable": true
         },
         {
           "label": "R2",
           "path": "read.fastqcReport2",
           "whenPathExists": "read.file2",
-          "format": "filename"
+          "format": "filename",
+          "previewable": true
         }
       ]
     }

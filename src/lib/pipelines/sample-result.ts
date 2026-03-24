@@ -7,6 +7,8 @@ import type {
 export interface SampleResultPreviewItem {
   label?: string;
   value: string;
+  /** Absolute path to the file for preview — only set when previewable */
+  previewPath?: string;
 }
 
 export interface SampleResultPreview {
@@ -88,23 +90,19 @@ export function getSampleResultPreview(
       return hasDisplayValue(getValueAtPath(sample, descriptor.whenPathExists));
     })
     .map<SampleResultPreviewItem | null>((descriptor) => {
-      const formatted = formatPreviewValue(
-        getValueAtPath(sample, descriptor.path),
-        descriptor,
-      );
+      const rawValue = getValueAtPath(sample, descriptor.path);
+      const formatted = formatPreviewValue(rawValue, descriptor);
 
       if (!formatted) {
         return null;
       }
 
-      return descriptor.label
-        ? {
-            label: descriptor.label,
-            value: formatted,
-          }
-        : {
-            value: formatted,
-          };
+      const item: SampleResultPreviewItem = { value: formatted };
+      if (descriptor.label) item.label = descriptor.label;
+      if (descriptor.previewable && typeof rawValue === "string" && rawValue.trim()) {
+        item.previewPath = rawValue.trim();
+      }
+      return item;
     })
     .filter((item): item is SampleResultPreviewItem => item !== null);
 

@@ -31,6 +31,7 @@ const PipelineSampleResultValueSchema = z
     whenPathExists: z.string().regex(/^[a-zA-Z0-9_.]+$/).optional(),
     format: z.enum(["text", "hash_prefix", "filename"]).optional(),
     truncate: z.number().int().min(1).max(64).optional(),
+    previewable: z.boolean().optional(),
   })
   .strict();
 

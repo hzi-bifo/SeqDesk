@@ -27,6 +27,7 @@ import type { PipelineSampleResult } from "@/lib/pipelines/types";
 import {
   AlertCircle,
   Clock,
+  ExternalLink,
   Info,
   Loader2,
   MoreHorizontal,
@@ -223,6 +224,7 @@ export function OrderPipelineView({
     currentRunId?: string | null;
   } | null>(null);
   const [changingSource, setChangingSource] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ path: string; label: string } | null>(null);
   const {
     systemReady,
     checkingSystem,
@@ -823,14 +825,29 @@ export function OrderPipelineView({
                             {sampleResultPreview.items.map((item) => (
                               <div
                                 key={`${item.label ?? "value"}-${item.value}`}
-                                className="text-xs"
+                                className="text-xs flex items-center gap-1"
                               >
                                 {item.label ? (
-                                  <span className="mr-1.5 text-muted-foreground">
+                                  <span className="mr-1 text-muted-foreground">
                                     {item.label}
                                   </span>
                                 ) : null}
-                                <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
+                                {item.previewPath ? (
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "font-mono text-blue-600 hover:text-blue-800 hover:underline cursor-pointer inline-flex items-center gap-0.5",
+                                      sample.read?.filesMissing && "line-through text-muted-foreground pointer-events-none"
+                                    )}
+                                    onClick={() => setPreviewFile({ path: item.previewPath!, label: `${item.label ? item.label + " — " : ""}${item.value}` })}
+                                    disabled={!!sample.read?.filesMissing}
+                                  >
+                                    {item.value}
+                                    <ExternalLink className="h-2.5 w-2.5" />
+                                  </button>
+                                ) : (
+                                  <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
+                                )}
                               </div>
                             ))}
                             {sample.read?.filesMissing && (
@@ -1475,6 +1492,40 @@ export function OrderPipelineView({
                 Delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? "s" : ""}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* HTML Report Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="relative flex h-[90vh] w-[90vw] max-w-6xl flex-col rounded-xl border bg-card shadow-lg">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-sm font-medium truncate">{previewFile.label}</h3>
+              <div className="flex items-center gap-2">
+                <a
+                  href={`/api/files/preview?path=${encodeURIComponent(previewFile.path)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                >
+                  Open in new tab
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <button
+                  type="button"
+                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => setPreviewFile(null)}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={`/api/files/preview?path=${encodeURIComponent(previewFile.path)}`}
+              className="flex-1 w-full rounded-b-xl"
+              title={previewFile.label}
+              sandbox="allow-same-origin allow-scripts"
+            />
           </div>
         </div>
       )}
