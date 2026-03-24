@@ -3,7 +3,6 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
-import { generateDemoFastqcReport } from "@/lib/demo/fastqc-report-template";
 import fs from "fs/promises";
 import path from "path";
 
@@ -15,23 +14,30 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * For demo sessions, serve a generated FastQC report instead of reading from disk.
- * Parses the sample name and read direction from the path.
+ * For demo sessions, serve a real FastQC report bundled in public/demo/.
+ * Uses the read direction (R1/R2) from the filename to pick the right report.
  */
-function serveDemoFastqcReport(filePath: string): NextResponse | null {
+async function serveDemoFastqcReport(filePath: string): Promise<NextResponse | null> {
   // Match paths like .../fastqc_reports/SampleName_R1_fastqc.html
-  const match = filePath.match(/\/([^/]+)_(R[12])_fastqc\.html$/);
+  const match = filePath.match(/_(R[12])_fastqc\.html$/);
   if (!match) return null;
-  const [, sampleName, direction] = match;
-  const html = generateDemoFastqcReport(sampleName, direction as "R1" | "R2");
-  return new NextResponse(html, {
-    headers: {
-      "Content-Type": "text/html",
-      "Content-Length": String(Buffer.byteLength(html)),
-      "Content-Security-Policy": "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  const direction = match[1]; // "R1" or "R2"
+
+  // Resolve the bundled report from public/demo/
+  const reportFile = path.join(process.cwd(), "public", "demo", `fastqc_${direction}.html`);
+  try {
+    const content = await fs.readFile(reportFile);
+    return new NextResponse(content, {
+      headers: {
+        "Content-Type": "text/html",
+        "Content-Length": String(content.length),
+        "Content-Security-Policy": "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -52,7 +58,7 @@ export async function GET(request: NextRequest) {
       const { searchParams } = new URL(request.url);
       const demoPath = searchParams.get("path");
       if (demoPath) {
-        const demoResponse = serveDemoFastqcReport(demoPath);
+        const demoResponse = await serveDemoFastqcReport(demoPath);
         if (demoResponse) return demoResponse;
       }
       return new NextResponse("Preview is not available for this file in the demo.", {
