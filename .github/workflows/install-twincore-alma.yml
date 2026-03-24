@@ -187,7 +187,7 @@ jobs:
       - name: Install canary side-by-side (source installer, headless)
         run: |
           set -euo pipefail
-          SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
+          SEQDESK_REPO="file://$GITHUB_WORKSPACE" SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
             -y \
             --without-pipelines \
             --branch "$GITHUB_REF_NAME" \
