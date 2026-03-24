@@ -71,6 +71,11 @@ export function DemoBanner({
           </p>
           <p className="text-xs text-muted-foreground">
             Private to this demo workspace. Reset anytime to restore the seeded data.
+            {!isFacilityDemo && (
+              <span className="block mt-0.5 text-muted-foreground/80">
+                Tip: Try editing the draft order and submitting it to experience the full workflow.
+              </span>
+            )}
           </p>
           {error ? (
             <p className="mt-1 text-xs text-destructive">{error}</p>

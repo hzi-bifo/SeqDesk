@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { Footer } from "@/components/layout/Footer";
+import { AdminDemoReadOnlyWrapper } from "@/components/demo/AdminDemoReadOnlyWrapper";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 import { isFacilityDemoSession } from "@/lib/demo/server";
@@ -29,7 +30,9 @@ export default async function AdminLayout({
   return (
     <div className="min-h-screen bg-background">
       <DashboardShell user={session.user} version={version}>
-        {children}
+        <AdminDemoReadOnlyWrapper isDemo={!!session.user.isDemo}>
+          {children}
+        </AdminDemoReadOnlyWrapper>
       </DashboardShell>
       <Footer />
     </div>
