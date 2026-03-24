@@ -59,6 +59,9 @@ const mocks = vi.hoisted(() => ({
     bin: {
       create: vi.fn(),
     },
+    read: {
+      create: vi.fn(),
+    },
     ticket: {
       deleteMany: vi.fn(),
     },
@@ -158,6 +161,7 @@ describe("demo workspace server helpers", () => {
     mocks.db.pipelineArtifact.create.mockResolvedValue({});
     mocks.db.assembly.create.mockResolvedValue({});
     mocks.db.bin.create.mockResolvedValue({});
+    mocks.db.read.create.mockResolvedValue({});
 
     mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
     mocks.db.demoWorkspace.update.mockResolvedValue({});
@@ -189,7 +193,7 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.study.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(3);
     expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(3);
-    expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(1);
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(4);
     expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(3);
     expect(mocks.db.pipelineRunEvent.create).toHaveBeenCalledTimes(3);
   });
