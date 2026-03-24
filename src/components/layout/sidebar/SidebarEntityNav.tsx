@@ -140,8 +140,8 @@ export function SidebarEntityNav({
       icon: Building2,
       show: showAdminControls && !!facilityStep,
     },
-    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls && !isDemoUser },
-    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && !isDemoUser && orderPipelines.length > 0 },
+    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls },
+    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && orderPipelines.length > 0 },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;
