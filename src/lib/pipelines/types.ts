@@ -68,6 +68,8 @@ export interface PipelineSampleResultValue {
   whenPathExists?: string;
   format?: PipelineSampleResultFormat;
   truncate?: number;
+  /** When true, the value is an HTML file path that can be previewed in-browser */
+  previewable?: boolean;
 }
 
 export interface PipelineSampleResult {

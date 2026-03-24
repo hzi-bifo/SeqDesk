@@ -337,4 +337,88 @@ describe("getSampleResultPreview", () => {
       items: [],
     });
   });
+
+  it("includes previewPath for previewable items", () => {
+    const sample = makeSample({
+      read: {
+        id: "read-1",
+        file1: "reads/sample_R1.fastq.gz",
+        file2: "reads/sample_R2.fastq.gz",
+        checksum1: null,
+        checksum2: null,
+        readCount1: null,
+        readCount2: null,
+        fastqcReport1: "/data/reports/sample_R1_fastqc.html",
+        fastqcReport2: "/data/reports/sample_R2_fastqc.html",
+        fileSize1: null,
+        fileSize2: null,
+        pipelineRunId: null,
+        pipelineRunNumber: null,
+        pipelineSources: null,
+        filesMissing: false,
+      },
+    });
+    const preview = getSampleResultPreview(sample, {
+      columnLabel: "QC Reports",
+      emptyText: "Not generated",
+      values: [
+        {
+          label: "R1",
+          path: "read.fastqcReport1",
+          whenPathExists: "read.file1",
+          format: "filename",
+          previewable: true,
+        },
+        {
+          label: "R2",
+          path: "read.fastqcReport2",
+          whenPathExists: "read.file2",
+          format: "filename",
+          previewable: true,
+        },
+      ],
+    });
+
+    expect(preview?.items).toEqual([
+      { label: "R1", value: "sample_R1_fastqc.html", previewPath: "/data/reports/sample_R1_fastqc.html" },
+      { label: "R2", value: "sample_R2_fastqc.html", previewPath: "/data/reports/sample_R2_fastqc.html" },
+    ]);
+  });
+
+  it("does not include previewPath when previewable is not set", () => {
+    const sample = makeSample({
+      read: {
+        id: "read-1",
+        file1: "reads/sample_R1.fastq.gz",
+        file2: null,
+        checksum1: null,
+        checksum2: null,
+        readCount1: null,
+        readCount2: null,
+        fastqcReport1: "/data/reports/sample_R1_fastqc.html",
+        fastqcReport2: null,
+        fileSize1: null,
+        fileSize2: null,
+        pipelineRunId: null,
+        pipelineRunNumber: null,
+        pipelineSources: null,
+        filesMissing: false,
+      },
+    });
+    const preview = getSampleResultPreview(sample, {
+      columnLabel: "QC Reports",
+      values: [
+        {
+          label: "R1",
+          path: "read.fastqcReport1",
+          whenPathExists: "read.file1",
+          format: "filename",
+        },
+      ],
+    });
+
+    expect(preview?.items).toEqual([
+      { label: "R1", value: "sample_R1_fastqc.html" },
+    ]);
+  });
 });
