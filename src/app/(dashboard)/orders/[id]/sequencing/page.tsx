@@ -889,14 +889,7 @@ export default function OrderSequencingPage({
     }
   };
 
-  if (session?.user?.isDemo) {
-    return (
-      <DemoFeatureNotice
-        title="Sequencing data is disabled in the public demo"
-        description="The hosted demo does not connect to local sequencing storage or browser uploads. This workspace is available in a real facility installation."
-      />
-    );
-  }
+  const isDemo = !!session?.user?.isDemo;
 
   if (sessionStatus === "loading" || loading) {
     return (
@@ -1084,7 +1077,7 @@ export default function OrderSequencingPage({
           samples={data.samples}
           onRunCompleted={() => void refreshSummary({ silent: true })}
           onSampleDataChanged={() => void refreshSummary({ silent: true })}
-          isDemo={!!session?.user?.isDemo}
+          isDemo={isDemo}
         />
       </PageContainer>
     );
@@ -1101,45 +1094,47 @@ export default function OrderSequencingPage({
                 {sampleOptions.length} sample{sampleOptions.length !== 1 ? "s" : ""} in this order
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => setScanDialogOpen(true)} disabled={!canManage}>
-                <FolderSearch className="mr-1.5 h-3.5 w-3.5" />
-                Scan Storage
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  void refreshSummary({ silent: true });
-                  void refreshOrderPipelines();
-                }}
-                disabled={refreshing}
-              >
-                {refreshing ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                )}
-                Refresh
-              </Button>
-              <Button size="sm" variant="outline" onClick={handleComputeChecksums} disabled={!canManage || computingChecksums}>
-                {computingChecksums ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Hash className="mr-2 h-4 w-4" />
-                )}
-                Compute Hashes
-              </Button>
-              <Button size="sm" variant="outline" asChild>
-                <Link href={`/orders/${orderId}/pipelines`}>
-                  <Play className="mr-2 h-4 w-4" />
-                  Order Pipelines
-                </Link>
-              </Button>
-            </div>
+            {!isDemo && (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setScanDialogOpen(true)} disabled={!canManage}>
+                  <FolderSearch className="mr-1.5 h-3.5 w-3.5" />
+                  Scan Storage
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void refreshSummary({ silent: true });
+                    void refreshOrderPipelines();
+                  }}
+                  disabled={refreshing}
+                >
+                  {refreshing ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  Refresh
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleComputeChecksums} disabled={!canManage || computingChecksums}>
+                  {computingChecksums ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Hash className="mr-2 h-4 w-4" />
+                  )}
+                  Compute Hashes
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/orders/${orderId}/pipelines`}>
+                    <Play className="mr-2 h-4 w-4" />
+                    Order Pipelines
+                  </Link>
+                </Button>
+              </div>
+            )}
           </div>
 
-          {!data.dataBasePathConfigured && (
+          {!isDemo && !data.dataBasePathConfigured && (
             <Card className="border-amber-200 bg-amber-50/70">
               <CardHeader>
                 <CardTitle className="text-base text-amber-900">Storage Not Configured</CardTitle>
@@ -1150,7 +1145,7 @@ export default function OrderSequencingPage({
             </Card>
           )}
 
-          {!canManage && (
+          {!isDemo && !canManage && (
             <Card className="border-slate-200 bg-slate-50/70">
               <CardHeader>
                 <CardTitle className="text-base">Order Not Ready For Sequencing Data</CardTitle>
