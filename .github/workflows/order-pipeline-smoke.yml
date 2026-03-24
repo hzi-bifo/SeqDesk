@@ -28,14 +28,17 @@ jobs:
         shell: bash -el {0}
     env:
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-gh
-      PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-gh
       PIPELINE_SMOKE_RUNNER_LABEL: github-hosted
       PIPELINE_SMOKE_WORKFLOW_LABEL: Order Pipeline End-to-End Smoke
-      NXF_HOME: ${{ runner.temp }}/.nextflow-gh
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set runtime paths
+        run: |
+          echo "PIPELINE_SMOKE_TMPDIR=$RUNNER_TEMP/order-pipeline-smoke-gh" >> "$GITHUB_ENV"
+          echo "NXF_HOME=$RUNNER_TEMP/.nextflow-gh" >> "$GITHUB_ENV"
 
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -71,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: order-pipeline-e2e-github-hosted
-          path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
+          path: ${{ runner.temp }}/order-pipeline-smoke-gh
           if-no-files-found: ignore
           retention-days: 14
 
@@ -92,14 +95,17 @@ jobs:
         shell: bash -el {0}
     env:
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-twincore
-      PIPELINE_SMOKE_TMPDIR: ${{ runner.temp }}/order-pipeline-smoke-twincore
       PIPELINE_SMOKE_RUNNER_LABEL: self-hosted-twincore
       PIPELINE_SMOKE_WORKFLOW_LABEL: Order Pipeline End-to-End Smoke
-      NXF_HOME: ${{ runner.temp }}/.nextflow-twincore
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set runtime paths
+        run: |
+          echo "PIPELINE_SMOKE_TMPDIR=$RUNNER_TEMP/order-pipeline-smoke-twincore" >> "$GITHUB_ENV"
+          echo "NXF_HOME=$RUNNER_TEMP/.nextflow-twincore" >> "$GITHUB_ENV"
 
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -135,7 +141,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: order-pipeline-e2e-self-hosted
-          path: ${{ env.PIPELINE_SMOKE_TMPDIR }}
+          path: ${{ runner.temp }}/order-pipeline-smoke-twincore
           if-no-files-found: ignore
           retention-days: 14
 
