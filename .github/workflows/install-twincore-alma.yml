@@ -18,6 +18,12 @@ jobs:
     runs-on: [self-hosted, linux, twincore, alma]
     timeout-minutes: 45
     env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_PORT: 5432
+      DB_USER: seqdesk
+      FALLBACK_DB_PORT: 55432
       NEXT_TELEMETRY_DISABLED: 1
     steps:
       - name: Checkout code
@@ -27,28 +33,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Ensure PostgreSQL database
-        run: |
-          set -euo pipefail
-
-          if pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && \
-             PGPASSWORD=seqdesk psql -h 127.0.0.1 -U seqdesk -d seqdesk -tAc "SELECT 1" >/dev/null 2>&1; then
-            echo "Using existing local PostgreSQL seqdesk database."
-            exit 0
-          fi
-
-          if ! sudo -n true >/dev/null 2>&1; then
-            echo "PostgreSQL provisioning requires passwordless sudo on this self-hosted runner."
-            echo "Either pre-create the local seqdesk role/database or grant NOPASSWD for systemctl and postgres psql."
-            exit 1
-          fi
-
-          sudo -n systemctl start postgresql || sudo -n systemctl start postgresql.service
-          sudo -n -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
-          if ! sudo -n -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
-            sudo -n -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
-          fi
 
       - name: Configure canary paths
         run: |
@@ -60,6 +44,48 @@ jobs:
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-twincore.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-twincore.config.json" >> "$GITHUB_ENV"
           echo "STORE_SMOKE_JSON=$RUNNER_TEMP/store-smoke-twincore.json" >> "$GITHUB_ENV"
+          echo "PGDATA_DIR=$RUNNER_TEMP/postgres-twincore-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+          echo "PG_LOG=$RUNNER_TEMP/postgres-twincore.log" >> "$GITHUB_ENV"
+
+      - name: Ensure PostgreSQL database
+        run: |
+          set -euo pipefail
+
+          if pg_isready -h "$DB_HOST" -p "$DB_PORT" >/dev/null 2>&1 && \
+             PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1" >/dev/null 2>&1; then
+            echo "Using existing local PostgreSQL seqdesk database."
+            exit 0
+          fi
+
+          if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
+            echo "PostgreSQL provisioning requires either an existing local seqdesk database or local initdb/pg_ctl binaries on this self-hosted runner."
+            echo "This workflow no longer uses sudo. Pre-create the database or install PostgreSQL server tools for unprivileged startup."
+            exit 1
+          fi
+
+          rm -rf "$PGDATA_DIR"
+          initdb -D "$PGDATA_DIR" -U postgres -A trust >/dev/null
+          {
+            echo "listen_addresses = '127.0.0.1'"
+            echo "port = $FALLBACK_DB_PORT"
+          } >> "$PGDATA_DIR/postgresql.conf"
+          pg_ctl -D "$PGDATA_DIR" -l "$PG_LOG" start
+
+          for _ in $(seq 1 30); do
+            if pg_isready -h "$DB_HOST" -p "$FALLBACK_DB_PORT" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -c "DO \$\$ BEGIN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD'; END \$\$;"
+          if ! psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+            psql -h "$DB_HOST" -p "$FALLBACK_DB_PORT" -U postgres -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER"
+          fi
+
+          echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
+          echo "USE_EPHEMERAL_POSTGRES=1" >> "$GITHUB_ENV"
+          echo "Provisioned PostgreSQL via temporary user-space cluster on port $FALLBACK_DB_PORT."
 
       - name: Create infrastructure JSON
         run: |
@@ -68,8 +94,8 @@ jobs:
             "port": $PORT,
             "pipelinesEnabled": false,
             "nextAuthUrl": "http://127.0.0.1:$PORT",
-            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
-            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
+            "databaseUrl": "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public",
+            "directUrl": "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public"
           }
           EOF
 
@@ -161,10 +187,15 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.STORE_SMOKE_JSON }}
+            ${{ env.PG_LOG }}
           if-no-files-found: warn
           retention-days: 14
 
       - name: Cleanup canary directory
         if: always()
         run: |
+          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ]; then
+            pg_ctl -D "$PGDATA_DIR" stop -m fast || true
+            rm -rf "$PGDATA_DIR"
+          fi
           rm -rf "$CANARY_DIR"
