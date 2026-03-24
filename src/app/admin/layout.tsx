@@ -22,9 +22,7 @@ export default async function AdminLayout({
     redirect("/orders");
   }
 
-  if (isFacilityDemoSession(session)) {
-    redirect("/orders");
-  }
+  // Demo facility admins can view admin pages (read-only) but not modify anything
 
   const version = getCurrentVersion();
 
