@@ -12,7 +12,7 @@ import {
   isMacOsArmRuntime,
   resolveCondaBin,
 } from '@/lib/pipelines/runtime-platform';
-import { getLocalCondaCompatibilityBlockMessage } from '@/lib/pipelines/runtime-compatibility';
+import { getLocalCondaCompatibilityBlockMessage, shouldSkipCondaOnMacArm } from '@/lib/pipelines/runtime-compatibility';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
@@ -348,6 +348,20 @@ export async function POST(
       );
     }
 
+    // When on macOS ARM with allowMacOsArmLocal, skip conda profile so
+    // Nextflow uses locally installed tools (e.g. fastqc from Homebrew)
+    const skipConda = !isSubmgPipeline && shouldSkipCondaOnMacArm({
+      manifest: pkg.manifest,
+      runtimeMode: executionSettings.runtimeMode,
+      useSlurm: executionSettings.useSlurm,
+      runtimePlatform,
+    });
+    if (skipConda) {
+      console.log(
+        `[Start Pipeline] macOS ARM detected with allowMacOsArmLocal — skipping conda profile for ${pipelineId}`
+      );
+    }
+
     const forbiddenProfiles = new Set(['docker', 'singularity', 'apptainer', 'podman']);
     const forbiddenSelected = profileParts
       .map((part) => part.toLowerCase())
@@ -427,6 +441,7 @@ export async function POST(
             ...executionSettings,
             dataBasePath: resolvedDataBasePath.dataBasePath,
             nextflowProfile: effectiveProfile,
+            skipConda,
           },
           userId: session.user.id,
         });

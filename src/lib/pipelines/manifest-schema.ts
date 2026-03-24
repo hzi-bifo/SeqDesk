@@ -91,6 +91,7 @@ export const ManifestSchema = z
         runtime: z
           .object({
             allowMacOsArmConda: z.boolean().optional(),
+            allowMacOsArmLocal: z.boolean().optional(),
           })
           .strict()
           .optional(),

@@ -88,6 +88,8 @@ export interface PackageExecution {
   defaultParams: Record<string, unknown>;
   runtime?: {
     allowMacOsArmConda?: boolean;
+    /** When true, skip Conda profile on macOS ARM and run using locally installed tools */
+    allowMacOsArmLocal?: boolean;
   };
 }
 

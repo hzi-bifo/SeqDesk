@@ -797,7 +797,14 @@ export function OrderPipelineView({
                           {sample.read.file2 ? "Paired-end" : "Single-end"}
                         </Badge>
                         {sample.read.filesMissing && (
-                          <Badge variant="outline" className="text-orange-700 border-orange-200 bg-orange-50">
+                          <Badge
+                            variant="outline"
+                            className="text-orange-700 border-orange-200 bg-orange-50"
+                            title={[
+                              sample.read.file1 && sample.read.fileSize1 == null && "R1 file missing from disk",
+                              sample.read.file2 && sample.read.fileSize2 == null && "R2 file missing from disk",
+                            ].filter(Boolean).join("; ") || "Source files missing from disk"}
+                          >
                             Stale
                           </Badge>
                         )}

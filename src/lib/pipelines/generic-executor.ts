@@ -254,11 +254,14 @@ function isBlankString(value: unknown): value is string {
  * - Combines manifest profiles + admin profiles
  * - De-duplicates
  * - Ensures conda is always present (required for SeqDesk execution)
+ * - When skipConda is true, omits the conda profile (for macOS ARM local execution)
  */
-function mergeProfiles(
+export function mergeProfiles(
   manifestProfiles: string[],
-  adminProfile?: string
+  adminProfile?: string,
+  options?: { skipConda?: boolean }
 ): string {
+  const skipConda = options?.skipConda ?? false;
   const profiles: string[] = [];
   const seen = new Set<string>();
 
@@ -266,6 +269,7 @@ function mergeProfiles(
     const trimmed = profile.trim();
     if (!trimmed) return;
     const key = trimmed.toLowerCase();
+    if (skipConda && key === 'conda') return;
     if (seen.has(key)) return;
     seen.add(key);
     profiles.push(trimmed);
@@ -284,7 +288,8 @@ function mergeProfiles(
   }
 
   // Ensure conda is always present (required for SeqDesk execution)
-  if (!seen.has('conda')) {
+  // unless explicitly skipped for macOS ARM local execution
+  if (!skipConda && !seen.has('conda')) {
     profiles.push('conda');
   }
 
@@ -488,7 +493,7 @@ function generateSlurmScript(
   const runName = buildNextflowRunName(runNumber, runId);
   const nameFlag = `-name ${runName}`;
   // Merge manifest profiles with admin-configured profile
-  const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
+  const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
   const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
   const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
@@ -569,7 +574,7 @@ function generateLocalScript(
   const runName = buildNextflowRunName(runNumber, runId);
   const nameFlag = `-name ${runName}`;
   // Merge manifest profiles with admin-configured profile
-  const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile);
+  const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
   const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
   const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
   const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
