@@ -15,17 +15,22 @@ const testTier = resolveTestTier(process.env.SEQDESK_TEST_TIER);
 const serialExecution = testTier === "risk" || testTier === "live";
 
 const includeByTier: Record<TestTier, string[]> = {
-  fast: ["src/**/*.test.ts"],
-  risk: ["src/**/*.risk.test.ts"],
-  live: ["src/**/*.live.test.ts"],
-  all: ["src/**/*.test.ts"],
+  fast: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  risk: ["src/**/*.risk.test.ts", "src/**/*.risk.test.tsx"],
+  live: ["src/**/*.live.test.ts", "src/**/*.live.test.tsx"],
+  all: ["src/**/*.test.ts", "src/**/*.test.tsx"],
 };
 
 const excludeByTier: Record<TestTier, string[]> = {
-  fast: ["src/**/*.risk.test.ts", "src/**/*.live.test.ts"],
-  risk: ["src/**/*.live.test.ts"],
+  fast: [
+    "src/**/*.risk.test.ts",
+    "src/**/*.risk.test.tsx",
+    "src/**/*.live.test.ts",
+    "src/**/*.live.test.tsx",
+  ],
+  risk: ["src/**/*.live.test.ts", "src/**/*.live.test.tsx"],
   live: [],
-  all: ["src/**/*.live.test.ts"],
+  all: ["src/**/*.live.test.ts", "src/**/*.live.test.tsx"],
 };
 
 export default defineConfig({
