@@ -10,7 +10,7 @@ function mapStudySectionToTab(section: string | null): string | null {
     case "analysis":
       return "pipelines";
     case "archive":
-      return "ena";
+      return "publishing";
     default:
       return null;
   }
@@ -21,8 +21,10 @@ function normalizeStudyTab(tab: string | null): string | null {
     case "samples":
     case "reads":
     case "pipelines":
-    case "ena":
+    case "publishing":
       return tab;
+    case "ena":
+      return "publishing";
     default:
       return null;
   }
@@ -55,7 +57,26 @@ export function getStudyHref(
     return `/studies/${studyId}`;
   }
 
-  return `/studies/${studyId}?tab=${activeTab}`;
+  const nextSearchParams = new URLSearchParams();
+  nextSearchParams.set("tab", activeTab);
+
+  if (activeTab === "pipelines") {
+    const pipelineId = searchParams.get("pipeline");
+    if (pipelineId) {
+      nextSearchParams.set("pipeline", pipelineId);
+    }
+  }
+
+  if (activeTab === "publishing") {
+    const publisher =
+      searchParams.get("publisher") ??
+      (searchParams.get("tab") === "ena" ? "ena" : null);
+    if (publisher) {
+      nextSearchParams.set("publisher", publisher);
+    }
+  }
+
+  return `/studies/${studyId}?${nextSearchParams.toString()}`;
 }
 
 export function getOrderHref(

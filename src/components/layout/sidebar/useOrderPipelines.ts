@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { OrderProgressCompletionStatus } from "@/lib/orders/progress-status";
-import type { PipelineRunStatus } from "@/lib/pipelines/types";
+import { getPipelineProgressStatuses } from "./pipelineProgress";
 
 export interface OrderPipelineNavItem {
   pipelineId: string;
@@ -20,50 +20,12 @@ interface OrderPipelineDefinition {
 
 interface PipelineRunSummary {
   pipelineId: string;
-  status: PipelineRunStatus;
+  status: import("@/lib/pipelines/types").PipelineRunStatus;
 }
 
 const cache = new Map<string, OrderPipelineDefinition[]>();
 
-export function getOrderPipelineProgressStatuses(
-  runs: PipelineRunSummary[]
-): Record<string, OrderProgressCompletionStatus> {
-  const groupedRuns = new Map<string, PipelineRunSummary[]>();
-
-  for (const run of runs) {
-    const existing = groupedRuns.get(run.pipelineId);
-    if (existing) {
-      existing.push(run);
-    } else {
-      groupedRuns.set(run.pipelineId, [run]);
-    }
-  }
-
-  const statuses: Record<string, OrderProgressCompletionStatus> = {};
-
-  for (const [pipelineId, pipelineRuns] of groupedRuns.entries()) {
-    const hasActiveRun = pipelineRuns.some(
-      (run) =>
-        run.status === "pending" ||
-        run.status === "queued" ||
-        run.status === "running"
-    );
-    const hasCompletedRun = pipelineRuns.some((run) => run.status === "completed");
-    const hasAttemptedRun = pipelineRuns.some(
-      (run) => run.status === "failed" || run.status === "cancelled"
-    );
-
-    statuses[pipelineId] = hasActiveRun
-      ? "partial"
-      : hasCompletedRun
-        ? "complete"
-        : hasAttemptedRun
-          ? "partial"
-          : "empty";
-  }
-
-  return statuses;
-}
+export { getPipelineProgressStatuses as getOrderPipelineProgressStatuses } from "./pipelineProgress";
 
 async function fetchOrderPipelineDefinitions(): Promise<OrderPipelineDefinition[]> {
   const cacheKey = "order-pipelines";
@@ -132,7 +94,7 @@ export function useOrderPipelines(
           ? (await seqRes.json()) as { summary?: { readsLinkedSamples: number } }
           : null;
         const hasLinkedReads = (seqPayload?.summary?.readsLinkedSamples ?? 0) > 0;
-        const statusByPipeline = getOrderPipelineProgressStatuses(
+        const statusByPipeline = getPipelineProgressStatuses(
           runsPayload?.runs ?? []
         );
 

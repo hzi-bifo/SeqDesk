@@ -24,8 +24,20 @@ describe("getStudyHref", () => {
       "/studies/study-1?tab=pipelines"
     );
     expect(getStudyHref("study-1", "/studies/study-1", new URLSearchParams("section=archive"))).toBe(
-      "/studies/study-1?tab=ena"
+      "/studies/study-1?tab=publishing"
     );
+  });
+
+  it("preserves publishing and pipeline sub-routes", () => {
+    expect(
+      getStudyHref("study-1", "/studies/study-1", new URLSearchParams("tab=publishing&publisher=ena"))
+    ).toBe("/studies/study-1?tab=publishing&publisher=ena");
+    expect(
+      getStudyHref("study-1", "/studies/study-1", new URLSearchParams("tab=ena"))
+    ).toBe("/studies/study-1?tab=publishing&publisher=ena");
+    expect(
+      getStudyHref("study-1", "/studies/study-1", new URLSearchParams("tab=pipelines&pipeline=mag"))
+    ).toBe("/studies/study-1?tab=pipelines&pipeline=mag");
   });
 
   it("drops unknown tabs back to the study overview", () => {

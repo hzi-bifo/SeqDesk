@@ -159,7 +159,7 @@ export default function HelpPage() {
             <li>- Order and Study fields are configured by your facility, so steps can differ between installations.</li>
             <li>- After order submission, sample rows are typically read-only, while order metadata may still be editable until completion.</li>
             <li>- A single order can feed one or multiple studies.</li>
-            <li>- For ENA, required checks (title, samples, taxonomy, metadata) are shown in the study Archive section.</li>
+            <li>- For ENA, required checks (title, samples, taxonomy, metadata) are shown in the study Publishing section.</li>
           </ul>
         </div>
       </section>

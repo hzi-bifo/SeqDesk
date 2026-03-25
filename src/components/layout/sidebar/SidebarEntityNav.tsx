@@ -16,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { SidebarEntityContext } from "./useSidebarEntity";
 import { useOrderFormSteps } from "./useOrderFormSteps";
 import { useOrderPipelines } from "./useOrderPipelines";
+import { useStudyPipelines } from "./useStudyPipelines";
 import { useStudyFormSteps } from "./useStudyFormSteps";
 import {
   getOrderProgressIndicatorClassName,
@@ -58,6 +59,10 @@ export function SidebarEntityNav({
     showAdminControls,
     entityType === "order" ? entityId : null
   );
+  const studyPipelines = useStudyPipelines(
+    showAdminControls,
+    entityType === "study" ? entityId : null
+  );
   const facilityStep = orderFormSteps.find((step) => step.id === "_facility");
   const detailOrderSteps = orderFormSteps.filter((step) => step.id !== "_facility");
 
@@ -82,7 +87,13 @@ export function SidebarEntityNav({
 
   // Derive active tab from URL
   const activeTab = pathname.startsWith("/studies") ? "studies" : "orders";
-  const currentStudyTab = searchParams.get("tab");
+  const requestedStudyTab = searchParams.get("tab");
+  const currentStudyTab =
+    requestedStudyTab === "ena" ? "publishing" : requestedStudyTab;
+  const currentStudyPublishingTarget =
+    currentStudyTab === "publishing"
+      ? (requestedStudyTab === "ena" ? "ena" : searchParams.get("publisher"))
+      : null;
   const currentStudySubview =
     pathname.match(/^\/studies\/[^/]+\/(facility|edit|metadata)$/)?.[1] ?? null;
   const currentStudySection =
@@ -105,10 +116,9 @@ export function SidebarEntityNav({
       icon: Building2,
       show: showAdminControls && studyFacilitySections.length > 0,
     },
-    { key: "samples", label: "Samples", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: FlaskConical, show: true },
-    { key: "reads", label: "Read Files", href: entityId ? `/studies/${entityId}?tab=reads` : undefined, icon: HardDrive, show: !isDemoUser },
+    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
     { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls && !isDemoUser },
-    { key: "archive", label: "Archive", href: entityId ? `/studies/${entityId}?tab=ena` : undefined, icon: Send, show: !isDemoUser },
+    { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: !isDemoUser },
   ];
 
   // ── Order nav items ──
@@ -163,10 +173,11 @@ export function SidebarEntityNav({
         (currentStudyTab === null || currentStudyTab === "overview" || currentStudyTab === "notes");
       if (item.key === "overview") return isStudyOverviewTab && currentStudySection === "overview";
       if (item.key === "facility") return currentStudySubview === "facility";
-      if (item.key === "samples") return currentStudyTab === "samples";
-      if (item.key === "reads") return currentStudyTab === "reads";
+      if (item.key === "sequencing") {
+        return currentStudyTab === "samples" || currentStudyTab === "reads";
+      }
       if (item.key === "analysis") return currentStudyTab === "pipelines";
-      if (item.key === "archive") return currentStudyTab === "ena";
+      if (item.key === "publishing") return currentStudyTab === "publishing";
       return false;
     }
 
@@ -221,6 +232,11 @@ export function SidebarEntityNav({
             item.key === "facility" &&
             !!entityId &&
             studyFacilitySections.length > 0;
+          const shouldShowStudySequencingSubitems =
+            !collapsed &&
+            activeTab === "studies" &&
+            item.key === "sequencing" &&
+            !!entityId;
           const shouldShowFacilitySubitems =
             !collapsed &&
             activeTab === "orders" &&
@@ -238,6 +254,18 @@ export function SidebarEntityNav({
             item.key === "analysis" &&
             !!entityId &&
             orderPipelines.length > 0;
+          const shouldShowStudyPipelineSubitems =
+            !collapsed &&
+            activeTab === "studies" &&
+            item.key === "analysis" &&
+            !!entityId &&
+            studyPipelines.length > 0;
+          const shouldShowStudyPublishingSubitems =
+            !collapsed &&
+            activeTab === "studies" &&
+            item.key === "publishing" &&
+            !!entityId &&
+            !isDemoUser;
 
           if (isDisabled) {
             const disabledItem = (
@@ -298,8 +326,11 @@ export function SidebarEntityNav({
           if (
             !shouldShowOrderSubitems &&
             !shouldShowFacilitySubitems &&
+            !shouldShowStudySequencingSubitems &&
             !shouldShowSequencingDataSubitems &&
             !shouldShowSequencingSubitems &&
+            !shouldShowStudyPipelineSubitems &&
+            !shouldShowStudyPublishingSubitems &&
             !shouldShowStudyOverviewSubitems &&
             !shouldShowStudyFacilitySubitems
           ) {
@@ -373,6 +404,68 @@ export function SidebarEntityNav({
                       </Link>
                     );
                   })}
+                </div>
+              )}
+              {shouldShowStudySequencingSubitems && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  {[
+                    {
+                      id: "samples",
+                      label: "Samples",
+                      href: `/studies/${entityId}?tab=samples`,
+                      visible: true,
+                    },
+                    {
+                      id: "reads",
+                      label: "Read Files",
+                      href: `/studies/${entityId}?tab=reads`,
+                      visible: !isDemoUser,
+                    },
+                  ]
+                    .filter((sub) => sub.visible)
+                    .map((sub) => {
+                      const isSubActive = currentStudyTab === sub.id;
+                      return (
+                        <Link
+                          key={sub.id}
+                          href={sub.href}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                            isSubActive
+                              ? "bg-secondary text-foreground font-medium"
+                              : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "h-2 w-2 rounded-full shadow-sm",
+                              sub.id === "reads" ? "bg-emerald-500" : "bg-slate-300"
+                            )}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">{sub.label}</span>
+                        </Link>
+                      );
+                    })}
+                </div>
+              )}
+              {shouldShowStudyPublishingSubitems && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  <Link
+                    href={`/studies/${entityId}?tab=publishing&publisher=ena`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                      currentStudyPublishingTarget === "ena"
+                        ? "bg-secondary text-foreground font-medium"
+                        : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                    )}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">ENA</span>
+                  </Link>
                 </div>
               )}
               {shouldShowOrderSubitems && (
@@ -499,6 +592,40 @@ export function SidebarEntityNav({
                       <Link
                         key={pipeline.pipelineId}
                         href={`/orders/${entityId}/sequencing?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                          isPipelineActive
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full shadow-sm",
+                            getOrderProgressIndicatorClassName(pipeline.status),
+                            isPipelineActive && "ring-2 ring-background"
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{pipeline.name}</span>
+                        <span className="sr-only">
+                          {getOrderProgressIndicatorLabel(pipeline.status)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+              {shouldShowStudyPipelineSubitems && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  {studyPipelines.map((pipeline) => {
+                    const isPipelineActive =
+                      currentStudyTab === "pipelines" &&
+                      searchParams.get("pipeline") === pipeline.pipelineId;
+                    return (
+                      <Link
+                        key={pipeline.pipelineId}
+                        href={`/studies/${entityId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}#study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isPipelineActive

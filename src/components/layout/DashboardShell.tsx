@@ -53,7 +53,9 @@ function derivePageTitle(pathname: string, section: string | null): string | nul
     if (section === "samples") return "Samples";
     if (section === "reads") return "Read Files";
     if (section === "pipelines" || section === "analysis") return "Analysis";
-    if (section === "ena" || section === "archive") return "Archive";
+    if (section === "publishing" || section === "ena" || section === "archive") {
+      return "Publishing";
+    }
     return "Overview";
   }
 

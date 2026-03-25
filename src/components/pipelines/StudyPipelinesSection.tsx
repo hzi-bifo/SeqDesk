@@ -6,6 +6,13 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { GlassCard } from "@/components/ui/glass-card";
 import {
   Dialog,
@@ -231,6 +238,7 @@ interface PipelineRun {
 interface StudyPipelinesSectionProps {
   studyId: string;
   samples: Sample[];
+  selectedPipelineId?: string | null;
 }
 
 interface EnaSettingsResponse {
@@ -878,13 +886,14 @@ function getMissingReadChecksumPaths(params: {
 export function StudyPipelinesSection({
   studyId,
   samples,
+  selectedPipelineId = null,
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   // Fetch enabled pipelines
-  const { data: pipelinesData } = useSWR(
-    "/api/admin/settings/pipelines?enabled=true",
+  const { data: pipelinesData, isLoading: pipelinesLoading } = useSWR(
+    "/api/admin/settings/pipelines?enabled=true&catalog=study",
     fetcher
   );
   const { data: enaSettingsData } = useSWR<EnaSettingsResponse>(
@@ -896,7 +905,7 @@ export function StudyPipelinesSection({
   const {
     data: runsData,
     mutate: mutateRuns,
-  } = useSWR(`/api/pipelines/runs?studyId=${studyId}&limit=10`, fetcher, {
+  } = useSWR(`/api/pipelines/runs?studyId=${studyId}&limit=200`, fetcher, {
     refreshInterval: 10000,
   });
 
@@ -978,7 +987,49 @@ export function StudyPipelinesSection({
     () => pipelinesData?.pipelines || [],
     [pipelinesData]
   );
-  const pipelineRuns: PipelineRun[] = runsData?.runs || [];
+  const pipelineRuns: PipelineRun[] = useMemo(
+    () => runsData?.runs || [],
+    [runsData?.runs]
+  );
+  const focusedPipeline = useMemo(
+    () =>
+      selectedPipelineId
+        ? enabledPipelines.find(
+            (pipeline) => pipeline.pipelineId === selectedPipelineId
+          ) ?? null
+        : null,
+    [enabledPipelines, selectedPipelineId]
+  );
+  const visiblePipelines = useMemo(
+    () =>
+      focusedPipeline
+        ? enabledPipelines.filter(
+            (pipeline) => pipeline.pipelineId === focusedPipeline.pipelineId
+          )
+        : enabledPipelines,
+    [enabledPipelines, focusedPipeline]
+  );
+  const visiblePipelineRuns = useMemo(
+    () =>
+      focusedPipeline
+        ? pipelineRuns.filter((run) => run.pipelineId === focusedPipeline.pipelineId)
+        : pipelineRuns,
+    [pipelineRuns, focusedPipeline]
+  );
+  const runsByPipeline = useMemo(() => {
+    const groupedRuns = new Map<string, PipelineRun[]>();
+
+    for (const run of pipelineRuns) {
+      const existing = groupedRuns.get(run.pipelineId);
+      if (existing) {
+        existing.push(run);
+      } else {
+        groupedRuns.set(run.pipelineId, [run]);
+      }
+    }
+
+    return groupedRuns;
+  }, [pipelineRuns]);
   const enaSubmissionServer = useMemo(() => {
     if (typeof enaSettingsData?.enaTestMode !== "boolean") {
       return null;
@@ -1521,9 +1572,141 @@ export function StudyPipelinesSection({
     }
   };
 
-  // If no pipelines are enabled, show nothing
-  if (enabledPipelines.length === 0 && pipelineRuns.length === 0) {
-    return null;
+  if (pipelinesLoading && enabledPipelines.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        Loading pipelines...
+      </div>
+    );
+  }
+
+  if (!focusedPipeline) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-semibold">Analysis</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Pipeline overview for this study
+          </p>
+        </div>
+
+        {enabledPipelines.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-muted-foreground">
+              No pipelines configured for this study.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4">
+            {enabledPipelines.map((pipeline) => {
+              const runs = runsByPipeline.get(pipeline.pipelineId) ?? [];
+              const completedRuns = runs.filter((run) => run.status === "completed");
+              const activeRuns = runs.filter(
+                (run) =>
+                  run.status === "running" ||
+                  run.status === "queued" ||
+                  run.status === "pending"
+              );
+              const failedRuns = runs.filter(
+                (run) => run.status === "failed" || run.status === "cancelled"
+              );
+              const latestRun = runs
+                .slice()
+                .sort(
+                  (a, b) =>
+                    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                )[0];
+
+              return (
+                <Link
+                  key={pipeline.pipelineId}
+                  href={`/studies/${studyId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}#study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
+                  className="block"
+                >
+                  <Card className="cursor-pointer transition-colors hover:bg-muted/30">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          {getPipelineIcon(pipeline.icon)}
+                          {pipeline.name}
+                        </CardTitle>
+                        <div className="flex items-center gap-2">
+                          {activeRuns.length > 0 && (
+                            <Badge
+                              variant="secondary"
+                              className="border-blue-200 bg-blue-50 text-xs text-blue-700"
+                            >
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              Running
+                            </Badge>
+                          )}
+                          {activeRuns.length === 0 && completedRuns.length > 0 && (
+                            <Badge
+                              variant="secondary"
+                              className="border-emerald-200 bg-emerald-50 text-xs text-emerald-700"
+                            >
+                              <CheckCircle2 className="mr-1 h-3 w-3" />
+                              Completed
+                            </Badge>
+                          )}
+                          {activeRuns.length === 0 &&
+                            completedRuns.length === 0 &&
+                            failedRuns.length > 0 && (
+                              <Badge
+                                variant="secondary"
+                                className="border-red-200 bg-red-50 text-xs text-red-700"
+                              >
+                                <AlertCircle className="mr-1 h-3 w-3" />
+                                Failed
+                              </Badge>
+                            )}
+                          {runs.length === 0 && (
+                            <Badge
+                              variant="outline"
+                              className="text-xs text-muted-foreground"
+                            >
+                              Not run yet
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <CardDescription>{pipeline.description}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <span>
+                          {runs.length} run{runs.length !== 1 ? "s" : ""} total
+                        </span>
+                        {completedRuns.length > 0 && (
+                          <span className="text-emerald-600">
+                            {completedRuns.length} completed
+                          </span>
+                        )}
+                        {failedRuns.length > 0 && (
+                          <span className="text-red-600">
+                            {failedRuns.length} failed
+                          </span>
+                        )}
+                        {latestRun && (
+                          <>
+                            <span className="text-border">|</span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Last run: {formatRelativeTime(latestRun.createdAt)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -1571,7 +1754,7 @@ export function StudyPipelinesSection({
 
           {/* Pipeline cards - admin-style */}
           <div className="grid gap-4 sm:grid-cols-2 mb-6">
-            {enabledPipelines.map((pipeline) => {
+            {visiblePipelines.map((pipeline) => {
               const validation = metadataPrecheck[pipeline.pipelineId];
               const readiness = getPipelineReadiness({
                 pipelineId: pipeline.pipelineId,
@@ -1589,10 +1772,15 @@ export function StudyPipelinesSection({
               return (
                 <GlassCard
                   key={pipeline.pipelineId}
+                  id={`study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
                   className={`relative transition-all ${
                     canRun
                       ? "hover:shadow-md hover:border-primary/50 cursor-pointer"
                       : "opacity-60"
+                  } ${
+                    focusedPipeline?.pipelineId === pipeline.pipelineId
+                      ? "ring-1 ring-primary/40 border-primary/40"
+                      : ""
                   }`}
                   onClick={() => canRun && openRunDialog(pipeline)}
                 >
@@ -1645,7 +1833,7 @@ export function StudyPipelinesSection({
                         {pipeline.pipelineId === "submg" &&
                         readiness.missingRequired.includes("Study accession") && (
                           <p className="text-xs text-amber-700 mt-1">
-                            Register this study in the Archive section first to populate the
+                            Register this study in the Publishing section first to populate the
                             accession used by SubMG.
                           </p>
                         )}
@@ -1709,14 +1897,14 @@ export function StudyPipelinesSection({
       )}
 
       {/* Run History */}
-      {pipelineRuns.length > 0 && (
+      {(visiblePipelineRuns.length > 0 || focusedPipeline) && (
         <div className="bg-card rounded-lg border overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4">
             <h3 className="text-sm font-semibold flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              Run History
+              {focusedPipeline ? `${focusedPipeline.name} Runs` : "Run History"}
             </h3>
-            {runsData?.total > pipelineRuns.length && (
+            {!focusedPipeline && runsData?.total > pipelineRuns.length && (
               <Link
                 href={`/analysis?studyId=${studyId}`}
                 className="text-xs text-primary hover:underline flex items-center gap-1"
@@ -1739,7 +1927,7 @@ export function StudyPipelinesSection({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pipelineRuns.map((run) => (
+              {visiblePipelineRuns.map((run) => (
                 <TableRow
                   key={run.id}
                   className="cursor-pointer hover:bg-muted/50"
@@ -1800,6 +1988,16 @@ export function StudyPipelinesSection({
                   </TableCell>
                 </TableRow>
               ))}
+              {visiblePipelineRuns.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="py-8 text-center text-sm text-muted-foreground"
+                  >
+                    No runs for this pipeline yet.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
@@ -2267,7 +2465,7 @@ export function StudyPipelinesSection({
                         {submgCoverage.studyAccessionMissing && (
                           <p className="text-xs text-amber-700">
                             Study accession comes from ENA Registration in this
-                            study&apos;s Archive section (Test Server or Production).
+                            study&apos;s Publishing section (Test Server or Production).
                           </p>
                         )}
                         <div className="space-y-1">

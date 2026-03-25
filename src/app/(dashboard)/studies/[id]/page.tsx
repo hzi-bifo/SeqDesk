@@ -6,6 +6,13 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
@@ -271,16 +278,61 @@ function formatUnknownFieldValue(value: unknown): string {
   return String(value);
 }
 
-function normalizeStudyTab(tab: string | null): "overview" | "samples" | "reads" | "pipelines" | "ena" {
+function normalizeStudyTab(
+  tab: string | null
+): "overview" | "samples" | "reads" | "pipelines" | "publishing" {
   switch (tab) {
     case "samples":
     case "reads":
     case "pipelines":
-    case "ena":
+    case "publishing":
       return tab;
+    case "ena":
+      return "publishing";
     default:
       return "overview";
   }
+}
+
+function normalizePublishingTarget(value: string | null): "ena" | null {
+  return value === "ena" ? "ena" : null;
+}
+
+function getPublishingStatus(study: Pick<Study, "submitted" | "readyForSubmission">): {
+  label: string;
+  className: string;
+} {
+  if (study.submitted) {
+    return {
+      label: "Registered",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  if (study.readyForSubmission) {
+    return {
+      label: "Ready",
+      className: "border-blue-200 bg-blue-50 text-blue-700",
+    };
+  }
+  return {
+    label: "Draft",
+    className: "border-slate-200 bg-slate-50 text-slate-700",
+  };
+}
+
+function getPublishingSummary(
+  study: Pick<Study, "submitted" | "readyForSubmission" | "studyAccessionId">
+): string {
+  if (study.submitted && study.studyAccessionId) {
+    return `Accession ${study.studyAccessionId} assigned`;
+  }
+  if (study.submitted) {
+    return "Study has been registered";
+  }
+  if (study.readyForSubmission) {
+    return "Ready for registration";
+  }
+  return "Complete metadata and mark ready to publish";
 }
 
 export default function StudyDetailPage({
@@ -337,7 +389,16 @@ export default function StudyDetailPage({
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isDemoUser = session?.user?.isDemo === true;
   const apiStudyId = study?.id ?? id;
-  const currentTab = normalizeStudyTab(searchParams.get("tab"));
+  const requestedTab = searchParams.get("tab");
+  const currentTab = normalizeStudyTab(requestedTab);
+  const selectedPipelineId =
+    currentTab === "pipelines" ? searchParams.get("pipeline") : null;
+  const selectedPublishingTarget =
+    currentTab === "publishing"
+      ? normalizePublishingTarget(
+          requestedTab === "ena" ? "ena" : searchParams.get("publisher")
+        )
+      : null;
 
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;
@@ -1560,15 +1621,62 @@ export default function StudyDetailPage({
         {/* Pipelines Tab - admin only */}
         {isAdmin && totalSamples > 0 && (
           <TabsContent value="pipelines">
-            <StudyPipelinesSection studyId={study.id} samples={studySamples} />
+            <StudyPipelinesSection
+              studyId={study.id}
+              samples={studySamples}
+              selectedPipelineId={selectedPipelineId}
+            />
           </TabsContent>
         )}
 
-        {/* ENA Tab */}
+        {/* Publishing Tab */}
         {!isDemoUser && (
-        <TabsContent value="ena">
-          {/* ENA Submission Readiness - Admin View */}
-          {isAdmin && !study.submitted && (() => {
+        <TabsContent value="publishing">
+          {!selectedPublishingTarget ? (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-semibold">Publishing</h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Publishing destinations available for this study
+                </p>
+              </div>
+
+              <div className="grid gap-4">
+                <Link
+                  href={`/studies/${id}?tab=publishing&publisher=ena`}
+                  className="block"
+                >
+                  <Card className="cursor-pointer transition-colors hover:bg-muted/30">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Send className="h-4 w-4 text-muted-foreground" />
+                          ENA
+                        </CardTitle>
+                        <Badge
+                          variant="secondary"
+                          className={getPublishingStatus(study).className}
+                        >
+                          {getPublishingStatus(study).label}
+                        </Badge>
+                      </div>
+                      <CardDescription>
+                        Register and publish study metadata to the European
+                        Nucleotide Archive
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <span>1 publishing route available</span>
+                        <span className="text-border">|</span>
+                        <span>{getPublishingSummary(study)}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              </div>
+            </div>
+          ) : (() => {
             const requiredChecks = {
               hasTitle: Boolean(study.title && study.title.trim()),
               hasDescription: Boolean(study.description && study.description.trim()),
@@ -1582,6 +1690,7 @@ export default function StudyDetailPage({
             const totalChecks = Object.keys(requiredChecks).length;
             const allPassed = passedChecks === totalChecks;
             const hasTestRegistration = Boolean(study.testRegisteredAt);
+            const publishingStatus = getPublishingStatus(study);
 
             return (
               <div className="bg-card rounded-lg border p-5">
@@ -1589,15 +1698,25 @@ export default function StudyDetailPage({
                   <div>
                     <p className="font-semibold flex items-center gap-2">
                       ENA Registration
+                      <Badge
+                        variant="secondary"
+                        className={publishingStatus.className}
+                      >
+                        {publishingStatus.label}
+                      </Badge>
                       <span className="text-sm font-normal text-muted-foreground">
                         ({passedChecks}/{totalChecks} checks)
                       </span>
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {study.readyForSubmission ? "User marked ready" : "User has not marked as ready"}
+                      {study.submitted
+                        ? "Study already registered with ENA"
+                        : study.readyForSubmission
+                          ? "User marked ready"
+                          : "User has not marked as ready"}
                     </p>
                   </div>
-                  {allPassed && (
+                  {!study.submitted && isAdmin && allPassed && (
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
@@ -1629,6 +1748,18 @@ export default function StudyDetailPage({
                     </div>
                   )}
                 </div>
+
+                {study.submitted && study.studyAccessionId && (
+                  <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                    Registered accession:{" "}
+                    <span className="font-mono">{study.studyAccessionId}</span>
+                    {study.submittedAt ? (
+                      <span className="ml-2 text-emerald-700">
+                        on {formatDate(study.submittedAt)}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
 
                 {/* Test Registration Status */}
                 {hasTestRegistration && (() => {

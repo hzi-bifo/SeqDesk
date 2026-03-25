@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   useOrderFormSteps: vi.fn(),
   useStudyFormSteps: vi.fn(),
   useOrderPipelines: vi.fn(),
+  useStudyPipelines: vi.fn(),
   progressClassName: vi.fn(),
   progressLabel: vi.fn(),
 }));
@@ -54,6 +55,10 @@ vi.mock("./useOrderPipelines", () => ({
   useOrderPipelines: mocks.useOrderPipelines,
 }));
 
+vi.mock("./useStudyPipelines", () => ({
+  useStudyPipelines: mocks.useStudyPipelines,
+}));
+
 vi.mock("@/lib/orders/progress-status", () => ({
   getOrderProgressIndicatorClassName: mocks.progressClassName,
   getOrderProgressIndicatorLabel: mocks.progressLabel,
@@ -88,6 +93,9 @@ describe("SidebarEntityNav", () => {
     });
     mocks.useOrderPipelines.mockReturnValue([
       { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete" },
+    ]);
+    mocks.useStudyPipelines.mockReturnValue([
+      { pipelineId: "mag", name: "MAG", status: "partial" },
     ]);
     mocks.progressClassName.mockImplementation((status: string) => `indicator-${status}`);
     mocks.progressLabel.mockImplementation((status: string) => `label-${status}`);
@@ -170,12 +178,82 @@ describe("SidebarEntityNav", () => {
 
     expect(screen.getByText("Overview")).toBeTruthy();
     expect(screen.getByText("Facility Fields")).toBeTruthy();
+    expect(screen.getByText("Sequencing Data")).toBeTruthy();
     expect(screen.getByText("Samples")).toBeTruthy();
     expect(screen.getByText("Overview A")).toBeTruthy();
     expect(screen.getByText("Facility B")).toBeTruthy();
     expect(screen.queryByText("Read Files")).toBeNull();
     expect(screen.queryByText("Analysis")).toBeNull();
-    expect(screen.queryByText("Archive")).toBeNull();
+    expect(screen.queryByText("Publishing")).toBeNull();
+  });
+
+  it("renders study sequencing subitems under a single parent", () => {
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=reads"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    expect(screen.getByText("Sequencing Data")).toBeTruthy();
+    expect(screen.getByText("Samples")).toBeTruthy();
+    const readsLink = screen.getByRole("link", { name: /Read Files/i });
+    expect(readsLink.getAttribute("href")).toBe("/studies/study-1?tab=reads");
+  });
+
+  it("renders study analysis pipeline subitems with progress dots", () => {
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=pipelines&pipeline=mag"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const pipelineLink = screen.getByRole("link", { name: /MAG/i });
+    expect(pipelineLink.getAttribute("href")).toBe(
+      "/studies/study-1?tab=pipelines&pipeline=mag#study-pipeline-mag"
+    );
+  });
+
+  it("renders study publishing with ENA subitem", () => {
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(
+      new URLSearchParams("tab=publishing&publisher=ena")
+    );
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    expect(screen.getByText("Publishing")).toBeTruthy();
+    const enaLink = screen.getByRole("link", { name: /ENA/i });
+    expect(enaLink.getAttribute("href")).toBe(
+      "/studies/study-1?tab=publishing&publisher=ena"
+    );
   });
 
   it("renders disabled order items when on an entity route without a selected entity", () => {
