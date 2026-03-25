@@ -25,6 +25,8 @@ import {
   type ExecutionSettings,
 } from "./execution-settings";
 
+const TEST_RUN_DIRECTORY = "/Users/tester/testdata/pipeline_runs";
+
 function makeSettings(overrides?: Partial<ExecutionSettings>): ExecutionSettings {
   return {
     ...DEFAULT_EXECUTION_SETTINGS,
@@ -90,7 +92,7 @@ describe("execution-settings", () => {
         pipelines: {
           execution: {
             mode: "local",
-            runDirectory: "/Users/pmu15/testdata/pipeline_runs",
+            runDirectory: TEST_RUN_DIRECTORY,
             conda: {
               path: "/opt/homebrew/Caskroom/miniconda/base",
               environment: "seqdesk-pipelines",
@@ -119,7 +121,7 @@ describe("execution-settings", () => {
     const result = await getExecutionSettings();
 
     expect(result.useSlurm).toBe(false);
-    expect(result.pipelineRunDir).toBe("/Users/pmu15/testdata/pipeline_runs");
+    expect(result.pipelineRunDir).toBe(TEST_RUN_DIRECTORY);
     expect(result.condaPath).toBe("/opt/homebrew/Caskroom/miniconda/base");
     expect(result.condaEnv).toBe("seqdesk-pipelines");
   });

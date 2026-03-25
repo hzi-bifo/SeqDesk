@@ -85,6 +85,7 @@ agents.md
 
 # private docs
 docs/
+PIPELINE_STORE_INTEGRATION_REVIEW.md
 
 # local AI tooling state
 .claude/
