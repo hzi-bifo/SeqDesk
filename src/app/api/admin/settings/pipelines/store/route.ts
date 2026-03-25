@@ -8,11 +8,30 @@ import {
   type RegistryCategoryEntry,
   type StorePipelineResponse,
 } from "@/lib/pipelines/store-sources";
+import {
+  matchesPipelineCatalog,
+  type PipelineCatalog,
+} from "@/lib/pipelines/package-contracts";
 
-export async function GET(_request: NextRequest) {
+function parseCatalogParam(value: string | null): PipelineCatalog | "all" | null {
+  if (!value || value === "all") return "all";
+  if (value === "order" || value === "study") return value;
+  return null;
+}
+
+export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "FACILITY_ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const catalog = parseCatalogParam(searchParams.get("catalog"));
+  if (!catalog) {
+    return NextResponse.json(
+      { error: "Invalid catalog. Expected one of: all, order, study" },
+      { status: 400 }
+    );
   }
 
   const registrySources = getPipelineRegistrySources();
@@ -37,7 +56,10 @@ export async function GET(_request: NextRequest) {
 
     for (const { registry, data } of responses) {
       for (const pipeline of data.pipelines || []) {
-        pipelines.push(normalizeRegistryPipeline(pipeline, registry));
+        const normalized = normalizeRegistryPipeline(pipeline, registry);
+        if (matchesPipelineCatalog(normalized.catalogs, catalog)) {
+          pipelines.push(normalized);
+        }
       }
       for (const category of data.categories || []) {
         if (!categoryMap.has(category.id)) {

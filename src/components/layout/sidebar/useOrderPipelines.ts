@@ -13,18 +13,15 @@ export interface OrderPipelineNavItem {
 interface OrderPipelineDefinition {
   pipelineId: string;
   name: string;
+  capabilities?: {
+    requiresLinkedReads?: boolean;
+  };
 }
 
 interface PipelineRunSummary {
   pipelineId: string;
   status: PipelineRunStatus;
 }
-
-/** Pipelines whose results become invalid when no reads are linked to samples. */
-const READ_DEPENDENT_PIPELINES = new Set([
-  "fastq-checksum",
-  "fastqc",
-]);
 
 const cache = new Map<string, OrderPipelineDefinition[]>();
 
@@ -75,7 +72,7 @@ async function fetchOrderPipelineDefinitions(): Promise<OrderPipelineDefinition[
     return cached;
   }
 
-  const res = await fetch("/api/admin/settings/pipelines?enabled=true");
+  const res = await fetch("/api/admin/settings/pipelines?enabled=true&catalog=order");
   if (!res.ok) {
     throw new Error("Failed to fetch pipeline definitions");
   }
@@ -85,16 +82,19 @@ async function fetchOrderPipelineDefinitions(): Promise<OrderPipelineDefinition[
       pipelineId: string;
       name: string;
       enabled: boolean;
-      input?: { supportedScopes?: string[] };
+      capabilities?: {
+        requiresLinkedReads?: boolean;
+      };
     }[];
   };
 
   const items: OrderPipelineDefinition[] = (data.pipelines ?? [])
-    .filter(
-      (pipeline) =>
-        pipeline.enabled && pipeline.input?.supportedScopes?.includes("order")
-    )
-    .map((pipeline) => ({ pipelineId: pipeline.pipelineId, name: pipeline.name }));
+    .filter((pipeline) => pipeline.enabled)
+    .map((pipeline) => ({
+      pipelineId: pipeline.pipelineId,
+      name: pipeline.name,
+      capabilities: pipeline.capabilities,
+    }));
 
   cache.set(cacheKey, items);
   return items;
@@ -141,7 +141,7 @@ export function useOrderPipelines(
         // reads are linked, even if past runs exist.
         const readDependentPipelines = new Set(
           definitions
-            .filter((p) => READ_DEPENDENT_PIPELINES.has(p.pipelineId))
+            .filter((pipeline) => pipeline.capabilities?.requiresLinkedReads === true)
             .map((p) => p.pipelineId)
         );
 
@@ -156,7 +156,11 @@ export function useOrderPipelines(
               ) {
                 status = "empty";
               }
-              return { ...pipeline, status };
+              return {
+                pipelineId: pipeline.pipelineId,
+                name: pipeline.name,
+                status,
+              };
             })
           );
         }

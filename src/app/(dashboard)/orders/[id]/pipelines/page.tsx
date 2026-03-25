@@ -202,7 +202,7 @@ export default function OrderPipelinesPage({
     fetcher
   );
   const pipelinesResponse = useSWR<{ pipelines: AdminPipeline[] }>(
-    isFacilityAdmin ? "/api/admin/settings/pipelines?enabled=true" : null,
+    isFacilityAdmin ? "/api/admin/settings/pipelines?enabled=true&catalog=order" : null,
     fetcher
   );
   const runsResponse = useSWR<{ runs: PipelineRun[] }>(
@@ -211,10 +211,7 @@ export default function OrderPipelinesPage({
   );
 
   const orderScopedPipelines = useMemo(
-    () =>
-      (pipelinesResponse.data?.pipelines || []).filter(
-        (pipeline) => pipeline.enabled && pipeline.input.supportedScopes.includes("order")
-      ),
+    () => (pipelinesResponse.data?.pipelines || []).filter((pipeline) => pipeline.enabled),
     [pipelinesResponse.data?.pipelines]
   );
 

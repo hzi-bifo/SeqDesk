@@ -1,6 +1,11 @@
 import { z } from "zod";
+import {
+  PACKAGE_TARGET_TYPES,
+  READ_WRITEBACK_FIELDS,
+} from "./package-contracts";
 
 export const PackageScope = z.enum(["sample", "study", "order", "run"]);
+export const PackageTargetType = z.enum(PACKAGE_TARGET_TYPES);
 
 export const StandardDestination = z.enum([
   "sample_reads",
@@ -23,6 +28,8 @@ export const OutputType = z.enum([
   "qc",
   "artifact",
 ]);
+
+const ReadWritebackField = z.enum(READ_WRITEBACK_FIELDS);
 
 const PipelineSampleResultValueSchema = z
   .object({
@@ -64,6 +71,12 @@ export const ManifestSchema = z
           .optional(),
       })
       .strict(),
+    targets: z
+      .object({
+        supported: z.array(PackageTargetType).min(1),
+      })
+      .strict()
+      .optional(),
     inputs: z.array(
       z
         .object({
@@ -140,6 +153,14 @@ export const ManifestSchema = z
               from: z.string().min(1),
               matchBy: z.string().min(1),
               map: z.record(z.string(), z.string()),
+            })
+            .strict()
+            .optional(),
+          writeback: z
+            .object({
+              target: z.literal("Read"),
+              mode: z.enum(["merge", "replace"]).optional(),
+              fields: z.record(z.string().min(1), ReadWritebackField),
             })
             .strict()
             .optional(),

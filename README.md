@@ -83,11 +83,16 @@ Set at least:
 }
 ```
 
+For `npm run dev`, keep `runtime.nextAuthUrl` aligned with the URL you will
+open in the browser, typically `http://localhost:3000`. The installer-oriented
+config example uses port `8000`, which is for installed service mode rather than
+local Next.js development.
+
 ### 3. Initialize database
 
 ```bash
 npm run db:migrate:deploy
-npx prisma db seed
+npm run db:seed
 ```
 
 SeqDesk is now PostgreSQL-only. Existing SQLite installs must remain on the last
@@ -113,6 +118,10 @@ npm run build
 npm run start
 npm test
 ```
+
+Vitest commands assume a local PostgreSQL test database at
+`postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public`
+unless you override `DATABASE_URL` and `DIRECT_URL`.
 
 ## Live Test Dashboard
 
@@ -155,15 +164,20 @@ Current local UI E2E coverage includes:
 
 | Area | Covered Flows |
 | --- | --- |
-| Orders | order creation, multi-sample orders, order editing, mark sent |
-| Studies | study creation from order samples |
-| Admin | admin order creation, cross-user order visibility, submitted-order deletion blocked/allowed by Data Handling settings |
+| Orders | wizard validation, multi-sample orders, sample-table copy/import checks, draft delete, submitted-order edit, mark sent, order notes |
+| Studies | study creation from order samples, ready/draft transitions, delete, study notes sidebar |
+| Admin | admin order creation, cross-user order visibility, admin access guard, form-builder roundtrip, facility-only/required field enforcement, submitted-order deletion policy |
+| Pipelines | admin simulate-reads run, settings persistence, replace-existing behavior |
+| Demo | seeded demo workspace, session isolation/reset, shared workspace behavior, pipeline execution blocked in demo |
 
 Run locally with:
 
 ```bash
 npm run test:e2e
 ```
+
+This uses the Playwright config in the repo, starts `npm run dev` at
+`http://127.0.0.1:3000` by default, and expects PostgreSQL to be available.
 
 ## Public Docs
 

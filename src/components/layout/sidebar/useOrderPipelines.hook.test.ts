@@ -32,26 +32,20 @@ describe("useOrderPipelines hook", () => {
 
   it("maps fetched pipelines and resets read-dependent completions when reads are missing", async () => {
     fetchMock.mockImplementation(async (url: string) => {
-      if (url === "/api/admin/settings/pipelines?enabled=true") {
+      if (url === "/api/admin/settings/pipelines?enabled=true&catalog=order") {
         return jsonResponse({
           pipelines: [
             {
               pipelineId: "fastq-checksum",
               name: "FASTQ Checksum",
               enabled: true,
-              input: { supportedScopes: ["order"] },
+              capabilities: { requiresLinkedReads: true },
             },
             {
               pipelineId: "simulate-reads",
               name: "Simulate Reads",
               enabled: true,
-              input: { supportedScopes: ["order"] },
-            },
-            {
-              pipelineId: "study-only",
-              name: "Study Only",
-              enabled: true,
-              input: { supportedScopes: ["study"] },
+              capabilities: { requiresLinkedReads: false },
             },
           ],
         });
@@ -92,7 +86,9 @@ describe("useOrderPipelines hook", () => {
       ]);
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/settings/pipelines?enabled=true");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/settings/pipelines?enabled=true&catalog=order"
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs?orderId=order-1&limit=200");
     expect(fetchMock).toHaveBeenCalledWith("/api/orders/order-1/sequencing");
 
@@ -101,14 +97,14 @@ describe("useOrderPipelines hook", () => {
 
   it("caches pipeline definitions across hook instances", async () => {
     fetchMock.mockImplementation(async (url: string) => {
-      if (url === "/api/admin/settings/pipelines?enabled=true") {
+      if (url === "/api/admin/settings/pipelines?enabled=true&catalog=order") {
         return jsonResponse({
           pipelines: [
             {
               pipelineId: "simulate-reads",
               name: "Simulate Reads",
               enabled: true,
-              input: { supportedScopes: ["order"] },
+              capabilities: { requiresLinkedReads: false },
             },
           ],
         });
@@ -150,7 +146,9 @@ describe("useOrderPipelines hook", () => {
     second.unmount();
 
     expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/api/admin/settings/pipelines?enabled=true")
+      fetchMock.mock.calls.filter(
+        ([url]) => url === "/api/admin/settings/pipelines?enabled=true&catalog=order"
+      )
     ).toHaveLength(1);
   });
 
