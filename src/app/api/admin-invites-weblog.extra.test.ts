@@ -74,6 +74,12 @@ const researcherSession = {
   },
 };
 
+function daysFromNow(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
 function jsonRequest(path: string, method: string, body?: unknown) {
   return new NextRequest(`http://localhost${path}`, {
     method,
@@ -261,7 +267,7 @@ describe("admin invites and run weblog quick wins", () => {
       data: {
         code: "ABCDEF01",
         email: "admin@example.test",
-        expiresAt: new Date("2026-04-01T14:30:00.000Z"),
+        expiresAt: daysFromNow(7),
         createdById: "admin-1",
       },
       include: {
@@ -310,7 +316,7 @@ describe("admin invites and run weblog quick wins", () => {
       data: {
         code: "AAAAAAAA",
         email: null,
-        expiresAt: new Date("2026-03-28T15:30:00.000Z"),
+        expiresAt: daysFromNow(3),
         createdById: "admin-1",
       },
       include: {
@@ -323,7 +329,7 @@ describe("admin invites and run weblog quick wins", () => {
       data: {
         code: "BBBBBBBB",
         email: null,
-        expiresAt: new Date("2026-03-28T15:30:00.000Z"),
+        expiresAt: daysFromNow(3),
         createdById: "admin-1",
       },
       include: {
