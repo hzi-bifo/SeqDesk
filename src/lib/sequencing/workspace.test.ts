@@ -441,6 +441,8 @@ describe("getOrderSequencingSummary", () => {
                 checksum2: null,
                 readCount1: 10,
                 readCount2: null,
+                avgQuality1: 37.6,
+                avgQuality2: null,
                 fastqcReport1: "qc/S1.html",
                 fastqcReport2: null,
                 pipelineRunId: "run-1",
@@ -491,6 +493,8 @@ describe("getOrderSequencingSummary", () => {
                 checksum2: null,
                 readCount1: null,
                 readCount2: null,
+                avgQuality1: null,
+                avgQuality2: null,
                 fastqcReport1: null,
                 fastqcReport2: null,
                 pipelineRunId: null,
@@ -533,6 +537,7 @@ describe("getOrderSequencingSummary", () => {
     });
     expect(result.samples[0].read).toEqual(
       expect.objectContaining({
+        avgQuality1: 37.6,
         fileSize1: 111,
         filesMissing: false,
         pipelineRunNumber: 9,

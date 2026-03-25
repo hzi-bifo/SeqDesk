@@ -40,6 +40,36 @@ require_env_command() {
 require_env_command nextflow nextflow -version
 require_env_command java java -version
 
+assert_summary_value() {
+  local file="$1"
+  local sample="$2"
+  local column="$3"
+  local expected="$4"
+
+  local actual
+  actual="$(awk -F'\t' -v sample="$sample" -v column="$column" '
+    NR == 1 {
+      for (i = 1; i <= NF; i += 1) {
+        if ($i == column) {
+          target = i
+          break
+        }
+      }
+      next
+    }
+    $1 == sample && target > 0 {
+      print $target
+      exit
+    }
+  ' "$file")"
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Unexpected $column for $sample: expected '$expected', got '${actual:-<empty>}'" >&2
+    echo "Summary file: $file" >&2
+    exit 1
+  fi
+}
+
 if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
   TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
   rm -rf "$TMP_DIR"
@@ -127,6 +157,13 @@ done
 
 grep -q 'SINGLE_A' "$OUTPUT_DIR/summary/fastqc-summary.tsv"
 grep -q 'PAIRED_B' "$OUTPUT_DIR/summary/fastqc-summary.tsv"
+grep -q 'r1_avg_quality' "$OUTPUT_DIR/summary/fastqc-summary.tsv"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "SINGLE_A" "r1_read_count" "2"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "SINGLE_A" "r1_avg_quality" "39.5"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r1_read_count" "2"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r1_avg_quality" "40.5"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r2_read_count" "2"
+assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r2_avg_quality" "40.5"
 
 echo "FASTQC smoke test passed."
 echo "Temporary run directory: $TMP_DIR"

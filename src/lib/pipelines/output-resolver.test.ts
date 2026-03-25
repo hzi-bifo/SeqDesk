@@ -355,6 +355,10 @@ describe("output-resolver", () => {
           metadata: {
             fastqcReport1: "/data/fastqc_reports/sample-1_R1_fastqc.html",
             fastqcReport2: "/data/fastqc_reports/sample-1_R2_fastqc.html",
+            readCount1: 42000,
+            readCount2: 42000,
+            avgQuality1: 37.2,
+            avgQuality2: 36.9,
           },
         },
         {
@@ -375,6 +379,10 @@ describe("output-resolver", () => {
       data: {
         fastqcReport1: "/data/fastqc_reports/sample-1_R1_fastqc.html",
         fastqcReport2: "/data/fastqc_reports/sample-1_R2_fastqc.html",
+        readCount1: 42000,
+        readCount2: 42000,
+        avgQuality1: 37.2,
+        avgQuality2: 36.9,
         pipelineSources: '{"simulate-reads":"old-run","fastqc":"fastqc-run-1"}',
       },
     });

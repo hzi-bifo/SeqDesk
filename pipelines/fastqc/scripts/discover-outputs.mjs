@@ -16,6 +16,64 @@ async function main() {
   const sampleByCode = new Map(samples.map((sample) => [sample.sampleId, sample]));
   const files = [];
   const errors = [];
+  const summaryMetricsBySample = new Map();
+
+  const parseNullableInt = (value) => {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      return null;
+    }
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const parseNullableFloat = (value) => {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      return null;
+    }
+    const parsed = Number.parseFloat(value.trim());
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const summaryPath = path.join(payload.outputDir, "summary", "fastqc-summary.tsv");
+  try {
+    await fs.access(summaryPath);
+
+    const summaryContent = await fs.readFile(summaryPath, "utf8");
+    const lines = summaryContent
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length > 0) {
+      const headers = lines[0].split("\t");
+      for (const line of lines.slice(1)) {
+        const values = line.split("\t");
+        const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+        const sampleCode = typeof row.sample_id === "string" ? row.sample_id.trim() : "";
+
+        if (!sampleCode) {
+          continue;
+        }
+
+        summaryMetricsBySample.set(sampleCode, {
+          readCount1: parseNullableInt(row.r1_read_count),
+          readCount2: parseNullableInt(row.r2_read_count),
+          avgQuality1: parseNullableFloat(row.r1_avg_quality),
+          avgQuality2: parseNullableFloat(row.r2_avg_quality),
+        });
+      }
+    }
+
+    files.push({
+      type: "artifact",
+      name: "fastqc-summary.tsv",
+      path: summaryPath,
+      fromStep: "fastqc",
+      outputId: "summary",
+    });
+  } catch {
+    errors.push("FastQC summary file was not produced");
+  }
 
   const reportsDir = path.join(payload.outputDir, "fastqc_reports");
   try {
@@ -59,21 +117,6 @@ async function main() {
     );
   }
 
-  // Check for summary artifact
-  const summaryPath = path.join(payload.outputDir, "summary", "fastqc-summary.tsv");
-  try {
-    await fs.access(summaryPath);
-    files.push({
-      type: "artifact",
-      name: "fastqc-summary.tsv",
-      path: summaryPath,
-      fromStep: "fastqc",
-      outputId: "summary",
-    });
-  } catch {
-    errors.push("FastQC summary file was not produced");
-  }
-
   // Emit metadata-only entries to write fastqcReport1/fastqcReport2 to Read model
   const htmlBySample = new Map();
   for (const f of files) {
@@ -99,6 +142,10 @@ async function main() {
       metadata: {
         fastqcReport1: entry.report1 || null,
         fastqcReport2: entry.report2 || null,
+        readCount1: summaryMetricsBySample.get(entry.name)?.readCount1 ?? null,
+        readCount2: summaryMetricsBySample.get(entry.name)?.readCount2 ?? null,
+        avgQuality1: summaryMetricsBySample.get(entry.name)?.avgQuality1 ?? null,
+        avgQuality2: summaryMetricsBySample.get(entry.name)?.avgQuality2 ?? null,
       },
     });
   }
