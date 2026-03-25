@@ -16,6 +16,11 @@
       "discoverOutputs": "scripts/discover-outputs.mjs"
     }
   },
+  "targets": {
+    "supported": [
+      "order"
+    ]
+  },
   "inputs": [],
   "execution": {
     "type": "nextflow",
@@ -41,6 +46,16 @@
       "destination": "sample_reads",
       "type": "artifact",
       "fromStep": "simulate_reads",
+      "writeback": {
+        "target": "Read",
+        "mode": "replace",
+        "fields": {
+          "file1": "file1",
+          "file2": "file2",
+          "readCount1": "readCount1",
+          "readCount2": "readCount2"
+        }
+      },
       "discovery": {
         "pattern": "manifests/*.json",
         "matchSampleBy": "filename"

@@ -99,6 +99,71 @@ describe("manifest-schema", () => {
     expect(result.data.execution.runtime?.allowMacOsArmConda).toBe(true);
   });
 
+  it("accepts manifest targets and Read writeback contracts", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      targets: {
+        supported: ["order"],
+      },
+      outputs: [
+        {
+          id: "sample_reads",
+          scope: "sample",
+          destination: "sample_reads",
+          discovery: {
+            pattern: "*.json",
+          },
+          writeback: {
+            target: "Read",
+            mode: "merge",
+            fields: {
+              checksum1: "checksum1",
+              avgQuality1: "avgQuality1",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.targets?.supported).toEqual(["order"]);
+    expect(result.data.outputs[0].writeback?.fields).toEqual({
+      checksum1: "checksum1",
+      avgQuality1: "avgQuality1",
+    });
+  });
+
+  it("rejects unsupported Read writeback fields", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      outputs: [
+        {
+          id: "sample_reads",
+          scope: "sample",
+          destination: "sample_reads",
+          discovery: {
+            pattern: "*.json",
+          },
+          writeback: {
+            target: "Read",
+            fields: {
+              checksum1: "notAReadField",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual([
+      "outputs",
+      0,
+      "writeback",
+      "fields",
+      "checksum1",
+    ]);
+  });
+
   it("accepts manifest-defined sample result previews", () => {
     const result = ManifestSchema.safeParse({
       ...baseManifest,

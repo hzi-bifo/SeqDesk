@@ -236,7 +236,7 @@ export function OrderPipelineView({
   } = useQuickPrerequisiteStatus();
 
   const pipelinesResponse = useSWR<{ pipelines: AdminPipeline[] }>(
-    "/api/admin/settings/pipelines?enabled=true",
+    "/api/admin/settings/pipelines?enabled=true&catalog=order",
     fetcher
   );
   const runsResponse = useSWR<{ runs: PipelineRun[]; total: number }>(

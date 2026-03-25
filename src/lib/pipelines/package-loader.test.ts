@@ -45,6 +45,9 @@ function baseManifest(id: string) {
       samplesheet: "samplesheet.yaml",
       parsers: [],
     },
+    targets: {
+      supported: ["study"],
+    },
     inputs: [],
     execution: {
       type: "nextflow",
@@ -114,6 +117,7 @@ function baseRegistry(id: string) {
 
 async function createManifestPackage(options: {
   id: string;
+  targets?: Array<"study" | "order">;
   ui?: {
     sampleResult?: {
       columnLabel: string;
@@ -131,6 +135,11 @@ async function createManifestPackage(options: {
     id: string;
     scope: "sample" | "study" | "order" | "run";
     destination: "sample_reads" | "sample_qc" | "sample_metadata" | "sample_assemblies" | "sample_bins" | "sample_annotations" | "study_report" | "order_files" | "order_report" | "run_artifact" | "download_only";
+    writeback?: {
+      target: "Read";
+      mode?: "merge" | "replace";
+      fields: Record<string, "file1" | "file2" | "checksum1" | "checksum2" | "readCount1" | "readCount2" | "avgQuality1" | "avgQuality2" | "fastqcReport1" | "fastqcReport2">;
+    };
     parsed?: {
       from: string;
       matchBy: string;
@@ -149,6 +158,9 @@ async function createManifestPackage(options: {
   const outputs = options.outputs ?? [];
   const manifest = {
     ...baseManifest(options.id),
+    targets: {
+      supported: options.targets ?? ["study"],
+    },
     files: {
       ...baseManifest(options.id).files,
       parsers: options.parserFiles?.map((entry) => entry.file) ?? [],
@@ -225,6 +237,7 @@ describe("package-loader", () => {
     expect(samplesheet?.samplesheet.format).toBe("csv");
     expect(definitionFromCompatibility?.id).toBe(PIPELINE_ID);
     expect(definitionFromCompatibility?.requires.reads).toBe(false);
+    expect(definitionFromCompatibility?.input.supportedScopes).toEqual(["study"]);
   });
 
   it("omits packages with missing manifest parser files", async () => {
@@ -349,5 +362,51 @@ describe("package-loader", () => {
         },
       ],
     });
+  });
+
+  it("derives compatibility scopes from manifest targets", async () => {
+    await createManifestPackage({
+      id: "orderpipe",
+      targets: ["order"],
+    });
+
+    const definition = packageToPipelineDefinition("orderpipe");
+
+    expect(definition?.input.supportedScopes).toEqual(["order"]);
+  });
+
+  it("omits packages with invalid Read writeback destinations", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "badwriteback");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("badwriteback"),
+      outputs: [
+        {
+          id: "summary",
+          scope: "run",
+          destination: "run_artifact",
+          discovery: { pattern: "*.txt" },
+          writeback: {
+            target: "Read",
+            fields: {
+              checksum1: "checksum1",
+            },
+          },
+        },
+      ],
+    });
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("badwriteback"));
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("badwriteback"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: {
+        format: "csv",
+        filename: "badwriteback.csv",
+        rows: { scope: "study" },
+        columns: [],
+      },
+    });
+
+    expect(getPackage("badwriteback")).toBeUndefined();
   });
 });

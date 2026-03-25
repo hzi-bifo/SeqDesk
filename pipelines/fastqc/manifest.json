@@ -16,6 +16,11 @@
       "discoverOutputs": "scripts/discover-outputs.mjs"
     }
   },
+  "targets": {
+    "supported": [
+      "order"
+    ]
+  },
   "inputs": [
     {
       "id": "reads",
@@ -65,6 +70,18 @@
       "destination": "sample_reads",
       "type": "artifact",
       "fromStep": "fastqc",
+      "writeback": {
+        "target": "Read",
+        "mode": "merge",
+        "fields": {
+          "fastqcReport1": "fastqcReport1",
+          "fastqcReport2": "fastqcReport2",
+          "readCount1": "readCount1",
+          "readCount2": "readCount2",
+          "avgQuality1": "avgQuality1",
+          "avgQuality2": "avgQuality2"
+        }
+      },
       "discovery": {
         "pattern": "fastqc_reports/*_R1_fastqc.html",
         "matchSampleBy": "filename"

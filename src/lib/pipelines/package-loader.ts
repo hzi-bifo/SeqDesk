@@ -14,6 +14,11 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
+import {
+  type PackageOutputWriteback,
+  type PackageTargetType,
+  deriveCompatibleInputScopes,
+} from './package-contracts';
 import type {
   PipelineParameterGroup,
   SeqDeskDestination,
@@ -78,6 +83,7 @@ export interface PackageOutput {
   fromStep?: string;
   discovery: PackageOutputDiscovery;
   parsed?: PackageOutputParsed;
+  writeback?: PackageOutputWriteback;
 }
 
 export interface PackageExecution {
@@ -112,6 +118,9 @@ export interface PackageManifest {
       samplesheet?: string;
       discoverOutputs?: string;
     };
+  };
+  targets?: {
+    supported: PackageTargetType[];
   };
   inputs: PackageInput[];
   execution: PackageExecution;
@@ -473,6 +482,20 @@ function validatePackageManifest(
         `Output "${output.id}" references unknown parser: "${output.parsed.from}"`
       );
     }
+
+    if (output.writeback?.target === 'Read') {
+      if (output.destination !== 'sample_reads') {
+        errors.push(
+          `Output "${output.id}" uses Read writeback but destination is "${output.destination}" instead of "sample_reads"`
+        );
+      }
+
+      if (output.scope !== 'sample') {
+        errors.push(
+          `Output "${output.id}" uses Read writeback but scope is "${output.scope}" instead of "sample"`
+        );
+      }
+    }
   }
 
   return {
@@ -743,7 +766,10 @@ export function packageToPipelineDefinition(packageId: string): PipelineDefiniti
     })),
     visibility: registry.visibility,
     input: {
-      supportedScopes: registry.input.supportedScopes as PipelineDefinition['input']['supportedScopes'],
+      supportedScopes: deriveCompatibleInputScopes(
+        pkg.manifest,
+        registry
+      ) as PipelineDefinition['input']['supportedScopes'],
       minSamples: registry.input.minSamples,
       perSample: registry.input.perSample,
     },

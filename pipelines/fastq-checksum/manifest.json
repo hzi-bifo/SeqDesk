@@ -16,6 +16,11 @@
       "discoverOutputs": "scripts/discover-outputs.mjs"
     }
   },
+  "targets": {
+    "supported": [
+      "order"
+    ]
+  },
   "inputs": [
     {
       "id": "reads",
@@ -43,6 +48,14 @@
       "destination": "sample_reads",
       "type": "artifact",
       "fromStep": "checksum",
+      "writeback": {
+        "target": "Read",
+        "mode": "merge",
+        "fields": {
+          "checksum1": "checksum1",
+          "checksum2": "checksum2"
+        }
+      },
       "discovery": {
         "pattern": "checksums/*.json",
         "matchSampleBy": "filename"

@@ -1,4 +1,66 @@
+import fs from "fs";
+import path from "path";
 import { PrismaClient } from "@prisma/client";
+
+const CONFIG_FILE_NAMES = [
+  "seqdesk.config.json",
+  ".seqdeskrc",
+  ".seqdeskrc.json",
+];
+
+function trimToString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function findConfigPath(baseDir) {
+  for (const name of CONFIG_FILE_NAMES) {
+    const candidate = path.join(baseDir, name);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function bootstrapSeedRuntimeEnv(baseDir = process.cwd()) {
+  const configPath = findConfigPath(baseDir);
+  if (!configPath) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const runtime =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed.runtime
+        : undefined;
+
+    if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
+      return;
+    }
+
+    const databaseUrl = trimToString(runtime.databaseUrl);
+    const directUrl = trimToString(runtime.directUrl);
+
+    if (!process.env.DATABASE_URL && databaseUrl) {
+      process.env.DATABASE_URL = databaseUrl;
+    }
+
+    if (!process.env.DIRECT_URL) {
+      process.env.DIRECT_URL = directUrl || process.env.DATABASE_URL;
+    }
+  } catch {
+    // Ignore invalid JSON and keep the caller's environment untouched.
+  }
+}
+
+bootstrapSeedRuntimeEnv();
 
 // Keep seeding independent from runtime dependency resolution.
 // These are bcrypt hashes for the default credentials:

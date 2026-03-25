@@ -3,6 +3,15 @@ import {
   resolveMetaxPathRef,
   resolveMetaxPathRepository,
 } from "./metaxpath-config";
+import {
+  deriveManifestTargets,
+  derivePipelineCapabilities,
+  derivePipelineCatalogs,
+  type PipelineCapabilities,
+  type PipelineCatalog,
+  type PackageTargetType,
+} from "./package-contracts";
+import { getPackageManifest } from "./package-loader";
 
 export type PipelineSourceKind = "registry" | "privateRegistry" | "github";
 
@@ -58,6 +67,10 @@ export interface RegistryPipelineEntry {
   downloadUrl?: string;
   isPrivate?: boolean;
   licenseRequired?: boolean;
+  targets?: {
+    supported?: PackageTargetType[];
+  };
+  capabilities?: Partial<PipelineCapabilities>;
   source?: RegistryPipelineSourceOverride;
   privateInstall?: {
     requiresKey?: boolean;
@@ -104,6 +117,11 @@ export interface StorePipelineResponse {
   tags: string[];
   isPrivate: boolean;
   licenseRequired: boolean;
+  targets: {
+    supported: PackageTargetType[];
+  } | null;
+  catalogs: PipelineCatalog[];
+  capabilities: PipelineCapabilities | null;
   source: PipelineSourceDescriptor;
 }
 
@@ -211,6 +229,25 @@ export function normalizeRegistryPipeline(
     descriptorPath: pipeline.source?.descriptorPath,
     includeWorkflow: pipeline.source?.includeWorkflow,
   };
+  const localManifest = getPackageManifest(pipeline.id);
+  const localTargets = deriveManifestTargets(localManifest);
+  const supportedTargets = localTargets.length > 0
+    ? localTargets
+    : Array.isArray(pipeline.targets?.supported)
+      ? pipeline.targets.supported
+      : [];
+  const catalogs = derivePipelineCatalogs(supportedTargets);
+  const capabilities = localManifest
+    ? derivePipelineCapabilities(localManifest)
+    : pipeline.capabilities
+      ? {
+          requiresLinkedReads: pipeline.capabilities.requiresLinkedReads === true,
+          writesCanonicalReadMetadata:
+            pipeline.capabilities.writesCanonicalReadMetadata === true,
+          writesCanonicalReadFiles:
+            pipeline.capabilities.writesCanonicalReadFiles === true,
+        }
+      : null;
 
   return {
     id: pipeline.id,
@@ -230,6 +267,9 @@ export function normalizeRegistryPipeline(
     tags: pipeline.tags || [],
     isPrivate: pipeline.isPrivate === true,
     licenseRequired: pipeline.licenseRequired === true,
+    targets: supportedTargets.length > 0 ? { supported: supportedTargets } : null,
+    catalogs,
+    capabilities,
     source,
   };
 }

@@ -274,11 +274,7 @@ export default function OrderSequencingPage({
 
   const sampleOptions = useMemo(() => data?.samples ?? [], [data?.samples]);
   const visibleOrderPipelines = useMemo(
-    () =>
-      orderPipelines.filter(
-        (pipeline) =>
-          pipeline.enabled && pipeline.input?.supportedScopes?.includes("order")
-      ),
+    () => orderPipelines.filter((pipeline) => pipeline.enabled),
     [orderPipelines]
   );
 
@@ -377,7 +373,7 @@ export default function OrderSequencingPage({
     }
 
     try {
-      const response = await fetch("/api/admin/settings/pipelines?enabled=true");
+      const response = await fetch("/api/admin/settings/pipelines?enabled=true&catalog=order");
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(payload?.error || "Failed to load order pipelines");

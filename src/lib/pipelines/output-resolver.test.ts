@@ -317,6 +317,59 @@ describe("output-resolver", () => {
     expect(mocks.db.pipelineArtifact.create).not.toHaveBeenCalled();
   });
 
+  it("uses manifest Read writeback mappings for metadata-only updates", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "checksums/*.json" },
+            writeback: {
+              target: "Read",
+              mode: "merge",
+              fields: {
+                checksumValue: "checksum1",
+                qualityMean: "avgQuality1",
+              },
+            },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1", pipelineSources: null });
+    mocks.db.read.update.mockResolvedValue({});
+
+    const result = await resolveOutputs("fastq-checksum", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: "/tmp/sample-1.json",
+          sampleId: "sample-1",
+          outputId: "sample-checksums",
+          metadata: {
+            checksumValue: "abc123",
+            qualityMean: 37.5,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: {
+        checksum1: "abc123",
+        avgQuality1: 37.5,
+        pipelineSources: '{"fastq-checksum":"run-id"}',
+      },
+    });
+  });
+
   it("writes fastqcReport paths to sample reads for fastqc pipeline", async () => {
     mocks.getPackage.mockReturnValue({
       manifest: {
@@ -463,6 +516,16 @@ describe("output-resolver", () => {
             destination: "sample_reads",
             type: "artifact",
             discovery: { pattern: "manifests/*.json" },
+            writeback: {
+              target: "Read",
+              mode: "replace",
+              fields: {
+                generatedFile1: "file1",
+                generatedFile2: "file2",
+                generatedReadCount1: "readCount1",
+                generatedReadCount2: "readCount2",
+              },
+            },
           },
         ],
       },
@@ -491,14 +554,12 @@ describe("output-resolver", () => {
           sampleId: "sample-1",
           outputId: "sample-simulated-reads",
           metadata: {
-            file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
-            file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
+            generatedFile1: "simulated/order_order-1/sample-1_R1.fastq.gz",
+            generatedFile2: "simulated/order_order-1/sample-1_R2.fastq.gz",
             sourceFile1,
             sourceFile2,
-            checksum1: "abc",
-            checksum2: "def",
-            readCount1: 1000,
-            readCount2: 1000,
+            generatedReadCount1: 1000,
+            generatedReadCount2: 1000,
             replaceExisting: true,
           },
         },
@@ -515,8 +576,8 @@ describe("output-resolver", () => {
         sampleId: "sample-1",
         file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
         file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
-        checksum1: "abc",
-        checksum2: "def",
+        checksum1: null,
+        checksum2: null,
         readCount1: 1000,
         readCount2: 1000,
         avgQuality1: null,
@@ -1075,7 +1136,6 @@ describe("output-resolver", () => {
         name: "unmatched.txt",
         path: "/tmp/unmatched.txt",
         sampleId: "sample-1",
-        producedByStepId: "",
       }),
     });
   });

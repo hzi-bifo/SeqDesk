@@ -12,9 +12,14 @@ import path from 'path';
 import { db } from '@/lib/db';
 import { ensureWithinBase } from '@/lib/files';
 import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
-import { PipelineOutput as DefinitionOutput } from './definitions';
 import { getPackage, PackageOutput } from './package-loader';
 import { DiscoveredFile, DiscoverOutputsResult } from './adapters/types';
+import {
+  READ_NUMBER_WRITEBACK_FIELDS,
+  READ_STRING_WRITEBACK_FIELDS,
+  type PackageOutputWriteback,
+  type ReadWritebackField,
+} from './package-contracts';
 
 /**
  * Result of resolving outputs to database records
@@ -34,9 +39,19 @@ export interface ResolveResult {
 type DestinationHandler = (
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput,
+  output: ResolvedOutputContract,
   pipelineId: string
 ) => Promise<{ success: boolean; error?: string }>;
+
+interface ResolvedOutputContract {
+  id: string;
+  destination?: PackageOutput['destination'];
+  fromStep?: string;
+  writeback?: PackageOutput['writeback'];
+}
+
+type ReadWritebackValue = string | number | null;
+type ReadWritebackData = Partial<Record<ReadWritebackField, ReadWritebackValue>>;
 
 function mergePipelineSource(
   existing: string | null | undefined,
@@ -179,10 +194,11 @@ async function replaceSampleReads(
 async function createAssembly(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput,
-  _pipelineId: string
+  output: ResolvedOutputContract,
+  pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   void output;
+  void pipelineId;
 
   if (!file.sampleId) {
     return { success: false, error: `Assembly ${file.name}: No sample ID` };
@@ -223,10 +239,11 @@ async function createAssembly(
 async function createBin(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput,
-  _pipelineId: string
+  output: ResolvedOutputContract,
+  pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
   void output;
+  void pipelineId;
 
   if (!file.sampleId) {
     return { success: false, error: `Bin ${file.name}: No sample ID` };
@@ -269,9 +286,10 @@ async function createBin(
 async function createArtifact(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput,
-  _pipelineId: string
+  output: ResolvedOutputContract,
+  pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  void pipelineId;
   try {
     // Check if artifact already exists for this run + path
     const existing = await db.pipelineArtifact.findFirst({
@@ -304,24 +322,93 @@ async function createArtifact(
   }
 }
 
+function hasConfiguredReadWriteback(
+  output: ResolvedOutputContract
+): output is ResolvedOutputContract & { writeback: PackageOutputWriteback } {
+  return output.writeback?.target === 'Read';
+}
+
+function getConfiguredReadWritebackValue(
+  metadata: Record<string, unknown> | undefined,
+  metadataKey: string,
+  readField: ReadWritebackField
+): ReadWritebackValue | undefined {
+  if (!metadata || !(metadataKey in metadata)) {
+    return undefined;
+  }
+
+  if ((READ_NUMBER_WRITEBACK_FIELDS as readonly string[]).includes(readField)) {
+    return getNumberMetadata(metadata, metadataKey);
+  }
+
+  if ((READ_STRING_WRITEBACK_FIELDS as readonly string[]).includes(readField)) {
+    return getStringMetadata(metadata, metadataKey);
+  }
+
+  return undefined;
+}
+
+function extractConfiguredReadWritebackData(
+  metadata: Record<string, unknown> | undefined,
+  writeback: PackageOutputWriteback
+): ReadWritebackData {
+  const data: ReadWritebackData = {};
+
+  for (const [metadataKey, readField] of Object.entries(writeback.fields)) {
+    const value = getConfiguredReadWritebackValue(metadata, metadataKey, readField);
+    if (value !== undefined) {
+      data[readField] = value;
+    }
+  }
+
+  return data;
+}
+
+function extractLegacyReadWritebackData(
+  metadata: Record<string, unknown> | undefined
+): ReadWritebackData {
+  const data: ReadWritebackData = {};
+
+  for (const key of ['file1', 'file2', 'checksum1', 'checksum2', 'fastqcReport1', 'fastqcReport2'] as const) {
+    const value = getStringMetadata(metadata, key);
+    if (value !== undefined) {
+      data[key] = value;
+    }
+  }
+
+  for (const key of ['readCount1', 'readCount2', 'avgQuality1', 'avgQuality2'] as const) {
+    const value = getNumberMetadata(metadata, key);
+    if (value !== undefined) {
+      data[key] = value;
+    }
+  }
+
+  return data;
+}
+
 async function updateSampleRead(
   file: DiscoveredFile,
   runId: string,
-  output: DefinitionOutput,
+  output: ResolvedOutputContract,
   pipelineId: string
 ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
-  void output;
-
   if (!file.sampleId) {
     return { success: false, error: `Sample read output ${file.name}: No sample ID` };
   }
 
   const metadata = file.metadata;
-  const file1 = getStringMetadata(metadata, 'file1');
-  const file2 = getStringMetadata(metadata, 'file2');
+  const writebackData = hasConfiguredReadWriteback(output)
+    ? extractConfiguredReadWritebackData(metadata, output.writeback)
+    : extractLegacyReadWritebackData(metadata);
+  const file1 = typeof writebackData.file1 === 'string' ? writebackData.file1 : null;
+  const file2 = typeof writebackData.file2 === 'string' ? writebackData.file2 : null;
   const sourceFile1 = getStringMetadata(metadata, 'sourceFile1');
   const sourceFile2 = getStringMetadata(metadata, 'sourceFile2');
-  const replaceExisting = getBooleanMetadata(metadata, 'replaceExisting') === true;
+  const replaceExistingPreference = getBooleanMetadata(metadata, 'replaceExisting');
+  const replaceExisting =
+    replaceExistingPreference === undefined
+      ? output.writeback?.mode === 'replace'
+      : replaceExistingPreference === true;
   const hasFileWriteback = Boolean(file1 && sourceFile1);
 
   if (hasFileWriteback) {
@@ -381,14 +468,38 @@ async function updateSampleRead(
         await replaceSampleReads(file.sampleId, resolvedDataBasePath.dataBasePath, {
           file1: file1!,
           file2: file2 ?? null,
-          checksum1: getStringMetadata(metadata, 'checksum1'),
-          checksum2: getStringMetadata(metadata, 'checksum2'),
-          readCount1: getNumberMetadata(metadata, 'readCount1'),
-          readCount2: getNumberMetadata(metadata, 'readCount2'),
-          avgQuality1: getNumberMetadata(metadata, 'avgQuality1'),
-          avgQuality2: getNumberMetadata(metadata, 'avgQuality2'),
-          fastqcReport1: getStringMetadata(metadata, 'fastqcReport1'),
-          fastqcReport2: getStringMetadata(metadata, 'fastqcReport2'),
+          checksum1:
+            typeof writebackData.checksum1 === 'string' || writebackData.checksum1 === null
+              ? writebackData.checksum1
+              : undefined,
+          checksum2:
+            typeof writebackData.checksum2 === 'string' || writebackData.checksum2 === null
+              ? writebackData.checksum2
+              : undefined,
+          readCount1:
+            typeof writebackData.readCount1 === 'number' || writebackData.readCount1 === null
+              ? writebackData.readCount1
+              : undefined,
+          readCount2:
+            typeof writebackData.readCount2 === 'number' || writebackData.readCount2 === null
+              ? writebackData.readCount2
+              : undefined,
+          avgQuality1:
+            typeof writebackData.avgQuality1 === 'number' || writebackData.avgQuality1 === null
+              ? writebackData.avgQuality1
+              : undefined,
+          avgQuality2:
+            typeof writebackData.avgQuality2 === 'number' || writebackData.avgQuality2 === null
+              ? writebackData.avgQuality2
+              : undefined,
+          fastqcReport1:
+            typeof writebackData.fastqcReport1 === 'string' || writebackData.fastqcReport1 === null
+              ? writebackData.fastqcReport1
+              : undefined,
+          fastqcReport2:
+            typeof writebackData.fastqcReport2 === 'string' || writebackData.fastqcReport2 === null
+              ? writebackData.fastqcReport2
+              : undefined,
           pipelineRunId: runId,
           pipelineSources: newSources,
         });
@@ -402,14 +513,22 @@ async function updateSampleRead(
             sampleId: file.sampleId,
             file1: file1!,
             file2: file2 ?? null,
-            checksum1: getStringMetadata(metadata, 'checksum1') ?? null,
-            checksum2: getStringMetadata(metadata, 'checksum2') ?? null,
-            readCount1: getNumberMetadata(metadata, 'readCount1') ?? null,
-            readCount2: getNumberMetadata(metadata, 'readCount2') ?? null,
-            avgQuality1: getNumberMetadata(metadata, 'avgQuality1') ?? null,
-            avgQuality2: getNumberMetadata(metadata, 'avgQuality2') ?? null,
-            fastqcReport1: getStringMetadata(metadata, 'fastqcReport1') ?? null,
-            fastqcReport2: getStringMetadata(metadata, 'fastqcReport2') ?? null,
+            checksum1:
+              typeof writebackData.checksum1 === 'string' ? writebackData.checksum1 : null,
+            checksum2:
+              typeof writebackData.checksum2 === 'string' ? writebackData.checksum2 : null,
+            readCount1:
+              typeof writebackData.readCount1 === 'number' ? writebackData.readCount1 : null,
+            readCount2:
+              typeof writebackData.readCount2 === 'number' ? writebackData.readCount2 : null,
+            avgQuality1:
+              typeof writebackData.avgQuality1 === 'number' ? writebackData.avgQuality1 : null,
+            avgQuality2:
+              typeof writebackData.avgQuality2 === 'number' ? writebackData.avgQuality2 : null,
+            fastqcReport1:
+              typeof writebackData.fastqcReport1 === 'string' ? writebackData.fastqcReport1 : null,
+            fastqcReport2:
+              typeof writebackData.fastqcReport2 === 'string' ? writebackData.fastqcReport2 : null,
             pipelineRunId: runId,
             pipelineSources: newSources,
           },
@@ -423,6 +542,22 @@ async function updateSampleRead(
         data: {
           file1: file1!,
           file2: file2 ?? null,
+          checksum1:
+            typeof writebackData.checksum1 === 'string' ? writebackData.checksum1 : null,
+          checksum2:
+            typeof writebackData.checksum2 === 'string' ? writebackData.checksum2 : null,
+          readCount1:
+            typeof writebackData.readCount1 === 'number' ? writebackData.readCount1 : null,
+          readCount2:
+            typeof writebackData.readCount2 === 'number' ? writebackData.readCount2 : null,
+          avgQuality1:
+            typeof writebackData.avgQuality1 === 'number' ? writebackData.avgQuality1 : null,
+          avgQuality2:
+            typeof writebackData.avgQuality2 === 'number' ? writebackData.avgQuality2 : null,
+          fastqcReport1:
+            typeof writebackData.fastqcReport1 === 'string' ? writebackData.fastqcReport1 : null,
+          fastqcReport2:
+            typeof writebackData.fastqcReport2 === 'string' ? writebackData.fastqcReport2 : null,
           pipelineRunId: runId,
           pipelineSources: newSources,
         },
@@ -460,15 +595,10 @@ async function updateSampleRead(
 
   const data: Record<string, string | number | null> = {};
 
-  for (const key of ['checksum1', 'checksum2', 'fastqcReport1', 'fastqcReport2'] as const) {
-    const value = getStringMetadata(metadata, key);
-    if (value !== undefined) {
-      data[key] = value;
+  for (const [key, value] of Object.entries(writebackData)) {
+    if (key === 'file1' || key === 'file2') {
+      continue;
     }
-  }
-
-  for (const key of ['readCount1', 'readCount2', 'avgQuality1', 'avgQuality2'] as const) {
-    const value = getNumberMetadata(metadata, key);
     if (value !== undefined) {
       data[key] = value;
     }
@@ -495,7 +625,8 @@ async function updateSampleRead(
     // If pipelineSources column doesn't exist, retry without it
     if (data.pipelineSources !== undefined) {
       try {
-        const { pipelineSources: _ps, ...dataWithoutSources } = data;
+        const dataWithoutSources = { ...data };
+        delete dataWithoutSources.pipelineSources;
         if (Object.keys(dataWithoutSources).length > 0) {
           await db.read.update({
             where: { id: read.id },
@@ -540,27 +671,15 @@ const destinationHandlers: Record<string, DestinationHandler> = {
  * Find the output definition that matches a discovered file
  */
 /**
- * Convert PackageOutput to DefinitionOutput for compatibility
- */
-function packageOutputToDefinitionOutput(pkgOutput: PackageOutput): DefinitionOutput {
-  return {
-    id: pkgOutput.id,
-    name: pkgOutput.id,
-    fromStep: '', // Filled by DiscoveredFile.fromStep when available
-    destination: pkgOutput.destination,
-  };
-}
-
-/**
  * Find the package output that matches a discovered file
  */
 function findMatchingPackageOutput(
   file: DiscoveredFile,
   outputs: PackageOutput[]
-): DefinitionOutput | null {
+): ResolvedOutputContract | null {
   if (file.outputId) {
     const byId = outputs.find(o => o.id === file.outputId);
-    if (byId) return packageOutputToDefinitionOutput(byId);
+    if (byId) return byId;
   }
 
   const scopePriority = file.sampleId
@@ -580,13 +699,13 @@ function findMatchingPackageOutput(
   for (const scope of scopePriority) {
     for (const destination of destinationPriority) {
       const match = outputs.find(o => o.scope === scope && o.destination === destination);
-      if (match) return packageOutputToDefinitionOutput(match);
+      if (match) return match;
     }
   }
 
   for (const destination of destinationPriority) {
     const match = outputs.find(o => o.destination === destination);
-    if (match) return packageOutputToDefinitionOutput(match);
+    if (match) return match;
   }
 
   return null;
@@ -626,7 +745,7 @@ export async function resolveOutputs(
   // Process each discovered file
   for (const file of discovered.files) {
     // Find matching output definition
-    let output: DefinitionOutput | null = null;
+    let output: ResolvedOutputContract | null = null;
 
     output = findMatchingPackageOutput(file, packageOutputs);
 
@@ -635,7 +754,6 @@ export async function resolveOutputs(
       // Default to creating an artifact
       const artifactResult = await createArtifact(file, runId, {
         id: file.type,
-        name: file.name,
         fromStep: file.fromStep || 'unknown',
       }, pipelineId);
     if (artifactResult.success) {

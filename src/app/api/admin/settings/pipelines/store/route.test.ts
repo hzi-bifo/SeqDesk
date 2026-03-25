@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -32,7 +33,9 @@ describe("GET /api/admin/settings/pipelines/store", () => {
   it("rejects non-admin requests", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
-    const response = await GET({} as never);
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/store")
+    );
 
     expect(response.status).toBe(403);
   });
@@ -52,6 +55,9 @@ describe("GET /api/admin/settings/pipelines/store", () => {
             {
               id: "mag",
               latestVersion: "3.0.0",
+              targets: {
+                supported: ["study"],
+              },
               versions: [
                 {
                   version: "3.0.0",
@@ -72,6 +78,9 @@ describe("GET /api/admin/settings/pipelines/store", () => {
               id: "metaxpath",
               latestVersion: "0.1.0",
               isPrivate: true,
+              targets: {
+                supported: ["order"],
+              },
               source: {
                 kind: "github",
                 label: "GitHub",
@@ -84,29 +93,26 @@ describe("GET /api/admin/settings/pipelines/store", () => {
         }),
       });
 
-    const response = await GET({} as never);
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/store?catalog=order")
+    );
     const payload = await response.json();
 
     expect(response.status).toBe(200);
     expect(payload.registries).toHaveLength(2);
     expect(payload.pipelines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "mag",
-          source: expect.objectContaining({
-            kind: "registry",
-            label: "SeqDesk Registry",
-          }),
-        }),
+      [
         expect.objectContaining({
           id: "metaxpath",
+          catalogs: ["order"],
+          targets: { supported: ["order"] },
           source: expect.objectContaining({
             kind: "github",
             repository: "hzi-bifo/MetaxPath-Nextflow",
             refDefault: "main",
           }),
         }),
-      ])
+      ]
     );
   });
 });

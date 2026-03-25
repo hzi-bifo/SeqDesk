@@ -7,6 +7,13 @@ import { getPipelineDatabaseStatuses } from '@/lib/pipelines/database-downloads'
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { getPackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
+import {
+  deriveManifestTargets,
+  derivePipelineCapabilities,
+  derivePipelineCatalogs,
+  matchesPipelineCatalog,
+  type PipelineCatalog,
+} from '@/lib/pipelines/package-contracts';
 import type { PipelineConfigSchema } from '@/lib/pipelines/types';
 
 function parsePipelineConfig(rawConfig: string | null | undefined): Record<string, unknown> {
@@ -69,6 +76,12 @@ function isLocalPipelineRef(pipelineRef: string | null | undefined): boolean {
   );
 }
 
+function parseCatalogParam(value: string | null): PipelineCatalog | 'all' | null {
+  if (!value || value === 'all') return 'all';
+  if (value === 'order' || value === 'study') return value;
+  return null;
+}
+
 // GET - List all pipeline configurations
 export async function GET(request: NextRequest) {
   try {
@@ -80,6 +93,14 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const enabledOnly = searchParams.get('enabled') === 'true';
+    const catalog = parseCatalogParam(searchParams.get('catalog'));
+
+    if (!catalog) {
+      return NextResponse.json(
+        { error: 'Invalid catalog. Expected one of: all, order, study' },
+        { status: 400 }
+      );
+    }
 
     // Get all pipeline IDs from registry
     const allPipelineIds = getAllPipelineIds();
@@ -104,6 +125,9 @@ export async function GET(request: NextRequest) {
         ...parsePipelineConfig(dbConfig?.config),
       };
       const manifest = getPackageManifest(pipelineId);
+      const supportedTargets = deriveManifestTargets(manifest, definition);
+      const catalogs = derivePipelineCatalogs(supportedTargets);
+      const capabilities = derivePipelineCapabilities(manifest, definition);
       const downloadStatus = manifest
         ? isLocalPipelineRef(manifest.execution.pipeline)
           ? {
@@ -140,6 +164,9 @@ export async function GET(request: NextRequest) {
         configSchema: extendedConfigSchema,
         defaultConfig: extendedDefaultConfig,
         input: definition.input,
+        targets: supportedTargets.length > 0 ? { supported: supportedTargets } : null,
+        catalogs,
+        capabilities,
         sampleResult: definition.sampleResult ?? null,
         visibility: definition.visibility,
         requires: definition.requires,
@@ -150,9 +177,9 @@ export async function GET(request: NextRequest) {
     }));
 
     // Filter if only enabled requested
-    const result = enabledOnly
-      ? pipelines.filter(p => p.enabled)
-      : pipelines;
+    const result = pipelines
+      .filter((pipeline) => (enabledOnly ? pipeline.enabled : true))
+      .filter((pipeline) => matchesPipelineCatalog(pipeline.catalogs, catalog));
 
     return NextResponse.json({ pipelines: result });
   } catch (error) {
