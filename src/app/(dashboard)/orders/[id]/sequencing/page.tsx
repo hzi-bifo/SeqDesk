@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { FastqcMetricBadges } from "@/components/orders/FastqcMetricBadges";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
 import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
 import { Badge } from "@/components/ui/badge";
@@ -58,6 +59,10 @@ import {
   SEQUENCING_ARTIFACT_TYPES,
   type FacilitySampleStatus,
 } from "@/lib/sequencing/constants";
+import {
+  formatAvgQuality,
+  getSequencingReportSummary,
+} from "@/lib/sequencing/display";
 
 const STATUS_DOT_COLORS: Record<FacilitySampleStatus, string> = {
   WAITING: "bg-slate-400",
@@ -156,11 +161,6 @@ function formatDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatAvgQuality(value?: number | null): string {
-  if (value == null) return "-";
-  return value.toFixed(1);
 }
 
 function formatRelativeTime(value: string): string {
@@ -497,40 +497,6 @@ export default function OrderSequencingPage({
       return "Single read linked";
     }
     return "No reads linked";
-  };
-
-  const getReportSummary = (sample: SequencingSampleRow) => {
-    if (sample.artifactCount === 0) {
-      return "No reports";
-    }
-    if (sample.artifactCount === 1) {
-      return "1 report";
-    }
-    return `${sample.artifactCount} reports`;
-  };
-
-  const getFastqcMetricBadges = (sample: SequencingSampleRow) => {
-    const metrics: Array<{ label: string; value: number | null | undefined }> = [
-      { label: "R1 Q", value: sample.read?.avgQuality1 },
-      { label: "R2 Q", value: sample.read?.avgQuality2 },
-    ].filter((metric) => metric.value != null);
-
-    if (metrics.length === 0) {
-      return null;
-    }
-
-    return (
-      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-        {metrics.map((metric) => (
-          <span
-            key={metric.label}
-            className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 text-xs text-muted-foreground"
-          >
-            {metric.label} {formatAvgQuality(metric.value)}
-          </span>
-        ))}
-      </div>
-    );
   };
 
   const hasReads = (sample: SequencingSampleRow) =>
@@ -1282,7 +1248,7 @@ export default function OrderSequencingPage({
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {sample.sampleAlias || sample.sampleTitle || ""}
                           {(sample.sampleAlias || sample.sampleTitle) && " · "}
-                          {getReadSummary(sample)} · {getReportSummary(sample)}
+                          {getReadSummary(sample)} · {getSequencingReportSummary(sample.artifactCount)}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -1532,8 +1498,8 @@ export default function OrderSequencingPage({
 
                     {/* QC / Reports */}
                     <div className="col-span-2 min-w-0">
-                      <span className="text-sm">{getReportSummary(sample)}</span>
-                      {getFastqcMetricBadges(sample)}
+                      <span className="text-sm">{getSequencingReportSummary(sample.artifactCount)}</span>
+                      <FastqcMetricBadges read={sample.read} />
                       {sample.artifactCount > 0 && (
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {artifactStageLabel(sample.latestArtifactStage)}
@@ -1832,8 +1798,8 @@ export default function OrderSequencingPage({
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3">
                     <div>
-                      <div className="text-sm font-medium">{getReportSummary(selectedSample)}</div>
-                      {getFastqcMetricBadges(selectedSample)}
+                      <div className="text-sm font-medium">{getSequencingReportSummary(selectedSample.artifactCount)}</div>
+                      <FastqcMetricBadges read={selectedSample.read} />
                       <div className="mt-1 text-xs text-muted-foreground">
                         Sample-level files for QC, reports, or delivery attachments.
                       </div>
