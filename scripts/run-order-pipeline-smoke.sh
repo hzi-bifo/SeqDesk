@@ -196,6 +196,33 @@ require_env_command java java -version
 require_env_command node node -v
 require_env_command md5sum md5sum --version
 
+assert_summary_field_present() {
+  local file="$1"
+  local sample="$2"
+  local column="$3"
+
+  local actual
+  actual="$(awk -F'\t' -v sample="$sample" -v column="$column" '
+    NR == 1 {
+      for (i = 1; i <= NF; i += 1) {
+        if ($i == column) {
+          target = i
+          break
+        }
+      }
+      next
+    }
+    $1 == sample && target > 0 {
+      print $target
+      exit
+    }
+  ' "$file")"
+
+  if [[ -z "$actual" ]]; then
+    fail_smoke "Missing $column value for $sample in ${file#"$TMP_DIR"/}"
+  fi
+}
+
 if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
   TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
   rm -rf "$TMP_DIR"
@@ -297,6 +324,15 @@ done
 
 grep -q 'SAMPLE_A' "$FASTQC_OUT/summary/fastqc-summary.tsv"
 grep -q 'SAMPLE_B' "$FASTQC_OUT/summary/fastqc-summary.tsv"
+grep -q 'r1_avg_quality' "$FASTQC_OUT/summary/fastqc-summary.tsv"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_A" "r1_read_count"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_A" "r1_avg_quality"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_B" "r1_read_count"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_B" "r1_avg_quality"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_A" "r2_read_count"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_A" "r2_avg_quality"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_B" "r2_read_count"
+assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_B" "r2_avg_quality"
 FASTQC_STATUS="passed"
 CURRENT_STAGE="completed"
 

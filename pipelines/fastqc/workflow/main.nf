@@ -54,6 +54,7 @@ process RUN_FASTQC {
 
     # Extract summary for R1
     unzip -p "fastqc_reports/${sample_id}_R1_fastqc.zip" "*/summary.txt" > fastqc_raw/r1_summary.txt
+    unzip -p "fastqc_reports/${sample_id}_R1_fastqc.zip" "*/fastqc_data.txt" > fastqc_raw/r1_data.txt
 
     # Handle R2 if present
     R2_STATUS=""
@@ -63,27 +64,54 @@ process RUN_FASTQC {
       mv "fastqc_raw/\${R2_BASE}_fastqc.html" "fastqc_reports/${sample_id}_R2_fastqc.html"
       mv "fastqc_raw/\${R2_BASE}_fastqc.zip" "fastqc_reports/${sample_id}_R2_fastqc.zip"
       unzip -p "fastqc_reports/${sample_id}_R2_fastqc.zip" "*/summary.txt" > fastqc_raw/r2_summary.txt
+      unzip -p "fastqc_reports/${sample_id}_R2_fastqc.zip" "*/fastqc_data.txt" > fastqc_raw/r2_data.txt
     fi
+
+    extract_total_sequences() {
+      awk '\$1 == "Total" && \$2 == "Sequences" { gsub(/,/, "", \$3); print \$3; exit }' "\$1"
+    }
+
+    extract_avg_quality() {
+      awk '
+        /^>>Per sequence quality scores/ { in_module = 1; next }
+        in_module && /^>>END_MODULE/ {
+          if (total > 0) {
+            printf "%.1f", weighted / total
+          }
+          exit
+        }
+        in_module && \$1 ~ /^[0-9]+(\\.[0-9]+)?\$/ && \$2 ~ /^[0-9]+(\\.[0-9]+)?\$/ {
+          weighted += \$1 * \$2
+          total += \$2
+        }
+      ' "\$1"
+    }
 
     # Build per-sample summary row
     # Count PASS/WARN/FAIL from R1 summary
     R1_PASS=\$(grep -c "^PASS" fastqc_raw/r1_summary.txt || true)
     R1_WARN=\$(grep -c "^WARN" fastqc_raw/r1_summary.txt || true)
     R1_FAIL=\$(grep -c "^FAIL" fastqc_raw/r1_summary.txt || true)
+    R1_READ_COUNT=\$(extract_total_sequences fastqc_raw/r1_data.txt)
+    R1_AVG_QUALITY=\$(extract_avg_quality fastqc_raw/r1_data.txt)
 
     R2_PASS=""
     R2_WARN=""
     R2_FAIL=""
+    R2_READ_COUNT=""
+    R2_AVG_QUALITY=""
     if [ -f fastqc_raw/r2_summary.txt ]; then
       R2_PASS=\$(grep -c "^PASS" fastqc_raw/r2_summary.txt || true)
       R2_WARN=\$(grep -c "^WARN" fastqc_raw/r2_summary.txt || true)
       R2_FAIL=\$(grep -c "^FAIL" fastqc_raw/r2_summary.txt || true)
+      R2_READ_COUNT=\$(extract_total_sequences fastqc_raw/r2_data.txt)
+      R2_AVG_QUALITY=\$(extract_avg_quality fastqc_raw/r2_data.txt)
     fi
 
     {
-      printf "sample_id\\tr1_pass\\tr1_warn\\tr1_fail\\tr2_pass\\tr2_warn\\tr2_fail\\n"
-      printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \\
-        "${sample_id}" "\$R1_PASS" "\$R1_WARN" "\$R1_FAIL" "\$R2_PASS" "\$R2_WARN" "\$R2_FAIL"
+      printf "sample_id\\tr1_pass\\tr1_warn\\tr1_fail\\tr1_read_count\\tr1_avg_quality\\tr2_pass\\tr2_warn\\tr2_fail\\tr2_read_count\\tr2_avg_quality\\n"
+      printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \\
+        "${sample_id}" "\$R1_PASS" "\$R1_WARN" "\$R1_FAIL" "\$R1_READ_COUNT" "\$R1_AVG_QUALITY" "\$R2_PASS" "\$R2_WARN" "\$R2_FAIL" "\$R2_READ_COUNT" "\$R2_AVG_QUALITY"
     } > "summary/${sample_id}.tsv"
     """
 }
@@ -103,7 +131,7 @@ process SUMMARIZE_FASTQC {
     def inputFiles = summary_rows.collect { "\"${it}\"" }.join(' ')
     """
     mkdir -p summary
-    printf "sample_id\\tr1_pass\\tr1_warn\\tr1_fail\\tr2_pass\\tr2_warn\\tr2_fail\\n" > summary/fastqc-summary.tsv
+    printf "sample_id\\tr1_pass\\tr1_warn\\tr1_fail\\tr1_read_count\\tr1_avg_quality\\tr2_pass\\tr2_warn\\tr2_fail\\tr2_read_count\\tr2_avg_quality\\n" > summary/fastqc-summary.tsv
     awk 'FNR > 1 { print }' ${inputFiles} >> summary/fastqc-summary.tsv
     """
 }

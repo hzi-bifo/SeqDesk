@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
-import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
 import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
@@ -159,6 +158,11 @@ function formatDateTime(value: string): string {
   });
 }
 
+function formatAvgQuality(value?: number | null): string {
+  if (value == null) return "-";
+  return value.toFixed(1);
+}
+
 function formatRelativeTime(value: string): string {
   const now = new Date();
   const date = new Date(value);
@@ -297,7 +301,7 @@ export default function OrderSequencingPage({
         if (!cancelled) setAnalysisRunsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeView, orderId, isFacilityAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeView, orderId, isFacilityAdmin]);
 
   const refreshSummary = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -503,6 +507,30 @@ export default function OrderSequencingPage({
       return "1 report";
     }
     return `${sample.artifactCount} reports`;
+  };
+
+  const getFastqcMetricBadges = (sample: SequencingSampleRow) => {
+    const metrics: Array<{ label: string; value: number | null | undefined }> = [
+      { label: "R1 Q", value: sample.read?.avgQuality1 },
+      { label: "R2 Q", value: sample.read?.avgQuality2 },
+    ].filter((metric) => metric.value != null);
+
+    if (metrics.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+        {metrics.map((metric) => (
+          <span
+            key={metric.label}
+            className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 text-xs text-muted-foreground"
+          >
+            {metric.label} {formatAvgQuality(metric.value)}
+          </span>
+        ))}
+      </div>
+    );
   };
 
   const hasReads = (sample: SequencingSampleRow) =>
@@ -1429,6 +1457,11 @@ export default function OrderSequencingPage({
                                         {sample.read.readCount1.toLocaleString()} reads
                                       </span>
                                     )}
+                                    {sample.read.avgQuality1 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        Q{formatAvgQuality(sample.read.avgQuality1)}
+                                      </span>
+                                    )}
                                     {sample.read.checksum1 && (
                                       <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 font-mono" title={sample.read.checksum1}>
                                         {sample.read.checksum1.slice(0, 8)}
@@ -1464,6 +1497,11 @@ export default function OrderSequencingPage({
                                         {sample.read.readCount2.toLocaleString()} reads
                                       </span>
                                     )}
+                                    {sample.read.avgQuality2 != null && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5">
+                                        Q{formatAvgQuality(sample.read.avgQuality2)}
+                                      </span>
+                                    )}
                                     {sample.read.checksum2 && (
                                       <span className="inline-flex items-center gap-1 rounded bg-secondary/60 px-1.5 py-0.5 font-mono" title={sample.read.checksum2}>
                                         {sample.read.checksum2.slice(0, 8)}
@@ -1495,6 +1533,7 @@ export default function OrderSequencingPage({
                     {/* QC / Reports */}
                     <div className="col-span-2 min-w-0">
                       <span className="text-sm">{getReportSummary(sample)}</span>
+                      {getFastqcMetricBadges(sample)}
                       {sample.artifactCount > 0 && (
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {artifactStageLabel(sample.latestArtifactStage)}
@@ -1728,6 +1767,10 @@ export default function OrderSequencingPage({
                         field === "file1"
                           ? selectedSample.read?.readCount1
                           : selectedSample.read?.readCount2;
+                      const avgQuality =
+                        field === "file1"
+                          ? selectedSample.read?.avgQuality1
+                          : selectedSample.read?.avgQuality2;
                       const label = index === 0 ? "R1" : "R2";
 
                       return (
@@ -1755,6 +1798,9 @@ export default function OrderSequencingPage({
                               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                                 <span>
                                   Reads: {readCount ?? "Unknown"}
+                                </span>
+                                <span>
+                                  Avg quality: {avgQuality != null ? formatAvgQuality(avgQuality) : "Unknown"}
                                 </span>
                                 <span>
                                   Checksum:{" "}
@@ -1787,6 +1833,7 @@ export default function OrderSequencingPage({
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3">
                     <div>
                       <div className="text-sm font-medium">{getReportSummary(selectedSample)}</div>
+                      {getFastqcMetricBadges(selectedSample)}
                       <div className="mt-1 text-xs text-muted-foreground">
                         Sample-level files for QC, reports, or delivery attachments.
                       </div>

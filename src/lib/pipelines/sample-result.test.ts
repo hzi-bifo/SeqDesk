@@ -20,6 +20,8 @@ function makeSample(overrides: Partial<SequencingSampleRow> = {}): SequencingSam
       checksum2: "fedcba0987654321",
       readCount1: 1200,
       readCount2: 1200,
+      avgQuality1: null,
+      avgQuality2: null,
       fastqcReport1: null,
       fastqcReport2: null,
       fileSize1: null,
@@ -84,6 +86,8 @@ describe("getSampleResultPreview", () => {
           checksum2: null,
           readCount1: 1200,
           readCount2: null,
+          avgQuality1: null,
+          avgQuality2: null,
           fastqcReport1: null,
           fastqcReport2: null,
           fileSize1: null,
@@ -127,6 +131,8 @@ describe("getSampleResultPreview", () => {
           checksum2: null,
           readCount1: null,
           readCount2: null,
+          avgQuality1: 37.4,
+          avgQuality2: 36.8,
           fastqcReport1: "/data/fastqc_reports/sample_R1_fastqc.html",
           fastqcReport2: "/data/fastqc_reports/sample_R2_fastqc.html",
           fileSize1: null,
@@ -138,31 +144,43 @@ describe("getSampleResultPreview", () => {
         },
       }),
       {
-        columnLabel: "QC Reports",
+        columnLabel: "FastQC",
         emptyText: "Not generated",
         values: [
           {
-            label: "R1",
+            label: "R1 report",
             path: "read.fastqcReport1",
             whenPathExists: "read.file1",
             format: "filename",
           },
           {
-            label: "R2",
+            label: "R1 avg Q",
+            path: "read.avgQuality1",
+            whenPathExists: "read.file1",
+          },
+          {
+            label: "R2 report",
             path: "read.fastqcReport2",
             whenPathExists: "read.file2",
             format: "filename",
+          },
+          {
+            label: "R2 avg Q",
+            path: "read.avgQuality2",
+            whenPathExists: "read.file2",
           },
         ],
       },
     );
 
     expect(preview).toEqual({
-      columnLabel: "QC Reports",
+      columnLabel: "FastQC",
       emptyText: "Not generated",
       items: [
-        { label: "R1", value: "sample_R1_fastqc.html" },
-        { label: "R2", value: "sample_R2_fastqc.html" },
+        { label: "R1 report", value: "sample_R1_fastqc.html" },
+        { label: "R1 avg Q", value: "37.4" },
+        { label: "R2 report", value: "sample_R2_fastqc.html" },
+        { label: "R2 avg Q", value: "36.8" },
       ],
     });
   });
