@@ -1,6 +1,6 @@
 # seqdesk
 
-NPM launcher for the SeqDesk installer.
+CLI launcher for installing and updating SeqDesk.
 
 ## Usage
 

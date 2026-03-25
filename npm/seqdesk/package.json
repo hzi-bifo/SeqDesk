@@ -1,7 +1,7 @@
 {
   "name": "seqdesk",
   "version": "1.1.81",
-  "description": "SeqDesk installer launcher",
+  "description": "CLI launcher for installing and updating SeqDesk",
   "scripts": {
     "sync-version": "node ./scripts/sync-version.js",
     "prepublishOnly": "node ./scripts/sync-version.js",
