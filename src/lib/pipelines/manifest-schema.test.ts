@@ -171,6 +171,7 @@ describe("manifest-schema", () => {
         sampleResult: {
           columnLabel: "Checksums",
           emptyText: "Not computed",
+          layout: "columns",
           values: [
             {
               label: "R1",
@@ -193,6 +194,7 @@ describe("manifest-schema", () => {
 
     expect(result.success).toBe(true);
     expect(result.data.ui?.sampleResult?.columnLabel).toBe("Checksums");
+    expect(result.data.ui?.sampleResult?.layout).toBe("columns");
     expect(result.data.ui?.sampleResult?.values).toHaveLength(2);
   });
 

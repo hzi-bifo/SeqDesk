@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   formatAvgQuality,
   getFastqcMetricItems,
+  getSequencingReportCount,
+  getSequencingReportStageLabel,
   getSequencingReportSummary,
+  hasSequencingReports,
 } from "./display";
-import type { SequencingReadSummary } from "./types";
+import type { SequencingReadSummary, SequencingSampleRow } from "./types";
 
 function makeRead(
   overrides: Partial<SequencingReadSummary> = {},
@@ -32,6 +35,29 @@ function makeRead(
   };
 }
 
+function makeSample(
+  overrides: Partial<SequencingSampleRow> = {},
+): SequencingSampleRow {
+  return {
+    id: "sample-1",
+    sampleId: "S-1",
+    sampleAlias: null,
+    sampleTitle: null,
+    facilityStatus: "SEQUENCED",
+    facilityStatusUpdatedAt: null,
+    updatedAt: new Date().toISOString(),
+    read: makeRead(),
+    integrityStatus: "complete",
+    hasReads: true,
+    sequencingRun: null,
+    artifactCount: 0,
+    qcArtifactCount: 0,
+    latestArtifactStage: null,
+    artifacts: [],
+    ...overrides,
+  };
+}
+
 describe("sequencing display helpers", () => {
   it("formats average quality values to one decimal place", () => {
     expect(formatAvgQuality(null)).toBe("-");
@@ -41,9 +67,60 @@ describe("sequencing display helpers", () => {
   });
 
   it("returns singular and plural report summaries", () => {
-    expect(getSequencingReportSummary(0)).toBe("No reports");
-    expect(getSequencingReportSummary(1)).toBe("1 report");
-    expect(getSequencingReportSummary(4)).toBe("4 reports");
+    expect(getSequencingReportSummary(makeSample({ read: makeRead({ fastqcReport1: null, fastqcReport2: null }) }))).toBe("No reports");
+    expect(
+      getSequencingReportSummary(
+        makeSample({
+          read: makeRead({
+            fastqcReport1: "/data/fastqc/sample_R1_fastqc.html",
+            fastqcReport2: null,
+          }),
+        }),
+      ),
+    ).toBe("1 report");
+    expect(
+      getSequencingReportSummary(
+        makeSample({
+          read: makeRead({
+            fastqcReport1: "/data/fastqc/sample_R1_fastqc.html",
+            fastqcReport2: "/data/fastqc/sample_R2_fastqc.html",
+          }),
+          artifacts: [
+            {
+              id: "artifact-1",
+              orderId: "order-1",
+              sampleId: "sample-1",
+              sequencingRunId: null,
+              stage: "qc",
+              artifactType: "multiqc_report",
+              source: "upload",
+              visibility: "facility",
+              path: "/data/qc/multiqc.html",
+              originalName: "multiqc.html",
+              size: null,
+              checksum: null,
+              mimeType: "text/html",
+              metadata: null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      ),
+    ).toBe("3 reports");
+  });
+
+  it("counts read-backed FastQC reports as sequencing reports", () => {
+    const sample = makeSample({
+      read: makeRead({
+        fastqcReport1: "/data/fastqc/sample_R1_fastqc.html",
+        fastqcReport2: "/data/fastqc/sample_R2_fastqc.html",
+      }),
+    });
+
+    expect(getSequencingReportCount(sample)).toBe(2);
+    expect(hasSequencingReports(sample)).toBe(true);
+    expect(getSequencingReportStageLabel(sample)).toBe("FastQC");
   });
 
   it("returns FastQC metric items for populated read qualities", () => {

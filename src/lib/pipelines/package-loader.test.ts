@@ -122,12 +122,14 @@ async function createManifestPackage(options: {
     sampleResult?: {
       columnLabel: string;
       emptyText?: string;
+      layout?: "stack" | "columns";
       values: Array<{
         label?: string;
         path: string;
         whenPathExists?: string;
-        format?: "text" | "hash_prefix";
+        format?: "text" | "hash_prefix" | "filename";
         truncate?: number;
+        previewable?: boolean;
       }>;
     };
   };
@@ -320,6 +322,7 @@ describe("package-loader", () => {
         sampleResult: {
           columnLabel: "Checksums",
           emptyText: "Not computed",
+          layout: "columns",
           values: [
             {
               label: "R1",
@@ -345,6 +348,7 @@ describe("package-loader", () => {
     expect(definition?.sampleResult).toEqual({
       columnLabel: "Checksums",
       emptyText: "Not computed",
+      layout: "columns",
       values: [
         {
           label: "R1",

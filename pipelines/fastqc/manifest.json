@@ -109,6 +109,7 @@
     "sampleResult": {
       "columnLabel": "FastQC",
       "emptyText": "Not generated",
+      "layout": "columns",
       "values": [
         {
           "label": "R1 report",

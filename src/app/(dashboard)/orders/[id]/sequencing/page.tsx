@@ -61,7 +61,9 @@ import {
 } from "@/lib/sequencing/constants";
 import {
   formatAvgQuality,
+  getSequencingReportStageLabel,
   getSequencingReportSummary,
+  hasSequencingReports,
 } from "@/lib/sequencing/display";
 
 const STATUS_DOT_COLORS: Record<FacilitySampleStatus, string> = {
@@ -498,7 +500,7 @@ export default function OrderSequencingPage({
   const hasReads = (sample: SequencingSampleRow) =>
     Boolean(sample.read?.file1 || sample.read?.file2);
 
-  const hasReports = (sample: SequencingSampleRow) => sample.artifactCount > 0;
+  const hasReports = (sample: SequencingSampleRow) => hasSequencingReports(sample);
 
   const filteredSamples = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -1244,7 +1246,7 @@ export default function OrderSequencingPage({
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {sample.sampleAlias || sample.sampleTitle || ""}
                           {(sample.sampleAlias || sample.sampleTitle) && " · "}
-                          {getReadSummary(sample)} · {getSequencingReportSummary(sample.artifactCount)}
+                          {getReadSummary(sample)} · {getSequencingReportSummary(sample)}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -1494,11 +1496,11 @@ export default function OrderSequencingPage({
 
                     {/* QC / Reports */}
                     <div className="col-span-2 min-w-0">
-                      <span className="text-sm">{getSequencingReportSummary(sample.artifactCount)}</span>
+                      <span className="text-sm">{getSequencingReportSummary(sample)}</span>
                       <FastqcMetricBadges read={sample.read} />
-                      {sample.artifactCount > 0 && (
+                      {hasSequencingReports(sample) && (
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {artifactStageLabel(sample.latestArtifactStage)}
+                          {getSequencingReportStageLabel(sample)}
                         </p>
                       )}
                     </div>
@@ -1794,7 +1796,7 @@ export default function OrderSequencingPage({
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3">
                     <div>
-                      <div className="text-sm font-medium">{getSequencingReportSummary(selectedSample.artifactCount)}</div>
+                      <div className="text-sm font-medium">{getSequencingReportSummary(selectedSample)}</div>
                       <FastqcMetricBadges read={selectedSample.read} />
                       <div className="mt-1 text-xs text-muted-foreground">
                         Sample-level files for QC, reports, or delivery attachments.

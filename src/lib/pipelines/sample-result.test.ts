@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { getSampleResultPreview } from "./sample-result";
+import {
+  getSampleResultPreview,
+  getSampleResultPreviewItem,
+} from "./sample-result";
 import type { SequencingSampleRow } from "@/lib/sequencing/types";
 
 function makeSample(overrides: Partial<SequencingSampleRow> = {}): SequencingSampleRow {
@@ -120,7 +123,7 @@ describe("getSampleResultPreview", () => {
     expect(preview?.items).toEqual([{ label: "R1", value: "abcdef12..." }]);
   });
 
-  it("formats filename values by extracting the basename", () => {
+  it("formats FastQC filename values into compact report labels", () => {
     const preview = getSampleResultPreview(
       makeSample({
         read: {
@@ -177,9 +180,9 @@ describe("getSampleResultPreview", () => {
       columnLabel: "FastQC",
       emptyText: "Not generated",
       items: [
-        { label: "R1 report", value: "sample_R1_fastqc.html" },
+        { label: "R1 report", value: "R1 report" },
         { label: "R1 avg Q", value: "37.4" },
-        { label: "R2 report", value: "sample_R2_fastqc.html" },
+        { label: "R2 report", value: "R2 report" },
         { label: "R2 avg Q", value: "36.8" },
       ],
     });
@@ -308,8 +311,8 @@ describe("getSampleResultPreview", () => {
       columnLabel: "QC Reports",
       emptyText: "Not generated",
       items: [
-        { label: "R1", value: "sample_R1_fastqc.html" },
-        { label: "R2", value: "sample_R2_fastqc.html" },
+        { label: "R1", value: "R1 report" },
+        { label: "R2", value: "R2 report" },
       ],
     });
   });
@@ -398,8 +401,8 @@ describe("getSampleResultPreview", () => {
     });
 
     expect(preview?.items).toEqual([
-      { label: "R1", value: "sample_R1_fastqc.html", previewPath: "/data/reports/sample_R1_fastqc.html" },
-      { label: "R2", value: "sample_R2_fastqc.html", previewPath: "/data/reports/sample_R2_fastqc.html" },
+      { label: "R1", value: "R1 report", previewPath: "/data/reports/sample_R1_fastqc.html" },
+      { label: "R2", value: "R2 report", previewPath: "/data/reports/sample_R2_fastqc.html" },
     ]);
   });
 
@@ -436,7 +439,42 @@ describe("getSampleResultPreview", () => {
     });
 
     expect(preview?.items).toEqual([
-      { label: "R1", value: "sample_R1_fastqc.html" },
+      { label: "R1", value: "R1 report" },
     ]);
+  });
+
+  it("returns a single preview item for a descriptor when the value exists", () => {
+    const sample = makeSample({
+      read: {
+        id: "read-1",
+        file1: "reads/sample_R1.fastq.gz",
+        file2: "reads/sample_R2.fastq.gz",
+        checksum1: null,
+        checksum2: null,
+        readCount1: null,
+        readCount2: null,
+        avgQuality1: 34.8,
+        avgQuality2: null,
+        fastqcReport1: null,
+        fastqcReport2: null,
+        fileSize1: null,
+        fileSize2: null,
+        pipelineRunId: null,
+        pipelineRunNumber: null,
+        pipelineSources: null,
+        filesMissing: false,
+      },
+    });
+
+    expect(
+      getSampleResultPreviewItem(sample, {
+        label: "R1 avg Q",
+        path: "read.avgQuality1",
+        whenPathExists: "read.file1",
+      }),
+    ).toEqual({
+      label: "R1 avg Q",
+      value: "34.8",
+    });
   });
 });

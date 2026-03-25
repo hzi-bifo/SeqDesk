@@ -22,7 +22,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { getSampleResultPreview } from "@/lib/pipelines/sample-result";
+import {
+  getSampleResultPreview,
+  getSampleResultPreviewItem,
+} from "@/lib/pipelines/sample-result";
 import type { PipelineSampleResult } from "@/lib/pipelines/types";
 import {
   AlertCircle,
@@ -586,7 +589,18 @@ export function OrderPipelineView({
   }
 
   const sampleResultConfig = pipeline.sampleResult;
-  const columnCount = (sampleResultConfig ? 5 : 4) + 1; // +1 for Source column
+  const sampleResultLayout = sampleResultConfig?.layout ?? "stack";
+  const sampleResultColumnCount = sampleResultConfig
+    ? sampleResultLayout === "columns"
+      ? sampleResultConfig.values.length
+      : 1
+    : 0;
+  const columnCount = 5 + sampleResultColumnCount; // #, Sample, Reads, Source, Action + sample-result columns
+  const tableMinWidthClass = sampleResultConfig
+    ? sampleResultLayout === "columns"
+      ? "min-w-[1240px]"
+      : "min-w-[960px]"
+    : "min-w-[720px]";
 
   return (
     <div className="space-y-6">
@@ -753,26 +767,37 @@ export function OrderPipelineView({
       )}
 
       {/* Sample table */}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto overflow-y-hidden rounded-xl border border-border bg-card">
+        <table className={cn("w-full text-sm", tableMinWidthClass)}>
           <thead>
             <tr className="border-b bg-secondary/30">
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">#</th>
-              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+              <th className="min-w-[10rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Sample
               </th>
-              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+              <th className="min-w-[8rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Reads
               </th>
-              {sampleResultConfig ? (
-                <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
-                  {sampleResultConfig.columnLabel}
-                </th>
-              ) : null}
-              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+              {sampleResultConfig
+                ? sampleResultLayout === "columns"
+                  ? sampleResultConfig.values.map((descriptor, index) => (
+                      <th
+                        key={`${descriptor.path}-${index}`}
+                        className="min-w-[12rem] px-4 py-2.5 text-left font-medium text-muted-foreground"
+                      >
+                        {descriptor.label ?? sampleResultConfig.columnLabel}
+                      </th>
+                    ))
+                  : (
+                      <th className="min-w-[22rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                        {sampleResultConfig.columnLabel}
+                      </th>
+                    )
+                : null}
+              <th className="min-w-[8rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Source
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">
+              <th className="min-w-[8rem] px-4 py-2.5 text-right font-medium text-muted-foreground">
                 Action
               </th>
             </tr>
@@ -785,6 +810,7 @@ export function OrderPipelineView({
                 sample,
                 sampleResultConfig,
               );
+              const hasSampleResultItems = !!sampleResultPreview && sampleResultPreview.items.length > 0;
 
               return (
                 <tr
@@ -827,68 +853,118 @@ export function OrderPipelineView({
                       </Badge>
                     )}
                   </td>
-                  {sampleResultConfig ? (
-                    <td className="px-4 py-3">
-                      {sampleResultPreview && sampleResultPreview.items.length > 0 ? (
-                        <div className="flex items-start gap-1.5">
-                          <div className="space-y-1">
-                            {sampleResultPreview.items.map((item) => (
-                              <div
-                                key={`${item.label ?? "value"}-${item.value}`}
-                                className="text-xs flex items-center gap-1"
-                              >
-                                {item.label ? (
-                                  <span className="mr-1 text-muted-foreground">
-                                    {item.label}
-                                  </span>
-                                ) : null}
-                                {item.previewPath ? (
+                  {sampleResultConfig
+                    ? sampleResultLayout === "columns"
+                      ? sampleResultConfig.values.map((descriptor, index) => {
+                          const item = getSampleResultPreviewItem(sample, descriptor);
+
+                          return (
+                            <td
+                              key={`${sample.id}-${descriptor.path}-${index}`}
+                              className="min-w-[12rem] px-4 py-3 align-top"
+                            >
+                              {item ? (
+                                item.previewPath ? (
                                   <button
                                     type="button"
                                     className={cn(
-                                      "font-mono text-blue-600 hover:text-blue-800 hover:underline cursor-pointer inline-flex items-center gap-0.5",
+                                      "inline-flex items-center gap-1 whitespace-nowrap font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline cursor-pointer",
                                       sample.read?.filesMissing && "line-through text-muted-foreground pointer-events-none"
                                     )}
-                                    onClick={() => setPreviewFile({ path: item.previewPath!, label: `${item.label ? item.label + " — " : ""}${item.value}` })}
+                                    onClick={() =>
+                                      setPreviewFile({
+                                        path: item.previewPath!,
+                                        label: `${descriptor.label ? descriptor.label + " — " : ""}${item.value}`,
+                                      })
+                                    }
                                     disabled={!!sample.read?.filesMissing}
                                   >
                                     {item.value}
                                     <ExternalLink className="h-2.5 w-2.5" />
                                   </button>
                                 ) : (
-                                  <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
+                                  <span
+                                    className={cn(
+                                      "whitespace-nowrap font-mono text-xs",
+                                      sample.read?.filesMissing && "line-through text-muted-foreground"
+                                    )}
+                                  >
+                                    {item.value}
+                                  </span>
+                                )
+                              ) : descriptor.previewable ? (
+                                <span className="text-xs text-muted-foreground">
+                                  {sampleResultConfig.emptyText ?? "No result yet"}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          );
+                        })
+                      : (
+                          <td className="min-w-[22rem] px-4 py-3 align-top">
+                            {hasSampleResultItems ? (
+                              <div className="flex items-start gap-1.5">
+                                <div className="min-w-[20rem] space-y-1">
+                                  {sampleResultPreview.items.map((item) => (
+                                    <div
+                                      key={`${item.label ?? "value"}-${item.value}`}
+                                      className="flex items-center gap-1 whitespace-nowrap text-xs"
+                                    >
+                                      {item.label ? (
+                                        <span className="mr-1 shrink-0 text-muted-foreground">
+                                          {item.label}
+                                        </span>
+                                      ) : null}
+                                      {item.previewPath ? (
+                                        <button
+                                          type="button"
+                                          className={cn(
+                                            "inline-flex items-center gap-0.5 whitespace-nowrap font-mono text-blue-600 hover:text-blue-800 hover:underline cursor-pointer",
+                                            sample.read?.filesMissing && "line-through text-muted-foreground pointer-events-none"
+                                          )}
+                                          onClick={() => setPreviewFile({ path: item.previewPath!, label: `${item.label ? item.label + " — " : ""}${item.value}` })}
+                                          disabled={!!sample.read?.filesMissing}
+                                        >
+                                          {item.value}
+                                          <ExternalLink className="h-2.5 w-2.5" />
+                                        </button>
+                                      ) : (
+                                        <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                  {sample.read?.filesMissing && (
+                                    <div className="text-xs text-orange-600">
+                                      Source files deleted
+                                    </div>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                  title="Clear result"
+                                  onClick={() => void handleClearSampleResult(sample.id)}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <span className="text-xs text-muted-foreground">
+                                  {sampleResultConfig.emptyText ?? "No result yet"}
+                                </span>
+                                {sample.read?.filesMissing && (
+                                  <div className="text-xs text-orange-600">
+                                    Source files deleted
+                                  </div>
                                 )}
                               </div>
-                            ))}
-                            {sample.read?.filesMissing && (
-                              <div className="text-xs text-orange-600">
-                                Source files deleted
-                              </div>
                             )}
-                          </div>
-                          <button
-                            type="button"
-                            className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            title="Clear result"
-                            onClick={() => void handleClearSampleResult(sample.id)}
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="space-y-0.5">
-                          <span className="text-xs text-muted-foreground">
-                            {sampleResultConfig.emptyText ?? "No result yet"}
-                          </span>
-                          {sample.read?.filesMissing && (
-                            <div className="text-xs text-orange-600">
-                              Source files deleted
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  ) : null}
+                          </td>
+                        )
+                    : null}
                   {(() => {
                     // Per-pipeline source: check pipelineSources map first, fall back to pipelineRunId
                     const sourceRunId =
@@ -930,42 +1006,54 @@ export function OrderPipelineView({
                   })()}
 
                   <td className="px-4 py-3 text-right">
-                    {initialCheckPending ? (
-                      <Button size="sm" variant="outline" disabled>
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Checking...
-                      </Button>
-                    ) : isRunning ? (
-                      <Button size="sm" variant="outline" disabled>
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Running...
-                      </Button>
-                    ) : ready ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={systemBlocked || !!isDemo}
-                        onClick={() => void handleRunSingle(sample.id)}
-                        title={isDemo ? "Disabled in demo" : systemBlocked ? systemReady?.summary : undefined}
-                      >
-                        {systemBlocked ? (
-                          <>
-                            <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
-                            Blocked
-                          </>
-                        ) : (
-                          <>
-                            <Play className="mr-1.5 h-3.5 w-3.5" />
-                            Run
-                          </>
-                        )}
-                      </Button>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs text-amber-700">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        {reason}
-                      </span>
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      {sampleResultLayout === "columns" && hasSampleResultItems ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Clear result"
+                          onClick={() => void handleClearSampleResult(sample.id)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                      {initialCheckPending ? (
+                        <Button size="sm" variant="outline" disabled>
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          Checking...
+                        </Button>
+                      ) : isRunning ? (
+                        <Button size="sm" variant="outline" disabled>
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          Running...
+                        </Button>
+                      ) : ready ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={systemBlocked || !!isDemo}
+                          onClick={() => void handleRunSingle(sample.id)}
+                          title={isDemo ? "Disabled in demo" : systemBlocked ? systemReady?.summary : undefined}
+                        >
+                          {systemBlocked ? (
+                            <>
+                              <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
+                              Blocked
+                            </>
+                          ) : (
+                            <>
+                              <Play className="mr-1.5 h-3.5 w-3.5" />
+                              Run
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-amber-700">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          {reason}
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

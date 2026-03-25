@@ -424,7 +424,11 @@ export async function getOrderSequencingSummary(
     summary: {
       totalSamples: rows.length,
       readsLinkedSamples: rows.filter((row) => row.hasReads).length,
-      qcArtifactSamples: rows.filter((row) => row.qcArtifactCount > 0).length,
+      qcArtifactSamples: rows.filter(
+        (row) =>
+          row.qcArtifactCount > 0 ||
+          Boolean(row.read?.fastqcReport1 || row.read?.fastqcReport2)
+      ).length,
       missingChecksumSamples: rows.filter(
         (row) => row.integrityStatus === "missing" || row.integrityStatus === "partial"
       ).length,

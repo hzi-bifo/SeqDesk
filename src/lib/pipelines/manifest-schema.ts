@@ -179,6 +179,7 @@ export const ManifestSchema = z
           .object({
             columnLabel: z.string().min(1),
             emptyText: z.string().min(1).optional(),
+            layout: z.enum(["stack", "columns"]).optional(),
             values: z.array(PipelineSampleResultValueSchema).min(1),
           })
           .strict()

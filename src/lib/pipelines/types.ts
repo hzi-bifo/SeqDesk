@@ -61,6 +61,7 @@ export interface PipelineConfigSchema {
 }
 
 export type PipelineSampleResultFormat = 'text' | 'hash_prefix' | 'filename';
+export type PipelineSampleResultLayout = 'stack' | 'columns';
 
 export interface PipelineSampleResultValue {
   label?: string;
@@ -75,6 +76,7 @@ export interface PipelineSampleResultValue {
 export interface PipelineSampleResult {
   columnLabel: string;
   emptyText?: string;
+  layout?: PipelineSampleResultLayout;
   values: PipelineSampleResultValue[];
 }
 
