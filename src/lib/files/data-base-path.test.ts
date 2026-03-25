@@ -37,6 +37,9 @@ import {
   resolveDataBasePathFromStoredValue,
 } from "./data-base-path";
 
+const DARWIN_HOME_DIR = "/Users/tester";
+const DARWIN_TESTDATA_DIR = `${DARWIN_HOME_DIR}/testdata`;
+
 function makeResolvedConfig(overrides?: Partial<ResolvedConfig>): ResolvedConfig {
   return {
     config: {
@@ -87,7 +90,7 @@ describe("data-base-path", () => {
       makeResolvedConfig({
         config: {
           site: {
-            dataBasePath: "/Users/pmu15/testdata",
+            dataBasePath: DARWIN_TESTDATA_DIR,
           },
         },
         sources: {
@@ -99,7 +102,7 @@ describe("data-base-path", () => {
     const result = resolveDataBasePathFromStoredValue("/db/data");
 
     expect(result).toEqual({
-      dataBasePath: "/Users/pmu15/testdata",
+      dataBasePath: DARWIN_TESTDATA_DIR,
       source: "file",
       isImplicit: false,
     });
@@ -131,8 +134,8 @@ describe("data-base-path", () => {
   it("uses ~/testdata automatically on macOS development when nothing explicit is configured", () => {
     vi.stubEnv("NODE_ENV", "development");
     mocks.platform.mockReturnValue("darwin");
-    mocks.homedir.mockReturnValue("/Users/pmu15");
-    mocks.existsSync.mockImplementation((candidate: string) => candidate === "/Users/pmu15/testdata");
+    mocks.homedir.mockReturnValue(DARWIN_HOME_DIR);
+    mocks.existsSync.mockImplementation((candidate: string) => candidate === DARWIN_TESTDATA_DIR);
     mocks.statSync.mockReturnValue({
       isDirectory: () => true,
     });
@@ -140,7 +143,7 @@ describe("data-base-path", () => {
     const result = resolveDataBasePathFromStoredValue(null);
 
     expect(result).toEqual({
-      dataBasePath: "/Users/pmu15/testdata",
+      dataBasePath: DARWIN_TESTDATA_DIR,
       source: "local-dev",
       isImplicit: true,
     });
@@ -149,7 +152,7 @@ describe("data-base-path", () => {
   it("does not apply the local macOS fallback during tests", () => {
     vi.stubEnv("NODE_ENV", "test");
     mocks.platform.mockReturnValue("darwin");
-    mocks.homedir.mockReturnValue("/Users/pmu15");
+    mocks.homedir.mockReturnValue(DARWIN_HOME_DIR);
     mocks.existsSync.mockReturnValue(true);
     mocks.statSync.mockReturnValue({
       isDirectory: () => true,
