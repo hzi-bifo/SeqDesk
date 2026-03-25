@@ -187,9 +187,15 @@ export default function InfrastructureOverviewPage() {
   };
 
   return (
+    <>
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
+          <span className="text-sm font-medium">Infrastructure</span>
+        </div>
+      </div>
     <PageContainer>
       <div className="space-y-8">
-        <div className="mb-4">
+        <div className="mb-4 mt-6">
           <h1 className="text-xl font-semibold">Infrastructure</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Configure data storage and runtime prerequisites for imports and pipeline execution
@@ -399,5 +405,6 @@ export default function InfrastructureOverviewPage() {
         </div>
       </div>
     </PageContainer>
+    </>
   );
 }

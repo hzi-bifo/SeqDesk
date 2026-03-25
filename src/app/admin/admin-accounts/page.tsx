@@ -329,8 +329,14 @@ export default function AdminAccountsPage() {
   }
 
   return (
+    <>
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
+          <span className="text-sm font-medium">Admin Accounts</span>
+        </div>
+      </div>
     <PageContainer>
-      <div className="mb-4">
+      <div className="mb-4 mt-6">
         <h1 className="text-xl font-semibold">Admin Accounts</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Manage facility administrators and invitation access
@@ -725,5 +731,6 @@ export default function AdminAccountsPage() {
         </DialogContent>
       </Dialog>
     </PageContainer>
+    </>
   );
 }
