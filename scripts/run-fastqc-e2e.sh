@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if ! command -v conda >/dev/null 2>&1; then
-  echo "conda is required for the smoke test" >&2
+  echo "conda is required for the end-to-end test" >&2
   exit 1
 fi
 
@@ -70,8 +70,8 @@ assert_summary_value() {
   fi
 }
 
-if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
-  TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
+if [[ -n "${PIPELINE_E2E_TMPDIR:-}" ]]; then
+  TMP_DIR="${PIPELINE_E2E_TMPDIR}"
   rm -rf "$TMP_DIR"
   mkdir -p "$TMP_DIR"
 else
@@ -165,7 +165,7 @@ assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r1_avg
 assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r2_read_count" "2"
 assert_summary_value "$OUTPUT_DIR/summary/fastqc-summary.tsv" "PAIRED_B" "r2_avg_quality" "9.5"
 
-echo "FASTQC smoke test passed."
+echo "FASTQC end-to-end test passed."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

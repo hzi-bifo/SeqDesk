@@ -1,4 +1,4 @@
-name: Install Smoke (Ubuntu)
+name: Install E2E (Ubuntu)
 
 on:
   push:
@@ -102,7 +102,7 @@ jobs:
           cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
           CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
           cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
-          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI smoke test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI e2e test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
           EOF
 
       - name: Create infrastructure JSON
@@ -227,23 +227,23 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
             --email "user@example.com" \
             --password "user" \
             --expected-role "RESEARCHER"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${RECONFIG_PORT}" \
             --email "admin@example.com" \
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
 
-      - name: Upload install smoke artifacts (public installer)
+      - name: Upload install e2e artifacts (public installer)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: install-smoke-public-ubuntu
+          name: install-e2e-public-ubuntu
           path: |
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
@@ -284,7 +284,7 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/source-server.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/source-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/source-seqdesk.config.json" >> "$GITHUB_ENV"
-          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/source-store-smoke.json" >> "$GITHUB_ENV"
+          echo "STORE_E2E_JSON=$RUNNER_TEMP/source-store-e2e.json" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -355,33 +355,33 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "user@example.com" \
             --password "user" \
             --expected-role "RESEARCHER"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
-          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --pipeline-ids "mag,submg" \
-            --result-file "$STORE_SMOKE_JSON"
+            --result-file "$STORE_E2E_JSON"
 
-      - name: Upload install smoke artifacts (source installer)
+      - name: Upload install e2e artifacts (source installer)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: install-smoke-source-ubuntu
+          name: install-e2e-source-ubuntu
           path: |
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
-            ${{ env.STORE_SMOKE_JSON }}
+            ${{ env.STORE_E2E_JSON }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -445,7 +445,7 @@ jobs:
           cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
           CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
           cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
-          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI smoke test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI e2e test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
           EOF
 
       - name: Create infrastructure JSON
@@ -543,7 +543,7 @@ jobs:
       - name: Verify researcher login works
         run: |
           set -euo pipefail
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "user@example.com" \
             --password "user" \
@@ -552,7 +552,7 @@ jobs:
       - name: Verify admin login works
         run: |
           set -euo pipefail
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
@@ -567,11 +567,11 @@ jobs:
             "${PM2_BIN}" logs seqdesk --nostream --lines 200 >"$SERVER_LOG" 2>&1 || true
           fi
 
-      - name: Upload install smoke artifacts (public installer PM2)
+      - name: Upload install e2e artifacts (public installer PM2)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: install-smoke-public-ubuntu-pm2
+          name: install-e2e-public-ubuntu-pm2
           path: |
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}

@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if ! command -v conda >/dev/null 2>&1; then
-  echo "conda is required for the smoke test" >&2
+  echo "conda is required for the end-to-end test" >&2
   exit 1
 fi
 
@@ -41,8 +41,8 @@ require_env_command nextflow nextflow -version
 require_env_command java java -version
 require_env_command md5sum md5sum --version
 
-if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
-  TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
+if [[ -n "${PIPELINE_E2E_TMPDIR:-}" ]]; then
+  TMP_DIR="${PIPELINE_E2E_TMPDIR}"
   rm -rf "$TMP_DIR"
   mkdir -p "$TMP_DIR"
 else
@@ -132,7 +132,7 @@ grep -q "\"checksum2\":\"$EXPECTED_PAIRED_B_R2\"" "$OUTPUT_DIR/checksums/PAIRED_
 grep -q "SINGLE_A" "$OUTPUT_DIR/summary/checksum-summary.tsv"
 grep -q "PAIRED_B" "$OUTPUT_DIR/summary/checksum-summary.tsv"
 
-echo "FASTQ checksum smoke test passed."
+echo "FASTQ checksum end-to-end test passed."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

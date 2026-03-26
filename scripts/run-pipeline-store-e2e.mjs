@@ -256,7 +256,7 @@ let installPayload = {
   success: true,
   action: existedBefore ? "already-installed" : "unknown",
   message: existedBefore
-    ? `Pipeline ${selectedPipeline.id} was already installed before smoke verification`
+    ? `Pipeline ${selectedPipeline.id} was already installed before e2e verification`
     : "Installation skipped",
 };
 

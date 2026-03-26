@@ -4,8 +4,8 @@ set -euo pipefail
 
 ENV_NAME="${PIPELINE_CONDA_ENV:-seqdesk-pipelines}"
 KEEP_TEMP=0
-RUNNER_LABEL="${PIPELINE_SMOKE_RUNNER_LABEL:-local}"
-WORKFLOW_LABEL="${PIPELINE_SMOKE_WORKFLOW_LABEL:-Order Pipeline End-to-End Smoke}"
+RUNNER_LABEL="${PIPELINE_E2E_RUNNER_LABEL:-local}"
+WORKFLOW_LABEL="${PIPELINE_E2E_WORKFLOW_LABEL:-Order Pipeline End-to-End}"
 TMP_DIR=""
 
 SIMULATE_STATUS="not run"
@@ -35,7 +35,7 @@ cleanup() {
   fi
 }
 
-fail_smoke() {
+fail_e2e() {
   FAILURE_MESSAGE="$1"
   echo "$FAILURE_MESSAGE" >&2
   if [[ -n "$TMP_DIR" ]]; then
@@ -48,7 +48,7 @@ require_output_file() {
   local path="$1"
   local label="$2"
   if [[ ! -f "$path" ]]; then
-    fail_smoke "Missing expected $label output: $path"
+    fail_e2e "Missing expected $label output: $path"
   fi
 }
 
@@ -77,7 +77,7 @@ write_artifact_manifest() {
   fi
 
   {
-    echo "Order pipeline end-to-end smoke artifact manifest"
+    echo "Order pipeline end-to-end artifact manifest"
     echo "Result: $result"
     echo "Runner: $RUNNER_LABEL"
     echo "Temporary run directory: $TMP_DIR"
@@ -173,7 +173,7 @@ on_exit() {
 trap 'on_exit $?' EXIT
 
 if ! command -v conda >/dev/null 2>&1; then
-  echo "conda is required for the smoke test" >&2
+  echo "conda is required for the end-to-end test" >&2
   exit 1
 fi
 
@@ -219,12 +219,12 @@ assert_summary_field_present() {
   ' "$file")"
 
   if [[ -z "$actual" ]]; then
-    fail_smoke "Missing $column value for $sample in ${file#"$TMP_DIR"/}"
+    fail_e2e "Missing $column value for $sample in ${file#"$TMP_DIR"/}"
   fi
 }
 
-if [[ -n "${PIPELINE_SMOKE_TMPDIR:-}" ]]; then
-  TMP_DIR="${PIPELINE_SMOKE_TMPDIR}"
+if [[ -n "${PIPELINE_E2E_TMPDIR:-}" ]]; then
+  TMP_DIR="${PIPELINE_E2E_TMPDIR}"
   rm -rf "$TMP_DIR"
   mkdir -p "$TMP_DIR"
 else
@@ -237,8 +237,8 @@ FASTQC_SAMPLESHEET="$TMP_DIR/fastqc-samplesheet.csv"
 SIM_OUT="$TMP_DIR/sim-output"
 CHECKSUM_OUT="$TMP_DIR/checksum-output"
 FASTQC_OUT="$TMP_DIR/fastqc-output"
-SUMMARY_FILE="$TMP_DIR/ORDER_PIPELINE_SMOKE_SUMMARY.md"
-ARTIFACT_MANIFEST="$TMP_DIR/ORDER_PIPELINE_SMOKE_ARTIFACTS.txt"
+SUMMARY_FILE="$TMP_DIR/ORDER_PIPELINE_E2E_SUMMARY.md"
+ARTIFACT_MANIFEST="$TMP_DIR/ORDER_PIPELINE_E2E_ARTIFACTS.txt"
 
 cat > "$SIM_SAMPLESHEET" <<'EOF'
 sample_id,order_id
@@ -336,7 +336,7 @@ assert_summary_field_present "$FASTQC_OUT/summary/fastqc-summary.tsv" "SAMPLE_B"
 FASTQC_STATUS="passed"
 CURRENT_STAGE="completed"
 
-echo "Order pipeline smoke test passed (simulate-reads, fastq-checksum, fastqc)."
+echo "Order pipeline end-to-end test passed (simulate-reads, fastq-checksum, fastqc)."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

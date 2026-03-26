@@ -49,7 +49,7 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/server-twincore.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-twincore.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-twincore.config.json" >> "$GITHUB_ENV"
-          echo "STORE_SMOKE_JSON=$RUNNER_TEMP/store-smoke-twincore.json" >> "$GITHUB_ENV"
+          echo "STORE_E2E_JSON=$RUNNER_TEMP/store-e2e-twincore.json" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-twincore-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-twincore.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools" >> "$GITHUB_ENV"
@@ -245,21 +245,21 @@ jobs:
               process.exit(1);
             }
           ' "$PROVIDERS_JSON"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "user@example.com" \
             --password "user" \
             --expected-role "RESEARCHER"
-          node "$GITHUB_WORKSPACE/scripts/run-auth-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
-          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-smoke.mjs" \
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --pipeline-ids "mag,submg" \
-            --result-file "$STORE_SMOKE_JSON"
+            --result-file "$STORE_E2E_JSON"
 
       - name: Upload canary install artifacts
         if: always()
@@ -271,7 +271,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
-            ${{ env.STORE_SMOKE_JSON }}
+            ${{ env.STORE_E2E_JSON }}
             ${{ env.PG_LOG }}
           if-no-files-found: warn
           retention-days: 14
