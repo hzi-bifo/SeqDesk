@@ -40,7 +40,7 @@ vi.mock("./generic-adapter", () => ({
   createGenericAdapter: mocks.genericAdapter.createGenericAdapter,
 }));
 
-import { prepareGenericRun } from "./generic-executor";
+import { prepareGenericRun, mergeProfiles } from "./generic-executor";
 
 function createAdapter(overrides?: Partial<PipelineAdapter>): PipelineAdapter {
   return {
@@ -314,5 +314,253 @@ describe("generic-executor", () => {
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
     expect(script).toContain(`STDOUT_LOG="${result.runFolder}/logs/pipeline.out"`);
     expect(script).toContain(`STDERR_LOG="${result.runFolder}/logs/pipeline.err"`);
+  });
+
+  it("generates a SLURM script when useSlurm is enabled", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "2.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-slurm",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+        slurmQueue: "gpu",
+        slurmCores: 16,
+        slurmMemory: "128GB",
+        slurmTimeLimit: 24,
+        slurmOptions: "--gres=gpu:1",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("#SBATCH -p gpu");
+    expect(script).toContain("#SBATCH -c 16");
+    expect(script).toContain("#SBATCH --mem='128GB'");
+    expect(script).toContain("#SBATCH -t 24:0:0");
+    expect(script).toContain("#SBATCH --gres=gpu:1");
+    expect(script).toContain("nf-core/mag");
+    expect(script).toContain("-r 2.0.0");
+
+    const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(config).toContain("executor = 'slurm'");
+    expect(config).toContain("cpus = 16");
+    expect(config).toContain("memory = '128GB'");
+    expect(config).toContain("time = '24h'");
+    expect(config).toContain("queue = 'gpu'");
+    expect(config).toContain("clusterOptions = '--gres=gpu:1'");
+  });
+
+  it("includes MAG CONCOCT workaround in nextflow config for mag pipeline", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+        package: { id: "mag" },
+      },
+      basePath: tempDir,
+      id: "mag",
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-mag",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(config).toContain("CONCOCT");
+    expect(config).toContain("concoct=1.1.0");
+  });
+
+  it("includes weblog config when weblogUrl is provided", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-weblog",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        weblogUrl: "http://localhost:3000/api/pipelines/weblog",
+        weblogSecret: "mysecret",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(config).toContain("weblog {");
+    expect(config).toContain("enabled = true");
+    expect(config).toContain("runId=run-weblog");
+    expect(config).toContain("token=mysecret");
+  });
+
+  it("returns error when adapter cannot be created", async () => {
+    mocks.adapters.getAdapter.mockReturnValue(undefined);
+    mocks.genericAdapter.createGenericAdapter.mockReturnValue(null);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-no-adapter",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Could not create adapter for pipeline: mag");
+  });
+
+  it("handles unexpected errors gracefully", async () => {
+    mocks.packageLoader.getPackage.mockImplementation(() => {
+      throw new Error("Unexpected crash");
+    });
+
+    const result = await prepareGenericRun({
+      runId: "run-crash",
+      pipelineId: "crash-pipe",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain("Failed to prepare run: Unexpected crash");
+  });
+
+  it("generates conda activation bootstrap when condaPath is set", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-conda",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        condaPath: "/opt/miniconda3",
+        condaEnv: "my-env",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain('CONDA_BASE="/opt/miniconda3"');
+    expect(script).toContain('CONDA_ENV="my-env"');
+    expect(script).toContain("source \"$CONDA_SH\"");
+    expect(script).toContain("conda activate");
+  });
+});
+
+describe("mergeProfiles", () => {
+  it("returns manifest profiles with conda when none need adding", () => {
+    expect(mergeProfiles(["conda", "docker"])).toBe("conda,docker");
+  });
+
+  it("adds conda if not in manifest profiles", () => {
+    expect(mergeProfiles(["docker"])).toBe("docker,conda");
+  });
+
+  it("merges admin profile with manifest profiles", () => {
+    expect(mergeProfiles(["conda"], "test")).toBe("conda,test");
+  });
+
+  it("deduplicates profiles case-insensitively", () => {
+    expect(mergeProfiles(["conda", "Docker"], "docker")).toBe("conda,Docker");
+  });
+
+  it("skips empty strings in admin profile", () => {
+    expect(mergeProfiles(["conda"], ",test,")).toBe("conda,test");
+  });
+
+  it("skips conda when skipConda is true", () => {
+    expect(mergeProfiles(["conda", "docker"], undefined, { skipConda: true })).toBe("docker");
+  });
+
+  it("does not add conda when skipConda is true and conda not in manifest", () => {
+    expect(mergeProfiles(["docker"], undefined, { skipConda: true })).toBe("docker");
+  });
+
+  it("returns empty string for empty inputs with skipConda", () => {
+    expect(mergeProfiles([], undefined, { skipConda: true })).toBe("");
+  });
+
+  it("returns conda alone when no other profiles", () => {
+    expect(mergeProfiles([])).toBe("conda");
+  });
+
+  it("merges comma-separated admin profiles", () => {
+    expect(mergeProfiles(["conda"], "test,singularity")).toBe("conda,test,singularity");
   });
 });

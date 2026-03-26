@@ -52,6 +52,12 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.d.ts", "**/types.ts"],
+      thresholds: {
+        lines: 41,
+        statements: 40,
+        branches: 30,
+        functions: 29,
+      },
     },
     testTimeout: 10000,
   },

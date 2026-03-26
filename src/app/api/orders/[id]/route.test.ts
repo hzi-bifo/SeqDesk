@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
     },
     sample: {
+      findMany: vi.fn(),
       updateMany: vi.fn(),
     },
     user: {
@@ -44,7 +45,133 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
-import { DELETE, PUT } from "./route";
+import { DELETE, GET, PUT } from "./route";
+
+describe("GET /api/orders/[id]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      name: "Test Order",
+      status: "DRAFT",
+      statusUpdatedAt: new Date("2024-01-01"),
+      createdAt: new Date("2024-01-01"),
+      numberOfSamples: 1,
+      contactName: null,
+      contactEmail: null,
+      contactPhone: null,
+      billingAddress: null,
+      platform: null,
+      instrumentModel: null,
+      librarySelection: null,
+      libraryStrategy: null,
+      librarySource: null,
+      customFields: null,
+      userId: "user-1",
+      _count: { samples: 1 },
+    });
+    mocks.db.user.findUnique.mockResolvedValue({
+      id: "user-1",
+      firstName: "Test",
+      lastName: "User",
+      email: "test@example.com",
+      department: { name: "Biology" },
+    });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+    mocks.db.statusNote.findMany.mockResolvedValue([]);
+  });
+
+  it("returns 401 when not authenticated", async () => {
+    mocks.getServerSession.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 404 when order does not exist", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 403 when researcher accesses another user's order", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      name: "Test Order",
+      status: "DRAFT",
+      statusUpdatedAt: new Date("2024-01-01"),
+      createdAt: new Date("2024-01-01"),
+      numberOfSamples: 1,
+      contactName: null,
+      contactEmail: null,
+      contactPhone: null,
+      billingAddress: null,
+      platform: null,
+      instrumentModel: null,
+      librarySelection: null,
+      libraryStrategy: null,
+      librarySource: null,
+      customFields: null,
+      userId: "other-user",
+      _count: { samples: 0 },
+    });
+    mocks.db.user.findUnique.mockResolvedValue({
+      id: "other-user",
+      firstName: "Other",
+      lastName: "User",
+      email: "other@example.com",
+      department: null,
+    });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+    mocks.db.statusNote.findMany.mockResolvedValue([]);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("returns order details for the owner", async () => {
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.id).toBe("order-1");
+    expect(data.user.firstName).toBe("Test");
+    expect(data.samples).toEqual([]);
+    expect(data.statusNotes).toEqual([]);
+  });
+
+  it("allows facility admin to view any order", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+  });
+});
 
 describe("DELETE /api/orders/[id]", () => {
   beforeEach(() => {

@@ -8,13 +8,19 @@ import {
   clearPackageCache,
   getAllPackageIds,
   getAllPackages,
+  getAllPipelineDefinitionsFromPackages,
   getPackage,
   getPackageDefinition,
   getPackageManifest,
   getPackageParsers,
   getPackageRegistry,
   getPackageSamplesheet,
+  getPackageScriptPath,
+  getParser,
+  getStepsFromPackage,
   hasPackage,
+  findStepByProcessFromPackage,
+  packageToDagData,
   packageToPipelineDefinition,
 } from "./package-loader";
 
@@ -412,5 +418,167 @@ describe("package-loader", () => {
     });
 
     expect(getPackage("badwriteback")).toBeUndefined();
+  });
+
+  it("returns undefined for non-existent package in convenience getters", async () => {
+    expect(getPackageManifest("nope")).toBeUndefined();
+    expect(getPackageDefinition("nope")).toBeUndefined();
+    expect(getPackageRegistry("nope")).toBeUndefined();
+    expect(getPackageSamplesheet("nope")).toBeNull();
+    expect(getPackageScriptPath("nope", "samplesheet")).toBeNull();
+    expect(getParser("nope", "p1")).toBeUndefined();
+    expect(packageToPipelineDefinition("nope")).toBeUndefined();
+    expect(packageToDagData("nope")).toBeNull();
+    expect(findStepByProcessFromPackage("nope", "FOO")).toBeNull();
+    expect(getStepsFromPackage("nope")).toEqual([]);
+  });
+
+  it("returns all pipeline definitions from packages", async () => {
+    await createManifestPackage({ id: "pipe-a" });
+    await createManifestPackage({ id: "pipe-b" });
+
+    const defs = getAllPipelineDefinitionsFromPackages();
+
+    expect(Object.keys(defs)).toContain("pipe-a");
+    expect(Object.keys(defs)).toContain("pipe-b");
+    expect(defs["pipe-a"].id).toBe("pipe-a");
+    expect(defs["pipe-b"].id).toBe("pipe-b");
+  });
+
+  it("sorts packages by registry sortOrder then name", async () => {
+    const packageDirB = path.join(process.cwd(), "pipelines", "beta");
+    await fs.mkdir(packageDirB, { recursive: true });
+    await writeJson(path.join(packageDirB, "manifest.json"), baseManifest("beta"));
+    await writeJson(path.join(packageDirB, "definition.json"), baseDefinition("beta"));
+    await writeJson(path.join(packageDirB, "registry.json"), { ...baseRegistry("beta"), sortOrder: 2, name: "Beta" });
+    await writeYaml(path.join(packageDirB, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "beta.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    const packageDirA = path.join(process.cwd(), "pipelines", "alpha");
+    await fs.mkdir(packageDirA, { recursive: true });
+    await writeJson(path.join(packageDirA, "manifest.json"), baseManifest("alpha"));
+    await writeJson(path.join(packageDirA, "definition.json"), baseDefinition("alpha"));
+    await writeJson(path.join(packageDirA, "registry.json"), { ...baseRegistry("alpha"), sortOrder: 1, name: "Alpha" });
+    await writeYaml(path.join(packageDirA, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "alpha.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    const ids = getAllPackageIds();
+    expect(ids).toEqual(["alpha", "beta"]);
+  });
+
+  it("converts package with steps to DAG data", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "dagpipe");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), baseManifest("dagpipe"));
+    await writeJson(path.join(packageDir, "definition.json"), {
+      ...baseDefinition("dagpipe"),
+      inputs: [{ id: "reads", name: "Reads", fileTypes: ["fastq"] }],
+      steps: [
+        { id: "qc", name: "QC", description: "Quality control", category: "qc", dependsOn: [], processMatchers: ["FASTQC"], tools: ["fastqc"], outputs: ["qc_report"] },
+        { id: "trim", name: "Trim", description: "Trimming", category: "preprocessing", dependsOn: ["qc"], processMatchers: ["TRIMGALORE"] },
+      ],
+      outputs: [
+        { id: "report", name: "QC Report", description: "Quality report", fromStep: "qc", fileTypes: ["html"] },
+      ],
+    });
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("dagpipe"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "dagpipe.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    const dag = packageToDagData("dagpipe");
+
+    expect(dag).not.toBeNull();
+    expect(dag!.pipeline.name).toBe("dagpipe");
+    // 1 input node + 2 step nodes + 1 output node = 4
+    const inputNodes = dag!.nodes.filter((n) => n.nodeType === "input");
+    const stepNodes = dag!.nodes.filter((n) => n.nodeType === "step");
+    const outputNodes = dag!.nodes.filter((n) => n.nodeType === "output");
+    expect(inputNodes.length).toBe(1);
+    expect(stepNodes.length).toBe(2);
+    expect(outputNodes.length).toBe(1);
+
+    // Edges: input->qc (root step), qc->trim, qc->output
+    expect(dag!.edges.length).toBe(3);
+    expect(dag!.edges.some((e) => e.from === "input_reads" && e.to === "qc")).toBe(true);
+    expect(dag!.edges.some((e) => e.from === "qc" && e.to === "trim")).toBe(true);
+    expect(dag!.edges.some((e) => e.from === "qc" && e.to === "output_report")).toBe(true);
+  });
+
+  it("finds step by Nextflow process name from package", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "findstep");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), baseManifest("findstep"));
+    await writeJson(path.join(packageDir, "definition.json"), {
+      ...baseDefinition("findstep"),
+      steps: [
+        { id: "qc", name: "QC", description: "QC", category: "qc", dependsOn: [], processMatchers: ["FASTQC"] },
+        { id: "trim", name: "Trim", description: "Trim", category: "prep", dependsOn: ["qc"], processMatchers: ["TRIMGALORE", "CUTADAPT"] },
+      ],
+    });
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("findstep"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "findstep.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    expect(findStepByProcessFromPackage("findstep", "NFCORE_MAG:MAG:FASTQC (sample1)")?.id).toBe("qc");
+    expect(findStepByProcessFromPackage("findstep", "TRIMGALORE")?.id).toBe("trim");
+    expect(findStepByProcessFromPackage("findstep", "NFCORE:CUTADAPT")?.id).toBe("trim");
+    expect(findStepByProcessFromPackage("findstep", "UNKNOWN_PROCESS")).toBeNull();
+  });
+
+  it("returns steps sorted by dependency order", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "sortsteps");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), baseManifest("sortsteps"));
+    await writeJson(path.join(packageDir, "definition.json"), {
+      ...baseDefinition("sortsteps"),
+      steps: [
+        { id: "c", name: "C", description: "C", category: "x", dependsOn: ["b"] },
+        { id: "a", name: "A", description: "A", category: "x", dependsOn: [] },
+        { id: "b", name: "B", description: "B", category: "x", dependsOn: ["a"] },
+      ],
+    });
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("sortsteps"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "sortsteps.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    const steps = getStepsFromPackage("sortsteps");
+
+    expect(steps.map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("loads parsers and retrieves them by ID", async () => {
+    await createManifestPackage({
+      id: "parserpipe",
+      parserFiles: [
+        { file: "parsers/quast.yaml", id: "quast" },
+        { file: "parsers/checkm.yaml", id: "checkm" },
+      ],
+    });
+
+    const allParsers = getPackageParsers("parserpipe");
+    expect(allParsers.size).toBe(2);
+
+    const quast = getParser("parserpipe", "quast");
+    expect(quast?.parser.id).toBe("quast");
+
+    const checkm = getParser("parserpipe", "checkm");
+    expect(checkm?.parser.id).toBe("checkm");
+
+    expect(getParser("parserpipe", "missing")).toBeUndefined();
+  });
+
+  it("returns null for getPackageScriptPath when package has no scripts", async () => {
+    await createManifestPackage({ id: "noscripts" });
+
+    expect(getPackageScriptPath("noscripts", "samplesheet")).toBeNull();
+    expect(getPackageScriptPath("noscripts", "discoverOutputs")).toBeNull();
   });
 });

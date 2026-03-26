@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
-import { computeOrderProgressStepStatuses } from "./progress-status";
+import {
+  computeOrderProgressStepStatuses,
+  getOrderProgressIndicatorClassName,
+  getOrderProgressIndicatorLabel,
+} from "./progress-status";
 
 const groups: FormFieldGroup[] = [
   {
@@ -264,5 +268,78 @@ describe("order progress status", () => {
 
     expect(partialReview.review).toBe("partial");
     expect(completeReview.review).toBe("complete");
+  });
+
+  it("returns all steps as empty when order is null", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields,
+      groups,
+      order: null,
+    });
+
+    expect(statuses.group_details).toBe("empty");
+    expect(statuses.group_sequencing).toBe("empty");
+    expect(statuses.samples).toBe("empty");
+    expect(statuses.review).toBe("empty");
+  });
+
+  it("marks review as empty when all prior steps are empty", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields,
+      groups,
+      order: {
+        name: null,
+        platform: null,
+        customFields: null,
+        numberOfSamples: 0,
+        samples: [],
+      },
+    });
+
+    expect(statuses.review).toBe("empty");
+  });
+
+  it("marks samples step as empty when order has zero samples", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields,
+      groups,
+      order: {
+        name: "Order A",
+        platform: "ILLUMINA",
+        customFields: null,
+        numberOfSamples: 0,
+        samples: [],
+      },
+    });
+
+    expect(statuses.samples).toBe("empty");
+  });
+});
+
+describe("getOrderProgressIndicatorClassName", () => {
+  it("returns emerald for complete", () => {
+    expect(getOrderProgressIndicatorClassName("complete")).toBe("bg-emerald-500");
+  });
+
+  it("returns amber for partial", () => {
+    expect(getOrderProgressIndicatorClassName("partial")).toBe("bg-amber-400");
+  });
+
+  it("returns slate for empty", () => {
+    expect(getOrderProgressIndicatorClassName("empty")).toBe("bg-slate-400");
+  });
+});
+
+describe("getOrderProgressIndicatorLabel", () => {
+  it("returns Complete for complete", () => {
+    expect(getOrderProgressIndicatorLabel("complete")).toBe("Complete");
+  });
+
+  it("returns Partially filled for partial", () => {
+    expect(getOrderProgressIndicatorLabel("partial")).toBe("Partially filled");
+  });
+
+  it("returns Not filled for empty", () => {
+    expect(getOrderProgressIndicatorLabel("empty")).toBe("Not filled");
   });
 });

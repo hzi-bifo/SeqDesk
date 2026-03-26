@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -6,6 +6,7 @@ import * as path from "path";
 import {
   clearConfigCache,
   getConfigValue,
+  getDefaultConfig,
   loadConfig,
   validateConfig,
 } from "./loader";
@@ -177,5 +178,84 @@ describe("config loader", () => {
 
     expect(valid.valid).toBe(true);
     expect(valid.errors).toEqual([]);
+  });
+
+  it("getDefaultConfig returns the default config object", () => {
+    const defaults = getDefaultConfig();
+    expect(defaults.site?.name).toBe("SeqDesk");
+    expect(defaults.site?.dataBasePath).toBe("./data");
+    expect(defaults.pipelines?.enabled).toBe(false);
+    expect(defaults.sequencingFiles?.scanDepth).toBe(2);
+    expect(defaults.auth?.allowRegistration).toBe(true);
+  });
+
+  it("validateConfig rejects null and non-object inputs", () => {
+    expect(validateConfig(null).valid).toBe(false);
+    expect(validateConfig(null).errors).toContain("Config must be an object");
+    expect(validateConfig(undefined).valid).toBe(false);
+    expect(validateConfig("string").valid).toBe(false);
+  });
+
+  it("validateConfig accepts an empty object", () => {
+    expect(validateConfig({}).valid).toBe(true);
+    expect(validateConfig({}).errors).toEqual([]);
+  });
+
+  it("validateConfig rejects scanDepth less than 1", () => {
+    const result = validateConfig({ sequencingFiles: { scanDepth: 0 } });
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("sequencingFiles.scanDepth must be a number between 1 and 10");
+  });
+
+  it("validateConfig accepts boundary scanDepth values", () => {
+    expect(validateConfig({ sequencingFiles: { scanDepth: 1 } }).valid).toBe(true);
+    expect(validateConfig({ sequencingFiles: { scanDepth: 10 } }).valid).toBe(true);
+  });
+
+  it("finds .seqdeskrc as alternate config filename", async () => {
+    await fs.writeFile(
+      path.join(tempDir, ".seqdeskrc"),
+      JSON.stringify({ site: { name: "From RC" } }),
+      "utf-8"
+    );
+    const resolved = loadConfig(true);
+    expect(resolved.config.site?.name).toBe("From RC");
+  });
+
+  it("handles malformed JSON in config file gracefully", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "seqdesk.config.json"),
+      "{ invalid json !!!",
+      "utf-8"
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const resolved = loadConfig(true);
+    // Falls back to defaults even though it finds the file
+    expect(resolved.config.site?.name).toBe("SeqDesk");
+    warnSpy.mockRestore();
+  });
+
+  it("loads env-only config when no config file exists", () => {
+    process.env.SEQDESK_SITE_NAME = "Env Only Site";
+    const resolved = loadConfig(true);
+    expect(resolved.filePath).toBeUndefined();
+    expect(resolved.config.site?.name).toBe("Env Only Site");
+    expect(resolved.sources["site.name"]).toBe("env");
+  });
+
+  it("deepMerge replaces arrays from file", async () => {
+    await writeConfigFile(tempDir, {
+      sequencingFiles: { extensions: [".bam", ".cram"] },
+    });
+    const resolved = loadConfig(true);
+    expect(resolved.config.sequencingFiles?.extensions).toEqual([".bam", ".cram"]);
+  });
+
+  it("getConfigValue returns file source when file provides value", async () => {
+    await writeConfigFile(tempDir, { pipelines: { enabled: true } });
+    loadConfig(true);
+    const result = getConfigValue<boolean>("pipelines.enabled");
+    expect(result.value).toBe(true);
+    expect(result.source).toBe("file");
   });
 });

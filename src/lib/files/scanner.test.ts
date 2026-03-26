@@ -140,4 +140,54 @@ describe("scanner", () => {
     clearScanCache();
     expect(getScanCacheStats().entries).toBe(0);
   });
+
+  it("checkFileExists returns null for non-existent file", async () => {
+    const result = await checkFileExists(tempDir, "does-not-exist.fastq.gz");
+    expect(result).toBeNull();
+  });
+
+  it("checkFileExists returns null when path points to a directory", async () => {
+    await fs.mkdir(path.join(tempDir, "subdir"), { recursive: true });
+    const result = await checkFileExists(tempDir, "subdir");
+    expect(result).toBeNull();
+  });
+
+  it("scanDirectory handles multiple ignore patterns", async () => {
+    await writeFile(path.join(tempDir, "good.fastq.gz"));
+    await writeFile(path.join(tempDir, "hidden", "bad.fastq.gz"));
+    await writeFile(path.join(tempDir, "temp", "skip.fastq.gz"));
+
+    const files = await scanDirectory(tempDir, {
+      ...options,
+      ignorePatterns: ["hidden/**", "temp/**"],
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0].filename).toBe("good.fastq.gz");
+  });
+
+  it("scanDirectory respects maxDepth of 1", async () => {
+    await writeFile(path.join(tempDir, "root.fastq.gz"));
+    await writeFile(path.join(tempDir, "sub", "deep.fastq.gz"));
+
+    const files = await scanDirectory(tempDir, {
+      ...options,
+      maxDepth: 1,
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0].filename).toBe("root.fastq.gz");
+  });
+
+  it("scanDirectory returns files from nested subdirectories", async () => {
+    await writeFile(path.join(tempDir, "a", "b", "c", "deep.fastq.gz"));
+
+    const files = await scanDirectory(tempDir, {
+      ...options,
+      maxDepth: 4,
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0].relativePath).toBe(path.join("a", "b", "c", "deep.fastq.gz"));
+  });
 });

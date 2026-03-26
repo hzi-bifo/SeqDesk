@@ -225,4 +225,58 @@ describe("findFilesForSample", () => {
     expect(results.get("SAMPLE_ALPHA")?.status).toBe("exact");
     expect(results.get("SAMPLE_BETA")?.status).toBe("exact");
   });
+
+  it("drops orphan R2 without R1", () => {
+    const files = [makeFile("SAMPLE001_R2.fastq.gz")];
+    const result = matchPairedEndFiles(files);
+    // Orphan R2 is dropped because only pairs with read1 are returned
+    expect(result).toHaveLength(0);
+  });
+
+  it("handles findFilesForSamples with mixed results", () => {
+    const files = [
+      makeFile("ALPHA_R1.fastq.gz"),
+      makeFile("ALPHA_R2.fastq.gz"),
+    ];
+
+    const results = findFilesForSamples(
+      [
+        { sampleId: "ALPHA" },
+        { sampleId: "MISSING_SAMPLE" },
+      ],
+      files
+    );
+
+    expect(results.get("ALPHA")?.status).toBe("exact");
+    expect(results.get("MISSING_SAMPLE")?.status).toBe("none");
+  });
+
+  it("matches by sampleAlias when sampleId does not match", () => {
+    const files = [
+      makeFile("ALIAS123_R1.fastq.gz"),
+      makeFile("ALIAS123_R2.fastq.gz"),
+    ];
+
+    const result = findFilesForSample(
+      { sampleId: "DOESNOTMATCH", sampleAlias: "ALIAS123" },
+      files
+    );
+
+    expect(result.status).toBe("exact");
+    expect(result.read1?.filename).toBe("ALIAS123_R1.fastq.gz");
+    expect(result.read2?.filename).toBe("ALIAS123_R2.fastq.gz");
+  });
+
+  it("returns none when no files match", () => {
+    const files = [makeFile("UNRELATED_R1.fastq.gz")];
+
+    const result = findFilesForSample(
+      { sampleId: "COMPLETELY_DIFFERENT" },
+      files
+    );
+
+    expect(result.status).toBe("none");
+    expect(result.read1).toBeNull();
+    expect(result.read2).toBeNull();
+  });
 });
