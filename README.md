@@ -54,7 +54,7 @@ npm run dev:mac
 
 This starts local PostgreSQL if needed, creates the default local `seqdesk`
 database and role, runs migrations and seed data, then starts Next.js with
-local PostgreSQL env overrides. It also sidesteps stale `.env` SQLite values.
+local PostgreSQL runtime overrides.
 
 ### 1. Clone and install
 

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -112,6 +111,7 @@ interface PipelineConfig {
   version?: string;
   icon: string;
   enabled: boolean;
+  catalogs?: string[];
   config: Record<string, unknown>;
   download?: PipelineDownloadInfo;
   databaseDownloads?: PipelineDatabaseDownloadInfo[];
@@ -187,6 +187,7 @@ interface StorePipeline {
   author?: string;
   downloads?: number;
   icon?: string;
+  catalogs?: string[];
   isPrivate?: boolean;
   licenseRequired?: boolean;
   source: {
@@ -381,6 +382,7 @@ export default function PipelineSettingsPage() {
     fetcher
   );
 
+  const [activeTab, setActiveTab] = useState("order");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [dagDialogOpen, setDagDialogOpen] = useState(false);
@@ -932,42 +934,62 @@ export default function PipelineSettingsPage() {
     localConfig.runAt === "selected-technologies" &&
     magSelectedTechnologyCount === 0;
 
+  const tabFilteredInstalledPipelines = filteredInstalledPipelines.filter(
+    (p) => !p.catalogs || p.catalogs.length === 0 || p.catalogs.includes(activeTab)
+  );
+  const tabFilteredAvailablePipelines = availablePipelines.filter(
+    (p) => !p.catalogs || p.catalogs.length === 0 || p.catalogs.includes(activeTab)
+  );
+  const tabVisiblePipelineCount =
+    tabFilteredInstalledPipelines.length + tabFilteredAvailablePipelines.length;
+
   return (
+    <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
+          <div className="absolute left-6 lg:left-8 text-xs text-muted-foreground">
+            {storeError
+              ? "Registry unavailable"
+              : `${installedCount} installed • ${storeLoading ? "Checking store..." : `${availablePipelineCount} available`}`}
+          </div>
+          <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+            <TabsTrigger
+              value="order"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Per-Sample Pipelines
+            </TabsTrigger>
+            <TabsTrigger
+              value="study"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Per-Study Pipelines
+            </TabsTrigger>
+          </TabsList>
+          <div className="absolute right-6 lg:right-8">
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-white"
+              onClick={() => {
+                void mutate();
+                void mutateStore();
+              }}
+              disabled={isLoading || storeLoading}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading || storeLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+      </div>
     <PageContainer>
       <div className="space-y-8">
-        <div className="mb-4">
+        <div className="mb-4 mt-6">
           <h1 className="text-xl font-semibold">Pipelines</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Install, update, and cache nf-core pipelines used by analysis workflows.
           </p>
-        </div>
-
-        <div className="sticky top-16 z-30">
-          <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-muted-foreground">
-              {storeError
-                ? "Store registry unavailable. Installed pipelines can still be managed."
-                : `${installedCount} installed • ${storeLoading ? "Checking store..." : `${availablePipelineCount} available`} • Download pipeline code and databases to warm runtime cache.`}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/data-compute">Infrastructure</Link>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="bg-white"
-                onClick={() => {
-                  void mutate();
-                  void mutateStore();
-                }}
-                disabled={isLoading || storeLoading}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading || storeLoading ? "animate-spin" : ""}`} />
-                Refresh all
-              </Button>
-            </div>
-          </div>
         </div>
 
         <section id="pipelines" className="space-y-4">
@@ -1111,13 +1133,13 @@ export default function PipelineSettingsPage() {
             <div className="text-center py-12 text-destructive">
               Failed to load pipeline configurations
             </div>
-          ) : storeLoading && visiblePipelineCount === 0 ? (
+          ) : storeLoading && tabVisiblePipelineCount === 0 ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : visiblePipelineCount > 0 ? (
+          ) : tabVisiblePipelineCount > 0 ? (
             <div className="grid gap-4 md:grid-cols-2">
-              {filteredInstalledPipelines.map((pipeline: PipelineConfig) => (
+              {tabFilteredInstalledPipelines.map((pipeline: PipelineConfig) => (
                 <GlassCard key={pipeline.pipelineId} className="relative">
                   {(() => {
                     const storeEntry = preferredStorePipelineMap.get(pipeline.pipelineId);
@@ -1540,7 +1562,7 @@ export default function PipelineSettingsPage() {
                 </GlassCard>
               ))}
 
-              {availablePipelines.map((pipeline) => (
+              {tabFilteredAvailablePipelines.map((pipeline) => (
                 <GlassCard key={`${pipeline.id}:${pipeline.source.sourceId}`} className="relative">
                   {(() => {
                     const privateStorePipeline = isPrivateStorePipeline(pipeline);
@@ -2275,5 +2297,6 @@ export default function PipelineSettingsPage() {
         </DialogContent>
       </Dialog>
     </PageContainer>
+    </Tabs>
   );
 }

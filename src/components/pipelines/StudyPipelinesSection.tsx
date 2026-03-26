@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -13,7 +13,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { GlassCard } from "@/components/ui/glass-card";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +21,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,14 +34,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -57,11 +54,11 @@ import {
   ChevronDown,
   Settings,
   ExternalLink,
-  Clock,
-  Package,
-  ArrowRight,
+  Hash,
   Layers,
   Trash2,
+  MoreHorizontal,
+  RefreshCw,
 } from "lucide-react";
 import { PipelineDataFlowSummary } from "@/components/pipelines/PipelineDataFlow";
 import {
@@ -72,6 +69,10 @@ import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisite
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 const AUTO_ASSEMBLY_SELECTION = "__auto__";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface PipelineInput {
   id: string;
@@ -127,25 +128,6 @@ interface MetadataValidation {
   };
 }
 
-interface PipelineReadinessCheck {
-  id: string;
-  label: string;
-  available: number;
-  total: number;
-  required: boolean;
-  ready: boolean;
-}
-
-interface PipelineReadinessSummary {
-  canRun: boolean;
-  checking: boolean;
-  requiredReady: number;
-  requiredTotal: number;
-  missingRequired: string[];
-  summary: string;
-  checkDetails: string[];
-}
-
 interface SubmgCoverageCheck {
   id: string;
   label: string;
@@ -185,6 +167,7 @@ interface Pipeline {
         title: string;
         description?: string;
         default?: unknown;
+        enum?: unknown[];
       }
     >;
   };
@@ -226,6 +209,7 @@ interface PipelineRun {
   status: string;
   progress: number | null;
   currentStep: string | null;
+  errorTail: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -245,6 +229,10 @@ interface EnaSettingsResponse {
   enaTestMode?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function getPipelineIcon(icon: string) {
   switch (icon) {
     case "Dna":
@@ -256,74 +244,47 @@ function getPipelineIcon(icon: string) {
   }
 }
 
-function getCategoryColor(category: string): string {
-  switch (category) {
-    case "metagenomics":
-      return "bg-emerald-100 text-emerald-700 border-emerald-200";
-    case "transcriptomics":
-      return "bg-blue-100 text-blue-700 border-blue-200";
-    case "amplicon":
-      return "bg-purple-100 text-purple-700 border-purple-200";
-    default:
-      return "bg-gray-100 text-gray-700 border-gray-200";
-  }
+function formatDateTime(value: string | null): string {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
 }
 
 function getStatusBadge(status: string) {
   switch (status) {
     case "completed":
-      return (
-        <Badge className="bg-green-100 text-green-700 border-green-200">
-          <CheckCircle2 className="h-3 w-3 mr-1" />
-          Completed
-        </Badge>
-      );
+      return <Badge className="bg-emerald-600">Completed</Badge>;
     case "running":
-      return (
-        <Badge className="bg-blue-100 text-blue-700 border-blue-200">
-          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-          Running
-        </Badge>
-      );
+      return <Badge className="bg-blue-600">Running</Badge>;
     case "queued":
-      return (
-        <Badge className="bg-amber-100 text-amber-700 border-amber-200">
-          <Clock className="h-3 w-3 mr-1" />
-          Queued
-        </Badge>
-      );
+      return <Badge variant="secondary">Queued</Badge>;
     case "failed":
-      return (
-        <Badge className="bg-red-100 text-red-700 border-red-200">
-          <XCircle className="h-3 w-3 mr-1" />
-          Failed
-        </Badge>
-      );
+      return <Badge variant="destructive">Failed</Badge>;
     case "pending":
-      return (
-        <Badge variant="outline">
-          <Clock className="h-3 w-3 mr-1" />
-          Pending
-        </Badge>
-      );
+      return <Badge variant="outline">Pending</Badge>;
+    case "cancelled":
+      return <Badge variant="outline">Cancelled</Badge>;
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
 }
 
-function formatRelativeTime(dateInput: string | Date) {
-  const date = new Date(dateInput);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+function getRunDetails(run: PipelineRun): string {
+  if (run.status === "failed" && run.errorTail?.trim()) {
+    return run.errorTail.trim();
+  }
+  if (run.currentStep?.trim()) {
+    return run.currentStep.trim();
+  }
+  if (run.status === "completed") {
+    return "Run completed successfully.";
+  }
+  if (run.status === "queued") {
+    return "Waiting for execution.";
+  }
+  if (run.status === "running") {
+    return "Pipeline is currently running.";
+  }
+  return "No additional details.";
 }
 
 function getFileName(filePath: string | null | undefined): string {
@@ -435,6 +396,10 @@ function formatSamplePreview(
   if (sampleCodes.length <= limit) return sampleCodes.join(", ");
   return `${sampleCodes.slice(0, limit).join(", ")}, +${sampleCodes.length - limit} more`;
 }
+
+// ---------------------------------------------------------------------------
+// SubMG coverage summary builder
+// ---------------------------------------------------------------------------
 
 function buildSubmgCoverageSummary(params: {
   validation: MetadataValidation;
@@ -670,191 +635,108 @@ function buildSubmgCoverageSummary(params: {
   };
 }
 
-function getPipelineReadiness(params: {
-  pipelineId: string;
-  validation?: MetadataValidation;
-  totalSamples: number;
-  samplesWithReads: number;
-}): PipelineReadinessSummary {
-  const { pipelineId, validation, totalSamples, samplesWithReads } = params;
+// ---------------------------------------------------------------------------
+// Readiness helpers
+// ---------------------------------------------------------------------------
 
-  if (pipelineId === "submg") {
-    if (!validation) {
-      return {
-        canRun: false,
-        checking: true,
-        requiredReady: 0,
-        requiredTotal: 6,
-        missingRequired: [],
-        summary: "Checking required inputs...",
-        checkDetails: [],
-      };
+function getReadinessIssues(params: {
+  pipeline: Pipeline | null;
+  samples: Sample[];
+  selectedSampleIds: Set<string>;
+  metadataValidation: MetadataValidation | null;
+  loadingMetadata: boolean;
+  prerequisites: PrerequisiteResult | null;
+  loadingPrereqs: boolean;
+  systemReady: { ready: boolean; summary: string } | null;
+  checkingSystem: boolean;
+  submgCoverage: SubmgCoverageSummary | null;
+}): string[] {
+  const {
+    pipeline,
+    samples,
+    selectedSampleIds,
+    metadataValidation,
+    loadingMetadata,
+    prerequisites,
+    loadingPrereqs,
+    systemReady,
+    checkingSystem,
+    submgCoverage,
+  } = params;
+  if (!pipeline) return [];
+
+  const issues: string[] = [];
+  const selectedSamples = samples.filter((s) => selectedSampleIds.has(s.id));
+
+  if (selectedSamples.length === 0) {
+    issues.push("Select at least one sample.");
+    return issues;
+  }
+
+  // System prerequisites
+  if (!checkingSystem && systemReady && !systemReady.ready) {
+    issues.push(`System: ${systemReady.summary}`);
+  }
+
+  // Prerequisites from server check
+  if (!loadingPrereqs && prerequisites && !prerequisites.requiredPassed) {
+    issues.push(`System requirements not met: ${prerequisites.summary}`);
+  }
+
+  // SubMG-specific
+  if (pipeline.pipelineId === "submg") {
+    if (loadingMetadata) {
+      issues.push("Checking metadata...");
+      return issues;
     }
-
-    const errorIssues = validation.issues.filter((issue) => issue.severity === "error");
-    const byField = new Map<string, MetadataIssue[]>();
-    for (const issue of errorIssues) {
-      const current = byField.get(issue.field) || [];
-      current.push(issue);
-      byField.set(issue.field, current);
-    }
-
-    const metadataFieldMissingSampleIds = new Map<string, Set<string>>();
-    const sampleMetadataIssues = [
-      ...(byField.get("sampleMetadata") || []),
-      ...(byField.get("checklistData") || []),
-    ];
-    for (const issue of sampleMetadataIssues) {
-      const sampleToken = extractSampleToken(issue.message) || issue.message;
-      const missingFields = extractSubmgMissingMetadataFields(issue.message);
-      for (const fieldName of missingFields) {
-        const sampleSet = metadataFieldMissingSampleIds.get(fieldName) || new Set<string>();
-        sampleSet.add(sampleToken);
-        metadataFieldMissingSampleIds.set(fieldName, sampleSet);
+    if (submgCoverage?.blocking) {
+      if (submgCoverage.studyAccessionMissing) {
+        issues.push("Study accession is missing. Register this study in the Publishing section first.");
+      }
+      for (const check of submgCoverage.checks) {
+        if (check.missingSampleIds.length > 0) {
+          issues.push(
+            `${check.label}: ${check.available}/${check.total} selected samples ready${check.missingDetail ? ` (fields: ${check.missingDetail})` : ""}`
+          );
+        }
       }
     }
-
-    let sampleMetadataMissingSummary: string | undefined;
-    if (metadataFieldMissingSampleIds.size > 0 && totalSamples > 0) {
-      sampleMetadataMissingSummary = Array.from(metadataFieldMissingSampleIds.entries())
-        .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
-        .map(([fieldName, sampleIds]) => `${fieldName} (${sampleIds.size}/${totalSamples})`)
-        .join(", ");
-    }
-
-    const checks: PipelineReadinessCheck[] = [];
-
-    const addStudyCheck = (id: string, label: string, fields: string[]) => {
-      const hasError = fields.some((field) => (byField.get(field) || []).length > 0);
-      checks.push({
-        id,
-        label,
-        available: hasError ? 0 : 1,
-        total: 1,
-        required: true,
-        ready: !hasError,
-      });
-    };
-
-    const addSampleCheck = (
-      id: string,
-      label: string,
-      fields: string[],
-      availableOverride?: number
-    ) => {
-      const issues = fields.flatMap((field) => byField.get(field) || []);
-      const missingCount = countMissingSamples(issues, totalSamples);
-      const availableCount =
-        typeof availableOverride === "number"
-          ? Math.max(0, Math.min(availableOverride, totalSamples))
-          : Math.max(0, totalSamples - missingCount);
-      checks.push({
-        id,
-        label,
-        available: availableCount,
-        total: totalSamples,
-        required: true,
-        ready: totalSamples > 0 && availableCount === totalSamples,
-      });
-    };
-
-    addStudyCheck("studyAccession", "Study accession", ["studyAccessionId", "studyAccession"]);
-    addSampleCheck("reads", "Paired reads", ["reads"], samplesWithReads);
-    addSampleCheck("checksums", "Read checksums", ["checksums"]);
-    addSampleCheck("taxId", "Sample taxId", ["taxId"]);
-    addSampleCheck("sampleMetadata", "Sample metadata", ["checklistData", "sampleMetadata"]);
-    addSampleCheck("assemblies", "Assemblies", ["assemblies"]);
-
-    const requiredChecks = checks.filter((check) => check.required);
-    const requiredReady = requiredChecks.filter((check) => check.ready).length;
-    const requiredTotal = requiredChecks.length;
-    const missingRequired = formatSampleMissingRequiredLabels(
-      requiredChecks.filter((check) => !check.ready).map((check) => check.label),
-      sampleMetadataMissingSummary ? [sampleMetadataMissingSummary] : []
-    );
-
-    const checkDetails = requiredChecks
-      .filter((check) => check.total > 1)
-      .map((check) => {
-        const base = `${check.label}: ${check.available}/${check.total} samples`;
-        if (check.label === "Sample metadata" && sampleMetadataMissingSummary) {
-          return `${base} • fields: ${sampleMetadataMissingSummary}`;
-        }
-        return base;
-      });
-
-    return {
-      canRun: requiredReady === requiredTotal,
-      checking: false,
-      requiredReady,
-      requiredTotal,
-      missingRequired,
-      summary: `${requiredReady}/${requiredTotal} required inputs available`,
-      checkDetails,
-    };
+    return issues;
   }
 
-  if (pipelineId === "mag") {
-    const pairedReadsReady = samplesWithReads > 0;
-    const metadataErrors = (validation?.issues || []).filter(
-      (issue) => issue.severity === "error"
+  // MAG-specific
+  if (pipeline.pipelineId === "mag") {
+    const samplesWithPairedReads = selectedSamples.filter((s) =>
+      s.reads?.some((r) => r.file1 && r.file2)
     );
-    const hasMetadataErrors = metadataErrors.length > 0;
-    const metadataReady = validation ? !hasMetadataErrors : true;
-    const requiredTotal = validation ? 2 : 1;
-    const requiredReady =
-      (pairedReadsReady ? 1 : 0) + (validation ? (metadataReady ? 1 : 0) : 0);
-    const hasLongReadPlatformError = metadataErrors.some((issue) =>
-      /long-read/i.test(issue.message)
-    );
-    const metadataLabel = hasLongReadPlatformError
-      ? "Short-read platform"
-      : "Platform metadata";
-    const missingRequired = [
-      ...(pairedReadsReady ? [] : ["Paired reads"]),
-      ...(validation && !metadataReady ? [metadataLabel] : []),
-    ];
-    const checkDetails: string[] = [];
-    if (totalSamples > 0) {
-      checkDetails.push(`Paired reads: ${samplesWithReads}/${totalSamples} samples`);
+    if (samplesWithPairedReads.length === 0) {
+      issues.push("No selected samples have paired reads linked.");
     }
-    if (validation && !metadataReady && metadataErrors.length > 0) {
-      checkDetails.push(metadataErrors[0].message);
+    if (metadataValidation && !loadingMetadata) {
+      const errors = metadataValidation.issues.filter((i) => i.severity === "error");
+      for (const err of errors) {
+        issues.push(err.message);
+      }
     }
-
-    return {
-      canRun: pairedReadsReady && metadataReady,
-      checking: false,
-      requiredReady,
-      requiredTotal,
-      missingRequired,
-      summary: validation
-        ? `${requiredReady}/${requiredTotal} required inputs available`
-        : `${samplesWithReads}/${totalSamples} samples with paired reads`,
-      checkDetails,
-    };
+    return issues;
   }
 
-  const hasErrors = Boolean(
-    validation?.issues.some((issue) => issue.severity === "error")
-  );
-  const errorFields = Array.from(
-    new Set(
-      (validation?.issues || [])
-        .filter((issue) => issue.severity === "error")
-        .map((issue) => fieldLabel(issue.field))
-    )
-  );
+  // Generic pipeline
+  for (const sample of selectedSamples) {
+    const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
+    if (!hasPairedReads) {
+      issues.push(`Sample ${sample.sampleId} is missing paired reads.`);
+    }
+  }
 
-  return {
-    canRun: !hasErrors,
-    checking: false,
-    requiredReady: hasErrors ? 0 : 1,
-    requiredTotal: 1,
-    missingRequired: errorFields,
-    summary: hasErrors ? "Missing required metadata" : "Ready to run",
-    checkDetails: [],
-  };
+  if (metadataValidation && !loadingMetadata) {
+    const errors = metadataValidation.issues.filter((i) => i.severity === "error");
+    for (const err of errors) {
+      issues.push(err.message);
+    }
+  }
+
+  return issues;
 }
 
 function getMissingReadChecksumPaths(params: {
@@ -883,16 +765,41 @@ function getMissingReadChecksumPaths(params: {
   return Array.from(paths);
 }
 
+function getApiErrorMessage(
+  payload: { error?: unknown; details?: unknown } | null,
+  fallback: string
+): string {
+  if (!payload) return fallback;
+  if (Array.isArray(payload.details) && payload.details.length > 0) {
+    return payload.details
+      .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+      .join("\n");
+  }
+  if (typeof payload.details === "string" && payload.details.trim()) {
+    return payload.details;
+  }
+  if (typeof payload.error === "string" && payload.error.trim()) {
+    return payload.error;
+  }
+  return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function StudyPipelinesSection({
   studyId,
   samples,
-  selectedPipelineId = null,
+  selectedPipelineId: requestedPipelineId = null,
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
-  // Fetch enabled pipelines
-  const { data: pipelinesData, isLoading: pipelinesLoading } = useSWR(
+  // --- Data fetching ---
+  const { data: pipelinesData, isLoading: pipelinesLoading, mutate: mutatePipelines } = useSWR<{
+    pipelines: Pipeline[];
+  }>(
     "/api/admin/settings/pipelines?enabled=true&catalog=study",
     fetcher
   );
@@ -900,41 +807,36 @@ export function StudyPipelinesSection({
     isFacilityAdmin ? "/api/admin/settings/ena" : null,
     fetcher
   );
-
-  // Fetch pipeline runs for this study
   const {
     data: runsData,
     mutate: mutateRuns,
-  } = useSWR(`/api/pipelines/runs?studyId=${studyId}&limit=200`, fetcher, {
-    refreshInterval: 10000,
-  });
+  } = useSWR<{ runs: PipelineRun[]; total?: number }>(
+    `/api/pipelines/runs?studyId=${studyId}&limit=200`,
+    fetcher
+  );
 
-  const [runDialogOpen, setRunDialogOpen] = useState(false);
-  const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(
-    null
-  );
+  // --- Pipeline selection state ---
+  const [selectedPipelineIdState, setSelectedPipelineId] = useState<string | null>(null);
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
-  const [selectedSamples, setSelectedSamples] = useState<Set<string>>(
-    new Set()
-  );
-  const [running, setRunning] = useState(false);
-  const [runResult, setRunResult] = useState<{
-    success: boolean;
-    runId?: string;
-    runNumber?: string;
-    error?: string;
-    details?: string[];
-  } | null>(null);
-  const [prerequisites, setPrerequisites] =
-    useState<PrerequisiteResult | null>(null);
+  const [selectedSamples, setSelectedSamples] = useState<Set<string>>(new Set());
+  const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  // --- Validation state ---
+  const [prerequisites, setPrerequisites] = useState<PrerequisiteResult | null>(null);
   const [loadingPrereqs, setLoadingPrereqs] = useState(false);
   const [prereqsExpanded, setPrereqsExpanded] = useState(false);
-  const [metadataValidation, setMetadataValidation] =
-    useState<MetadataValidation | null>(null);
+  const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
   const [loadingMetadata, setLoadingMetadata] = useState(false);
-  const [metadataPrecheck, setMetadataPrecheck] = useState<
-    Record<string, MetadataValidation>
-  >({});
+
+  // --- Pipeline definition for data flow ---
+  const [pipelineDefinition, setPipelineDefinition] = useState<{
+    inputs: PipelineInput[];
+    outputs: PipelineOutput[];
+  } | null>(null);
+  const [showDataFlow, setShowDataFlow] = useState(false);
+
+  // --- Assembly selection state ---
   const initialPreferredAssemblyMap = useMemo(() => {
     const map: Record<string, string | null> = {};
     for (const sample of samples) {
@@ -948,30 +850,176 @@ export function StudyPipelinesSection({
   const [assemblySelectionSaving, setAssemblySelectionSaving] = useState<
     Record<string, boolean>
   >({});
-  const [assemblySelectionError, setAssemblySelectionError] = useState<
-    string | null
-  >(null);
+  const [assemblySelectionError, setAssemblySelectionError] = useState<string | null>(null);
+
+  // --- Delete run state ---
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
   const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
+
+  // --- Checksum state ---
   const [calculatingChecksums, setCalculatingChecksums] = useState(false);
   const [checksumResult, setChecksumResult] = useState<{
     success: boolean;
     message: string;
     detail?: string;
   } | null>(null);
-  const [localChecksumOverrides, setLocalChecksumOverrides] = useState<
-    Record<string, true>
-  >({});
-
-  // Pipeline definition for data flow display
-  const [pipelineDefinition, setPipelineDefinition] = useState<{
-    inputs: PipelineInput[];
-    outputs: PipelineOutput[];
-  } | null>(null);
-  const [showDataFlow, setShowDataFlow] = useState(false);
+  const [localChecksumOverrides, setLocalChecksumOverrides] = useState<Record<string, true>>({});
 
   const { systemReady, checkingSystem } = useQuickPrerequisiteStatus();
+
+  // --- Derived data ---
+  const enabledPipelines: Pipeline[] = useMemo(
+    () => pipelinesData?.pipelines || [],
+    [pipelinesData]
+  );
+  const pipelineRuns: PipelineRun[] = useMemo(
+    () => runsData?.runs || [],
+    [runsData?.runs]
+  );
+
+  const selectedPipeline = useMemo(
+    () =>
+      enabledPipelines.find((p) => p.pipelineId === selectedPipelineIdState) || null,
+    [enabledPipelines, selectedPipelineIdState]
+  );
+
+  const samplesWithAssemblySelection = useMemo(
+    () =>
+      samples.map((sample) => ({
+        ...sample,
+        preferredAssemblyId:
+          preferredAssemblyBySample[sample.id] ?? sample.preferredAssemblyId ?? null,
+      })),
+    [preferredAssemblyBySample, samples]
+  );
+
+  const samplesWithReads = useMemo(
+    () =>
+      samplesWithAssemblySelection.filter((s) =>
+        s.reads?.some((r) => r.file1 && r.file2)
+      ),
+    [samplesWithAssemblySelection]
+  );
+
+  const enaSubmissionServer = useMemo(() => {
+    if (typeof enaSettingsData?.enaTestMode !== "boolean") return null;
+    const isTestMode = enaSettingsData.enaTestMode;
+    return {
+      isTestMode,
+      label: isTestMode ? "Test server" : "Production server",
+      host: isTestMode ? "wwwdev.ebi.ac.uk" : "www.ebi.ac.uk",
+    };
+  }, [enaSettingsData]);
+
+  const missingChecksumFilePaths = useMemo(
+    () =>
+      getMissingReadChecksumPaths({
+        samples: samplesWithAssemblySelection,
+        ignorePaths: localChecksumOverrides,
+      }),
+    [localChecksumOverrides, samplesWithAssemblySelection]
+  );
+
+  const isSubmgSelected = selectedPipeline?.pipelineId === "submg";
+
+  const submitBinsEnabled = Boolean(
+    localConfig.submitBins ??
+      selectedPipeline?.defaultConfig?.submitBins ??
+      true
+  );
+
+  const submgCoverage = useMemo(() => {
+    if (!isSubmgSelected || !metadataValidation) return null;
+    return buildSubmgCoverageSummary({
+      validation: metadataValidation,
+      samples: samplesWithAssemblySelection,
+      selectedSampleIds: selectedSamples,
+      submitBins: submitBinsEnabled,
+    });
+  }, [
+    isSubmgSelected,
+    metadataValidation,
+    samplesWithAssemblySelection,
+    selectedSamples,
+    submitBinsEnabled,
+  ]);
+
+  const submgMissingRequiredLabels = useMemo(() => {
+    if (!submgCoverage) return [];
+    return formatSampleMissingRequiredLabels(
+      submgCoverage.missingRequired,
+      submgCoverage.sampleMetadataMissingSummary
+        ? [submgCoverage.sampleMetadataMissingSummary]
+        : []
+    );
+  }, [submgCoverage]);
+
+  const readinessIssues = getReadinessIssues({
+    pipeline: selectedPipeline,
+    samples: samplesWithAssemblySelection,
+    selectedSampleIds: selectedSamples,
+    metadataValidation,
+    loadingMetadata,
+    prerequisites,
+    loadingPrereqs,
+    systemReady,
+    checkingSystem,
+    submgCoverage,
+  });
+
+  const hasActiveRuns = useMemo(
+    () =>
+      pipelineRuns.some(
+        (run) => run.status === "queued" || run.status === "running"
+      ),
+    [pipelineRuns]
+  );
+
+  const visibleRuns = useMemo(
+    () =>
+      selectedPipeline
+        ? pipelineRuns.filter((run) => run.pipelineId === selectedPipeline.pipelineId)
+        : pipelineRuns,
+    [pipelineRuns, selectedPipeline]
+  );
+
+  const samplesWithAssemblies = useMemo(
+    () =>
+      samplesWithAssemblySelection.filter(
+        (sample) => getAvailableAssemblies(sample).length > 0
+      ),
+    [samplesWithAssemblySelection]
+  );
+
+  // --- Effects ---
+
+  // Auto-select pipeline
+  useEffect(() => {
+    if (!enabledPipelines.length) return;
+    setSelectedPipelineId((current) => {
+      if (current && enabledPipelines.some((p) => p.pipelineId === current)) {
+        return current;
+      }
+      if (requestedPipelineId && enabledPipelines.some((p) => p.pipelineId === requestedPipelineId)) {
+        return requestedPipelineId;
+      }
+      return enabledPipelines[0].pipelineId;
+    });
+  }, [enabledPipelines, requestedPipelineId]);
+
+  // Init config and samples when pipeline changes
+  useEffect(() => {
+    if (!selectedPipeline) return;
+    setLocalConfig({ ...(selectedPipeline.config || selectedPipeline.defaultConfig || {}) });
+  }, [selectedPipeline]);
+
+  useEffect(() => {
+    if (!selectedPipeline || samplesWithReads.length === 0) return;
+    setSelectedSamples((current) =>
+      current.size > 0 ? current : new Set(samplesWithReads.map((s) => s.id))
+    );
+  }, [selectedPipeline, samplesWithReads]);
 
   useEffect(() => {
     setPreferredAssemblyBySample(initialPreferredAssemblyMap);
@@ -983,159 +1031,71 @@ export function StudyPipelinesSection({
     setCalculatingChecksums(false);
   }, [studyId]);
 
-  const enabledPipelines: Pipeline[] = useMemo(
-    () => pipelinesData?.pipelines || [],
-    [pipelinesData]
-  );
-  const pipelineRuns: PipelineRun[] = useMemo(
-    () => runsData?.runs || [],
-    [runsData?.runs]
-  );
-  const focusedPipeline = useMemo(
-    () =>
-      selectedPipelineId
-        ? enabledPipelines.find(
-            (pipeline) => pipeline.pipelineId === selectedPipelineId
-          ) ?? null
-        : null,
-    [enabledPipelines, selectedPipelineId]
-  );
-  const visiblePipelines = useMemo(
-    () =>
-      focusedPipeline
-        ? enabledPipelines.filter(
-            (pipeline) => pipeline.pipelineId === focusedPipeline.pipelineId
-          )
-        : enabledPipelines,
-    [enabledPipelines, focusedPipeline]
-  );
-  const visiblePipelineRuns = useMemo(
-    () =>
-      focusedPipeline
-        ? pipelineRuns.filter((run) => run.pipelineId === focusedPipeline.pipelineId)
-        : pipelineRuns,
-    [pipelineRuns, focusedPipeline]
-  );
-  const runsByPipeline = useMemo(() => {
-    const groupedRuns = new Map<string, PipelineRun[]>();
-
-    for (const run of pipelineRuns) {
-      const existing = groupedRuns.get(run.pipelineId);
-      if (existing) {
-        existing.push(run);
-      } else {
-        groupedRuns.set(run.pipelineId, [run]);
-      }
-    }
-
-    return groupedRuns;
-  }, [pipelineRuns]);
-  const enaSubmissionServer = useMemo(() => {
-    if (typeof enaSettingsData?.enaTestMode !== "boolean") {
-      return null;
-    }
-
-    const isTestMode = enaSettingsData.enaTestMode;
-    return {
-      isTestMode,
-      label: isTestMode ? "Test server" : "Production server",
-      host: isTestMode ? "wwwdev.ebi.ac.uk" : "www.ebi.ac.uk",
-    };
-  }, [enaSettingsData]);
-  const samplesWithAssemblySelection = useMemo(
-    () =>
-      samples.map((sample) => ({
-        ...sample,
-        preferredAssemblyId:
-          preferredAssemblyBySample[sample.id] ?? sample.preferredAssemblyId ?? null,
-      })),
-    [preferredAssemblyBySample, samples]
-  );
-  const samplesWithAssemblies = useMemo(
-    () =>
-      samplesWithAssemblySelection.filter(
-        (sample) => getAvailableAssemblies(sample).length > 0
-      ),
-    [samplesWithAssemblySelection]
-  );
-
-  // Pre-check metadata for enabled pipelines so cards reflect runability
+  // Fetch prerequisites, metadata, and definition when pipeline changes
   useEffect(() => {
-    const checkMetadata = async () => {
-      if (!enabledPipelines.length) return;
+    if (!selectedPipeline) return;
+    let cancelled = false;
 
-      const checks: Record<string, MetadataValidation> = {};
-      for (const pipeline of enabledPipelines) {
-        try {
-          const res = await fetch("/api/pipelines/validate-metadata", {
+    setLoadingPrereqs(true);
+    setLoadingMetadata(true);
+    setPrerequisites(null);
+    setMetadataValidation(null);
+    setPipelineDefinition(null);
+    setPrereqsExpanded(false);
+    setShowDataFlow(false);
+
+    const load = async () => {
+      try {
+        const [prereqRes, metadataRes, defRes] = await Promise.all([
+          fetch("/api/admin/settings/pipelines/check-prerequisites"),
+          fetch("/api/pipelines/validate-metadata", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ studyId, pipelineId: pipeline.pipelineId }),
-          });
-          if (res.ok) {
-            checks[pipeline.pipelineId] = await res.json();
-          }
-        } catch {
-          // Ignore errors in precheck
+            body: JSON.stringify({ studyId, pipelineId: selectedPipeline.pipelineId }),
+          }),
+          fetch(`/api/admin/settings/pipelines/${selectedPipeline.pipelineId}/definition`),
+        ]);
+
+        if (cancelled) return;
+
+        if (prereqRes.ok) {
+          const data = await prereqRes.json();
+          setPrerequisites(data);
+          if (!data.requiredPassed) setPrereqsExpanded(true);
+        }
+        if (metadataRes.ok) {
+          setMetadataValidation(await metadataRes.json());
+        }
+        if (defRes.ok) {
+          const data = await defRes.json();
+          setPipelineDefinition({ inputs: data.inputs || [], outputs: data.outputs || [] });
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) {
+          setLoadingPrereqs(false);
+          setLoadingMetadata(false);
         }
       }
-      setMetadataPrecheck(checks);
     };
 
-    checkMetadata();
-  }, [enabledPipelines, studyId]);
+    void load();
+    return () => { cancelled = true; };
+  }, [selectedPipeline, studyId]);
 
-  // Check which pipelines can run based on data availability
-  const samplesWithReads = samplesWithAssemblySelection.filter((s) =>
-    s.reads?.some((r) => r.file1 && r.file2)
-  );
-  const missingChecksumFilePaths = useMemo(
-    () =>
-      getMissingReadChecksumPaths({
-        samples: samplesWithAssemblySelection,
-        ignorePaths: localChecksumOverrides,
-      }),
-    [localChecksumOverrides, samplesWithAssemblySelection]
-  );
-  const isSubmgDialog = selectedPipeline?.pipelineId === "submg";
-  const submitBinsEnabled = Boolean(
-    localConfig.submitBins ??
-      selectedPipeline?.defaultConfig?.submitBins ??
-      true
-  );
+  // Poll when active runs exist
+  useEffect(() => {
+    if (!hasActiveRuns) return;
+    const interval = window.setInterval(() => {
+      void mutateRuns();
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveRuns, mutateRuns]);
 
-  const submgCoverage = useMemo(() => {
-    if (!isSubmgDialog || !metadataValidation) return null;
-    return buildSubmgCoverageSummary({
-      validation: metadataValidation,
-      samples: samplesWithAssemblySelection,
-      selectedSampleIds: selectedSamples,
-      submitBins: submitBinsEnabled,
-    });
-  }, [
-    isSubmgDialog,
-    metadataValidation,
-    samplesWithAssemblySelection,
-    selectedSamples,
-    submitBinsEnabled,
-  ]);
-  const submgMissingRequiredLabels = useMemo(() => {
-    if (!submgCoverage) return [];
-    return formatSampleMissingRequiredLabels(
-      submgCoverage.missingRequired,
-      submgCoverage.sampleMetadataMissingSummary
-        ? [submgCoverage.sampleMetadataMissingSummary]
-        : []
-    );
-  }, [submgCoverage]);
+  // --- Handlers ---
 
-  const hasBlockingMetadataErrors =
-    metadataValidation !== null &&
-    (isSubmgDialog
-      ? Boolean(submgCoverage?.blocking)
-      : metadataValidation.issues.some((i) => i.severity === "error"));
-
-  const refreshSubmgValidation = async () => {
+  const refreshSubmgValidation = useCallback(async () => {
     const validationRes = await fetch("/api/pipelines/validate-metadata", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1146,20 +1106,100 @@ export function StudyPipelinesSection({
       let message = "Failed to refresh SubMG metadata validation";
       try {
         const payload = await validationRes.json();
-        if (typeof payload.error === "string") {
-          message = payload.error;
-        }
-      } catch {
-        // Keep fallback error message.
-      }
+        if (typeof payload.error === "string") message = payload.error;
+      } catch { /* keep fallback */ }
       throw new Error(message);
     }
 
     const validation = (await validationRes.json()) as MetadataValidation;
-    setMetadataPrecheck((prev) => ({ ...prev, submg: validation }));
-
-    if (isSubmgDialog) {
+    if (isSubmgSelected) {
       setMetadataValidation(validation);
+    }
+  }, [studyId, isSubmgSelected]);
+
+  const handleToggleSample = (sampleId: string) => {
+    setSelectedSamples((current) => {
+      const next = new Set(current);
+      if (next.has(sampleId)) {
+        next.delete(sampleId);
+      } else {
+        next.add(sampleId);
+      }
+      return next;
+    });
+  };
+
+  const handleStartPipeline = async () => {
+    if (!selectedPipeline) return;
+
+    setStartingPipelineId(selectedPipeline.pipelineId);
+    setError("");
+
+    try {
+      const createResponse = await fetch("/api/pipelines/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: selectedPipeline.pipelineId,
+          studyId,
+          sampleIds: Array.from(selectedSamples),
+          config: localConfig,
+        }),
+      });
+
+      const createPayload = await createResponse.json().catch(() => null);
+      if (!createResponse.ok) {
+        throw new Error(getApiErrorMessage(createPayload, "Failed to create pipeline run"));
+      }
+
+      const runId = createPayload?.run?.id as string | undefined;
+      if (!runId) {
+        throw new Error("Pipeline run was created without an id");
+      }
+
+      const startResponse = await fetch(`/api/pipelines/runs/${runId}/start`, {
+        method: "POST",
+      });
+      const startPayload = await startResponse.json().catch(() => null);
+      if (!startResponse.ok) {
+        throw new Error(getApiErrorMessage(startPayload, "Failed to start pipeline run"));
+      }
+
+      await mutateRuns();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Failed to start pipeline");
+    } finally {
+      setStartingPipelineId(null);
+    }
+  };
+
+  const handleDeleteRun = async () => {
+    if (!deleteTarget) return;
+
+    setDeletingRun(true);
+    setDeleteRunError(null);
+
+    try {
+      const res = await fetch(`/api/pipelines/runs/${deleteTarget.id}/delete`, {
+        method: "POST",
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDeleteRunError(
+          getApiErrorMessage(payload as { error?: unknown }, "Failed to delete run")
+        );
+        return;
+      }
+
+      setDeleteTarget(null);
+      await mutateRuns();
+    } catch (deleteError) {
+      setDeleteRunError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete run"
+      );
+    } finally {
+      setDeletingRun(false);
     }
   };
 
@@ -1167,10 +1207,7 @@ export function StudyPipelinesSection({
     if (calculatingChecksums) return;
 
     if (missingChecksumFilePaths.length === 0) {
-      setChecksumResult({
-        success: true,
-        message: "All read files already have checksums.",
-      });
+      setChecksumResult({ success: true, message: "All read files already have checksums." });
       return;
     }
 
@@ -1230,13 +1267,9 @@ export function StudyPipelinesSection({
         }
       }
 
-      const detailParts = [
-        `${aggregate.updatedReadRecords} stored in read records`,
-      ];
+      const detailParts = [`${aggregate.updatedReadRecords} stored in read records`];
       if (aggregate.notLinkedToRead > 0) {
-        detailParts.push(
-          `${aggregate.notLinkedToRead} not assigned to a read record`
-        );
+        detailParts.push(`${aggregate.notLinkedToRead} not assigned to a read record`);
       }
       if (aggregate.failed > 0) {
         detailParts.push(`${aggregate.failed} failed`);
@@ -1250,106 +1283,26 @@ export function StudyPipelinesSection({
         message: `Calculated MD5 for ${aggregate.successful}/${aggregate.total} read files.`,
         detail: detailParts.join(" · "),
       });
-    } catch (error) {
+    } catch (checksumError) {
       setChecksumResult({
         success: false,
         message:
-          error instanceof Error ? error.message : "Failed to calculate read checksums",
+          checksumError instanceof Error ? checksumError.message : "Failed to calculate read checksums",
       });
     } finally {
       setCalculatingChecksums(false);
     }
   };
 
-  const openRunDialog = async (pipeline: Pipeline) => {
-    setSelectedPipeline(pipeline);
-    setLocalConfig({ ...(pipeline.config || pipeline.defaultConfig) });
-    setSelectedSamples(new Set(samplesWithReads.map((s) => s.id)));
-    setRunResult(null);
-    setPrerequisites(null);
-    setMetadataValidation(null);
-    setPipelineDefinition(null);
-    setPrereqsExpanded(false);
-    setShowDataFlow(false);
-    setRunDialogOpen(true);
-
-    // Check prerequisites, metadata, and fetch definition in parallel
-    setLoadingPrereqs(true);
-    setLoadingMetadata(true);
-
-    try {
-      const [prereqRes, metadataRes, defRes] = await Promise.all([
-        fetch("/api/admin/settings/pipelines/check-prerequisites"),
-        fetch("/api/pipelines/validate-metadata", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ studyId, pipelineId: pipeline.pipelineId }),
-        }),
-        fetch(`/api/admin/settings/pipelines/${pipeline.pipelineId}/definition`),
-      ]);
-
-      if (prereqRes.ok) {
-        const data = await prereqRes.json();
-        setPrerequisites(data);
-        if (!data.requiredPassed) {
-          setPrereqsExpanded(true);
-        }
-      }
-
-      if (metadataRes.ok) {
-        const data = await metadataRes.json();
-        setMetadataValidation(data);
-      }
-
-      if (defRes.ok) {
-        const data = await defRes.json();
-        setPipelineDefinition({
-          inputs: data.inputs || [],
-          outputs: data.outputs || [],
-        });
-      }
-    } catch (err) {
-      console.error("Failed to check prerequisites:", err);
-    } finally {
-      setLoadingPrereqs(false);
-      setLoadingMetadata(false);
-    }
-  };
-
-  const toggleSample = (sampleId: string) => {
-    const newSet = new Set(selectedSamples);
-    if (newSet.has(sampleId)) {
-      newSet.delete(sampleId);
-    } else {
-      newSet.add(sampleId);
-    }
-    setSelectedSamples(newSet);
-  };
-
-  const selectAllSamples = () => {
-    setSelectedSamples(new Set(samplesWithReads.map((s) => s.id)));
-  };
-
-  const deselectAllSamples = () => {
-    setSelectedSamples(new Set());
-  };
-
-  const handlePreferredAssemblyChange = async (
-    sampleId: string,
-    value: string
-  ) => {
+  const handlePreferredAssemblyChange = async (sampleId: string, value: string) => {
     const nextAssemblyId = value === AUTO_ASSEMBLY_SELECTION ? null : value;
     const sample = samplesWithAssemblySelection.find((item) => item.id === sampleId);
     if (!sample) return;
 
     if (nextAssemblyId) {
-      const selectedAssembly = sample.assemblies.find(
-        (assembly) => assembly.id === nextAssemblyId
-      );
+      const selectedAssembly = sample.assemblies.find((a) => a.id === nextAssemblyId);
       if (!selectedAssembly?.assemblyFile) {
-        setAssemblySelectionError(
-          `Sample ${sample.sampleId}: selected assembly has no file path.`
-        );
+        setAssemblySelectionError(`Sample ${sample.sampleId}: selected assembly has no file path.`);
         return;
       }
     }
@@ -1358,14 +1311,8 @@ export function StudyPipelinesSection({
       preferredAssemblyBySample[sampleId] ?? sample.preferredAssemblyId ?? null;
 
     setAssemblySelectionError(null);
-    setPreferredAssemblyBySample((prev) => ({
-      ...prev,
-      [sampleId]: nextAssemblyId,
-    }));
-    setAssemblySelectionSaving((prev) => ({
-      ...prev,
-      [sampleId]: true,
-    }));
+    setPreferredAssemblyBySample((prev) => ({ ...prev, [sampleId]: nextAssemblyId }));
+    setAssemblySelectionSaving((prev) => ({ ...prev, [sampleId]: true }));
 
     let preferredAssemblySaved = false;
 
@@ -1373,193 +1320,39 @@ export function StudyPipelinesSection({
       const updateRes = await fetch(`/api/samples/${sampleId}/preferred-assembly`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          studyId,
-          assemblyId: nextAssemblyId,
-        }),
+        body: JSON.stringify({ studyId, assemblyId: nextAssemblyId }),
       });
 
       if (!updateRes.ok) {
         let message = "Failed to update preferred assembly";
         try {
           const payload = await updateRes.json();
-          if (typeof payload.error === "string") {
-            message = payload.error;
-          }
-        } catch {
-          // Ignore parse failures and keep fallback message.
-        }
+          if (typeof payload.error === "string") message = payload.error;
+        } catch { /* ignore */ }
         throw new Error(message);
       }
 
       preferredAssemblySaved = true;
       await refreshSubmgValidation();
-    } catch (error) {
+    } catch (err) {
       if (!preferredAssemblySaved) {
-        setPreferredAssemblyBySample((prev) => ({
-          ...prev,
-          [sampleId]: previousAssemblyId,
-        }));
+        setPreferredAssemblyBySample((prev) => ({ ...prev, [sampleId]: previousAssemblyId }));
         setAssemblySelectionError(
-          error instanceof Error
-            ? error.message
-            : "Failed to update preferred assembly"
+          err instanceof Error ? err.message : "Failed to update preferred assembly"
         );
       } else {
         setAssemblySelectionError(
-          error instanceof Error
-            ? `Preferred assembly saved, but metadata refresh failed: ${error.message}`
+          err instanceof Error
+            ? `Preferred assembly saved, but metadata refresh failed: ${err.message}`
             : "Preferred assembly saved, but failed to refresh SubMG metadata validation."
         );
       }
     } finally {
-      setAssemblySelectionSaving((prev) => ({
-        ...prev,
-        [sampleId]: false,
-      }));
+      setAssemblySelectionSaving((prev) => ({ ...prev, [sampleId]: false }));
     }
   };
 
-  const handleStartRun = async () => {
-    if (!selectedPipeline || selectedSamples.size === 0) return;
-
-    setRunning(true);
-    setRunResult(null);
-
-    try {
-      const normalizeDetails = (value: unknown): string[] | undefined => {
-        if (!value) return undefined;
-        if (Array.isArray(value)) {
-          return value.map((item) => String(item));
-        }
-        if (typeof value === "string") {
-          return [value];
-        }
-        return [JSON.stringify(value)];
-      };
-
-      // Step 1: Create the run record
-      const createRes = await fetch("/api/pipelines/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pipelineId: selectedPipeline.pipelineId,
-          studyId,
-          sampleIds: Array.from(selectedSamples),
-          config: localConfig,
-        }),
-      });
-
-      let createData: Record<string, unknown> = {};
-      try {
-        createData = await createRes.json();
-      } catch {
-        // ignore
-      }
-
-      if (!createRes.ok) {
-        setRunResult({
-          success: false,
-          error:
-            (createData.error as string) || "Failed to create pipeline run",
-          details: normalizeDetails(
-            createData.details ?? `HTTP ${createRes.status}`
-          ),
-        });
-        return;
-      }
-
-      const runId = (createData as { run?: { id?: string } }).run?.id;
-      if (!runId) {
-        setRunResult({
-          success: false,
-          error: "Failed to create pipeline run",
-          details: ["Server returned success but no run ID was provided."],
-        });
-        return;
-      }
-
-      // Step 2: Start the run
-      const startRes = await fetch(`/api/pipelines/runs/${runId}/start`, {
-        method: "POST",
-      });
-
-      let startData: Record<string, unknown> = {};
-      try {
-        startData = await startRes.json();
-      } catch {
-        // ignore
-      }
-
-      if (!startRes.ok) {
-        setRunResult({
-          success: false,
-          runId,
-          error: (startData.error as string) || "Failed to start pipeline",
-          details: normalizeDetails(
-            startData.details ?? `HTTP ${startRes.status}`
-          ),
-        });
-        return;
-      }
-
-      setRunResult({
-        success: true,
-        runId,
-        runNumber: String(
-          (startData as { runNumber?: number }).runNumber ||
-            (createData as { run?: { runNumber?: number } }).run?.runNumber ||
-            ""
-        ),
-      });
-
-      // Refresh runs list
-      mutateRuns();
-    } catch (err) {
-      setRunResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to start pipeline",
-      });
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const handleDeleteRun = async () => {
-    if (!deleteTarget) return;
-
-    setDeletingRun(true);
-    setDeleteRunError(null);
-
-    try {
-      const res = await fetch(`/api/pipelines/runs/${deleteTarget.id}/delete`, {
-        method: "POST",
-      });
-
-      let payload: { error?: string } = {};
-      try {
-        payload = await res.json();
-      } catch {
-        // Ignore non-JSON error payloads.
-      }
-
-      if (!res.ok) {
-        setDeleteRunError(payload.error || "Failed to delete run");
-        return;
-      }
-
-      setDeleteTarget(null);
-      await mutateRuns();
-    } catch (error) {
-      setDeleteRunError(
-        error instanceof Error ? error.message : "Failed to delete run"
-      );
-    } finally {
-      setDeletingRun(false);
-    }
-  };
-
-  const getStatusIcon = (status: PrerequisiteCheck["status"]) => {
+  const getPrereqStatusIcon = (status: PrerequisiteCheck["status"]) => {
     switch (status) {
       case "pass":
         return <CheckCircle2 className="h-4 w-4 text-green-600" />;
@@ -1572,6 +1365,7 @@ export function StudyPipelinesSection({
     }
   };
 
+  // --- Loading state ---
   if (pipelinesLoading && enabledPipelines.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -1581,151 +1375,53 @@ export function StudyPipelinesSection({
     );
   }
 
-  if (!focusedPipeline) {
+  // --- Empty state ---
+  if (enabledPipelines.length === 0) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold">Analysis</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Pipeline overview for this study
-          </p>
-        </div>
-
-        {enabledPipelines.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              No pipelines configured for this study.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4">
-            {enabledPipelines.map((pipeline) => {
-              const runs = runsByPipeline.get(pipeline.pipelineId) ?? [];
-              const completedRuns = runs.filter((run) => run.status === "completed");
-              const activeRuns = runs.filter(
-                (run) =>
-                  run.status === "running" ||
-                  run.status === "queued" ||
-                  run.status === "pending"
-              );
-              const failedRuns = runs.filter(
-                (run) => run.status === "failed" || run.status === "cancelled"
-              );
-              const latestRun = runs
-                .slice()
-                .sort(
-                  (a, b) =>
-                    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-                )[0];
-
-              return (
-                <Link
-                  key={pipeline.pipelineId}
-                  href={`/studies/${studyId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}#study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
-                  className="block"
-                >
-                  <Card className="cursor-pointer transition-colors hover:bg-muted/30">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between gap-4">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          {getPipelineIcon(pipeline.icon)}
-                          {pipeline.name}
-                        </CardTitle>
-                        <div className="flex items-center gap-2">
-                          {activeRuns.length > 0 && (
-                            <Badge
-                              variant="secondary"
-                              className="border-blue-200 bg-blue-50 text-xs text-blue-700"
-                            >
-                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                              Running
-                            </Badge>
-                          )}
-                          {activeRuns.length === 0 && completedRuns.length > 0 && (
-                            <Badge
-                              variant="secondary"
-                              className="border-emerald-200 bg-emerald-50 text-xs text-emerald-700"
-                            >
-                              <CheckCircle2 className="mr-1 h-3 w-3" />
-                              Completed
-                            </Badge>
-                          )}
-                          {activeRuns.length === 0 &&
-                            completedRuns.length === 0 &&
-                            failedRuns.length > 0 && (
-                              <Badge
-                                variant="secondary"
-                                className="border-red-200 bg-red-50 text-xs text-red-700"
-                              >
-                                <AlertCircle className="mr-1 h-3 w-3" />
-                                Failed
-                              </Badge>
-                            )}
-                          {runs.length === 0 && (
-                            <Badge
-                              variant="outline"
-                              className="text-xs text-muted-foreground"
-                            >
-                              Not run yet
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <CardDescription>{pipeline.description}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>
-                          {runs.length} run{runs.length !== 1 ? "s" : ""} total
-                        </span>
-                        {completedRuns.length > 0 && (
-                          <span className="text-emerald-600">
-                            {completedRuns.length} completed
-                          </span>
-                        )}
-                        {failedRuns.length > 0 && (
-                          <span className="text-red-600">
-                            {failedRuns.length} failed
-                          </span>
-                        )}
-                        {latestRun && (
-                          <>
-                            <span className="text-border">|</span>
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              Last run: {formatRelativeTime(latestRun.createdAt)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>No Study Pipelines Enabled</CardTitle>
+          <CardDescription>
+            Enable a study-scoped pipeline in admin settings before using this workspace.
+          </CardDescription>
+        </CardHeader>
+      </Card>
     );
   }
 
+  // --- Main render ---
   return (
-    <>
-      {/* System warning */}
-      {checkingSystem ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Checking system requirements...
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Study Pipelines</h1>
+          <p className="text-sm text-muted-foreground">
+            Run study-scoped analysis pipelines on linked FASTQ files.
+          </p>
         </div>
-      ) : systemReady && !systemReady.ready ? (
-        <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 mb-4">
-          <p className="text-sm text-amber-800 flex items-center gap-2 mb-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void mutatePipelines();
+            void mutateRuns();
+          }}
+        >
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
+
+      {/* System warning banner */}
+      {!checkingSystem && systemReady && !systemReady.ready ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+          <div className="flex items-center gap-2 font-medium">
             <AlertTriangle className="h-4 w-4" />
             {systemReady.summary}
-          </p>
+          </div>
           <Link
             href="/admin/settings/pipelines"
-            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
             <Settings className="h-3 w-3" />
             Configure Pipeline Settings
@@ -1733,568 +1429,420 @@ export function StudyPipelinesSection({
         </div>
       ) : null}
 
-      {/* Pipeline cards */}
-      {samplesWithReads.length === 0 ? (
-        <div className="text-center py-8 bg-muted/30 rounded-lg border border-dashed mb-4">
-          <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-          <p className="font-medium mb-1">No Samples Ready</p>
-          <p className="text-sm text-muted-foreground">
-            Assign paired-end read files to run analysis pipelines
-          </p>
+      {/* Error banner */}
+      {error ? (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
         </div>
-      ) : (
-        <>
-          {/* Sample readiness */}
-          <div className="flex items-center gap-2 text-sm mb-3">
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-            <span>
-              <strong>{samplesWithReads.length}</strong> of {samples.length} samples ready
-            </span>
-          </div>
+      ) : null}
 
-          {/* Pipeline cards - admin-style */}
-          <div className="grid gap-4 sm:grid-cols-2 mb-6">
-            {visiblePipelines.map((pipeline) => {
-              const validation = metadataPrecheck[pipeline.pipelineId];
-              const readiness = getPipelineReadiness({
-                pipelineId: pipeline.pipelineId,
-                validation,
-                totalSamples: samples.length,
-                samplesWithReads: samplesWithReads.length,
-              });
-              const canRun = readiness.canRun;
-              const category = pipeline.category || "metagenomics";
-              const isSubmgPipeline = pipeline.pipelineId === "submg";
-              const submgNeedsChecksums =
-                isSubmgPipeline &&
-                readiness.missingRequired.includes("Read checksums");
-
-              return (
-                <GlassCard
-                  key={pipeline.pipelineId}
-                  id={`study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
-                  className={`relative transition-all ${
-                    canRun
-                      ? "hover:shadow-md hover:border-primary/50 cursor-pointer"
-                      : "opacity-60"
-                  } ${
-                    focusedPipeline?.pipelineId === pipeline.pipelineId
-                      ? "ring-1 ring-primary/40 border-primary/40"
-                      : ""
-                  }`}
-                  onClick={() => canRun && openRunDialog(pipeline)}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`p-3 rounded-xl ${getCategoryColor(category)}`}>
-                      {getPipelineIcon(pipeline.icon)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <h3 className="font-semibold">{pipeline.name}</h3>
-                        {pipeline.version && (
-                          <Badge variant="outline" className="text-xs font-normal">
-                            v{pipeline.version}
-                          </Badge>
-                        )}
-                        <Badge variant="secondary" className="text-xs capitalize">
-                          {category}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {pipeline.description}
-                      </p>
-                      {isSubmgPipeline && (
-                        <p
-                          className={`text-xs mt-2 ${
-                            enaSubmissionServer?.isTestMode
-                              ? "text-amber-700"
-                              : enaSubmissionServer
-                                ? "text-blue-700"
-                                : "text-muted-foreground"
-                          }`}
-                        >
-                          {enaSubmissionServer
-                            ? `ENA target: ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - test submission mode." : ""}`
-                            : "ENA target: loading from Admin > ENA settings..."}
-                        </p>
-                      )}
-                      <p
-                        className={`text-xs mt-2 ${
-                          canRun ? "text-muted-foreground" : "text-amber-700"
-                        }`}
-                      >
-                        {readiness.summary}
-                      </p>
-                      {readiness.missingRequired.length > 0 && (
-                        <p className="text-xs text-destructive mt-1">
-                          Missing: {readiness.missingRequired.join(", ")}
-                        </p>
-                      )}
-                        {pipeline.pipelineId === "submg" &&
-                        readiness.missingRequired.includes("Study accession") && (
-                          <p className="text-xs text-amber-700 mt-1">
-                            Register this study in the Publishing section first to populate the
-                            accession used by SubMG.
-                          </p>
-                        )}
-                      {readiness.checkDetails.length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {readiness.checkDetails.join(" • ")}
-                        </p>
-                      )}
-                      {submgNeedsChecksums &&
-                        isFacilityAdmin &&
-                        missingChecksumFilePaths.length > 0 && (
-                          <div className="mt-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8"
-                              disabled={calculatingChecksums}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void handleComputeReadChecksums();
-                              }}
-                            >
-                              {calculatingChecksums ? (
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              ) : null}
-                              Compute and add read checksums
-                            </Button>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {missingChecksumFilePaths.length} read file
-                              {missingChecksumFilePaths.length === 1 ? "" : "s"}{" "}
-                              currently missing MD5 values.
-                            </p>
-                          </div>
-                        )}
-                      {isSubmgPipeline && checksumResult && (
-                        <p
-                          className={`text-xs mt-2 ${
-                            checksumResult.success
-                              ? "text-green-700"
-                              : "text-destructive"
-                          }`}
-                        >
-                          {checksumResult.message}
-                          {checksumResult.detail
-                            ? ` ${checksumResult.detail}`
-                            : ""}
-                        </p>
-                      )}
-                    </div>
-                    {canRun && (
-                      <Button size="sm" variant="ghost" className="h-8 flex-shrink-0">
-                        <Play className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      {/* Run History */}
-      {(visiblePipelineRuns.length > 0 || focusedPipeline) && (
-        <div className="bg-card rounded-lg border overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              {focusedPipeline ? `${focusedPipeline.name} Runs` : "Run History"}
-            </h3>
-            {!focusedPipeline && runsData?.total > pipelineRuns.length && (
-              <Link
-                href={`/analysis?studyId=${studyId}`}
-                className="text-xs text-primary hover:underline flex items-center gap-1"
-              >
-                View all {runsData.total} runs
-                <ArrowRight className="h-3 w-3" />
-              </Link>
-            )}
-          </div>
-
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/50">
-                <TableHead>Pipeline</TableHead>
-                <TableHead className="w-[100px]">Run</TableHead>
-                <TableHead className="w-[100px]">Started</TableHead>
-                <TableHead className="w-[120px]">Results</TableHead>
-                <TableHead className="w-[110px]">Status</TableHead>
-                <TableHead className="w-[110px]">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visiblePipelineRuns.map((run) => (
-                <TableRow
-                  key={run.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => window.location.href = `/analysis/${run.id}`}
-                >
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded-lg ${getCategoryColor("metagenomics")}`}>
-                        {getPipelineIcon(run.pipelineIcon)}
-                      </div>
-                      <span className="font-medium text-sm">{run.pipelineName}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {run.runNumber}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {formatRelativeTime(run.createdAt)}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {run.currentStep && run.status === "running" ? (
-                      <span className="text-blue-600">{run.currentStep}</span>
-                    ) : run._count &&
-                      (run._count.assembliesCreated > 0 ||
-                        run._count.binsCreated > 0) ? (
-                      <span>
-                        {run._count.assembliesCreated} assemblies, {run._count.binsCreated} bins
-                      </span>
-                    ) : (
-                      <span>--</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {getStatusBadge(run.status)}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-destructive hover:text-destructive"
-                      title={
-                        run.status === "running"
-                          ? "Stop the run before deleting"
-                          : "Delete run and associated data"
-                      }
-                      disabled={run.status === "running" || deletingRun}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDeleteRunError(null);
-                        setDeleteTarget(run);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {visiblePipelineRuns.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="py-8 text-center text-sm text-muted-foreground"
-                  >
-                    No runs for this pipeline yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-
-      {samplesWithAssemblySelection.length > 0 && (
-        <div className="bg-card rounded-lg border overflow-hidden mt-4">
-          <div className="px-5 py-4 border-b bg-secondary/30">
-            <h3 className="text-sm font-semibold">Selected Assembly Per Sample</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Choose the assembly marked as final for each sample. Automatic mode
-              always uses the newest available assembly.
-            </p>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/50">
-                <TableHead>Sample</TableHead>
-                <TableHead className="w-[320px]">Final Assembly</TableHead>
-                <TableHead>Current Final Selection</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {samplesWithAssemblySelection.map((sample) => {
-                const availableAssemblies = getAvailableAssemblies(sample);
-                const activeSelection = resolveAssemblySelection(sample, {
-                  strictPreferred: true,
-                });
-                const selectedAssembly = activeSelection.assembly;
-                const hasExplicitSelection =
-                  Boolean(sample.preferredAssemblyId) &&
-                  availableAssemblies.some(
-                    (assembly) => assembly.id === sample.preferredAssemblyId
-                  );
-                const stalePreferredValue =
-                  sample.preferredAssemblyId && !hasExplicitSelection
-                    ? `__missing__:${sample.preferredAssemblyId}`
-                    : null;
-                const currentSelectValue =
-                  stalePreferredValue ||
-                  (hasExplicitSelection
-                    ? (sample.preferredAssemblyId as string)
-                    : AUTO_ASSEMBLY_SELECTION);
-
+      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
+        {/* --- Left column --- */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Hash className="h-5 w-5" />
+              Available Pipelines
+            </CardTitle>
+            <CardDescription>
+              Select a pipeline, choose samples, and start the run.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Pipeline selector */}
+            <div className="grid gap-3 md:grid-cols-2">
+              {enabledPipelines.map((pipeline) => {
+                const active = pipeline.pipelineId === selectedPipelineIdState;
                 return (
-                  <TableRow key={sample.id}>
-                    <TableCell>
-                      <div className="font-medium text-sm">{sample.sampleId}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {availableAssemblies.length} assembly
-                        {availableAssemblies.length === 1 ? "" : "ies"}
+                  <button
+                    key={pipeline.pipelineId}
+                    type="button"
+                    onClick={() => setSelectedPipelineId(pipeline.pipelineId)}
+                    className={`rounded-lg border p-4 text-left transition ${
+                      active
+                        ? "border-foreground bg-secondary/40"
+                        : "border-border hover:border-foreground/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-medium">
+                        {getPipelineIcon(pipeline.icon)}
+                        {pipeline.name}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={currentSelectValue}
-                        onValueChange={(value) => {
-                          if (value.startsWith("__missing__:")) return;
-                          void handlePreferredAssemblyChange(sample.id, value);
-                        }}
-                        disabled={
-                          (availableAssemblies.length === 0 &&
-                            !stalePreferredValue) ||
-                          Boolean(assemblySelectionSaving[sample.id])
-                        }
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select final assembly" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
-                            Automatic (latest available assembly)
-                          </SelectItem>
-                          {stalePreferredValue && (
-                            <SelectItem value={stalePreferredValue}>
-                              Unavailable preferred assembly (choose another)
-                            </SelectItem>
-                          )}
-                          {availableAssemblies.map((assembly) => {
-                            const runNumber =
-                              assembly.createdByPipelineRun?.runNumber || "manual";
-                            const fileName = getFileName(assembly.assemblyFile);
-                            return (
-                              <SelectItem key={assembly.id} value={assembly.id}>
-                                {runNumber} • {fileName}
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
-                      {activeSelection.preferredMissing && (
-                        <p className="text-xs text-destructive mt-1">
-                          Previously selected assembly is no longer available.
-                          Pick a new final assembly.
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {selectedAssembly ? (
-                        <div className="space-y-1">
-                          <p className="font-medium text-foreground">
-                            {activeSelection.source === "preferred"
-                              ? "Marked as final"
-                              : "Automatic selection"}
-                          </p>
-                          <p className="text-muted-foreground">
-                            Run{" "}
-                            {selectedAssembly.createdByPipelineRun?.runNumber ||
-                              "manual"}
-                            {selectedAssembly.createdByPipelineRun?.createdAt
-                              ? ` • ${formatRelativeTime(
-                                  selectedAssembly.createdByPipelineRun.createdAt
-                                )}`
-                              : ""}
-                          </p>
-                          <p className="text-muted-foreground truncate max-w-[360px]">
-                            {selectedAssembly.assemblyFile}
-                          </p>
-                        </div>
-                      ) : (
-                        <span className="text-destructive">
-                          No usable assembly selected
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                      <Badge variant="outline">{pipeline.category || "analysis"}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">{pipeline.description}</p>
+                  </button>
                 );
               })}
-            </TableBody>
-          </Table>
-          {assemblySelectionError && (
-            <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">
-              {assemblySelectionError}
             </div>
-          )}
-          {samplesWithAssemblies.length === 0 && (
-            <div className="px-5 py-3 border-t text-sm text-muted-foreground">
-              No assemblies found yet. Run MAG first to generate assemblies.
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* Delete Run Dialog */}
-      <Dialog
-        open={Boolean(deleteTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteTarget(null);
-            setDeleteRunError(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Run {deleteTarget?.runNumber}?</DialogTitle>
-            <DialogDescription>
-              This will permanently delete the run entry, its folder, and related
-              records (steps, events, artifacts, assemblies, and bins). This action
-              cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
+            {/* Selected Samples */}
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-medium">Selected Samples</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {samplesWithReads.length} of {samples.length} sample
+                    {samples.length === 1 ? "" : "s"} with paired reads
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setSelectedSamples(new Set(samplesWithReads.map((s) => s.id)))
+                    }
+                  >
+                    Select All
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedSamples(new Set())}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
 
-          {deleteRunError && (
-            <p className="text-sm text-destructive">{deleteRunError}</p>
-          )}
+              <div className="grid gap-2 md:grid-cols-2">
+                {samples.map((sample) => {
+                  const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
+                  const sampleMissing =
+                    isSubmgSelected && submgCoverage?.sampleMissingRequired[sample.id];
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDeleteTarget(null);
-                setDeleteRunError(null);
-              }}
-              disabled={deletingRun}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteRun}
-              disabled={deletingRun}
-            >
-              {deletingRun ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : null}
-              Delete Run
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Run Pipeline Dialog */}
-      <Dialog open={runDialogOpen} onOpenChange={setRunDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {selectedPipeline && getPipelineIcon(selectedPipeline.icon)}
-              Run {selectedPipeline?.name}
-            </DialogTitle>
-            <DialogDescription>
-              Select samples and configure the pipeline run
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="max-h-[60vh] overflow-y-auto pr-1">
-          {runResult ? (
-            <div className="py-4">
-              <div
-                className={`p-4 rounded-lg border ${
-                  runResult.success
-                    ? "bg-green-50 border-green-200"
-                    : "bg-red-50 border-red-200"
-                }`}
-              >
-                <div className="text-center">
-                  {runResult.success ? (
-                    <>
-                      <CheckCircle2 className="h-8 w-8 text-green-600 mx-auto mb-3" />
-                      <p className="font-semibold text-lg">
-                        Pipeline Run Started
-                      </p>
-                      {runResult.runNumber && (
-                        <p className="text-sm text-muted-foreground mt-1 font-mono">
-                          {runResult.runNumber}
-                        </p>
-                      )}
-                      <p className="text-sm text-muted-foreground mt-3">
-                        Your pipeline is now queued and will start processing
-                        shortly.
-                      </p>
-                      <div className="mt-4 flex flex-col gap-2">
-                        <Link
-                          href={`/analysis/${runResult.runId}`}
-                          className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
-                        >
-                          <FlaskConical className="h-4 w-4" />
-                          View Run Details
-                        </Link>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
-                      <p className="font-medium text-red-800">
-                        Failed to Start
-                      </p>
-                      <p className="text-sm text-red-600 mt-1">
-                        {runResult.error}
-                      </p>
-                      {runResult.details && runResult.details.length > 0 && (
-                        <div className="mt-3 text-left bg-red-100 p-3 rounded text-xs">
-                          <p className="font-medium text-red-800 mb-1">
-                            Details:
-                          </p>
-                          <ul className="list-disc list-inside space-y-1 text-red-700">
-                            {runResult.details.map((detail, i) => (
-                              <li key={i}>{detail}</li>
-                            ))}
-                          </ul>
+                  return (
+                    <label
+                      key={sample.id}
+                      className="flex items-start gap-3 rounded-lg border px-3 py-2"
+                    >
+                      <Checkbox
+                        checked={selectedSamples.has(sample.id)}
+                        onCheckedChange={() => handleToggleSample(sample.id)}
+                        disabled={!hasPairedReads}
+                      />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{sample.sampleId}</span>
+                          {hasPairedReads ? (
+                            <Badge variant="outline" className="text-emerald-700">
+                              Reads linked
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-amber-700">
+                              Missing reads
+                            </Badge>
+                          )}
                         </div>
-                      )}
-                    </>
+                        <div className="text-xs text-muted-foreground">
+                          {hasPairedReads
+                            ? sample.reads.some((r) => r.file1 && r.file2)
+                              ? "Paired-end FASTQ"
+                              : "Single-end FASTQ"
+                            : "No linked FASTQ files"}
+                        </div>
+                        {sampleMissing && sampleMissing.length > 0 && (
+                          <div className="text-[11px] text-destructive">
+                            Missing:{" "}
+                            {formatSampleMissingRequiredLabels(
+                              sampleMissing,
+                              submgCoverage?.sampleMissingMetadataFields[sample.id] || []
+                            ).join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Pipeline Configuration */}
+            {selectedPipeline &&
+            Object.keys(selectedPipeline.configSchema.properties || {}).length > 0 ? (
+              <div className="space-y-3 rounded-lg border p-4">
+                <div>
+                  <h2 className="font-medium">Pipeline Configuration</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Configure this run before starting it.
+                  </p>
+                </div>
+
+                <div className="grid gap-3">
+                  {Object.entries(selectedPipeline.configSchema.properties).map(
+                    ([key, property]) => {
+                      if (property.type === "boolean") {
+                        return (
+                          <label
+                            key={key}
+                            className="flex items-start gap-3 rounded-lg border px-3 py-3"
+                          >
+                            <Checkbox
+                              checked={Boolean(localConfig[key])}
+                              onCheckedChange={(checked) =>
+                                setLocalConfig((current) => ({
+                                  ...current,
+                                  [key]: checked === true,
+                                }))
+                              }
+                            />
+                            <div className="space-y-1">
+                              <div className="font-medium">{property.title}</div>
+                              {property.description ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {property.description}
+                                </div>
+                              ) : null}
+                            </div>
+                          </label>
+                        );
+                      }
+
+                      if (Array.isArray(property.enum) && property.enum.length > 0) {
+                        return (
+                          <div key={key} className="grid gap-1.5">
+                            <label htmlFor={`pipeline-config-${key}`} className="text-sm font-medium">
+                              {property.title}
+                            </label>
+                            <select
+                              id={`pipeline-config-${key}`}
+                              value={String(localConfig[key] ?? property.default ?? property.enum[0] ?? "")}
+                              onChange={(event) =>
+                                setLocalConfig((current) => ({
+                                  ...current,
+                                  [key]: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                            >
+                              {property.enum.map((value) => (
+                                <option key={String(value)} value={String(value)}>
+                                  {String(value)}
+                                </option>
+                              ))}
+                            </select>
+                            {property.description ? (
+                              <div className="text-xs text-muted-foreground">
+                                {property.description}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={key} className="grid gap-1.5">
+                          <label htmlFor={`pipeline-config-${key}`} className="text-sm font-medium">
+                            {property.title}
+                          </label>
+                          <input
+                            id={`pipeline-config-${key}`}
+                            type={property.type === "number" ? "number" : "text"}
+                            value={String(localConfig[key] ?? property.default ?? "")}
+                            onChange={(event) =>
+                              setLocalConfig((current) => ({
+                                ...current,
+                                [key]:
+                                  property.type === "number"
+                                    ? Number(event.target.value)
+                                    : event.target.value,
+                              }))
+                            }
+                            className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                          />
+                          {property.description ? (
+                            <div className="text-xs text-muted-foreground">
+                              {property.description}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }
                   )}
                 </div>
               </div>
-            </div>
-          ) : (
-            <>
-              {/* System Requirements */}
-              <div className="py-3 border-b">
+            ) : null}
+
+            {/* SubMG Scope */}
+            {isSubmgSelected && (
+              <div className="space-y-3 rounded-lg border p-4">
+                <div>
+                  <h2 className="font-medium">SubMG Submission Scope</h2>
+                </div>
+                <p
+                  className={`text-xs ${
+                    enaSubmissionServer?.isTestMode
+                      ? "text-amber-700"
+                      : enaSubmissionServer
+                        ? "text-blue-700"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {enaSubmissionServer
+                    ? `ENA target: ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - test submission mode." : ""}`
+                    : "ENA target: loading from Admin > ENA settings..."}
+                </p>
+
+                {loadingMetadata ? (
+                  <p className="text-xs text-muted-foreground">Evaluating selected samples...</p>
+                ) : submgCoverage ? (
+                  <>
+                    <p
+                      className={`text-xs ${
+                        submgCoverage.blocking ? "text-amber-700" : "text-green-700"
+                      }`}
+                    >
+                      {submgCoverage.summary}
+                    </p>
+                    {submgCoverage.missingRequired.length > 0 && (
+                      <p className="text-xs text-destructive">
+                        Missing required: {submgMissingRequiredLabels.join(", ")}
+                      </p>
+                    )}
+                    {submgCoverage.studyAccessionMissing && (
+                      <p className="text-xs text-amber-700">
+                        Study accession comes from ENA Registration in this
+                        study&apos;s Publishing section (Test Server or Production).
+                      </p>
+                    )}
+                    <div className="space-y-1">
+                      {submgCoverage.checks.map((check) => {
+                        const preview = formatSamplePreview(
+                          check.missingSampleIds,
+                          new Map(samplesWithAssemblySelection.map((s) => [s.id, s]))
+                        );
+                        return (
+                          <p key={check.id} className="text-xs text-muted-foreground">
+                            {check.label}: {check.available}/{check.total} selected
+                            {preview ? ` - missing ${preview}` : ""}
+                            {check.missingDetail ? ` - fields: ${check.missingDetail}` : ""}
+                          </p>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{submgCoverage.binsSummary}</p>
+                    {submgCoverage.binsHint && (
+                      <p className="text-xs text-amber-700">{submgCoverage.binsHint}</p>
+                    )}
+                  </>
+                ) : null}
+
+                {/* Checksum computation */}
+                {isFacilityAdmin && missingChecksumFilePaths.length > 0 && (
+                  <div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={calculatingChecksums}
+                      onClick={() => void handleComputeReadChecksums()}
+                    >
+                      {calculatingChecksums ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      Compute and add read checksums
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {missingChecksumFilePaths.length} read file
+                      {missingChecksumFilePaths.length === 1 ? "" : "s"} currently missing MD5
+                      values.
+                    </p>
+                  </div>
+                )}
+                {checksumResult && (
+                  <p
+                    className={`text-xs ${
+                      checksumResult.success ? "text-green-700" : "text-destructive"
+                    }`}
+                  >
+                    {checksumResult.message}
+                    {checksumResult.detail ? ` ${checksumResult.detail}` : ""}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Metadata Validation (inline) */}
+            {selectedPipeline && (loadingMetadata || metadataValidation) && (
+              <div className="space-y-2 rounded-lg border p-4">
+                {loadingMetadata ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking study metadata...
+                  </div>
+                ) : metadataValidation ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      {metadataValidation.valid ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      ) : metadataValidation.issues.some((i) => i.severity === "error") ? (
+                        <XCircle className="h-4 w-4 text-red-600" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                      )}
+                      <span className="text-sm font-medium">Study Metadata</span>
+                      {metadataValidation.metadata.platform && (
+                        <span className="text-xs text-muted-foreground">
+                          Platform: {metadataValidation.metadata.platform}
+                        </span>
+                      )}
+                    </div>
+                    {metadataValidation.issues.length > 0 && (
+                      <div className="space-y-1 ml-6">
+                        {metadataValidation.issues.map((issue, i) => (
+                          <div
+                            key={i}
+                            className={`text-sm flex items-center gap-2 ${
+                              issue.severity === "error" ? "text-red-600" : "text-yellow-600"
+                            }`}
+                          >
+                            {issue.severity === "error" ? (
+                              <XCircle className="h-3 w-3" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3" />
+                            )}
+                            <span>{issue.message}</span>
+                            {issue.fixUrl && (
+                              <Link
+                                href={issue.fixUrl}
+                                className="text-primary hover:underline inline-flex items-center gap-0.5"
+                              >
+                                Fix <ExternalLink className="h-3 w-3" />
+                              </Link>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            )}
+
+            {/* System Requirements (collapsible) */}
+            {selectedPipeline && (loadingPrereqs || prerequisites) && (
+              <div className="rounded-lg border p-4">
                 {loadingPrereqs ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Checking system requirements...
                   </div>
                 ) : prerequisites ? (
-                  <Collapsible
-                    open={prereqsExpanded}
-                    onOpenChange={setPrereqsExpanded}
-                  >
+                  <Collapsible open={prereqsExpanded} onOpenChange={setPrereqsExpanded}>
                     <CollapsibleTrigger asChild>
-                      <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-2 -m-2">
+                      <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-1 -m-1">
                         <div className="flex items-center gap-2">
                           {prerequisites.requiredPassed ? (
                             <CheckCircle2 className="h-4 w-4 text-green-600" />
                           ) : (
                             <XCircle className="h-4 w-4 text-red-600" />
                           )}
-                          <span className="text-sm font-medium">
-                            System Requirements
-                          </span>
+                          <span className="text-sm font-medium">System Requirements</span>
                           <span
                             className={`text-xs ${
-                              prerequisites.requiredPassed
-                                ? "text-green-600"
-                                : "text-red-600"
+                              prerequisites.requiredPassed ? "text-green-600" : "text-red-600"
                             }`}
                           >
                             {prerequisites.summary}
@@ -2327,22 +1875,15 @@ export function StudyPipelinesSection({
                                     : ""
                               }`}
                             >
-                              {getStatusIcon(check.status)}
+                              {getPrereqStatusIcon(check.status)}
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-medium">
-                                    {check.name}
-                                  </span>
-                                  {check.required &&
-                                    check.status !== "pass" && (
-                                      <span className="text-xs text-red-600">
-                                        required
-                                      </span>
-                                    )}
+                                  <span className="font-medium">{check.name}</span>
+                                  {check.required && check.status !== "pass" && (
+                                    <span className="text-xs text-red-600">required</span>
+                                  )}
                                 </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {check.message}
-                                </p>
+                                <p className="text-xs text-muted-foreground">{check.message}</p>
                               </div>
                             </div>
                           ))}
@@ -2361,375 +1902,409 @@ export function StudyPipelinesSection({
                   </Collapsible>
                 ) : null}
               </div>
+            )}
 
-              {/* Metadata Validation */}
-              {(loadingMetadata || metadataValidation) && (
-                <div className="py-3 border-b">
-                  {loadingMetadata ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Checking study metadata...
-                    </div>
-                  ) : metadataValidation ? (
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        {metadataValidation.valid ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                        ) : metadataValidation.issues.some(
-                            (i) => i.severity === "error"
-                          ) ? (
-                          <XCircle className="h-4 w-4 text-red-600" />
-                        ) : (
-                          <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                        )}
-                        <span className="text-sm font-medium">
-                          Study Metadata
+            {/* Data Flow (collapsible) */}
+            {pipelineDefinition && pipelineDefinition.inputs.length > 0 && (
+              <div className="rounded-lg border p-4">
+                <Collapsible open={showDataFlow} onOpenChange={setShowDataFlow}>
+                  <CollapsibleTrigger asChild>
+                    <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-1 -m-1">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium">Data Integration</span>
+                        <span className="text-xs text-muted-foreground">
+                          {pipelineDefinition.inputs.length} inputs, {pipelineDefinition.outputs.length} outputs
                         </span>
-                        {metadataValidation.metadata.platform && (
-                          <span className="text-xs text-muted-foreground">
-                            Platform: {metadataValidation.metadata.platform}
-                          </span>
-                        )}
                       </div>
-                      {metadataValidation.issues.length > 0 && (
-                        <div className="space-y-1 ml-6">
-                          {metadataValidation.issues.map((issue, i) => (
-                            <div
-                              key={i}
-                              className={`text-sm flex items-center gap-2 ${
-                                issue.severity === "error"
-                                  ? "text-red-600"
-                                  : "text-yellow-600"
-                              }`}
-                            >
-                              {issue.severity === "error" ? (
-                                <XCircle className="h-3 w-3" />
-                              ) : (
-                                <AlertTriangle className="h-3 w-3" />
-                              )}
-                              <span>{issue.message}</span>
-                              {issue.fixUrl && (
-                                <Link
-                                  href={issue.fixUrl}
-                                  className="text-primary hover:underline inline-flex items-center gap-0.5"
-                                >
-                                  Fix <ExternalLink className="h-3 w-3" />
-                                </Link>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              {isSubmgDialog && (
-                <div className="py-3 border-b">
-                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                    <p className="text-sm font-medium">SubMG Submission Scope</p>
-                    <p
-                      className={`text-xs ${
-                        enaSubmissionServer?.isTestMode
-                          ? "text-amber-700"
-                          : enaSubmissionServer
-                            ? "text-blue-700"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {enaSubmissionServer
-                        ? `Current ENA target (Admin > ENA): ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - this run will be a test submission." : ""}`
-                        : "Current ENA target: loading from Admin > ENA settings..."}
-                    </p>
-                    {loadingMetadata ? (
-                      <p className="text-xs text-muted-foreground">
-                        Evaluating selected samples...
-                      </p>
-                    ) : submgCoverage ? (
-                      <>
-                        <p
-                          className={`text-xs ${
-                            submgCoverage.blocking
-                              ? "text-amber-700"
-                              : "text-green-700"
-                          }`}
-                        >
-                          {submgCoverage.summary}
-                        </p>
-                        {submgCoverage.missingRequired.length > 0 && (
-                          <p className="text-xs text-destructive">
-                            Missing required: {submgMissingRequiredLabels.join(", ")}
-                          </p>
-                        )}
-                        {submgCoverage.studyAccessionMissing && (
-                          <p className="text-xs text-amber-700">
-                            Study accession comes from ENA Registration in this
-                            study&apos;s Publishing section (Test Server or Production).
-                          </p>
-                        )}
-                        <div className="space-y-1">
-                          {submgCoverage.checks.map((check) => {
-                            const preview = formatSamplePreview(
-                              check.missingSampleIds,
-                              new Map(
-                                samplesWithAssemblySelection.map((sample) => [
-                                  sample.id,
-                                  sample,
-                                ])
-                              )
-                            );
-                            return (
-                              <p key={check.id} className="text-xs text-muted-foreground">
-                                {check.label}: {check.available}/{check.total} selected
-                                {preview ? ` • missing ${preview}` : ""}
-                                {check.missingDetail ? ` • fields: ${check.missingDetail}` : ""}
-                              </p>
-                            );
-                          })}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {submgCoverage.binsSummary}
-                        </p>
-                        {submgCoverage.binsHint && (
-                          <p className="text-xs text-amber-700">
-                            {submgCoverage.binsHint}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                          Tip: Deselect samples with missing required inputs, or generate assemblies/bins first with the MAG pipeline.
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Unable to evaluate SubMG coverage yet.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Data Flow - What goes in/out */}
-              {pipelineDefinition && pipelineDefinition.inputs.length > 0 && (
-                <div className="py-3 border-b">
-                  <Collapsible open={showDataFlow} onOpenChange={setShowDataFlow}>
-                    <CollapsibleTrigger asChild>
-                      <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-2 -m-2">
-                        <div className="flex items-center gap-2">
-                          <Layers className="h-4 w-4 text-primary" />
-                          <span className="text-sm font-medium">
-                            Data Integration
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {pipelineDefinition.inputs.length} inputs, {pipelineDefinition.outputs.length} outputs
-                          </span>
-                        </div>
-                        <ChevronDown
-                          className={`h-4 w-4 transition-transform ${
-                            showDataFlow ? "rotate-180" : ""
-                          }`}
-                        />
-                      </button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-3">
-                      <PipelineDataFlowSummary
-                        inputs={pipelineDefinition.inputs}
-                        outputs={pipelineDefinition.outputs}
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${
+                          showDataFlow ? "rotate-180" : ""
+                        }`}
                       />
-                    </CollapsibleContent>
-                  </Collapsible>
-                </div>
-              )}
-
-              {/* Sample Selection */}
-              <div className="py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <Label>
-                    {isSubmgDialog
-                      ? `Samples to Submit (${selectedSamples.size} selected)`
-                      : `Samples (${selectedSamples.size} selected)`}
-                  </Label>
-                  <div className="flex gap-2 text-xs">
-                    <button
-                      className="text-primary hover:underline"
-                      onClick={selectAllSamples}
-                    >
-                      Select All
                     </button>
-                    <span className="text-muted-foreground">|</span>
-                    <button
-                      className="text-primary hover:underline"
-                      onClick={deselectAllSamples}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-
-                {isSubmgDialog && (
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Select which samples to include in this SubMG submission.
-                    Samples missing required inputs must be deselected or completed first.
-                  </p>
-                )}
-
-                <div className="max-h-48 overflow-y-auto border rounded-lg p-2 space-y-1">
-                  {samplesWithReads.map((sample) => (
-                    <div
-                      key={sample.id}
-                      className="flex items-center gap-2 p-2 rounded hover:bg-muted/50"
-                    >
-                      <Checkbox
-                        id={`sample-${sample.id}`}
-                        checked={selectedSamples.has(sample.id)}
-                        onCheckedChange={() => toggleSample(sample.id)}
-                      />
-                      <Label
-                        htmlFor={`sample-${sample.id}`}
-                        className="flex-1 cursor-pointer"
-                      >
-                        <div className="flex flex-col">
-                          <span>{sample.sampleId}</span>
-                          {isSubmgDialog &&
-                            submgCoverage?.sampleMissingRequired[sample.id] &&
-                            submgCoverage.sampleMissingRequired[sample.id].length > 0 && (
-                              <span className="text-[11px] text-destructive">
-                                Missing:{" "}
-                                {formatSampleMissingRequiredLabels(
-                                  submgCoverage.sampleMissingRequired[sample.id],
-                                  submgCoverage.sampleMissingMetadataFields[sample.id] || []
-                                ).join(", ")}
-                              </span>
-                            )}
-                        </div>
-                      </Label>
-                      <span className="text-xs text-muted-foreground">
-                        {(sample.reads ?? []).filter((r) => r.file1 && r.file2).length}{" "}
-                        read pair(s)
-                      </span>
-                    </div>
-                  ))}
-
-                  {samplesWithReads.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No samples with paired reads
-                    </p>
-                  )}
-                </div>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    <PipelineDataFlowSummary
+                      inputs={pipelineDefinition.inputs}
+                      outputs={pipelineDefinition.outputs}
+                    />
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
+            )}
+          </CardContent>
+        </Card>
 
-              {/* Configuration */}
-              {selectedPipeline &&
-                Object.keys(selectedPipeline.configSchema.properties).length >
-                  0 && (
-                  <div className="border-t pt-4">
-                    <Label className="mb-3 block">Configuration</Label>
-                    <div className="space-y-3">
-                      {Object.entries(
-                        selectedPipeline.configSchema.properties
-                      ).map(([key, schema]) => {
-                        if (schema.type === "boolean") {
+        {/* --- Right column --- */}
+        <div className="space-y-6">
+          {/* Readiness card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>{selectedPipeline?.name || "Pipeline"}</CardTitle>
+              <CardDescription>
+                {selectedPipeline?.description || "Select a pipeline to review readiness."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {readinessIssues.length === 0 ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
+                  <div className="flex items-center gap-2 font-medium">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Ready to run
+                  </div>
+                  <p className="mt-1 text-emerald-800">
+                    {selectedSamples.size} selected sample
+                    {selectedSamples.size === 1 ? "" : "s"} meet the current input
+                    requirements.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+                  <div className="flex items-center gap-2 font-medium">
+                    <AlertCircle className="h-4 w-4" />
+                    Action required
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {readinessIssues.map((issue) => (
+                      <div key={issue}>{issue}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Button
+                className="w-full"
+                disabled={
+                  !selectedPipeline ||
+                  readinessIssues.length > 0 ||
+                  startingPipelineId !== null ||
+                  loadingPrereqs ||
+                  loadingMetadata
+                }
+                onClick={() => void handleStartPipeline()}
+              >
+                {startingPipelineId === selectedPipeline?.pipelineId ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="mr-2 h-4 w-4" />
+                )}
+                Start Pipeline
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Recent Runs */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Runs</CardTitle>
+              <CardDescription>
+                {selectedPipeline
+                  ? `${selectedPipeline.name} runs for this study.`
+                  : "Study-scoped runs for this study."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {visibleRuns.length === 0 ? (
+                <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                  No runs started for this pipeline yet.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Run
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Pipeline
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Status
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Details
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Created
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Started
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Completed
+                          </th>
+                          <th className="w-[56px] px-3 py-2 text-right font-medium text-muted-foreground">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {visibleRuns.map((run) => (
+                          <tr
+                            key={run.id}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => (window.location.href = `/analysis/${run.id}`)}
+                          >
+                            <td className="px-3 py-2 align-top">
+                              <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
+                                {run.runNumber}
+                              </code>
+                            </td>
+                            <td className="px-3 py-2 align-top font-medium">
+                              {run.pipelineName}
+                            </td>
+                            <td className="px-3 py-2 align-top">{getStatusBadge(run.status)}</td>
+                            <td className="max-w-[320px] px-3 py-2 align-top text-xs text-muted-foreground">
+                              {getRunDetails(run)}
+                            </td>
+                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                              {formatDateTime(run.createdAt)}
+                            </td>
+                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                              {formatDateTime(run.startedAt)}
+                            </td>
+                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                              {formatDateTime(run.completedAt)}
+                            </td>
+                            <td className="px-3 py-2 align-top text-right">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label={`Actions for ${run.runNumber}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    disabled={run.status === "running" || deletingRun}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      setDeleteRunError(null);
+                                      setDeleteTarget(run);
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete run
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Assembly Selection */}
+          {samplesWithAssemblySelection.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Selected Assembly Per Sample</CardTitle>
+                <CardDescription>
+                  Choose the assembly marked as final for each sample. Automatic mode
+                  always uses the newest available assembly.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Sample
+                          </th>
+                          <th className="w-[320px] px-3 py-2 text-left font-medium text-muted-foreground">
+                            Final Assembly
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                            Current Final Selection
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {samplesWithAssemblySelection.map((sample) => {
+                          const availableAssemblies = getAvailableAssemblies(sample);
+                          const activeSelection = resolveAssemblySelection(sample, {
+                            strictPreferred: true,
+                          });
+                          const selectedAssembly = activeSelection.assembly;
+                          const hasExplicitSelection =
+                            Boolean(sample.preferredAssemblyId) &&
+                            availableAssemblies.some(
+                              (assembly) => assembly.id === sample.preferredAssemblyId
+                            );
+                          const stalePreferredValue =
+                            sample.preferredAssemblyId && !hasExplicitSelection
+                              ? `__missing__:${sample.preferredAssemblyId}`
+                              : null;
+                          const currentSelectValue =
+                            stalePreferredValue ||
+                            (hasExplicitSelection
+                              ? (sample.preferredAssemblyId as string)
+                              : AUTO_ASSEMBLY_SELECTION);
+
                           return (
-                            <div key={key} className="flex items-start gap-2">
-                              <Checkbox
-                                id={`config-${key}`}
-                                checked={localConfig[key] as boolean}
-                                onCheckedChange={(checked) =>
-                                  setLocalConfig((prev) => ({
-                                    ...prev,
-                                    [key]: checked,
-                                  }))
-                                }
-                              />
-                              <div className="grid gap-1 leading-none">
-                                <Label
-                                  htmlFor={`config-${key}`}
-                                  className="text-sm"
+                            <tr key={sample.id}>
+                              <td className="px-3 py-2 align-top">
+                                <div className="font-medium text-sm">{sample.sampleId}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {availableAssemblies.length} assembly
+                                  {availableAssemblies.length === 1 ? "" : "ies"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <Select
+                                  value={currentSelectValue}
+                                  onValueChange={(value) => {
+                                    if (value.startsWith("__missing__:")) return;
+                                    void handlePreferredAssemblyChange(sample.id, value);
+                                  }}
+                                  disabled={
+                                    (availableAssemblies.length === 0 && !stalePreferredValue) ||
+                                    Boolean(assemblySelectionSaving[sample.id])
+                                  }
                                 >
-                                  {schema.title}
-                                </Label>
-                                {schema.description && (
-                                  <p className="text-xs text-muted-foreground">
-                                    {schema.description}
+                                  <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Select final assembly" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
+                                      Automatic (latest available assembly)
+                                    </SelectItem>
+                                    {stalePreferredValue && (
+                                      <SelectItem value={stalePreferredValue}>
+                                        Unavailable preferred assembly (choose another)
+                                      </SelectItem>
+                                    )}
+                                    {availableAssemblies.map((assembly) => {
+                                      const runNumber =
+                                        assembly.createdByPipelineRun?.runNumber || "manual";
+                                      const fileName = getFileName(assembly.assemblyFile);
+                                      return (
+                                        <SelectItem key={assembly.id} value={assembly.id}>
+                                          {runNumber} - {fileName}
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectContent>
+                                </Select>
+                                {activeSelection.preferredMissing && (
+                                  <p className="text-xs text-destructive mt-1">
+                                    Previously selected assembly is no longer available. Pick a new
+                                    final assembly.
                                   </p>
                                 )}
-                              </div>
-                            </div>
+                              </td>
+                              <td className="px-3 py-2 align-top text-xs">
+                                {selectedAssembly ? (
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-foreground">
+                                      {activeSelection.source === "preferred"
+                                        ? "Marked as final"
+                                        : "Automatic selection"}
+                                    </p>
+                                    <p className="text-muted-foreground">
+                                      Run{" "}
+                                      {selectedAssembly.createdByPipelineRun?.runNumber || "manual"}
+                                      {selectedAssembly.createdByPipelineRun?.createdAt
+                                        ? ` - ${formatDateTime(String(selectedAssembly.createdByPipelineRun.createdAt))}`
+                                        : ""}
+                                    </p>
+                                    <p className="text-muted-foreground truncate max-w-[360px]">
+                                      {selectedAssembly.assemblyFile}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <span className="text-destructive">No usable assembly selected</span>
+                                )}
+                              </td>
+                            </tr>
                           );
-                        }
-
-                        return (
-                          <div key={key} className="grid gap-1">
-                            <Label
-                              htmlFor={`config-${key}`}
-                              className="text-sm"
-                            >
-                              {schema.title}
-                            </Label>
-                            <input
-                              id={`config-${key}`}
-                              type={schema.type === "number" ? "number" : "text"}
-                              value={String(localConfig[key] ?? "")}
-                              onChange={(e) =>
-                                setLocalConfig((prev) => ({
-                                  ...prev,
-                                  [key]:
-                                    schema.type === "number"
-                                      ? Number(e.target.value)
-                                      : e.target.value,
-                                }))
-                              }
-                              className="w-full px-3 py-2 border rounded-md bg-background text-sm"
-                            />
-                            {schema.description && (
-                              <p className="text-xs text-muted-foreground">
-                                {schema.description}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {assemblySelectionError && (
+                  <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {assemblySelectionError}
                   </div>
                 )}
-            </>
+                {samplesWithAssemblies.length === 0 && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No assemblies found yet. Run MAG first to generate assemblies.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           )}
-          </div>
+        </div>
+      </div>
+
+      {/* Delete Run Dialog */}
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteRunError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete run {deleteTarget?.runNumber}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the run entry, its folder, and related
+              records (steps, events, artifacts, assemblies, and bins). This action
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteRunError ? (
+            <p className="text-sm text-destructive">{deleteRunError}</p>
+          ) : null}
 
           <DialogFooter>
-            {runResult ? (
-              <Button onClick={() => setRunDialogOpen(false)}>Close</Button>
-            ) : (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => setRunDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleStartRun}
-                  disabled={
-                    running ||
-                    selectedSamples.size === 0 ||
-                    loadingPrereqs ||
-                    loadingMetadata ||
-                    (prerequisites !== null && !prerequisites.requiredPassed) ||
-                    hasBlockingMetadataErrors
-                  }
-                >
-                  {running ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Start Pipeline
-                </Button>
-              </>
-            )}
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteRunError(null);
+              }}
+              disabled={deletingRun}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteRun()}
+              disabled={deletingRun}
+            >
+              {deletingRun ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete Run
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
