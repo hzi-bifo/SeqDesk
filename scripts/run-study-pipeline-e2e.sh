@@ -241,6 +241,8 @@ conda run -n "$ENV_NAME" nextflow run nf-core/mag \
   -profile conda \
   --input "$MAG_SAMPLESHEET" \
   --outdir "$MAG_OUT" \
+  --max_cpus 4 \
+  --max_memory 16.GB \
   --skip_spades \
   --skip_prokka \
   --skip_concoct \
