@@ -187,6 +187,154 @@ describe("GET /api/pipelines/runs/[id]", () => {
     expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 
+  it("allows FACILITY_ADMIN to see any run regardless of ownership", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "unknown-pipeline",
+      targetType: "study",
+      inputSampleIds: null,
+      config: null,
+      results: null,
+      runFolder: null,
+      queueJobId: null,
+      outputPath: null,
+      errorPath: null,
+      status: "completed",
+      order: null,
+      study: {
+        id: "study-1",
+        title: "Study",
+        userId: "other-user",
+        samples: [],
+      },
+      user: null,
+      steps: [],
+      assembliesCreated: [],
+      binsCreated: [],
+      artifacts: [],
+      events: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.run.pipelineName).toBe("unknown-pipeline"); // fallback
+    expect(body.run.config).toBeNull();
+    expect(body.run.results).toBeNull();
+    expect(body.run.inputSampleIds).toBeNull();
+  });
+
+  it("includes study samples for study-targeted runs", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      targetType: "study",
+      inputSampleIds: null,
+      config: null,
+      results: null,
+      runFolder: null,
+      queueJobId: null,
+      outputPath: null,
+      errorPath: null,
+      status: "completed",
+      order: null,
+      study: {
+        id: "study-1",
+        title: "Study",
+        userId: "user-1",
+        samples: [
+          {
+            id: "s-db-1",
+            sampleId: "ST1",
+            reads: [
+              { id: "rd-1", file1: "/reads/ST1_R1.fastq", file2: null, checksum1: "x", checksum2: null },
+            ],
+          },
+        ],
+      },
+      user: null,
+      steps: [],
+      assembliesCreated: [],
+      binsCreated: [],
+      artifacts: [],
+      events: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.run.inputFiles).toEqual([
+      expect.objectContaining({
+        id: "rd-1_r1",
+        sampleId: "ST1",
+      }),
+    ]);
+  });
+
+  it("detects SLURM log files for numeric queue job IDs", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      targetType: "order",
+      inputSampleIds: null,
+      config: null,
+      results: null,
+      runFolder: "/runs/run-1",
+      queueJobId: "54321",
+      outputPath: null,
+      errorPath: null,
+      status: "completed",
+      order: {
+        id: "order-1",
+        name: "Order",
+        orderNumber: "ORD-001",
+        userId: "user-1",
+        samples: [],
+      },
+      study: null,
+      user: null,
+      steps: [],
+      assembliesCreated: [],
+      binsCreated: [],
+      artifacts: [],
+      events: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // Both log files should be detected since fs.access returns success
+    expect(body.run.detectedLogFiles.length).toBeGreaterThan(0);
+    expect(body.run.executionCommands.launchCommand).toContain("sbatch");
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    mocks.db.pipelineRun.findUnique.mockRejectedValue(new Error("DB crash"));
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Failed to fetch run details" });
+  });
+
   it("returns enriched run details and filters input files to selected samples", async () => {
     const response = await GET(
       new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
@@ -348,6 +496,112 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       }),
     });
     expect(await response.json()).toEqual({ success: true });
+  });
+
+  it("returns 404 when run is not found for DELETE", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(null);
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Run not found" });
+  });
+
+  it("cancels SLURM jobs via scancel", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      status: "running",
+      queueJobId: "12345",
+    });
+    const mockStderr = { on: vi.fn() };
+    const mockProc = {
+      stderr: mockStderr,
+      on: vi.fn(),
+    };
+    mocks.spawn.mockReturnValue(mockProc);
+    // Simulate spawn close with code 0
+    mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+      if (event === "close") {
+        cb(0);
+      }
+      return mockProc;
+    });
+    mockStderr.on.mockReturnValue(mockStderr);
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.spawn).toHaveBeenCalledWith("scancel", ["12345"]);
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        status: "cancelled",
+      }),
+    });
+  });
+
+  it("force-stops when local process kill throws non-ESRCH error", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      status: "running",
+      queueJobId: "local-999",
+    });
+    processKill.mockImplementation(() => {
+      const err = new Error("Process group failed") as NodeJS.ErrnoException;
+      err.code = "EINVAL";
+      throw err;
+    });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    // EINVAL causes fallback to single-process kill, which also throws EINVAL
+    // Since that also throws, it force-stops
+    expect(response.status).toBe(200);
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        status: "failed",
+      }),
+    });
+  });
+
+  it("treats pending runs as cancellable", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      status: "pending",
+      queueJobId: null,
+    });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    // No queueJobId and status is pending (not running), so normal cancel
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        status: "cancelled",
+      }),
+    });
   });
 
   it("force-stops stuck running jobs without queue IDs", async () => {

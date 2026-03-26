@@ -400,4 +400,221 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     const body = await response.json();
     expect(body.error).toContain("Unsupported Nextflow profile");
   });
+
+  it("submits to SLURM via sbatch and returns queued status", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    // sbatch available
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    // sbatch spawn returns job ID
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "98765\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.status).toBe("queued");
+    expect(body.jobId).toBe("98765");
+  });
+
+  it("returns 500 when sbatch fails with non-zero exit", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stderr.emit("data", "sbatch: error: invalid partition");
+        child.emit("close", 1);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toContain("sbatch exited with code 1");
+  });
+
+  it("returns 500 when sbatch command is not found", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+    });
+    // All commands fail including sbatch
+    mocks.exec.mockImplementation(
+      (
+        _cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        callback(new Error("not found"), null);
+      }
+    );
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toContain("sbatch command not found");
+  });
+
+  it("local execution: handles exit code non-zero and marks run as failed", async () => {
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", 1));
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.status).toBe("running");
+
+    // Wait for the async close handler
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // finalizeLocalRun should have been called with exit code 1
+    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    const failedUpdate = updateCalls.find(
+      (call: { 0: { data: { status: string } } }) => call[0].data.status === "failed"
+    );
+    expect(failedUpdate).toBeDefined();
+    expect(failedUpdate[0].data.errorTail).toContain("exited with code 1");
+  });
+
+  it("local execution: process error event triggers finalizeLocalRun", async () => {
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("error", new Error("spawn ENOENT")));
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+
+    // Wait for the async error handler
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    const failedUpdate = updateCalls.find(
+      (call: { 0: { data: { status: string } } }) => call[0].data.status === "failed"
+    );
+    expect(failedUpdate).toBeDefined();
+  });
+
+  it("selects samples from inputSampleIds field on the run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      inputSampleIds: JSON.stringify(["s1", "s2"]),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    // prepareGenericRun should receive the selected sample IDs in target
+    expect(mocks.prepareGenericRun).toHaveBeenCalledTimes(1);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.target.sampleIds).toEqual(["s1", "s2"]);
+  });
+
+  it("selects samples from request body sampleIds", async () => {
+    const response = await POST(
+      makeRequest({ sampleIds: ["s1"] }),
+      { params: baseParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.prepareGenericRun).toHaveBeenCalledTimes(1);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.target.sampleIds).toEqual(["s1"]);
+  });
+
+  it("resolves conda binary via resolveCondaBin", async () => {
+    mocks.resolveCondaBin.mockResolvedValue("/custom/conda/bin/conda");
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveCondaBin).toHaveBeenCalledWith("/opt/conda");
+  });
+
+  it("constructs effective profile with conda appended", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      nextflowProfile: "test",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    // "test" should get "conda" appended -> "test,conda"
+    expect(prepArgs.executionSettings.nextflowProfile).toBe("test,conda");
+  });
+
+  it("finalizeLocalRun with exit code 0 marks run as completed and triggers output processing", async () => {
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+
+    // Wait for the async close handler
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    const completedUpdate = updateCalls.find(
+      (call: { 0: { data: { status: string } } }) => call[0].data.status === "completed"
+    );
+    expect(completedUpdate).toBeDefined();
+    expect(completedUpdate[0].data.progress).toBe(100);
+    expect(completedUpdate[0].data.currentStep).toBe("Completed");
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith("run-1", "fastqc");
+  });
 });

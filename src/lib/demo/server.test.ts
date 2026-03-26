@@ -95,6 +95,14 @@ import {
   authorizeDemoWorkspaceToken,
   bootstrapDemoWorkspace,
   cleanupExpiredDemoWorkspaces,
+  getDemoWorkspaceCookieName,
+  getDemoCookieOptions,
+  getAuthSessionCookieName,
+  getAuthSessionCookieOptions,
+  isDemoSession,
+  getDemoExperience,
+  isResearcherDemoSession,
+  isFacilityDemoSession,
   resetDemoWorkspace,
 } from "./server";
 
@@ -368,5 +376,191 @@ describe("demo workspace server helpers", () => {
         },
       },
     });
+  });
+
+  it("cleanupExpiredDemoWorkspaces returns zero when no expired workspaces found", async () => {
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
+
+    const result = await cleanupExpiredDemoWorkspaces();
+
+    expect(result).toEqual({ deletedWorkspaces: 0 });
+    expect(mocks.db.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("authorizeDemoWorkspaceToken returns null for null token", async () => {
+    const result = await authorizeDemoWorkspaceToken(null);
+    expect(result).toBeNull();
+  });
+
+  it("authorizeDemoWorkspaceToken returns null for empty string token", async () => {
+    const result = await authorizeDemoWorkspaceToken("");
+    expect(result).toBeNull();
+  });
+
+  it("authorizeDemoWorkspaceToken returns null for non-existent workspace", async () => {
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
+
+    const result = await authorizeDemoWorkspaceToken("nonexistent-token");
+    expect(result).toBeNull();
+  });
+
+  it("authorizeDemoWorkspaceToken destroys expired workspace and returns null", async () => {
+    const expiredWorkspace = {
+      id: "workspace-expired",
+      tokenHash: "hash",
+      userId: "user-expired",
+      adminUserId: "admin-expired",
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2020-01-01T00:00:00Z"),
+      user: {
+        id: "user-expired",
+        email: "demo@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-expired",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue(expiredWorkspace);
+    mocks.db.study.findMany.mockResolvedValue([]);
+
+    const result = await authorizeDemoWorkspaceToken("expired-token");
+    expect(result).toBeNull();
+  });
+
+  it("bootstrapDemoWorkspace creates a new workspace when no token is provided", async () => {
+    const result = await bootstrapDemoWorkspace(undefined, "facility");
+
+    expect(result.created).toBe(true);
+    expect(result.workspaceId).toBe("workspace-1");
+    expect(result.userId).toBe("admin-1");
+  });
+
+  it("resetDemoWorkspace creates new workspace even without a token", async () => {
+    const result = await resetDemoWorkspace(undefined, "researcher");
+
+    expect(result.created).toBe(true);
+    expect(result.userId).toBe("user-1");
+  });
+});
+
+describe("isDemoSession", () => {
+  it("returns false for null session", () => {
+    expect(isDemoSession(null)).toBe(false);
+  });
+
+  it("returns false for undefined session", () => {
+    expect(isDemoSession(undefined)).toBe(false);
+  });
+
+  it("returns false for non-demo user", () => {
+    expect(
+      isDemoSession({ user: { isDemo: false } } as never)
+    ).toBe(false);
+  });
+
+  it("returns true for demo user", () => {
+    expect(
+      isDemoSession({ user: { isDemo: true } } as never)
+    ).toBe(true);
+  });
+});
+
+describe("getDemoExperience", () => {
+  it("returns null for non-demo session", () => {
+    expect(getDemoExperience({ user: { isDemo: false } } as never)).toBeNull();
+  });
+
+  it("returns null for null session", () => {
+    expect(getDemoExperience(null)).toBeNull();
+  });
+
+  it("returns researcher for demo session with researcher experience", () => {
+    expect(
+      getDemoExperience({
+        user: { isDemo: true, demoExperience: "researcher" },
+      } as never)
+    ).toBe("researcher");
+  });
+
+  it("returns facility for demo session with facility experience", () => {
+    expect(
+      getDemoExperience({
+        user: { isDemo: true, demoExperience: "facility" },
+      } as never)
+    ).toBe("facility");
+  });
+});
+
+describe("isResearcherDemoSession", () => {
+  it("returns true for researcher demo session", () => {
+    expect(
+      isResearcherDemoSession({
+        user: { isDemo: true, demoExperience: "researcher" },
+      } as never)
+    ).toBe(true);
+  });
+
+  it("returns false for facility demo session", () => {
+    expect(
+      isResearcherDemoSession({
+        user: { isDemo: true, demoExperience: "facility" },
+      } as never)
+    ).toBe(false);
+  });
+});
+
+describe("isFacilityDemoSession", () => {
+  it("returns true for facility demo session", () => {
+    expect(
+      isFacilityDemoSession({
+        user: { isDemo: true, demoExperience: "facility" },
+      } as never)
+    ).toBe(true);
+  });
+
+  it("returns false for researcher demo session", () => {
+    expect(
+      isFacilityDemoSession({
+        user: { isDemo: true, demoExperience: "researcher" },
+      } as never)
+    ).toBe(false);
+  });
+});
+
+describe("cookie helpers", () => {
+  it("getDemoWorkspaceCookieName returns the workspace cookie name", () => {
+    expect(getDemoWorkspaceCookieName()).toBe("seqdesk-demo-workspace");
+  });
+
+  it("getDemoCookieOptions returns httpOnly lax cookie", () => {
+    const options = getDemoCookieOptions();
+    expect(options.httpOnly).toBe(true);
+    expect(options.sameSite).toBe("lax");
+    expect(options.path).toBe("/");
+    expect(options.expires).toBeInstanceOf(Date);
+    expect(options.expires.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("getAuthSessionCookieName returns non-secure name in dev", () => {
+    const name = getAuthSessionCookieName();
+    expect(name).toBe("next-auth.session-token");
+  });
+
+  it("getAuthSessionCookieOptions returns options with expiry", () => {
+    const expiresAt = new Date("2099-01-01");
+    const options = getAuthSessionCookieOptions(expiresAt);
+    expect(options.httpOnly).toBe(true);
+    expect(options.sameSite).toBe("lax");
+    expect(options.expires).toBe(expiresAt);
   });
 });

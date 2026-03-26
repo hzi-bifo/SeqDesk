@@ -121,4 +121,201 @@ describe("POST /api/register", () => {
     const data = await response.json();
     expect(data.error).toBe("Admin registration requires an invite code");
   });
+
+  it("creates admin with valid invite code and returns 201", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "VALIDCODE",
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 86400000), // tomorrow
+      email: null,
+    });
+    mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        user: {
+          create: vi.fn().mockResolvedValue({
+            id: "admin-1",
+            email: "admin@example.com",
+            firstName: "Admin",
+            lastName: "User",
+            role: "FACILITY_ADMIN",
+          }),
+        },
+        adminInvite: { update: vi.fn() },
+      };
+      return fn(tx);
+    });
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        email: "admin@example.com",
+        role: "FACILITY_ADMIN",
+        inviteCode: "validcode",
+        facilityName: "Core Lab",
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const data = await response.json();
+    expect(data.user.role).toBe("FACILITY_ADMIN");
+  });
+
+  it("returns 400 for invalid invite code", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(null);
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        role: "FACILITY_ADMIN",
+        inviteCode: "BADCODE",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Invalid invite code");
+  });
+
+  it("returns 400 for already-used invite", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "USEDCODE",
+      usedAt: new Date(),
+      expiresAt: new Date(Date.now() + 86400000),
+      email: null,
+    });
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        role: "FACILITY_ADMIN",
+        inviteCode: "USEDCODE",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("This invite has already been used");
+  });
+
+  it("returns 400 for expired invite", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "EXPIRED",
+      usedAt: null,
+      expiresAt: new Date(Date.now() - 86400000), // yesterday
+      email: null,
+    });
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        role: "FACILITY_ADMIN",
+        inviteCode: "EXPIRED",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("This invite has expired");
+  });
+
+  it("returns 400 when invite email restriction does not match", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "RESTRICTED",
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 86400000),
+      email: "specific@example.com",
+    });
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        email: "other@example.com",
+        role: "FACILITY_ADMIN",
+        inviteCode: "RESTRICTED",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("This invite is for a different email address");
+  });
+
+  it("returns 400 for non-existent department", async () => {
+    mocks.db.department.findUnique.mockResolvedValue(null);
+
+    const response = await POST(
+      makeRequest({ ...validBody, departmentId: "bad-dept" })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Invalid department selected");
+  });
+
+  it("returns 400 for inactive department", async () => {
+    mocks.db.department.findUnique.mockResolvedValue({
+      id: "dept-1",
+      isActive: false,
+    });
+
+    const response = await POST(
+      makeRequest({ ...validBody, departmentId: "dept-1" })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Invalid department selected");
+  });
+
+  it("creates researcher with valid department", async () => {
+    mocks.db.department.findUnique.mockResolvedValue({
+      id: "dept-1",
+      isActive: true,
+    });
+
+    const response = await POST(
+      makeRequest({ ...validBody, departmentId: "dept-1", institution: "HZI" })
+    );
+
+    expect(response.status).toBe(201);
+    const data = await response.json();
+    expect(data.user.email).toBe("new@example.com");
+  });
+
+  it("returns 400 when email domain is restricted", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: { "account-validation": true },
+        globalDisabled: false,
+      }),
+      extraSettings: JSON.stringify({
+        accountValidationSettings: JSON.stringify({
+          allowedDomains: ["allowed.org"],
+          enforceValidation: true,
+        }),
+      }),
+    });
+
+    const response = await POST(
+      makeRequest({ ...validBody, email: "user@blocked.com" })
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.code).toBe("INVALID_EMAIL_DOMAIN");
+  });
+
+  it("returns 500 on unexpected error", async () => {
+    mocks.db.$transaction.mockRejectedValue(new Error("DB crash"));
+
+    const response = await POST(makeRequest(validBody));
+
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Something went wrong");
+  });
 });

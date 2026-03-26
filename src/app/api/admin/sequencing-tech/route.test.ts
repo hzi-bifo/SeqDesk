@@ -437,6 +437,185 @@ describe("POST /api/admin/sequencing-tech", () => {
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
   });
 
+  it("returns 500 when POST throws unexpectedly", async () => {
+    mocks.getServerSession.mockRejectedValue(new Error("session crash"));
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/sequencing-tech",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "reset" }),
+      }
+    );
+
+    const response = await POST(request);
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Failed to process");
+  });
+
+  it("check-updates updates syncUrl even when versions match if syncUrl changed", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    const localConfig = {
+      ...defaultConfig,
+      syncUrl: "https://old-server.com/api/tech",
+    };
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        sequencingTechConfig: JSON.stringify(localConfig),
+      }),
+    });
+    mocks.parseTechConfig.mockReturnValue(localConfig);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        technologies: [{ id: "nanopore", name: "Nanopore", available: true }],
+        devices: [],
+        flowCells: [],
+        kits: [],
+        software: [],
+        barcodeSchemes: [],
+        barcodeSets: [],
+        version: 1,
+      }),
+    });
+    mocks.db.siteSettings.upsert.mockResolvedValue({});
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/sequencing-tech",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "check-updates",
+          syncUrl: "https://new-server.com/api/tech",
+        }),
+      }
+    );
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.hasUpdates).toBe(false);
+    expect(body.message).toContain("Registry source updated");
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("check-updates detects missing remote items and merges", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    const localConfig = {
+      ...defaultConfig,
+      technologies: [{ id: "nanopore", name: "Nanopore", available: true }],
+      devices: [],
+      flowCells: [],
+      kits: [],
+      software: [],
+      barcodeSchemes: [],
+      barcodeSets: [],
+    };
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        sequencingTechConfig: JSON.stringify(localConfig),
+      }),
+    });
+    mocks.parseTechConfig.mockReturnValue(localConfig);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        technologies: [
+          { id: "nanopore", name: "Nanopore", available: true },
+          { id: "illumina", name: "Illumina", available: true },
+        ],
+        devices: [{ id: "minion", name: "MinION" }],
+        flowCells: [],
+        kits: [],
+        software: [],
+        barcodeSchemes: [],
+        barcodeSets: [],
+        version: 1, // same version, but has missing items
+      }),
+    });
+    mocks.db.siteSettings.upsert.mockResolvedValue({});
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/sequencing-tech",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "check-updates" }),
+      }
+    );
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.hasUpdates).toBe(true);
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 500 when PUT throws unexpectedly", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockRejectedValue(new Error("DB down"));
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/sequencing-tech",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ config: defaultConfig }),
+      }
+    );
+
+    const response = await PUT(request);
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Failed to update config");
+  });
+
+  it("PUT saves with existing extraSettings", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({ otherKey: "preserved" }),
+    });
+    mocks.db.siteSettings.upsert.mockResolvedValue({});
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/sequencing-tech",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ config: defaultConfig }),
+      }
+    );
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    const savedExtra = JSON.parse(upsertCall.update.extraSettings);
+    expect(savedExtra.otherKey).toBe("preserved");
+    expect(savedExtra.sequencingTechConfig).toBeDefined();
+  });
+
+  it("GET handles malformed extraSettings JSON by auto-syncing", async () => {
+    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: "invalid-json{",
+    });
+    // When extraSettings is malformed, storedConfig is null, so it auto-syncs
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => defaultConfig,
+    });
+    mocks.db.siteSettings.upsert.mockResolvedValue({});
+    mocks.parseTechConfig.mockReturnValue(defaultConfig);
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    // Should attempt remote auto-sync since no stored config
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("check-updates returns error info when fetch fails", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);

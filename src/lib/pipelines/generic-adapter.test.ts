@@ -554,4 +554,497 @@ describe("generic-adapter", () => {
 
     expect(mocks.registerAdapter).not.toHaveBeenCalled();
   });
+
+  it("returns error in samplesheet when no config found", async () => {
+    const pkg = makePackageIdOnly("test");
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.generateSamplesheetFromConfig.mockResolvedValue(undefined);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.generateSamplesheet({
+      target: { type: "study", studyId: "study-1" },
+      dataBasePath: "/tmp/data",
+    });
+
+    expect(result.content).toBe("");
+    expect(result.sampleCount).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("No samplesheet configuration");
+  });
+
+  it("validates no-samples found returns invalid", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "reads",
+        scope: "sample",
+        source: "sample.reads",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("No samples found");
+  });
+
+  it("validates sample.reads with no reads assigned", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "reads",
+        scope: "sample",
+        source: "sample.reads",
+        required: true,
+        filters: { paired: false },
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Sample SAMPLE-1: No reads assigned");
+  });
+
+  it("validates sample.reads with paired filter but no paired reads", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "reads",
+        scope: "sample",
+        source: "sample.reads",
+        required: true,
+        filters: { paired: true },
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [{ file1: "/tmp/R1.fastq.gz", file2: null }],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Sample SAMPLE-1: No paired-end reads (R1+R2) found");
+  });
+
+  it("validates sample.assemblies requirement", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "assemblies",
+        scope: "sample",
+        source: "sample.assemblies",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+    mocks.resolveAssemblySelection.mockReturnValue({
+      assembly: null,
+      fallbackAssembly: null,
+      source: "none",
+      preferredMissing: false,
+    });
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Sample SAMPLE-1: Assembly file is required");
+  });
+
+  it("validates sample.assemblies with preferred assembly missing", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "assemblies",
+        scope: "sample",
+        source: "sample.assemblies",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        preferredAssemblyId: "missing-assembly-id",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+    mocks.resolveAssemblySelection.mockReturnValue({
+      assembly: null,
+      fallbackAssembly: null,
+      source: "none",
+      preferredMissing: true,
+    });
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues[0]).toContain("Preferred assembly selection is invalid");
+  });
+
+  it("validates sample.bins requirement", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "bins",
+        scope: "sample",
+        source: "sample.bins",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [{ binFile: null }],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Sample SAMPLE-1: At least one bin file is required");
+  });
+
+  it("validates sample.taxId requirement", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "taxId",
+        scope: "sample",
+        source: "sample.taxId",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        taxId: "",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Sample SAMPLE-1: taxId is required");
+  });
+
+  it("validates sample.checklistData requirement", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "checklist",
+        scope: "sample",
+        source: "sample.checklistData",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        checklistData: null,
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain(
+      "Sample SAMPLE-1: Checklist data is required and must be valid JSON"
+    );
+  });
+
+  it("validates study.studyAccessionId requirement", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "study-accession",
+        scope: "study",
+        source: "study.studyAccessionId",
+        required: true,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: null });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain("Study accession (PRJ*) is required");
+  });
+
+  it("handles custom discoverOutputs script errors gracefully", async () => {
+    const pkg = makePackageIdOnly("failing");
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.getPackageScriptPath.mockReturnValue("/tmp/discover-outputs.mjs");
+    mocks.runDiscoverOutputsScript.mockRejectedValue(new Error("Script crashed"));
+
+    const adapter = createGenericAdapter("failing");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      target: { type: "order", orderId: "order-1" },
+      samples: [],
+    });
+
+    expect(result.files).toHaveLength(0);
+    expect(result.errors).toContain("Script crashed");
+  });
+
+  it("discovers outputs with different destination types", async () => {
+    const outputs: PackageOutput[] = [
+      {
+        id: "bins",
+        scope: "sample",
+        destination: "sample_bins",
+        discovery: {
+          pattern: "bins/*.fa",
+          matchSampleBy: "parent_dir",
+        },
+      },
+      {
+        id: "report",
+        scope: "study",
+        destination: "study_report",
+        discovery: {
+          pattern: "reports/*.html",
+        },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("test", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+
+    await fs.mkdir(path.join(tempDir, "bins"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "reports"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "bins", "bin1.fa"), "bin");
+    await fs.writeFile(path.join(tempDir, "reports", "summary.html"), "report");
+
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      samples: [],
+    });
+
+    expect(result.files).toHaveLength(2);
+
+    const binFile = result.files.find((f) => f.outputId === "bins");
+    const reportFile = result.files.find((f) => f.outputId === "report");
+
+    expect(binFile?.type).toBe("bin");
+    expect(reportFile?.type).toBe("report");
+
+    expect(result.summary.binsFound).toBe(1);
+    expect(result.summary.reportsFound).toBe(1);
+  });
+
+  it("discovers outputs with path-based sample matching", async () => {
+    const outputs: PackageOutput[] = [
+      {
+        id: "artifact",
+        scope: "sample",
+        destination: "artifact",
+        discovery: {
+          pattern: "output/**/result.txt",
+          matchSampleBy: "path",
+        },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("test", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+
+    await fs.mkdir(path.join(tempDir, "output", "SAMPLE-1"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "output", "SAMPLE-1", "result.txt"), "data");
+
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      samples: [{ id: "db-s1", sampleId: "SAMPLE-1" }],
+    });
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].sampleId).toBe("db-s1");
+    expect(result.files[0].sampleName).toBe("SAMPLE-1");
+  });
+
+  it("returns empty files when output directory does not exist", async () => {
+    const outputs: PackageOutput[] = [
+      {
+        id: "missing",
+        scope: "sample",
+        destination: "artifact",
+        discovery: {
+          pattern: "nonexistent/*.txt",
+        },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("test", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: path.join(tempDir, "does-not-exist"),
+      samples: [],
+    });
+
+    expect(result.files).toHaveLength(0);
+    expect(result.summary.artifactsFound).toBe(0);
+  });
+
+  it("skips non-required inputs during validation", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "optional-reads",
+        scope: "sample",
+        source: "sample.reads",
+        required: false,
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(true);
+    expect(result.issues).toHaveLength(0);
+  });
+
+  it("validates with valid platform mapping passes", async () => {
+    const pkg = makePackageIdOnly("test", [
+      {
+        id: "sequencer",
+        scope: "order",
+        source: "order.platform",
+        required: true,
+        transform: {
+          type: "map_value",
+          strict: true,
+          mapping: {
+            illumina: "Illumina",
+            Illumina: "Illumina",
+          },
+        },
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+    mocks.resolveOrderPlatform.mockReturnValue("Illumina");
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(true);
+  });
 });

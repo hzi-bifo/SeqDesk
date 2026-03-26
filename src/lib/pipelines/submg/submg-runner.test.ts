@@ -552,6 +552,225 @@ describe("submg runner", () => {
     ]);
   });
 
+  it("returns error when pipeline run is not found", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(null);
+
+    const result = await prepareSubmgRun({
+      runId: "missing",
+      studyId: "study-1",
+      config: {},
+      executionSettings: {
+        useSlurm: false,
+        pipelineRunDir: tempDir,
+        dataBasePath: tempDir,
+      },
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Pipeline run not found");
+  });
+
+  it("returns error when study is not found", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      inputSampleIds: null,
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "Webin-12345",
+      enaPassword: "secret",
+      enaTestMode: false,
+    });
+    mocks.db.study.findUnique.mockResolvedValue(null);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "missing",
+      config: {},
+      executionSettings: {
+        useSlurm: false,
+        pipelineRunDir: tempDir,
+        dataBasePath: tempDir,
+      },
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Study not found");
+  });
+
+  it("returns error when study is missing ENA accession", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      inputSampleIds: null,
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "Webin-12345",
+      enaPassword: "secret",
+      enaTestMode: false,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: null,
+      samples: [],
+    });
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: {
+        useSlurm: false,
+        pipelineRunDir: tempDir,
+        dataBasePath: tempDir,
+      },
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain("missing ENA accession");
+  });
+
+  it("fails when ENA test mode is on but study has no test registration", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      inputSampleIds: null,
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "Webin-12345",
+      enaPassword: "secret",
+      enaTestMode: true,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123",
+      testRegisteredAt: null,
+      samples: [],
+    });
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: {
+        useSlurm: false,
+        pipelineRunDir: tempDir,
+        dataBasePath: tempDir,
+      },
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain("no ENA Test registration timestamp");
+  });
+
+  it("returns error when no samples are selected", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      inputSampleIds: JSON.stringify(["nonexistent-sample"]),
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "Webin-12345",
+      enaPassword: "secret",
+      enaTestMode: false,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123",
+      samples: [
+        { id: "sample-1", sampleId: "S1" },
+      ],
+    });
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: {
+        useSlurm: false,
+        pipelineRunDir: tempDir,
+        dataBasePath: tempDir,
+      },
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("No samples selected for SubMG submission");
+  });
+
+  it("returns errors when processSubmgRunResults finds no run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(null);
+
+    const result = await processSubmgRunResults("missing");
+
+    expect(result.errors).toContain("Run not found");
+    expect(result.samplesUpdated).toBe(0);
+  });
+
+  it("returns errors when processSubmgRunResults finds run without runFolder", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder: null,
+      study: { samples: [] },
+    });
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.errors).toContain("Run has no runFolder");
+  });
+
+  it("warns when metadata JSON is malformed", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-010");
+    await fs.mkdir(runFolder, { recursive: true });
+    await fs.writeFile(path.join(runFolder, "submg-metadata.json"), "not-valid-json");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [] },
+    });
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.warnings).toContain("Failed to parse submg-metadata.json");
+  });
+
+  it("warns when a sample alias cannot be mapped", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-011");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "biological_samples"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "biological_samples", "sample_preliminary_accessions.txt"),
+      ["sample\tbiosample\trun", "UNKNOWN-ALIAS\tSAMPLE999\tERS999"].join("\n")
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [] },
+    });
+
+    // Metadata file with no entries so no mapping can succeed
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.warnings.some((w: string) => w.includes("Could not map sample alias"))).toBe(true);
+    expect(result.samplesUpdated).toBe(0);
+  });
+
   it("warns when a read report cannot be mapped to a read record", async () => {
     const runFolder = path.join(tempDir, "SUBMG-20260303-004");
     const loggingDir = path.join(runFolder, "logging_0");

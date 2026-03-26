@@ -837,6 +837,314 @@ describe("cancelSequencingUpload", () => {
   });
 });
 
+describe("getOrderSequencingSummary", () => {
+  it("throws when order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(getOrderSequencingSummary("missing")).rejects.toThrow("Order not found");
+  });
+
+  it("handles samples with no reads gracefully", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            facilityStatus: "WAITING",
+            facilityStatusUpdatedAt: null,
+            updatedAt: new Date("2026-03-24T09:00:00.000Z"),
+            reads: [],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.summary.totalSamples).toBe(1);
+    expect(result.summary.readsLinkedSamples).toBe(0);
+    expect(result.samples[0].read).toBeNull();
+    expect(result.samples[0].hasReads).toBe(false);
+  });
+});
+
+describe("assignOrderSequencingReads additional branches", () => {
+  it("throws when order status is not manageable (e.g. PENDING)", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        status: "PENDING",
+        samples: [],
+      })
+    );
+
+    await expect(
+      assignOrderSequencingReads("order-1", [])
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+  });
+
+  it("returns error when read2 file is not found on disk", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      status: "COMPLETED",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "S1",
+          facilityStatus: "READY",
+          reads: [],
+        },
+      ],
+    });
+    mocks.files.checkFileExists
+      .mockResolvedValueOnce(true)   // read1 exists
+      .mockResolvedValueOnce(false); // read2 missing
+
+    const result = await assignOrderSequencingReads("order-1", [
+      {
+        sampleId: "sample-1",
+        read1: "manual/S1_R1.fastq.gz",
+        read2: "manual/S1_R2.fastq.gz",
+      },
+    ]);
+
+    expect(result).toEqual([
+      { sampleId: "S1", success: false, error: "Read 2 file not found" },
+    ]);
+  });
+
+  it("returns error when file path normalization throws", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      status: "COMPLETED",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "S1",
+          facilityStatus: "READY",
+          reads: [],
+        },
+      ],
+    });
+    mocks.files.hasAllowedExtension.mockReturnValue(false);
+
+    const result = await assignOrderSequencingReads("order-1", [
+      {
+        sampleId: "sample-1",
+        read1: "manual/S1_R1.txt",
+        read2: null,
+      },
+    ]);
+
+    expect(result).toEqual([
+      { sampleId: "S1", success: false, error: "File extension not allowed" },
+    ]);
+  });
+});
+
+describe("setOrderSequencingStatuses additional branches", () => {
+  it("throws when order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(
+      setOrderSequencingStatuses("missing", [])
+    ).rejects.toThrow("Order not found");
+  });
+
+  it("throws when order status is not manageable", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({ status: "PENDING" })
+    );
+    await expect(
+      setOrderSequencingStatuses("order-1", [
+        { sampleId: "s1", facilityStatus: "READY" },
+      ])
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+  });
+});
+
+describe("discoverOrderSequencingFiles additional branches", () => {
+  it("throws when order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(
+      discoverOrderSequencingFiles("missing")
+    ).rejects.toThrow("Order not found");
+  });
+
+  it("throws when order status is not manageable", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({ status: "PENDING" })
+    );
+    await expect(
+      discoverOrderSequencingFiles("order-1")
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+  });
+
+  it("reports no-match for samples with no matching files", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectory.mockResolvedValue([]);
+    mocks.files.findFilesForSample.mockReturnValue({
+      status: "none",
+      read1: null,
+      read2: null,
+      confidence: 0,
+      alternatives: [],
+    });
+
+    const result = await discoverOrderSequencingFiles("order-1");
+
+    expect(result.summary.noMatch).toBe(1);
+    expect(result.summary.autoAssigned).toBe(0);
+    expect(result.results[0].autoAssigned).toBe(false);
+  });
+
+  it("force-scans overrides existing assignments", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            facilityStatus: "READY",
+            reads: [{ id: "read-1", file1: "reads/existing.fastq.gz", file2: null }],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectory.mockResolvedValue([
+      { relativePath: "reads/S1_R1.fastq.gz", filename: "S1_R1.fastq.gz" },
+    ]);
+    mocks.files.findFilesForSample.mockReturnValue({
+      status: "partial",
+      read1: { relativePath: "reads/S1_R1.fastq.gz", filename: "S1_R1.fastq.gz" },
+      read2: null,
+      confidence: 0.8,
+      alternatives: [],
+    });
+
+    const result = await discoverOrderSequencingFiles("order-1", { force: true });
+
+    expect(mocks.files.findFilesForSample).toHaveBeenCalledTimes(1);
+    expect(result.summary.partialMatches).toBe(1);
+  });
+});
+
+describe("linkOrderSequencingArtifact additional branches", () => {
+  it("throws when order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(
+      linkOrderSequencingArtifact("missing", {
+        stage: "qc",
+        artifactType: "qc_report",
+        path: "/data/sequencing/report.html",
+      })
+    ).rejects.toThrow("Order not found");
+  });
+
+  it("links an order-level artifact when sampleId is null", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({ samples: [] })
+    );
+
+    await linkOrderSequencingArtifact("order-1", {
+      sampleId: null,
+      stage: "delivery",
+      artifactType: "delivery_report",
+      path: "/data/sequencing/delivery/report.html",
+    });
+
+    expect(mocks.db.sequencingArtifact.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sampleId: null,
+        stage: "delivery",
+        artifactType: "delivery_report",
+      }),
+    });
+  });
+});
+
+describe("createSequencingUploadSession additional branches", () => {
+  it("rejects read uploads with invalid target role", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(createOrder());
+
+    await expect(
+      createSequencingUploadSession("order-1", "user-1", {
+        targetKind: "read",
+        targetRole: "R3",
+        originalName: "reads.fastq.gz",
+        expectedSize: 42,
+      })
+    ).rejects.toThrow("Read uploads must target R1 or R2");
+  });
+
+  it("rejects read uploads with disallowed file extensions", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(createOrder());
+    mocks.files.hasAllowedExtension.mockReturnValue(false);
+
+    await expect(
+      createSequencingUploadSession("order-1", "user-1", {
+        targetKind: "read",
+        targetRole: "R1",
+        originalName: "reads.txt",
+        expectedSize: 42,
+      })
+    ).rejects.toThrow("Read uploads must use an allowed sequencing file extension");
+  });
+
+  it("creates an artifact upload session", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(createOrder());
+
+    const result = await createSequencingUploadSession("order-1", "user-1", {
+      targetKind: "artifact",
+      targetRole: "delivery",
+      originalName: "report.html",
+      expectedSize: 1024,
+    });
+
+    expect(result.uploadId).toBe("upload-1");
+    expect(mocks.db.sequencingUpload.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        targetKind: "artifact",
+      }),
+      select: { id: true, originalName: true },
+    });
+  });
+});
+
+describe("cancelSequencingUpload additional branches", () => {
+  it("throws when upload is not found", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue(null);
+    await expect(cancelSequencingUpload("order-1", "missing")).rejects.toThrow("Upload not found");
+  });
+
+  it("throws when upload orderId does not match", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "other-order",
+      tempPath: "tmp/file.part",
+      finalPath: null,
+      status: "UPLOADING",
+    });
+    await expect(cancelSequencingUpload("order-1", "upload-1")).rejects.toThrow("Upload not found");
+  });
+});
+
 describe("computeOrderSequencingChecksums", () => {
   it("updates missing read and artifact checksums and reports skipped or failed files", async () => {
     mocks.db.order.findUnique.mockResolvedValue(

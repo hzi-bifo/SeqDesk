@@ -452,4 +452,386 @@ describe("prerequisite-check", () => {
       message: "Unknown setting",
     });
   });
+
+  it("tests pipelineRunDir setting with no value", async () => {
+    const result = await testSetting("pipelineRunDir");
+    expect(result).toEqual({
+      success: false,
+      message: "No path provided",
+    });
+  });
+
+  it("tests pipelineRunDir setting with a writable path", async () => {
+    fsAccessMock.mockResolvedValue(undefined);
+    fsWriteFileMock.mockResolvedValue(undefined);
+    fsUnlinkMock.mockResolvedValue(undefined);
+
+    const result = await testSetting("pipelineRunDir", "/tmp/runs");
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("writable");
+  });
+
+  it("tests condaPath with no value and system conda available", async () => {
+    execResponder = (command: string) => {
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("condaPath");
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("PATH");
+    expect(result.version).toBe("conda 24.9.1");
+  });
+
+  it("tests condaPath with no value and no system conda", async () => {
+    execResponder = () => {
+      return { error: createExecError("not found", "ENOENT") };
+    };
+
+    const result = await testSetting("condaPath");
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("not found");
+  });
+
+  it("tests condaPath with an invalid path", async () => {
+    fsAccessMock.mockRejectedValue(createFsError("ENOENT"));
+
+    execResponder = () => {
+      return { error: createExecError("not found", "ENOENT") };
+    };
+
+    const result = await testSetting("condaPath", "/nonexistent/conda");
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("not found");
+  });
+
+  it("tests slurm setting", async () => {
+    execResponder = (command: string) => {
+      if (command === "sinfo --version") {
+        return { stdout: "slurm 23.11.0\n" };
+      }
+      if (command.includes("sinfo -h")) {
+        return { stdout: "normal* up\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("slurm");
+    expect(result.success).toBe(true);
+    expect(result.message).toBe("Available");
+  });
+
+  it("tests nfcore setting when installed in PATH", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { error: createExecError("not found", "ENOENT") };
+      }
+      if (command === "nf-core --version 2>&1") {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("nfcore");
+    expect(result.success).toBe(true);
+    expect(result.version).toBe("2.14.1");
+  });
+
+  it("tests weblogUrl with no value", async () => {
+    const result = await testSetting("weblogUrl");
+    expect(result).toEqual({
+      success: false,
+      message: "No URL provided",
+    });
+  });
+
+  it("tests weblogUrl when fetch returns 403", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("forbidden", { status: 403 }));
+
+    const result = await testSetting(
+      "weblogUrl",
+      "https://example.org/api/pipelines/weblog"
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Unauthorized");
+    fetchSpy.mockRestore();
+  });
+
+  it("tests weblogUrl when fetch returns 200", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+
+    const result = await testSetting(
+      "weblogUrl",
+      "https://example.org/api/pipelines/weblog"
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("reachable");
+    fetchSpy.mockRestore();
+  });
+
+  it("tests weblogUrl when fetch fails with network error", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("fetch failed"));
+
+    const result = await testSetting(
+      "weblogUrl",
+      "https://example.org/api/pipelines/weblog"
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Request failed");
+    fetchSpy.mockRestore();
+  });
+
+  it("detects versions returning empty when all commands fail", async () => {
+    execResponder = () => {
+      return { error: createExecError("not found", "ENOENT") };
+    };
+
+    const versions = await detectVersions();
+    expect(versions).toEqual({});
+  });
+
+  it("checkAllPrerequisites with SLURM enabled passes platform check", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command === "conda config --show channels") {
+        return { stdout: "channels:\n  - conda-forge\n  - bioconda\n" };
+      }
+      if (command.includes("nf-core --version")) {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      if (command === "sinfo --version") {
+        return { stdout: "slurm 23.11.0\n" };
+      }
+      if (command.includes("sinfo -h")) {
+        return { stdout: "normal* up\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: true,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    expect(result.requiredPassed).toBe(true);
+    const platformCheck = result.checks.find((c) => c.id === "conda_platform");
+    expect(platformCheck?.status).toBe("pass");
+    expect(platformCheck?.message).toContain("SLURM");
+  });
+
+  it("checkAllPrerequisites fails when macOS ARM is detected", async () => {
+    isMacOsArmRuntimeMock.mockReturnValue(true);
+    detectRuntimePlatformMock.mockResolvedValue({
+      raw: "osx-arm64",
+      source: "conda-subdir",
+    });
+
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command === "conda config --show channels") {
+        return { stdout: "channels:\n  - conda-forge\n  - bioconda\n" };
+      }
+      if (command.includes("nf-core --version")) {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    const platformCheck = result.checks.find((c) => c.id === "conda_platform");
+    expect(platformCheck?.status).toBe("fail");
+    expect(platformCheck?.message).toContain("macOS ARM");
+  });
+
+  it("quickPrerequisiteCheck returns ready when all critical checks pass", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await quickPrerequisiteCheck(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    expect(result.ready).toBe(true);
+    expect(result.summary).toContain("Ready");
+  });
+
+  it("quickPrerequisiteCheck reports all failed components when everything is missing", async () => {
+    fsAccessMock.mockRejectedValue(createFsError("ENOENT"));
+    fsMkdirMock.mockRejectedValue(createFsError("EACCES"));
+
+    execResponder = () => {
+      return { error: createExecError("not found", "ENOENT") };
+    };
+
+    const result = await quickPrerequisiteCheck(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+      },
+      "/tmp/missing-data"
+    );
+
+    expect(result.ready).toBe(false);
+    expect(result.summary).toContain("Missing");
+    expect(result.summary).toContain("Conda/Mamba");
+  });
+
+  it("checkAllPrerequisites summary reports warnings count", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return {
+          error: createExecError(
+            "network issue",
+            "ETIMEOUT",
+            "",
+            "temporary failure in name resolution"
+          ),
+        };
+      }
+      if (command === "conda config --show channels") {
+        return { stdout: "channels:\n  - defaults\n" };
+      }
+      if (command.includes("nf-core --version")) {
+        return { error: createExecError("nf-core not found", "ENOENT") };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    expect(result.requiredPassed).toBe(true);
+    expect(result.allPassed).toBe(false);
+    expect(result.summary).toMatch(/warning/i);
+  });
+
+  it("tests weblogUrl with an unexpected status code", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("server error", { status: 502 }));
+
+    const result = await testSetting(
+      "weblogUrl",
+      "https://example.org/api/pipelines/weblog"
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Unexpected response");
+    expect(result.message).toContain("502");
+    fetchSpy.mockRestore();
+  });
 });

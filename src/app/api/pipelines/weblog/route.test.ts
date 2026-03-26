@@ -337,4 +337,201 @@ describe("POST /api/pipelines/weblog", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
   });
+
+  it("parses utcTime as ISO string", async () => {
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      utcTime: "2025-06-15T10:30:00Z",
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("parses utcTime as numeric timestamp", async () => {
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      utcTime: Date.now(),
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("normalizes event type to lowercase", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+
+    const req = makeRequest("run-1", {
+      event: "PROCESS_START",
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // Step should be upserted with running status (process_start)
+    expect(mocks.db.pipelineRunStep.upsert).toHaveBeenCalledTimes(1);
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    expect(upsertArgs.create.status).toBe("running");
+  });
+
+  it("extracts process name from trace field", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-assembly", name: "Assembly" });
+
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      trace: { process: "MEGAHIT" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.findStepByProcess).toHaveBeenCalledWith("mag", "MEGAHIT");
+  });
+
+  it("derives completed status for process_complete with exit code 0", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.getStepsForPipeline.mockReturnValue([{ id: "step-qc" }]);
+    mocks.db.pipelineRunStep.count.mockResolvedValue(1);
+
+    const req = makeRequest("run-1", {
+      event: "process_complete",
+      trace: { process: "FASTQC", exit: 0, status: "COMPLETED" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    expect(upsertArgs.create.status).toBe("completed");
+  });
+
+  it("derives failed status for process_complete with non-zero exit", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.getStepsForPipeline.mockReturnValue([{ id: "step-qc" }]);
+    mocks.db.pipelineRunStep.count.mockResolvedValue(0);
+
+    const req = makeRequest("run-1", {
+      event: "process_complete",
+      trace: { process: "FASTQC", exit: 1, status: "FAILED" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    expect(upsertArgs.create.status).toBe("failed");
+  });
+
+  it("runs output processing on workflow_complete with terminal queue state", async () => {
+    mocks.execFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
+    mocks.getAdapter.mockReturnValue({
+      discoverOutputs: vi.fn().mockResolvedValue({ summary: {}, assemblies: [], bins: [], artifacts: [] }),
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 0,
+      errors: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce({ ...baseRun, queueJobId: null })
+      .mockResolvedValueOnce({
+        ...baseRun,
+        runFolder: "/tmp/runs/run-1",
+        targetType: "study",
+        studyId: "study-1",
+        orderId: null,
+        study: { samples: [{ id: "s1", sampleId: "SAMPLE1" }] },
+        order: null,
+      });
+    mocks.db.assembly.count.mockResolvedValue(1);
+    mocks.db.bin.count.mockResolvedValue(0);
+    mocks.db.pipelineArtifact.count.mockResolvedValue(0);
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    expect(updateData.status).toBe("completed");
+    expect(updateData.progress).toBe(100);
+  });
+
+  it("extracts message from payload", async () => {
+    const req = makeRequest("run-1", {
+      event: "workflow_error",
+      message: "Out of memory",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const createdEvent = txMock.pipelineRunEvent.create.mock.calls[0][0].data;
+    expect(createdEvent.message).toBe("Out of memory");
+  });
+
+  it("stringifies and truncates payload exceeding limit", async () => {
+    // Create a payload just over the threshold so it gets truncated
+    const largeValue = "x".repeat(12000);
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      data: largeValue,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const createdEvent = txMock.pipelineRunEvent.create.mock.calls[0][0].data;
+    // Payload should be truncated to MAX_EVENT_PAYLOAD (12000) chars
+    expect(createdEvent.payload.length).toBeLessThanOrEqual(12000);
+    expect(createdEvent.payload.endsWith("...")).toBe(true);
+  });
 });
