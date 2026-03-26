@@ -1,6 +1,8 @@
 name: Order Pipeline End-to-End
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       run_github_hosted:
@@ -20,7 +22,7 @@ permissions:
 jobs:
   github_hosted:
     name: Order Pipeline E2E (GitHub-hosted)
-    if: ${{ inputs.run_github_hosted }}
+    if: ${{ github.event_name == 'push' || inputs.run_github_hosted }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
