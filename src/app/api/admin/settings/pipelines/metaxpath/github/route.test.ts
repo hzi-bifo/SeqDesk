@@ -223,6 +223,69 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     expect(json.details).toContain("manifest.json missing");
   });
 
+  it("returns 500 when an unexpected error occurs during install", async () => {
+    // Clone succeeds
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    // Descriptor valid
+    mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
+    // git rev-parse HEAD
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "abc123\n", stderr: "" });
+    // readdir throws error
+    mocks.fsPromises.readdir.mockRejectedValue(new Error("EPERM: permission denied"));
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "ghp_test123", ref: "main" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.error).toContain("Failed to import MetaxPath");
+  });
+
+  it("uses default ref when ref is not provided", async () => {
+    // Clone succeeds
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "def789\n", stderr: "" });
+    mocks.fsPromises.readdir.mockResolvedValue([]);
+    mocks.db.pipelineConfig.upsert.mockResolvedValue({});
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "ghp_test123" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.ref).toBe("main");
+  });
+
+  it("extracts exec error details from stdout when stderr is absent", async () => {
+    mocks.execFileAsync.mockRejectedValueOnce(
+      Object.assign(new Error("clone failed"), { stdout: "Repository not found" }),
+    );
+    mocks.classifyCloneFailure.mockReturnValue({
+      status: 404,
+      error: "Repository not found",
+    });
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "ghp_test123", ref: "main" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(404);
+    const json = await response.json();
+    expect(json.details).toBe("Repository not found");
+  });
+
   it("succeeds on happy path", async () => {
     // Clone succeeds
     mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     user: {
       create: vi.fn(),
       deleteMany: vi.fn(),
+      findMany: vi.fn(),
     },
     study: {
       create: vi.fn(),
@@ -179,6 +180,7 @@ describe("demo workspace server helpers", () => {
     mocks.db.demoWorkspace.update.mockResolvedValue({});
     mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
     mocks.db.study.findMany.mockResolvedValue([]);
+    mocks.db.user.findMany.mockResolvedValue([]);
 
     mocks.db.order.findMany.mockResolvedValue([]);
     mocks.db.sample.findMany.mockResolvedValue([]);
@@ -562,5 +564,216 @@ describe("cookie helpers", () => {
     expect(options.httpOnly).toBe(true);
     expect(options.sameSite).toBe("lax");
     expect(options.expires).toBe(expiresAt);
+  });
+});
+
+describe("bootstrapDemoWorkspace edge cases", () => {
+  it("recreates workspace when existing token has expired (stale seedVersion)", async () => {
+    const staleWorkspace = {
+      id: "workspace-stale",
+      tokenHash: "hash",
+      userId: "user-stale",
+      adminUserId: "admin-stale",
+      seedVersion: 0, // Old seed version
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: {
+        id: "user-stale",
+        email: "demo-researcher@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-stale",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    // First call finds the stale workspace, subsequent calls return null (after destroy)
+    mocks.db.demoWorkspace.findUnique.mockResolvedValueOnce(staleWorkspace).mockResolvedValue(null);
+    mocks.db.study.findMany.mockResolvedValue([]);
+    // Re-set user.create mocks for the recreation
+    mocks.db.user.create
+      .mockResolvedValueOnce({ id: "user-new" })
+      .mockResolvedValueOnce({ id: "admin-new" });
+    mocks.db.demoWorkspace.create.mockResolvedValue({ id: "workspace-new" });
+    mocks.db.study.create
+      .mockResolvedValueOnce({ id: "study-1" })
+      .mockResolvedValueOnce({ id: "study-2" });
+    mocks.db.order.create
+      .mockResolvedValueOnce({ id: "order-1" })
+      .mockResolvedValueOnce({ id: "order-2", samples: [{ id: "s1", sampleId: "GR-01" }] })
+      .mockResolvedValueOnce({ id: "order-3", samples: [{ id: "s2", sampleId: "SR-01" }] });
+
+    const result = await bootstrapDemoWorkspace("stale-token", "researcher");
+
+    expect(result.created).toBe(true);
+    expect(result.token).toBe("stale-token");
+  });
+
+  it("recreates workspace when existing token has no adminUser", async () => {
+    const noAdminWorkspace = {
+      id: "workspace-noadmin",
+      tokenHash: "hash",
+      userId: "user-noadmin",
+      adminUserId: null,
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: {
+        id: "user-noadmin",
+        email: "demo-researcher@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: null,
+    };
+    mocks.db.demoWorkspace.findUnique.mockResolvedValueOnce(noAdminWorkspace).mockResolvedValue(null);
+    mocks.db.study.findMany.mockResolvedValue([]);
+    mocks.db.user.create
+      .mockResolvedValueOnce({ id: "user-new" })
+      .mockResolvedValueOnce({ id: "admin-new" });
+    mocks.db.demoWorkspace.create.mockResolvedValue({ id: "workspace-new" });
+    mocks.db.study.create
+      .mockResolvedValueOnce({ id: "study-1" })
+      .mockResolvedValueOnce({ id: "study-2" });
+    mocks.db.order.create
+      .mockResolvedValueOnce({ id: "order-1" })
+      .mockResolvedValueOnce({ id: "order-2", samples: [{ id: "s1", sampleId: "GR-01" }] })
+      .mockResolvedValueOnce({ id: "order-3", samples: [{ id: "s2", sampleId: "SR-01" }] });
+
+    const result = await bootstrapDemoWorkspace("noadmin-token", "facility");
+
+    expect(result.created).toBe(true);
+    expect(result.token).toBe("noadmin-token");
+  });
+});
+
+describe("authorizeDemoWorkspaceToken edge cases", () => {
+  it("returns null when workspace user lookup fails for the researcher persona", async () => {
+    const workspaceNoUser = {
+      id: "workspace-nouser",
+      tokenHash: "hash",
+      userId: "user-exists",
+      adminUserId: "admin-exists",
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: null as unknown as { id: string; email: string; firstName: string; lastName: string; role: string; isDemo: boolean },
+      adminUser: {
+        id: "admin-exists",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue(workspaceNoUser);
+
+    // workspace.user is null, so isWorkspaceReusable will fail
+    // Actually, the null user won't crash isWorkspaceReusable because it checks adminUserId && adminUser && seedVersion && expiry
+    // But selectWorkspaceUser returns null for researcher when user is null
+    // Actually isWorkspaceReusable doesn't check user, only adminUser. So it will pass the reusable check
+    // but then selectWorkspaceUser for researcher returns workspace.user which is null
+    const result = await authorizeDemoWorkspaceToken("valid-token", "researcher");
+    expect(result).toBeNull();
+  });
+
+  it("returns researcher persona for default demoExperience", async () => {
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue({
+      id: "workspace-default",
+      tokenHash: "hash",
+      userId: "user-default",
+      adminUserId: "admin-default",
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: {
+        id: "user-default",
+        email: "demo-researcher@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-default",
+        email: "demo-facility@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    });
+
+    // Default experience is researcher
+    const result = await authorizeDemoWorkspaceToken("demo-token");
+    expect(result).toMatchObject({
+      id: "user-default",
+      role: "RESEARCHER",
+      demoExperience: "researcher",
+    });
+  });
+});
+
+describe("cleanupExpiredDemoWorkspaces with multiple workspaces", () => {
+  it("cleans up multiple expired workspaces by iterating each", async () => {
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([
+      {
+        id: "ws-1",
+        userId: "user-1",
+        adminUserId: "admin-1",
+      },
+      {
+        id: "ws-2",
+        userId: "user-2",
+        adminUserId: "admin-2",
+      },
+    ]);
+    mocks.db.study.findMany.mockResolvedValue([]);
+
+    const result = await cleanupExpiredDemoWorkspaces();
+
+    expect(result).toEqual({ deletedWorkspaces: 2 });
+    // user.deleteMany should have been called for each workspace
+    expect(mocks.db.user.deleteMany).toHaveBeenCalled();
+    // The first call should be for ws-1
+    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["user-1", "admin-1"] } },
+    });
+    // The second call should be for ws-2
+    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["user-2", "admin-2"] } },
+    });
+  });
+
+  it("handles workspaces without adminUserId", async () => {
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([
+      {
+        id: "ws-1",
+        userId: "user-1",
+        adminUserId: null,
+      },
+    ]);
+    mocks.db.study.findMany.mockResolvedValue([]);
+
+    const result = await cleanupExpiredDemoWorkspaces();
+
+    expect(result).toEqual({ deletedWorkspaces: 1 });
+    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: {
+          in: ["user-1"],
+        },
+      },
+    });
   });
 });

@@ -543,6 +543,399 @@ describe("metadata-validation", () => {
     expect(issue).toBeDefined();
     expect(issue?.message).toContain("long-read");
   });
+
+  it("accepts PipelineTarget object and merges sampleIds override", async () => {
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata(
+      { type: "study", studyId: "study-1" },
+      "mag",
+      ["sample-1"]
+    );
+
+    expect(result.metadata.platform).toBe("Illumina");
+  });
+
+  it("uses target sampleIds when already set on the PipelineTarget", async () => {
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata(
+      { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      "mag",
+      ["sample-override"]
+    );
+
+    // sampleIds already set, so override is ignored
+    expect(result.metadata.platform).toBe("Illumina");
+  });
+
+  it("returns no-samples error for order target with no samples", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      samples: [],
+    });
+
+    const result = await validatePipelineMetadata(
+      { type: "order", orderId: "order-1" },
+      "fastq-checksum"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues[0].message).toBe("No samples in order");
+  });
+
+  it("returns SubMG error when validating against an order target", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata(
+      { type: "order", orderId: "order-1" },
+      "submg"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues[0].message).toBe("SubMG can only run on study targets");
+  });
+
+  it("reports SubMG missing checklist fields for present but incomplete data", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ enaTestMode: false });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: JSON.stringify({
+            "collection date": "2026-03-01",
+            // missing geographic_location
+          }),
+          taxId: "9606",
+          reads: [
+            {
+              file1: "/tmp/R1.fastq.gz",
+              file2: "/tmp/R2.fastq.gz",
+              checksum1: "abc",
+              checksum2: "def",
+            },
+          ],
+          assemblies: [
+            {
+              id: "asm-1",
+              assemblyFile: "/tmp/assembly.fa",
+              createdByPipelineRunId: null,
+              createdByPipelineRun: null,
+            },
+          ],
+          bins: [{ id: "bin-1" }],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "submg");
+    const metadataIssue = result.issues.find(
+      (issue) => issue.field === "sampleMetadata"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(metadataIssue).toBeDefined();
+    expect(metadataIssue?.message).toContain("geographic location");
+  });
+
+  it("validates SubMG ENA test mode with no testRegisteredAt", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ enaTestMode: true });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      studyAccessionId: "PRJ123456",
+      testRegisteredAt: null,
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: JSON.stringify({
+            "collection date": "2026-03-01",
+            "geographic_location": "Germany",
+          }),
+          taxId: "9606",
+          reads: [
+            {
+              file1: "/tmp/R1.fastq.gz",
+              file2: "/tmp/R2.fastq.gz",
+              checksum1: "abc",
+              checksum2: "def",
+            },
+          ],
+          assemblies: [
+            {
+              id: "asm-1",
+              assemblyFile: "/tmp/assembly.fa",
+              createdByPipelineRunId: null,
+              createdByPipelineRun: null,
+            },
+          ],
+          bins: [{ id: "bin-1" }],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "submg");
+    const testIssue = result.issues.find(
+      (issue) => issue.message.includes("not registered on ENA Test")
+    );
+
+    expect(result.valid).toBe(false);
+    expect(testIssue).toBeDefined();
+  });
+
+  it("reports both long-read and unsupported platforms in one message", async () => {
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Oxford Nanopore",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+        {
+          id: "sample-2",
+          sampleId: "SAMPLE-2",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-2",
+            platform: "Weird Machine",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+    const platformIssue = result.issues.find(
+      (i) => i.field === "platform" && i.message.includes("long-read")
+    );
+
+    expect(result.valid).toBe(false);
+    expect(platformIssue).toBeDefined();
+    expect(platformIssue?.message).toContain("Also found unsupported");
+  });
+
+  it("reports no-resolved-platform error when all orders have null platform", async () => {
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: null,
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+    const platformIssue = result.issues.find(
+      (i) => i.field === "platform" && i.severity === "error"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(platformIssue?.message).toContain("Sequencing platform is required");
+  });
+
+  it("emits unrecognized-platform fallback message when no mapped platform exists", async () => {
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            // platform is some value that is not in the mapping at all
+            platform: "completely_unknown_brand",
+            customFields: null,
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+    const issue = result.issues.find(
+      (i) => i.field === "platform" && i.message.includes("not recognized")
+    );
+
+    expect(result.valid).toBe(false);
+    expect(issue).toBeDefined();
+  });
+
+  it("reports more than 5 missing platform samples with +N notation", async () => {
+    const samples = Array.from({ length: 7 }, (_, i) => ({
+      id: `sample-${i}`,
+      sampleId: `SAMPLE-${i}`,
+      checklistData: null,
+      taxId: null,
+      reads: [],
+      assemblies: [],
+      bins: [],
+      order: null,
+    }));
+    // Add one sample with a platform so hasAnyResolvedPlatform is true
+    samples.push({
+      id: "sample-ok",
+      sampleId: "SAMPLE-OK",
+      checklistData: null,
+      taxId: null,
+      reads: [],
+      assemblies: [],
+      bins: [],
+      order: {
+        id: "order-1",
+        platform: "Illumina",
+        customFields: null,
+        instrumentModel: null,
+        libraryStrategy: null,
+        librarySelection: null,
+        librarySource: null,
+      },
+    } as never);
+
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples,
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+    const issue = result.issues.find(
+      (i) => i.field === "platform" && i.message.includes("+")
+    );
+
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("+2 more");
+  });
 });
 
 describe("mapPlatformForPipeline", () => {
@@ -563,5 +956,22 @@ describe("mapPlatformForPipeline", () => {
 
   it("passes through platform values for non-mag pipelines", () => {
     expect(mapPlatformForPipeline("Custom Platform", "submg")).toBe("Custom Platform");
+  });
+
+  it("returns null for null or undefined platform", () => {
+    expect(mapPlatformForPipeline(null, "mag")).toBeNull();
+    expect(mapPlatformForPipeline(undefined, "mag")).toBeNull();
+    expect(mapPlatformForPipeline("", "mag")).toBeNull();
+  });
+
+  it("maps known platforms with case variations", () => {
+    expect(mapPlatformForPipeline("ILLUMINA", "mag")).toBe("ILLUMINA");
+    expect(mapPlatformForPipeline("BGI", "mag")).toBe("BGISEQ");
+    expect(mapPlatformForPipeline("DNBseq", "mag")).toBe("DNBSEQ");
+  });
+
+  it("returns null for unknown platform in non-mag pipeline", () => {
+    expect(mapPlatformForPipeline(null, "submg")).toBeNull();
+    expect(mapPlatformForPipeline(undefined, "submg")).toBeNull();
   });
 });

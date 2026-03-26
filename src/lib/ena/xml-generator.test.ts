@@ -254,6 +254,34 @@ describe("parseReceiptXml", () => {
     expect(result.samples).toHaveLength(0);
   });
 
+  it("handles multiple INFO messages", () => {
+    const xml = `<RECEIPT success="true">
+      <INFO>Message 1</INFO>
+      <INFO>Message 2</INFO>
+      <INFO>Message 3</INFO>
+    </RECEIPT>`;
+    const result = parseReceiptXml(xml);
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages).toEqual(["Message 1", "Message 2", "Message 3"]);
+  });
+
+  it("parses SAMPLE with biosample EXT_ID", () => {
+    const xml = `<RECEIPT success="true">
+      <SAMPLE alias="s1" accession="ERS1">
+        <EXT_ID accession="SAMEA1"/>
+      </SAMPLE>
+    </RECEIPT>`;
+    const result = parseReceiptXml(xml);
+    expect(result.samples[0].biosample).toBe("SAMEA1");
+  });
+
+  it("parses submissionId attribute", () => {
+    const xml = `<RECEIPT success="true" submissionId="SUB123">
+    </RECEIPT>`;
+    const result = parseReceiptXml(xml);
+    expect(result.submissionId).toBe("SUB123");
+  });
+
   it("returns a parser error for non-string receipt input", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const result = parseReceiptXml(null as unknown as string);

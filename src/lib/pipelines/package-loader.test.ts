@@ -575,6 +575,122 @@ describe("package-loader", () => {
     expect(getParser("parserpipe", "missing")).toBeUndefined();
   });
 
+  it("omits packages where definition is missing", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "nodef");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("nodef"),
+      files: {
+        ...baseManifest("nodef").files,
+        definition: "missing-definition.json",
+      },
+    });
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("nodef"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "nodef.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    expect(getPackage("nodef")).toBeUndefined();
+  });
+
+  it("omits packages where registry is missing", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "noreg");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("noreg"),
+      files: {
+        ...baseManifest("noreg").files,
+        registry: "missing-registry.json",
+      },
+    });
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("noreg"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "noreg.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    expect(getPackage("noreg")).toBeUndefined();
+  });
+
+  it("loads script path from package with scripts configured", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "scriptpipe");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    const manifest = {
+      ...baseManifest("scriptpipe"),
+      files: {
+        ...baseManifest("scriptpipe").files,
+        scripts: {
+          samplesheet: "scripts/gen-samplesheet.ts",
+        },
+      },
+    };
+    await writeJson(path.join(packageDir, "manifest.json"), manifest);
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("scriptpipe"));
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("scriptpipe"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "scriptpipe.csv", rows: { scope: "study" }, columns: [] },
+    });
+    // Create the script file so validation passes
+    await fs.mkdir(path.join(packageDir, "scripts"), { recursive: true });
+    await fs.writeFile(path.join(packageDir, "scripts", "gen-samplesheet.ts"), "export default {};", "utf8");
+
+    const scriptPath = getPackageScriptPath("scriptpipe", "samplesheet");
+    expect(scriptPath).toContain("scripts/gen-samplesheet.ts");
+  });
+
+  it("omits packages with Read writeback and non-sample scope", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "badscope");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("badscope"),
+      outputs: [
+        {
+          id: "reads",
+          scope: "study",
+          destination: "sample_reads",
+          discovery: { pattern: "*.fastq" },
+          writeback: {
+            target: "Read",
+            fields: { checksum1: "checksum1" },
+          },
+        },
+      ],
+    });
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("badscope"));
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("badscope"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "badscope.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    expect(getPackage("badscope")).toBeUndefined();
+  });
+
+  it("omits packages with missing script files", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "missingscript");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    const manifest = {
+      ...baseManifest("missingscript"),
+      files: {
+        ...baseManifest("missingscript").files,
+        scripts: {
+          samplesheet: "scripts/does-not-exist.ts",
+        },
+      },
+    };
+    await writeJson(path.join(packageDir, "manifest.json"), manifest);
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("missingscript"));
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("missingscript"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "missingscript.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    expect(getPackage("missingscript")).toBeUndefined();
+  });
+
   it("returns null for getPackageScriptPath when package has no scripts", async () => {
     await createManifestPackage({ id: "noscripts" });
 

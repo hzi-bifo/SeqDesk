@@ -177,4 +177,135 @@ describe("POST /api/admin/settings/sequencing-files/simulate", () => {
     expect(json.singleEndCount).toBe(1);
     expect(json.filesCreated).toBe(3); // 2 for paired + 1 for single-end
   });
+
+  it("handles malformed extraSettings JSON gracefully", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      dataBasePath: "/data/sequencing",
+      extraSettings: "not-valid-json{{{",
+    });
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.success).toBe(true);
+    // Falls back to defaults
+    expect(json.extension).toBe(".fastq.gz");
+  });
+
+  it("caps readCount at MAX_READ_COUNT (50000)", async () => {
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count: 1, readCount: 999999, readLength: 100 }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.readCount).toBe(50000);
+  });
+
+  it("caps readLength at MAX_READ_LENGTH (300)", async () => {
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count: 1, readCount: 100, readLength: 999 }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.readLength).toBe(300);
+  });
+
+  it("uses .fastq extension without gzip when configured", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      dataBasePath: "/data/sequencing",
+      extraSettings: JSON.stringify({
+        sequencingFiles: {
+          allowedExtensions: [".fastq"],
+        },
+      }),
+    });
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count: 1 }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.extension).toBe(".fastq");
+    // writeFile should be called (no gzip for non-.gz)
+    expect(mocks.fsPromises.writeFile).toHaveBeenCalled();
+  });
+
+  it("creates multiple samples correctly", async () => {
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count: 5, readCount: 100, readLength: 50 }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.samples).toHaveLength(5);
+    // Samples 1-4 paired, sample 5 single-end
+    expect(json.pairedCount).toBe(4);
+    expect(json.singleEndCount).toBe(1);
+    expect(json.filesCreated).toBe(9); // 4*2 + 1
+  });
+
+  it("returns 500 when an unexpected error occurs", async () => {
+    mocks.resolveTemplateSource.mockRejectedValue(new Error("Unexpected failure"));
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.error).toContain("Failed to create test files");
+  });
+
+  it("returns 400 when data base path is not writable", async () => {
+    mocks.fsPromises.access.mockRejectedValue(new Error("EACCES"));
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error).toContain("not writable");
+  });
+
+  it("handles request body parse failure gracefully", async () => {
+    // NextRequest with invalid body - use no body at all
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/sequencing-files/simulate", {
+      method: "POST",
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.success).toBe(true);
+    // Defaults should be used
+    expect(json.samples).toHaveLength(3);
+  });
 });

@@ -314,6 +314,221 @@ describe("order progress status", () => {
 
     expect(statuses.samples).toBe("empty");
   });
+
+  it("counts MiXS step based on checklist and field selections", () => {
+    const mixsFields: FormFieldDefinition[] = [
+      ...fields,
+      {
+        id: "field_mixs",
+        type: "mixs" as const,
+        label: "MiXS Checklist",
+        name: "_mixsChecklist",
+        required: false,
+        visible: true,
+        order: 10,
+      },
+    ];
+
+    const statuses = computeOrderProgressStepStatuses({
+      fields: mixsFields,
+      groups,
+      enabledMixsChecklists: ["soil"],
+      order: {
+        name: "Order A",
+        platform: "ILLUMINA",
+        customFields: JSON.stringify({
+          _mixsChecklist: "soil",
+          _mixsFields: ["collection_date", "depth"],
+        }),
+        numberOfSamples: 1,
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            sampleDescription: null,
+            scientificName: null,
+            taxId: null,
+            customFields: JSON.stringify({ sample_concentration: 10 }),
+          },
+        ],
+      },
+    });
+
+    expect(statuses.mixs).toBe("complete");
+  });
+
+  it("marks MiXS as empty when no checklist is selected", () => {
+    const mixsFields: FormFieldDefinition[] = [
+      ...fields,
+      {
+        id: "field_mixs",
+        type: "mixs" as const,
+        label: "MiXS Checklist",
+        name: "_mixsChecklist",
+        required: false,
+        visible: true,
+        order: 10,
+      },
+    ];
+
+    const statuses = computeOrderProgressStepStatuses({
+      fields: mixsFields,
+      groups,
+      enabledMixsChecklists: ["soil"],
+      order: {
+        name: "Order A",
+        platform: null,
+        customFields: null,
+        numberOfSamples: 0,
+        samples: [],
+      },
+    });
+
+    expect(statuses.mixs).toBe("empty");
+  });
+
+  it("falls back to _count.samples for numberOfSamples system field", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields: [
+        {
+          id: "field_num_samples",
+          type: "number",
+          label: "Number of Samples",
+          name: "numberOfSamples",
+          required: false,
+          visible: true,
+          order: 0,
+          groupId: "group_details",
+          isSystem: true,
+          systemKey: "numberOfSamples",
+        },
+      ],
+      groups,
+      order: {
+        customFields: null,
+        numberOfSamples: null,
+        _count: { samples: 5 },
+        samples: [],
+      },
+    });
+
+    expect(statuses.group_details).toBe("complete");
+  });
+
+  it("handles organism field with scientificName", () => {
+    const organismFields: FormFieldDefinition[] = [
+      {
+        id: "field_organism",
+        type: "organism" as const,
+        label: "Organism",
+        name: "organism",
+        required: false,
+        visible: true,
+        order: 0,
+        perSample: true,
+      },
+    ];
+
+    const statuses = computeOrderProgressStepStatuses({
+      fields: organismFields,
+      groups: [],
+      order: {
+        customFields: null,
+        numberOfSamples: 1,
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            sampleDescription: null,
+            scientificName: "Homo sapiens",
+            taxId: null,
+            customFields: null,
+          },
+        ],
+      },
+    });
+
+    expect(statuses.samples).toBe("complete");
+  });
+
+  it("counts ungrouped custom fields as filled", () => {
+    const ungroupedField: FormFieldDefinition[] = [
+      {
+        id: "field_ungrouped",
+        type: "text",
+        label: "Extra Info",
+        name: "extraInfo",
+        required: false,
+        visible: true,
+        order: 0,
+        // no groupId -> ungrouped
+      },
+    ];
+
+    const statuses = computeOrderProgressStepStatuses({
+      fields: ungroupedField,
+      groups: [],
+      order: {
+        customFields: JSON.stringify({
+          extraInfo: "some value",
+          unknownField: "also present",
+        }),
+        numberOfSamples: 0,
+        samples: [],
+      },
+    });
+
+    expect(statuses._ungrouped).toBe("complete");
+  });
+
+  it("handles malformed JSON in order customFields", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields,
+      groups,
+      order: {
+        name: "Order A",
+        platform: "ILLUMINA",
+        customFields: "not-valid-json",
+        numberOfSamples: 1,
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            sampleDescription: null,
+            scientificName: null,
+            taxId: null,
+            customFields: null,
+          },
+        ],
+      },
+    });
+
+    // Should not throw; customFields parsed as empty object
+    expect(statuses.group_details).toBe("complete");
+  });
+
+  it("handles customFields that parse as a JSON array", () => {
+    const statuses = computeOrderProgressStepStatuses({
+      fields,
+      groups,
+      order: {
+        name: "Order A",
+        platform: null,
+        customFields: JSON.stringify([1, 2, 3]),
+        numberOfSamples: 0,
+        samples: [],
+      },
+    });
+
+    // Arrays are not valid objects; should fall back to empty
+    expect(statuses.group_sequencing).toBe("empty");
+  });
 });
 
 describe("getOrderProgressIndicatorClassName", () => {

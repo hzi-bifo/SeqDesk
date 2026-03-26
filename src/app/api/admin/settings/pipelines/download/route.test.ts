@@ -190,4 +190,77 @@ describe("POST /api/admin/settings/pipelines/download", () => {
     const body = await response.json();
     expect(body.error).toContain("already in progress");
   });
+
+  it("returns 400 when pipelineId is a non-string type", async () => {
+    const response = await POST(makeRequest({ pipelineId: 123 }));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("Pipeline ID required");
+  });
+
+  it("returns 400 when pipeline reference is missing in manifest", async () => {
+    mocks.getPackageManifest.mockReturnValue({
+      execution: {
+        type: "nextflow",
+        pipeline: null,
+        version: "2.5.4",
+      },
+    });
+
+    const response = await POST(makeRequest({ pipelineId: "mag" }));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("Pipeline reference missing");
+  });
+
+  it("allows re-download when existing job is in success state", async () => {
+    mocks.getDownloadJobStatus.mockResolvedValue({
+      state: "success",
+      finishedAt: "2025-01-01T00:00:00Z",
+    });
+
+    const response = await POST(makeRequest({ pipelineId: "mag" }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+  });
+
+  it("allows re-download when existing job is in error state", async () => {
+    mocks.getDownloadJobStatus.mockResolvedValue({
+      state: "error",
+      error: "Download exited with code 1",
+    });
+
+    const response = await POST(makeRequest({ pipelineId: "mag" }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+  });
+
+  it("returns 500 when getExecutionSettings throws", async () => {
+    mocks.getExecutionSettings.mockRejectedValue(
+      new Error("Settings unavailable")
+    );
+
+    const response = await POST(makeRequest({ pipelineId: "mag" }));
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toContain("Failed to download pipeline");
+    expect(body.details).toContain("Settings unavailable");
+  });
+
+  it("uses custom version when provided in request body", async () => {
+    const response = await POST(
+      makeRequest({ pipelineId: "mag", version: "3.0.0" })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.version).toBe("3.0.0");
+  });
 });

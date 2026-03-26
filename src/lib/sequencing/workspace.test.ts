@@ -90,8 +90,10 @@ vi.mock("@/lib/orders/auto-complete", () => ({
 }));
 
 import {
+  appendSequencingUploadChunk,
   assignOrderSequencingReads,
   cancelSequencingUpload,
+  completeSequencingUpload,
   computeOrderSequencingChecksums,
   createSequencingUploadSession,
   discoverOrderSequencingFiles,
@@ -1210,5 +1212,319 @@ describe("computeOrderSequencingChecksums", () => {
       where: { id: "artifact-2" },
       data: { checksum: "md5-artifact" },
     });
+  });
+
+  it("throws when order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(computeOrderSequencingChecksums("missing")).rejects.toThrow("Order not found");
+  });
+
+  it("skips reads and artifacts that already have checksums", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            reads: [
+              {
+                id: "read-1",
+                file1: "reads/S1_R1.fastq.gz",
+                file2: null,
+                checksum1: "already-has-md5",
+                checksum2: null,
+              },
+            ],
+            sequencingArtifacts: [
+              {
+                id: "artifact-1",
+                path: "artifacts/qc.html",
+                checksum: "existing-checksum",
+              },
+            ],
+          },
+        ],
+        sequencingArtifacts: [],
+      })
+    );
+
+    const result = await computeOrderSequencingChecksums("order-1");
+
+    expect(result.updatedReads).toBe(0);
+    expect(result.updatedArtifacts).toBe(0);
+    expect(mocks.storage.calculateMd5ForRelativePath).not.toHaveBeenCalled();
+  });
+
+  it("filters reads by readIds when provided", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            reads: [
+              { id: "read-1", file1: "reads/S1_R1.fastq.gz", file2: null, checksum1: null, checksum2: null },
+              { id: "read-2", file1: "reads/S2_R1.fastq.gz", file2: null, checksum1: null, checksum2: null },
+            ],
+            sequencingArtifacts: [],
+          },
+        ],
+        sequencingArtifacts: [],
+      })
+    );
+
+    const result = await computeOrderSequencingChecksums("order-1", { readIds: ["read-1"] });
+
+    expect(result.updatedReads).toBe(1);
+    expect(mocks.storage.calculateMd5ForRelativePath).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("appendSequencingUploadChunk", () => {
+  it("writes chunk data and updates upload progress", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      tempPath: "_uploads/orders/order-1/_tmp/upload-1.part",
+      receivedSize: BigInt(0),
+      expectedSize: BigInt(1000),
+      status: "PENDING",
+    });
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(500),
+      modifiedAt: new Date(),
+    });
+
+    const mockStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+
+    const result = await appendSequencingUploadChunk("order-1", "upload-1", BigInt(0), mockStream);
+
+    expect(mocks.storage.writeSequencingUploadChunk).toHaveBeenCalledWith(
+      "/data/sequencing",
+      "_uploads/orders/order-1/_tmp/upload-1.part",
+      mockStream,
+      true
+    );
+    expect(result.receivedSize).toBe(500);
+    expect(result.status).toBe("UPLOADING");
+  });
+
+  it("marks upload as READY when received size meets expected size", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      tempPath: "_uploads/orders/order-1/_tmp/upload-1.part",
+      receivedSize: BigInt(500),
+      expectedSize: BigInt(1000),
+      status: "UPLOADING",
+    });
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(1000),
+      modifiedAt: new Date(),
+    });
+
+    const mockStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+        controller.close();
+      },
+    });
+
+    const result = await appendSequencingUploadChunk("order-1", "upload-1", BigInt(500), mockStream);
+
+    expect(result.status).toBe("READY");
+    expect(result.receivedSize).toBe(1000);
+  });
+
+  it("throws when upload is not found", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue(null);
+
+    const mockStream = new ReadableStream<Uint8Array>();
+    await expect(
+      appendSequencingUploadChunk("order-1", "missing", BigInt(0), mockStream)
+    ).rejects.toThrow("Upload not found");
+  });
+
+  it("throws when upload orderId does not match", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "other-order",
+      tempPath: "tmp/file.part",
+      receivedSize: BigInt(0),
+      expectedSize: BigInt(100),
+      status: "PENDING",
+    });
+
+    const mockStream = new ReadableStream<Uint8Array>();
+    await expect(
+      appendSequencingUploadChunk("order-1", "upload-1", BigInt(0), mockStream)
+    ).rejects.toThrow("Upload not found");
+  });
+
+  it("throws when offset does not match received size", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      tempPath: "tmp/file.part",
+      receivedSize: BigInt(100),
+      expectedSize: BigInt(1000),
+      status: "UPLOADING",
+    });
+
+    const mockStream = new ReadableStream<Uint8Array>();
+    await expect(
+      appendSequencingUploadChunk("order-1", "upload-1", BigInt(200), mockStream)
+    ).rejects.toThrow("Upload offset does not match");
+  });
+});
+
+describe("completeSequencingUpload", () => {
+  it("throws when upload is not found", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue(null);
+    await expect(completeSequencingUpload("order-1", "missing")).rejects.toThrow("Upload not found");
+  });
+
+  it("throws when upload is incomplete", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      sampleId: null,
+      targetKind: "read",
+      targetRole: "R1",
+      originalName: "reads.fastq.gz",
+      tempPath: "tmp/file.part",
+      expectedSize: BigInt(1000),
+      receivedSize: BigInt(500),
+      checksumProvided: null,
+      checksumComputed: null,
+      mimeType: null,
+      metadata: null,
+      finalPath: null,
+      createdById: "user-1",
+    });
+    await expect(completeSequencingUpload("order-1", "upload-1")).rejects.toThrow("Upload is incomplete");
+  });
+
+  it("completes an artifact upload and creates artifact record", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      sampleId: null,
+      targetKind: "artifact",
+      targetRole: "delivery",
+      originalName: "report.html",
+      tempPath: "_uploads/tmp/upload-1.part",
+      expectedSize: BigInt(200),
+      receivedSize: BigInt(200),
+      checksumProvided: "abc123",
+      checksumComputed: null,
+      mimeType: "text/html",
+      metadata: JSON.stringify({ stage: "delivery", artifactType: "report" }),
+      finalPath: null,
+      createdById: "user-1",
+    });
+    mocks.db.order.findUnique.mockResolvedValue(createOrder());
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(200),
+      modifiedAt: new Date(),
+    });
+
+    const result = await completeSequencingUpload("order-1", "upload-1");
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.size).toBe(200);
+    expect(mocks.storage.finalizeSequencingUpload).toHaveBeenCalled();
+    expect(mocks.db.sequencingArtifact.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        orderId: "order-1",
+        stage: "delivery",
+        artifactType: "report",
+        source: "upload",
+      }),
+    });
+    expect(mocks.db.sequencingUpload.update).toHaveBeenCalledWith({
+      where: { id: "upload-1" },
+      data: { finalPath: expect.any(String), status: "COMPLETED" },
+    });
+  });
+
+  it("completes a read upload and assigns reads to sample", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      sampleId: "sample-1",
+      targetKind: "read",
+      targetRole: "R1",
+      originalName: "reads.fastq.gz",
+      tempPath: "_uploads/tmp/upload-1.part",
+      expectedSize: BigInt(500),
+      receivedSize: BigInt(500),
+      checksumProvided: "md5-provided",
+      checksumComputed: null,
+      mimeType: null,
+      metadata: null,
+      finalPath: null,
+      createdById: "user-1",
+    });
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(500),
+      modifiedAt: new Date(),
+    });
+
+    const result = await completeSequencingUpload("order-1", "upload-1");
+
+    expect(result.status).toBe("COMPLETED");
+    expect(mocks.db.read.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sampleId: "sample-1",
+        checksum1: "md5-provided",
+      }),
+    });
+  });
+
+  it("throws when read upload has no target sample", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      sampleId: null,
+      targetKind: "read",
+      targetRole: "R1",
+      originalName: "reads.fastq.gz",
+      tempPath: "_uploads/tmp/upload-1.part",
+      expectedSize: BigInt(100),
+      receivedSize: BigInt(100),
+      checksumProvided: null,
+      checksumComputed: null,
+      mimeType: null,
+      metadata: null,
+      finalPath: null,
+      createdById: "user-1",
+    });
+    mocks.db.order.findUnique.mockResolvedValue(createOrder());
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(100),
+      modifiedAt: new Date(),
+    });
+
+    await expect(completeSequencingUpload("order-1", "upload-1")).rejects.toThrow(
+      "Read uploads require a target sample"
+    );
   });
 });

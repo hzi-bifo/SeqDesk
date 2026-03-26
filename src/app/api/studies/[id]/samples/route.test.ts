@@ -105,6 +105,80 @@ describe("POST /api/studies/[id]/samples", () => {
     expect(response.status).toBe(404);
   });
 
+  it("allows FACILITY_ADMIN to assign samples they do not own", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.sample.findMany.mockResolvedValue([
+      { id: "sample-1", checklistData: null, order: { userId: "other-user" } },
+    ]);
+
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await POST(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+  });
+
+  it("saves perSampleData with metadata merging for researcher", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        checklistData: JSON.stringify({ existing_field: "keep" }),
+        order: { userId: "user-1" },
+      },
+    ]);
+    mocks.loadStudyFormSchema.mockResolvedValue({
+      studyFields: [],
+      perSampleFields: [
+        { id: "f1", name: "collection_date", label: "Collection Date", type: "text", order: 0, perSample: true },
+      ],
+      fields: [],
+      groups: [],
+      modules: {},
+    });
+
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sampleIds: ["sample-1"],
+        perSampleData: {
+          "sample-1": { collection_date: "2024-01-01" },
+        },
+      }),
+    });
+    const response = await POST(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.db.sample.update).toHaveBeenCalledWith({
+      where: { id: "sample-1" },
+      data: {
+        checklistData: JSON.stringify({
+          existing_field: "keep",
+          collection_date: "2024-01-01",
+        }),
+      },
+    });
+  });
+
+  it("returns 500 when db throws an error", async () => {
+    mocks.db.sample.updateMany.mockRejectedValue(new Error("DB failure"));
+
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await POST(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Failed to assign samples");
+  });
+
   it("returns 403 when assigning samples user does not own", async () => {
     mocks.db.sample.findMany.mockResolvedValue([
       { id: "sample-1", checklistData: null, order: { userId: "other-user" } },
@@ -212,6 +286,72 @@ describe("PUT /api/studies/[id]/samples", () => {
     const response = await PUT(req, { params: Promise.resolve({ id: "study-1" }) });
     expect(response.status).toBe(404);
   });
+
+  it("handles both samplesToAdd and samplesToRemove", async () => {
+    // Current study has sample-1; new sampleIds has sample-2 (add sample-2, remove sample-1)
+    mocks.db.sample.findMany.mockImplementation(async ({ where, select, include }) => {
+      if (where?.studyId && select?.id) {
+        return [{ id: "sample-1" }];
+      }
+      if (where?.id?.in && include?.order) {
+        return [{ id: "sample-2", order: { userId: "user-1" } }];
+      }
+      if (where?.id?.in && select?.id && select?.checklistData) {
+        return [{ id: "sample-2", checklistData: null }];
+      }
+      return [];
+    });
+
+    const req = new NextRequest(BASE_URL, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-2"] }),
+    });
+    const response = await PUT(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.added).toBe(1);
+    expect(data.removed).toBe(1);
+  });
+
+  it("allows FACILITY_ADMIN to add unowned samples", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.sample.findMany.mockImplementation(async ({ where, select, include }) => {
+      if (where?.studyId && select?.id) {
+        return [];
+      }
+      if (where?.id?.in && include?.order) {
+        return [{ id: "sample-1", order: { userId: "other-user" } }];
+      }
+      return [];
+    });
+
+    const req = new NextRequest(BASE_URL, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await PUT(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.added).toBe(1);
+  });
+
+  it("returns 500 when db throws an error", async () => {
+    mocks.db.study.findUnique.mockRejectedValue(new Error("DB failure"));
+
+    const req = new NextRequest(BASE_URL, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await PUT(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Failed to update samples");
+  });
 });
 
 describe("DELETE /api/studies/[id]/samples", () => {
@@ -279,5 +419,36 @@ describe("DELETE /api/studies/[id]/samples", () => {
     });
     const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
     expect(response.status).toBe(403);
+  });
+
+  it("allows FACILITY_ADMIN to unassign samples from any study", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.study.findUnique.mockResolvedValue({ userId: "other-user" });
+
+    const req = new NextRequest(BASE_URL, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+  });
+
+  it("returns 500 when db throws an error", async () => {
+    mocks.db.study.findUnique.mockRejectedValue(new Error("DB failure"));
+
+    const req = new NextRequest(BASE_URL, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sampleIds: ["sample-1"] }),
+    });
+    const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Failed to remove samples");
   });
 });

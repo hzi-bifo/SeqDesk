@@ -302,6 +302,21 @@ describe("validateLicense", () => {
     expect(result.daysRemaining).toBe(0);
   });
 
+  it("rejects token with empty signature when not in dev mode", async () => {
+    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({
+        ...makeLicense(),
+        expiresAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+    ).toString("base64url");
+
+    const result = await validateLicense(`${header}.${payload}.`);
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe("Invalid license signature");
+  });
+
   it("blocks dev license generation outside development", () => {
     expect(() => generateDevLicense("Test Org")).toThrow(
       "Dev licenses can only be generated in development mode"

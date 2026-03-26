@@ -388,6 +388,46 @@ describe("installer", () => {
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an unsupported checksum algorithm", async () => {
+    configureInstallerShell();
+    const mod = await loadInstallerModule();
+
+    await expect(
+      mod.installUpdate(
+        createRelease({
+          checksum: "md5:abcdef1234567890",
+        })
+      )
+    ).rejects.toThrow("Unsupported checksum algorithm: md5");
+  });
+
+  it("skips disk space check on non-unix platforms", async () => {
+    platformMock.mockReturnValue("win32");
+    configureInstallerShell();
+    const progress: string[] = [];
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease(), (entry) => {
+      progress.push(`${entry.status}:${entry.progress}`);
+    });
+
+    expect(progress[0]).toBe("downloading:5");
+    expect(progress).toContain("complete:100");
+  });
+
+  it("rejects when database compatibility check fails", async () => {
+    getDatabaseCompatibilityErrorMock.mockReturnValue(
+      "This release requires PostgreSQL but SQLite is installed."
+    );
+    const mod = await loadInstallerModule();
+
+    await expect(mod.installUpdate(createRelease())).rejects.toThrow(
+      "This release requires PostgreSQL but SQLite is installed."
+    );
+
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails checksum verification when the downloaded archive does not match", async () => {
     configureInstallerShell();
     const mod = await loadInstallerModule();

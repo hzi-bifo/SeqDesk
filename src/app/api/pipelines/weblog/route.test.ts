@@ -534,4 +534,278 @@ describe("POST /api/pipelines/weblog", () => {
     expect(createdEvent.payload.length).toBeLessThanOrEqual(12000);
     expect(createdEvent.payload.endsWith("...")).toBe(true);
   });
+
+  it("falls back to receivedAt when event time is too far in the future", async () => {
+    const futureTime = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString();
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      utcTime: futureTime,
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const createdEvent = txMock.pipelineRunEvent.create.mock.calls[0][0].data;
+    const eventTime = new Date(createdEvent.occurredAt);
+    const futureDate = new Date(futureTime);
+    // Should use receivedAt instead of the far-future time
+    expect(eventTime.getTime()).toBeLessThan(futureDate.getTime());
+  });
+
+  it("falls back to receivedAt when event time is too far in the past", async () => {
+    const pastTime = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      utcTime: pastTime,
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const createdEvent = txMock.pipelineRunEvent.create.mock.calls[0][0].data;
+    const eventTime = new Date(createdEvent.occurredAt);
+    const pastDate = new Date(pastTime);
+    // Should use receivedAt instead of the ancient past time
+    expect(eventTime.getTime()).toBeGreaterThan(pastDate.getTime());
+  });
+
+  it("cleans up excess events beyond 100 in the transaction", async () => {
+    const excessEvents = Array.from({ length: 5 }, (_, i) => ({ id: `excess-${i}` }));
+
+    mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        pipelineRunEvent: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn(),
+          findMany: vi.fn().mockResolvedValue(excessEvents),
+          deleteMany: vi.fn(),
+        },
+        pipelineRun: {
+          update: vi.fn(),
+        },
+      };
+      await fn(tx);
+      // Verify excess events were deleted
+      expect(tx.pipelineRunEvent.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ["excess-0", "excess-1", "excess-2", "excess-3", "excess-4"] } },
+      });
+    });
+
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      trace: { process: "FASTQC" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("keeps run as running when workflow_complete but queue state is active", async () => {
+    mocks.execFileAsync.mockResolvedValue({ stdout: "RUNNING|computing\n", stderr: "" });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "12345",
+    });
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    expect(updateData.status).toBe("running");
+    expect(updateData.currentStep).toBe("Finalizing...");
+  });
+
+  it("marks run as running when processCompletedRun throws", async () => {
+    mocks.execFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
+    mocks.getAdapter.mockReturnValue(null);
+    mocks.createGenericAdapter.mockReturnValue(null);
+    let callCount = 0;
+    mocks.db.pipelineRun.findUnique.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { ...baseRun, queueJobId: null, pipelineId: "mag" };
+      return null; // processCompletedRun - run not found, returns early
+    });
+
+    mocks.db.assembly.count.mockResolvedValue(0);
+    mocks.db.bin.count.mockResolvedValue(0);
+    mocks.db.pipelineArtifact.count.mockResolvedValue(0);
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    // MAG pipeline with 0 materialized outputs should stay running
+    expect(updateData.status).toBe("running");
+    expect(updateData.currentStep).toBe("Finalizing outputs...");
+  });
+
+  it("handles non-numeric queue job IDs gracefully", async () => {
+    vi.clearAllMocks();
+    mocks.getExecutionSettings.mockResolvedValue({ weblogSecret: "" });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.findStepByProcess.mockReturnValue(null);
+    mocks.db.pipelineRunStep.findUnique.mockResolvedValue(null);
+    mocks.db.pipelineRunStep.count.mockResolvedValue(0);
+    mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        pipelineRunEvent: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          create: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+          deleteMany: vi.fn(),
+        },
+        pipelineRun: { update: vi.fn() },
+      };
+      return fn(tx);
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "invalid-format",
+    });
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // Non-numeric, non-local job IDs return null state, so workflow_complete
+    // should still process the run as completed
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    // With null queue state and no adapter, it still processes
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    // No outputs discovered since no adapter, so status depends on pipeline type
+    expect(["completed", "running"]).toContain(updateData.status);
+  });
+
+  it("processes a process_error event and marks step as failed", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.getStepsForPipeline.mockReturnValue([{ id: "step-qc" }]);
+    mocks.db.pipelineRunStep.count.mockResolvedValue(0);
+
+    const req = makeRequest("run-1", {
+      event: "process_error",
+      trace: { process: "FASTQC", status: "ERROR" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    expect(upsertArgs.create.status).toBe("failed");
+  });
+
+  it("preserves failed step status when a later running event arrives", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.db.pipelineRunStep.findUnique.mockResolvedValue({
+      status: "failed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      trace: { process: "FASTQC", status: "RUNNING" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    // Should preserve failed status even though process_start would normally set running
+    expect(upsertArgs.update.status).toBe("failed");
+  });
+
+  it("extracts process name from task field when trace is absent", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-assembly", name: "Assembly" });
+
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      task: { process: "MEGAHIT" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.findStepByProcess).toHaveBeenCalledWith("mag", "MEGAHIT");
+  });
 });

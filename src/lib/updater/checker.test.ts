@@ -154,6 +154,79 @@ describe("updater checker", () => {
     });
   });
 
+  it("returns 0.0.0 when package.json is missing or invalid", async () => {
+    await fs.rm(path.join(tempDir, "package.json"));
+
+    const mod = await loadCheckerModule();
+
+    expect(mod.getCurrentVersion()).toBe("0.0.0");
+    expect(await mod.getInstalledVersion()).toBe("0.0.0");
+  });
+
+  it("returns 0.0.0 when package.json has no version field", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "package.json"),
+      JSON.stringify({ name: "test" }),
+      "utf8"
+    );
+
+    const mod = await loadCheckerModule();
+
+    expect(mod.getCurrentVersion()).toBe("0.0.0");
+  });
+
+  it("clears the update cache so the next check re-fetches", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        updateAvailable: false,
+        latest: null,
+      }),
+    } as Response);
+
+    const mod = await loadCheckerModule();
+    await mod.checkForUpdates();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mod.clearUpdateCache();
+    await mod.checkForUpdates();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-fetches when forced even if cache is valid", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        updateAvailable: false,
+        latest: null,
+      }),
+    } as Response);
+
+    const mod = await loadCheckerModule();
+    await mod.checkForUpdates();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await mod.checkForUpdates(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns error result when HTTP response is not ok", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    } as Response);
+
+    const mod = await loadCheckerModule();
+    const result = await mod.checkForUpdates(true);
+
+    expect(result.updateAvailable).toBe(false);
+    expect(result.error).toContain("HTTP 503");
+  });
+
   it("returns a structured error result when the request fails", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValue(new Error("network down"));

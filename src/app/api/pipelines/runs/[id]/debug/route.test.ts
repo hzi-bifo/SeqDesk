@@ -245,4 +245,212 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
     const body = await res.json();
     expect(body.error).toBe("Failed to build debug bundle");
   });
+
+  it("includes SLURM log file paths when queueJobId is numeric", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "12345",
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // Should include slurm-specific log files
+    const filePaths = body.files.map((f: { path: string }) => f.path);
+    expect(filePaths).toContain("/data/runs/run-1/logs/slurm-12345.out");
+    expect(filePaths).toContain("/data/runs/run-1/logs/slurm-12345.err");
+  });
+
+  it("does not include SLURM log files when queueJobId is non-numeric", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "local-999",
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    const filePaths = body.files.map((f: { path: string }) => f.path);
+    const slurmFiles = filePaths.filter((p: string) => p.includes("slurm-"));
+    expect(slurmFiles).toHaveLength(0);
+  });
+
+  it("includes queue diagnostics when queueJobId is numeric", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "12345",
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // queueChecks should have entries for squeue and sacct
+    expect(body.hostDiagnostics.queueChecks.length).toBeGreaterThan(0);
+  });
+
+  it("has empty queue diagnostics when no queueJobId", async () => {
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.hostDiagnostics.queueChecks).toHaveLength(0);
+  });
+
+  it("includes target info for order-based runs", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      targetType: "order",
+      orderId: "order-1",
+      studyId: null,
+      study: null,
+      order: {
+        id: "order-1",
+        name: "Test Order",
+        orderNumber: "ORD-001",
+        userId: "user-1",
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S001",
+            reads: [
+              {
+                id: "read-1",
+                file1: "/data/reads/S001_R1.fastq.gz",
+                file2: "/data/reads/S001_R2.fastq.gz",
+                checksum1: "abc",
+                checksum2: "def",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.target.type).toBe("order");
+    expect(body.target.orderNumber).toBe("ORD-001");
+    expect(body.target.selectedSampleCount).toBe(1);
+  });
+
+  it("returns null target when neither study nor order is present", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      targetType: null,
+      study: null,
+      order: null,
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.target).toBeNull();
+  });
+
+  it("filters samples by inputSampleIds when set", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      inputSampleIds: JSON.stringify(["sample-999"]),
+      study: {
+        ...baseRun.study,
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S001",
+            reads: [],
+          },
+          {
+            id: "sample-999",
+            sampleId: "S999",
+            reads: [],
+          },
+        ],
+      },
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // Only sample-999 should be selected
+    expect(body.target.selectedSampleCount).toBe(1);
+    expect(body.target.selectedSamples[0].sampleId).toBe("S999");
+  });
+
+  it("text format includes section headers and run details", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      config: JSON.stringify({ key: "value" }),
+      outputTail: "last output line",
+      errorTail: "last error line",
+    });
+
+    const res = await GET(makeRequest("run-1", "text"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+
+    expect(text).toContain("=== Run ===");
+    expect(text).toContain("=== ExecutionSettings ===");
+    expect(text).toContain("=== HostDiagnostics ===");
+    expect(text).toContain("=== Files ===");
+    expect(text).toContain("=== RunConfigJSON ===");
+    expect(text).toContain("=== OutputTail ===");
+    expect(text).toContain("last output line");
+    expect(text).toContain("=== ErrorTail ===");
+    expect(text).toContain("last error line");
+  });
+
+  it("allows order owner to access their run", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "order-owner", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      targetType: "order",
+      study: null,
+      order: {
+        id: "order-1",
+        name: "Order",
+        orderNumber: "ORD-001",
+        userId: "order-owner",
+        samples: [],
+      },
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+  });
+
+  it("includes no files when runFolder is null", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      runFolder: null,
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.files).toHaveLength(0);
+  });
+
+  it("reports condaScriptExists as null when condaPath is empty", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecSettings,
+      condaPath: "",
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.executionSettings.condaScriptPath).toBeNull();
+    expect(body.executionSettings.condaScriptExists).toBeNull();
+  });
 });

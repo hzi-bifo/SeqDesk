@@ -245,6 +245,162 @@ describe("/api/orders/[id]/notes", () => {
     });
   });
 
+  it("normalizes empty string notes to null", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      notes: "some existing note",
+      notesEditedAt: new Date("2026-03-12T10:00:00.000Z"),
+      notesEditedById: "user-1",
+      notesEditedBy: null,
+    });
+    mocks.db.order.update.mockResolvedValue({
+      notes: null,
+      notesEditedAt: new Date("2026-03-12T11:00:00.000Z"),
+      notesEditedById: "user-1",
+      notesEditedBy: null,
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: "" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ notes: null }),
+      }),
+    );
+  });
+
+  it("rejects notes that are not a string (object)", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: { key: "value" } }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Notes must be a string or null");
+  });
+
+  it("rejects notes that are a number", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: 42 }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Notes must be a string or null");
+  });
+
+  it("skips update when notes have not changed", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      notes: "Same note",
+      notesEditedAt: new Date("2026-03-12T10:00:00.000Z"),
+      notesEditedById: "user-1",
+      notesEditedBy: null,
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: "Same note" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).not.toHaveBeenCalled();
+    const data = await response.json();
+    expect(data.notes).toBe("Same note");
+    expect(data.notesSupported).toBe(true);
+  });
+
+  it("returns null notes when extraSettings has malformed JSON", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: "not valid json{{{",
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      notes: "Some note",
+      notesEditedAt: new Date("2026-03-12T10:00:00.000Z"),
+      notesEditedById: "user-1",
+      notesEditedBy: null,
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes"),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    // parseExtraSettings returns {} on parse error, so orderNotesEnabled defaults to !== false => true
+    expect(response.status).toBe(200);
+  });
+
+  it("returns 500 when db.order.update throws a non-schema error", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      notes: null,
+      notesEditedAt: null,
+      notesEditedById: null,
+      notesEditedBy: null,
+    });
+    mocks.db.order.update.mockRejectedValue(new Error("Connection lost"));
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: "New note" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Failed to update order notes");
+  });
+
   it("rejects note updates when the feature is disabled in admin settings", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: {

@@ -834,4 +834,201 @@ describe("prerequisite-check", () => {
     expect(result.message).toContain("502");
     fetchSpy.mockRestore();
   });
+
+  it("tests pipelineRunDir with a path that needs creation", async () => {
+    fsAccessMock.mockRejectedValue(createFsError("ENOENT"));
+    fsMkdirMock.mockResolvedValue(undefined);
+
+    const result = await testSetting("pipelineRunDir", "/tmp/new-dir");
+    expect(result.success).toBe(true);
+  });
+
+  it("tests pipelineRunDir with a write error", async () => {
+    fsAccessMock.mockResolvedValue(undefined);
+    const permError = createFsError("EACCES");
+    fsWriteFileMock.mockRejectedValue(permError);
+
+    const result = await testSetting("pipelineRunDir", "/root/forbidden");
+    expect(result.success).toBe(false);
+  });
+
+  it("tests condaPath with a specific path finds conda in condabin", async () => {
+    fsAccessMock.mockImplementation(async (target: string) => {
+      if (String(target) === "/opt/miniconda/bin/conda") {
+        throw createFsError("ENOENT");
+      }
+      // condabin/conda passes
+    });
+
+    execResponder = (command: string) => {
+      if (command === "/opt/miniconda/condabin/conda --version") {
+        return { stdout: "conda 24.7.0\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("condaPath", "/opt/miniconda");
+    expect(result.success).toBe(true);
+    expect(result.version).toBe("conda 24.7.0");
+  });
+
+  it("tests slurm when sinfo is not available", async () => {
+    execResponder = () => {
+      return { error: createExecError("not found", "ENOENT") };
+    };
+
+    const result = await testSetting("slurm");
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Not available");
+  });
+
+  it("tests nfcore when not installed reports not found", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { error: createExecError("not found", "ENOENT") };
+      }
+      if (command === "nf-core --version 2>&1") {
+        return { error: createExecError("nf-core not found", "ENOENT") };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("nfcore");
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Not installed");
+  });
+
+  it("tests nextflow when command returns unexpected output", async () => {
+    execResponder = (command: string) => {
+      if (command === "nextflow -version") {
+        return { stdout: "some unexpected output\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await testSetting("nextflow");
+    expect(result.success).toBe(true);
+    expect(result.version).toBeUndefined();
+  });
+
+  it("detects tool versions returning partial data when some tools fail", async () => {
+    execResponder = (command: string) => {
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command === "conda env list") {
+        return { stdout: "base * /opt/conda\n" };
+      }
+      if (command === "nextflow -version") {
+        return { stdout: "nextflow version 24.10.0.5000\n" };
+      }
+      if (command === "nf-core --version") {
+        return { error: createExecError("not found", "ENOENT") };
+      }
+      if (command === "java -version 2>&1") {
+        return { error: createExecError("not found", "ENOENT") };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const versions = await detectVersions();
+    expect(versions.conda).toBe("24.9.1");
+    expect(versions.nextflow).toBe("24.10.0");
+    expect(versions.nfcore).toBeUndefined();
+    expect(versions.java).toBeUndefined();
+  });
+
+  it("checkAllPrerequisites run dir creation on ENOENT", async () => {
+    fsAccessMock.mockImplementation(async (target: string) => {
+      if (String(target) === "/tmp/nonexistent-dir" || String(target).startsWith("/tmp/nonexistent-dir/")) {
+        throw createFsError("ENOENT");
+      }
+    });
+
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout: "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command === "conda config --show channels") {
+        return { stdout: "channels:\n  - conda-forge\n  - bioconda\n" };
+      }
+      if (command.includes("nf-core --version")) {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/nonexistent-dir",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    const runDirCheck = result.checks.find((c) => c.id === "run_directory");
+    expect(runDirCheck?.status).toBe("pass");
+    expect(runDirCheck?.message).toContain("Created");
+  });
+
+  it("quickPrerequisiteCheck with SLURM enabled passes without slurm check", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout: "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command === "sinfo --version") {
+        return { stdout: "slurm 23.11.0\n" };
+      }
+      if (command.includes("sinfo -h")) {
+        return { stdout: "normal* up\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await quickPrerequisiteCheck(
+      {
+        useSlurm: true,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    expect(result.ready).toBe(true);
+  });
 });

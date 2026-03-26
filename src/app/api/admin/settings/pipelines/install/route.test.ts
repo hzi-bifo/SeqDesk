@@ -162,6 +162,138 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     expect((init.headers as Headers).get("authorization")).toBe("Bearer secret-token");
   });
 
+  it("returns 403 when not authenticated", async () => {
+    mocks.getServerSession.mockResolvedValue(null);
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pipelineId: "mag" }),
+      })
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("returns 403 when user is not FACILITY_ADMIN", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { role: "RESEARCHER" },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pipelineId: "mag" }),
+      })
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("returns 400 when pipelineId is missing", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error).toContain("Pipeline ID required");
+  });
+
+  it("returns 400 when private registry install lacks credentials", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "custom",
+          source: {
+            kind: "privateRegistry",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error).toContain("access key");
+  });
+
+  it("returns 400 when registry install has no download URL", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "custom",
+          source: {
+            kind: "registry",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error).toContain("download URL");
+  });
+
+  it("returns 500 when fetch for registry payload fails", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "custom",
+          source: {
+            kind: "registry",
+            downloadUrl: "https://example.com/download",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.error).toContain("Failed to install pipeline");
+  });
+
+  it("returns 500 when fetch returns invalid JSON", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new Error("Invalid JSON");
+      },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "custom",
+          source: {
+            kind: "registry",
+            downloadUrl: "https://example.com/download",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(500);
+  });
+
   it("rewrites legacy metaxpath github source details before installing", async () => {
     mocks.installGitHubPipelineSnapshot.mockResolvedValue({
       action: "install",

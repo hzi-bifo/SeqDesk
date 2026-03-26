@@ -1803,6 +1803,158 @@ describe("output-resolver", () => {
     expect(mocks.db.read.create).toHaveBeenCalled();
   });
 
+  it("returns error when sample read metadata update has no Read record", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "checksums/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue(null);
+
+    const result = await resolveOutputs("fastq-checksum", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: "/tmp/sample-1.json",
+          sampleId: "sample-1",
+          outputId: "sample-checksums",
+          metadata: {
+            checksum1: "abc123",
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e: string) => e.includes("No canonical Read record"))).toBe(true);
+  });
+
+  it("returns error when sample_reads output has no sampleId", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "checksums/*.json" },
+          },
+        ],
+      },
+    });
+
+    const result = await resolveOutputs("fastq-checksum", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "unknown.json",
+          path: "/tmp/unknown.json",
+          outputId: "sample-checksums",
+          metadata: {
+            checksum1: "abc123",
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e: string) => e.includes("No sample ID"))).toBe(true);
+  });
+
+  it("skips metadata-only update when writebackData has no meaningful fields", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-checksums",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "checksums/*.json" },
+          },
+        ],
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "read-1", pipelineSources: null });
+
+    const result = await resolveOutputs("fastq-checksum", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: "/tmp/sample-1.json",
+          sampleId: "sample-1",
+          outputId: "sample-checksums",
+          metadata: {},
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.read.update).not.toHaveBeenCalled();
+  });
+
+  it("returns error when file writeback has no dataBasePath configured", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+            writeback: {
+              target: "Read",
+              mode: "replace",
+              fields: {
+                generatedFile1: "file1",
+              },
+            },
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: null,
+      source: "none",
+      isImplicit: false,
+    });
+
+    const result = await resolveOutputs("simulate-reads", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "s1.json",
+          path: "/tmp/s1.json",
+          sampleId: "s1",
+          outputId: "sample-reads",
+          metadata: {
+            generatedFile1: "output/s1_R1.fastq.gz",
+            sourceFile1: "/tmp/s1_R1.fastq.gz",
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e: string) => e.includes("Data base path is not configured"))).toBe(true);
+  });
+
   it("saves run results with errors and warnings arrays", async () => {
     mocks.db.pipelineRun.update.mockResolvedValue({});
 

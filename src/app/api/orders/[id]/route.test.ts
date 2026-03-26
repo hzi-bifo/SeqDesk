@@ -159,6 +159,21 @@ describe("GET /api/orders/[id]", () => {
     expect(data.statusNotes).toEqual([]);
   });
 
+  it("returns fallback user when user lookup returns null", async () => {
+    mocks.db.user.findUnique.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.user.firstName).toBe("Unknown");
+    expect(data.user.lastName).toBe("User");
+    expect(data.user.email).toBe("");
+  });
+
   it("allows facility admin to view any order", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
@@ -273,6 +288,27 @@ describe("DELETE /api/orders/[id]", () => {
     });
   });
 
+  it("returns 403 when non-owner non-admin tries to delete", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-2", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+    });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(403);
+    const data = await response.json();
+    expect(data.error).toBe("Forbidden");
+    expect(mocks.db.order.delete).not.toHaveBeenCalled();
+  });
+
   it("allows owners to delete draft orders without consulting the setting", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
@@ -302,6 +338,174 @@ describe("DELETE /api/orders/[id]", () => {
 describe("PUT /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("updates name and contactName fields", async () => {
+    const existingOrder = {
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+      name: "Old Name",
+    };
+
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue(existingOrder);
+    mocks.db.order.update.mockResolvedValue({
+      ...existingOrder,
+      name: "New Name",
+      contactName: "Jane Doe",
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "New Name", contactName: "Jane Doe" }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "order-1" },
+        data: expect.objectContaining({
+          name: "New Name",
+          contactName: "Jane Doe",
+        }),
+      }),
+    );
+  });
+
+  it("returns 400 for backwards status transition by non-admin", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "SUBMITTED",
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "DRAFT" }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Invalid status transition");
+  });
+
+  it("returns 400 for markSamplesSent on DRAFT order", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ markSamplesSent: true }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Cannot mark samples as sent before order submission");
+  });
+
+  it("handles null customFields by storing null", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+    });
+    mocks.db.order.update.mockResolvedValue({ id: "order-1" });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ customFields: null }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ customFields: null }),
+      }),
+    );
+  });
+
+  it("stores NaN as NaN when numberOfSamples is malformed", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+    });
+    mocks.db.order.update.mockResolvedValue({ id: "order-1" });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ numberOfSamples: "abc" }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ numberOfSamples: NaN }),
+      }),
+    );
+  });
+
+  it("returns 500 when db.order.update throws", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "user-1",
+      status: "DRAFT",
+    });
+    mocks.db.order.update.mockRejectedValue(new Error("DB failure"));
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Crash" }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(500);
+    const data = await response.json();
+    expect(data.error).toBe("Failed to update order");
   });
 
   it("treats empty request bodies as a no-op update", async () => {

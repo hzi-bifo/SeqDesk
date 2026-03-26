@@ -617,4 +617,300 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(completedUpdate[0].data.currentStep).toBe("Completed");
     expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith("run-1", "fastqc");
   });
+
+  it("parses valid custom config object from run.config", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      config: JSON.stringify({ maxCpus: 4, customParam: "value" }),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.config).toEqual({ maxCpus: 4, customParam: "value" });
+  });
+
+  it("resolves effective profile with multiple comma-separated values", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      nextflowProfile: "test,custom",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    // "test,custom" should get "conda" appended -> "test,custom,conda"
+    expect(prepArgs.executionSettings.nextflowProfile).toBe("test,custom,conda");
+  });
+
+  it("does not duplicate conda in effective profile when already present", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      nextflowProfile: "conda,test",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.executionSettings.nextflowProfile).toBe("conda,test");
+  });
+
+  it("returns 400 when inputSampleIds is not an array", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      inputSampleIds: JSON.stringify("not-an-array"),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("sample selection is invalid");
+  });
+
+  it("returns 400 when inputSampleIds contains non-string values", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      inputSampleIds: JSON.stringify([123, 456]),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("sample selection is invalid");
+  });
+
+  it("returns 400 when request body sampleIds is empty array", async () => {
+    const response = await POST(
+      makeRequest({ sampleIds: [] }),
+      { params: baseParams }
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("sample selection is invalid");
+  });
+
+  it("returns 400 when request body sampleIds contains non-string values", async () => {
+    const response = await POST(
+      makeRequest({ sampleIds: [123] }),
+      { params: baseParams }
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("sample selection is invalid");
+  });
+
+  it("persists sampleIds from request body to run when run has no inputSampleIds", async () => {
+    const response = await POST(
+      makeRequest({ sampleIds: ["s1", "s2"] }),
+      { params: baseParams }
+    );
+
+    expect(response.status).toBe(200);
+    // Should have called update to persist the sampleIds
+    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    const sampleUpdate = updateCalls.find(
+      (call: { 0: { data: { inputSampleIds?: string } } }) =>
+        call[0].data.inputSampleIds !== undefined
+    );
+    expect(sampleUpdate).toBeDefined();
+    expect(JSON.parse(sampleUpdate[0].data.inputSampleIds)).toEqual(["s1", "s2"]);
+  });
+
+  it("returns 400 when conda compatibility blocks the run", async () => {
+    mocks.getLocalCondaCompatibilityBlockMessage.mockReturnValue(
+      "macOS ARM is not supported for this pipeline"
+    );
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("macOS ARM is not supported");
+    // Should have updated the run to failed status
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "failed",
+          statusSource: "launcher",
+        }),
+      })
+    );
+  });
+
+  it("returns 400 when neither conda nor nextflow is available for local execution", async () => {
+    mocks.resolveCondaBin.mockResolvedValue(null);
+    // nextflow also not available (exec mock already rejects all commands)
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("Neither conda nor nextflow were found");
+  });
+
+  it("warns but proceeds when conda is missing but nextflow is available", async () => {
+    mocks.resolveCondaBin.mockResolvedValue(null);
+    // Make `command -v nextflow` succeed
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v nextflow")) {
+          callback(null, { stdout: "/usr/local/bin/nextflow" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+  });
+
+  it("handles study-based target correctly", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      targetType: "study",
+      orderId: null,
+      studyId: "study-1",
+      order: null,
+      study: { samples: [{ id: "s1", reads: [] }] },
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.target).toEqual({ type: "study", studyId: "study-1" });
+  });
+
+  it("returns 500 on top-level unexpected error", async () => {
+    mocks.db.pipelineRun.findUnique.mockRejectedValue(
+      new Error("Unexpected DB error")
+    );
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Failed to start pipeline run");
+  });
+
+  it("sbatch returns job ID with cluster suffix", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+      slurmOptions: '--mem=64G --time=48:00:00',
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        // parsable output with cluster suffix: "12345;cluster"
+        child.stdout.emit("data", "12345;mycluster\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.jobId).toBe("12345");
+  });
+
+  it("sbatch failure when no job id is returned", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        // sbatch exits 0 but no job id in output
+        child.stdout.emit("data", "no job id here\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toContain("sbatch did not return a job id");
+  });
+
+  it("returns success without execution when prepResult has no runFolder", async () => {
+    mocks.prepareGenericRun.mockResolvedValue({
+      success: true,
+      runFolder: null,
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.runFolder).toBeNull();
+    // spawn should not have been called
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it("uses scriptPath from prepResult when available", async () => {
+    mocks.prepareGenericRun.mockResolvedValue({
+      success: true,
+      runFolder: "/tmp/runs/run-1",
+      scriptPath: "/tmp/runs/run-1/custom-run.sh",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    // spawn should be called with the custom script path
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "bash",
+      ["/tmp/runs/run-1/custom-run.sh"],
+      expect.any(Object)
+    );
+  });
 });
