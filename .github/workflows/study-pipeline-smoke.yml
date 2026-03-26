@@ -1,0 +1,152 @@
+name: Study Pipeline End-to-End Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_github_hosted:
+        description: Run the smoke test on GitHub-hosted Ubuntu first
+        required: true
+        default: false
+        type: boolean
+      run_self_hosted:
+        description: Run the smoke test on the Twincore self-hosted runner
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  github_hosted:
+    name: Study Pipeline E2E (GitHub-hosted)
+    if: ${{ inputs.run_github_hosted }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-gh
+      PIPELINE_SMOKE_RUNNER_LABEL: github-hosted
+      PIPELINE_SMOKE_WORKFLOW_LABEL: Study Pipeline End-to-End Smoke
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set runtime paths
+        run: |
+          echo "PIPELINE_SMOKE_TMPDIR=$RUNNER_TEMP/study-pipeline-smoke-gh" >> "$GITHUB_ENV"
+          echo "NXF_HOME=$RUNNER_TEMP/.nextflow-gh" >> "$GITHUB_ENV"
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
+      - name: Create pipeline Conda environment
+        run: |
+          conda create -y -n "$PIPELINE_CONDA_ENV" \
+            --override-channels \
+            -c conda-forge \
+            -c bioconda \
+            python=3.11 \
+            openjdk=17 \
+            nodejs \
+            coreutils \
+            nextflow \
+            nf-core
+
+      - name: Run study pipeline end-to-end smoke
+        run: bash scripts/run-study-pipeline-smoke.sh --keep-temp
+
+      - name: Publish study pipeline summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f "$PIPELINE_SMOKE_TMPDIR/STUDY_PIPELINE_SMOKE_SUMMARY.md" ]]; then
+            cat "$PIPELINE_SMOKE_TMPDIR/STUDY_PIPELINE_SMOKE_SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload study pipeline outputs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-pipeline-e2e-github-hosted
+          path: ${{ runner.temp }}/study-pipeline-smoke-gh
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup Conda environment
+        if: ${{ always() }}
+        run: |
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          rm -rf "$PIPELINE_SMOKE_TMPDIR" "$NXF_HOME"
+
+  self_hosted:
+    name: Study Pipeline E2E (Self-hosted Twincore)
+    needs: github_hosted
+    if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
+    runs-on: [self-hosted, linux, twincore, alma]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-twincore
+      PIPELINE_SMOKE_RUNNER_LABEL: self-hosted-twincore
+      PIPELINE_SMOKE_WORKFLOW_LABEL: Study Pipeline End-to-End Smoke
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set runtime paths
+        run: |
+          echo "PIPELINE_SMOKE_TMPDIR=$RUNNER_TEMP/study-pipeline-smoke-twincore" >> "$GITHUB_ENV"
+          echo "NXF_HOME=$RUNNER_TEMP/.nextflow-twincore" >> "$GITHUB_ENV"
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
+      - name: Create pipeline Conda environment
+        run: |
+          conda create -y -n "$PIPELINE_CONDA_ENV" \
+            --override-channels \
+            -c conda-forge \
+            -c bioconda \
+            python=3.11 \
+            openjdk=17 \
+            nodejs \
+            coreutils \
+            nextflow \
+            nf-core
+
+      - name: Run study pipeline end-to-end smoke
+        run: bash scripts/run-study-pipeline-smoke.sh --keep-temp
+
+      - name: Publish study pipeline summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f "$PIPELINE_SMOKE_TMPDIR/STUDY_PIPELINE_SMOKE_SUMMARY.md" ]]; then
+            cat "$PIPELINE_SMOKE_TMPDIR/STUDY_PIPELINE_SMOKE_SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload study pipeline outputs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: study-pipeline-e2e-self-hosted
+          path: ${{ runner.temp }}/study-pipeline-smoke-twincore
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup Conda environment
+        if: ${{ always() }}
+        run: |
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          rm -rf "$PIPELINE_SMOKE_TMPDIR" "$NXF_HOME"
