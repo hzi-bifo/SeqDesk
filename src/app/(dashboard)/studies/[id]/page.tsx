@@ -357,6 +357,10 @@ export default function StudyDetailPage({
     status: "idle" | "checking" | "ok" | "error";
     message?: string;
   }>({ status: "idle" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [enaSubmissions, setEnaSubmissions] = useState<any[]>([]);
+  const [enaSubmissionsLoaded, setEnaSubmissionsLoaded] = useState(false);
+  const [expandedSubmissionId, setExpandedSubmissionId] = useState<string | null>(null);
   const [studyFormFields, setStudyFormFields] = useState<FormFieldDefinition[]>([]);
   const [studyPerSampleFields, setStudyPerSampleFields] = useState<FormFieldDefinition[]>([]);
   const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(getFixedStudySections());
@@ -500,6 +504,28 @@ export default function StudyDetailPage({
         setEnaCheck({ status: "error", message: "Failed to check ENA credentials" });
       });
   }, [selectedPublishingTarget, isAdmin, enaCheck.status]);
+
+  // Fetch ENA submissions for this study
+  const fetchEnaSubmissions = useCallback(() => {
+    if (!study || !isAdmin) return;
+    fetch("/api/admin/submissions")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        const studySubs = (Array.isArray(data) ? data : [])
+          .filter((s: { entityType: string; entityId: string }) => s.entityType === "study" && s.entityId === study.id)
+          .sort((a: { createdAt: string }, b: { createdAt: string }) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setEnaSubmissions(studySubs);
+        setEnaSubmissionsLoaded(true);
+      })
+      .catch(() => {
+        setEnaSubmissionsLoaded(true);
+      });
+  }, [study, isAdmin]);
+
+  useEffect(() => {
+    if (selectedPublishingTarget !== "ena" || enaSubmissionsLoaded) return;
+    fetchEnaSubmissions();
+  }, [selectedPublishingTarget, enaSubmissionsLoaded, fetchEnaSubmissions]);
 
   const handleDeleteStudy = async () => {
     if (!study) return;
@@ -697,6 +723,8 @@ export default function StudyDetailPage({
       setRegisterResult({ success: false, error: message, isTest });
     } finally {
       setSubmitting(false);
+      // Refresh submissions list
+      fetchEnaSubmissions();
     }
   };
 
@@ -1900,70 +1928,193 @@ export default function StudyDetailPage({
                 {/* Section 4: Submission History */}
                 <div className="rounded-xl border border-border bg-card">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                    <h3 className="text-sm font-medium">Submission History</h3>
+                    <h3 className="text-sm font-medium flex items-center gap-2">
+                      Submission History
+                      {enaSubmissions.length > 0 && (
+                        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted px-1.5 text-[11px] font-medium">
+                          {enaSubmissions.length}
+                        </span>
+                      )}
+                    </h3>
                     <span className="text-xs text-muted-foreground">
                       Created by {study.user.firstName && study.user.lastName
                         ? `${study.user.firstName} ${study.user.lastName}`
                         : study.user.email}
                     </span>
                   </div>
-                  {!study.submitted && !hasTestRegistration ? (
+                  {enaSubmissions.length === 0 ? (
                     <div className="rounded-b-xl border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                      No submissions yet. Use the buttons above to register with ENA.
+                      {enaSubmissionsLoaded ? "No submissions yet. Use the buttons above to register with ENA." : "Loading..."}
                     </div>
                   ) : (
                     <div className="divide-y divide-border">
-                      {study.submitted && study.studyAccessionId && (
-                        <Link href="/submissions" className="flex items-center justify-between px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer">
-                          <div className="flex items-center gap-3">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
-                              <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
-                            </span>
-                            <div>
-                              <p className="text-sm font-medium">Production registration</p>
-                              <p className="text-xs text-muted-foreground font-mono">{study.studyAccessionId}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            {study.submittedAt && (
-                              <span className="text-xs text-muted-foreground">{formatDate(study.submittedAt)}</span>
-                            )}
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          </div>
-                        </Link>
-                      )}
-                      {hasTestRegistration && (() => {
-                        const expiration = getTestExpirationStatus(study.testRegisteredAt);
-                        const isExpired = expiration?.expired ?? false;
+                      {enaSubmissions.map((sub) => {
+                        const response = safeJsonParse(sub.response);
+                        const accessions = safeJsonParse(sub.accessionNumbers);
+                        const steps = response?.steps as Array<{ step: number; name: string; status: string; details?: Record<string, unknown> }> | undefined;
+                        const studyAccession = accessions?.study || response?.receipt?.studyAccession;
+                        const isExpanded = expandedSubmissionId === sub.id;
+                        const isTest = response?.isTest;
+                        const statusColor = sub.status === "ACCEPTED"
+                          ? "#00BD7D"
+                          : sub.status === "PARTIAL"
+                            ? "#FFBA00"
+                            : sub.status === "ERROR" || sub.status === "REJECTED"
+                              ? "var(--destructive)"
+                              : "#8FA1B9";
+
                         return (
-                          <Link href="/submissions" className="flex items-center justify-between px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer">
-                            <div className="flex items-center gap-3">
-                              <span className={`flex h-6 w-6 items-center justify-center rounded-full shrink-0 ${
-                                isExpired ? "bg-[#CAD5E2]/20" : "bg-[#FFBA00]/10"
-                              }`}>
-                                {isExpired ? (
-                                  <Clock className="h-3.5 w-3.5 text-[#8FA1B9]" />
-                                ) : (
-                                  <AlertCircle className="h-3.5 w-3.5 text-[#FFBA00]" />
-                                )}
-                              </span>
-                              <div>
-                                <p className={`text-sm font-medium ${isExpired ? "text-[#8FA1B9]" : ""}`}>Test registration</p>
-                                <p className="text-xs text-muted-foreground">
-                                  <span className={`font-mono ${isExpired ? "line-through" : ""}`}>{study.studyAccessionId}</span>
-                                  <span className="ml-1.5">({expiration?.text ?? "expires 24h"})</span>
-                                </p>
+                          <div key={sub.id}>
+                            <button
+                              onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
+                              className="flex items-center justify-between px-4 py-3 w-full text-left hover:bg-secondary/20 transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full shrink-0" style={{ backgroundColor: `${statusColor}15` }}>
+                                  {sub.status === "ACCEPTED" ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5" style={{ color: statusColor }} />
+                                  ) : sub.status === "PARTIAL" ? (
+                                    <AlertCircle className="h-3.5 w-3.5" style={{ color: statusColor }} />
+                                  ) : sub.status === "ERROR" || sub.status === "REJECTED" ? (
+                                    <XCircle className="h-3.5 w-3.5" style={{ color: statusColor }} />
+                                  ) : (
+                                    <Clock className="h-3.5 w-3.5" style={{ color: statusColor }} />
+                                  )}
+                                </span>
+                                <div>
+                                  <p className="text-sm font-medium">
+                                    {isTest ? "Test" : "Production"} registration
+                                    <span className="ml-2 text-xs font-normal px-1.5 py-0.5 rounded" style={{ color: statusColor, backgroundColor: `${statusColor}15` }}>
+                                      {sub.status}
+                                    </span>
+                                  </p>
+                                  {studyAccession && (
+                                    <p className="text-xs text-muted-foreground font-mono">{studyAccession}</p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              {study.testRegisteredAt && (
-                                <span className="text-xs text-muted-foreground">{formatDate(study.testRegisteredAt)}</span>
-                              )}
-                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                          </Link>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-muted-foreground">{formatDate(sub.createdAt)}</span>
+                                <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                              </div>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="px-4 pb-4 space-y-3 border-t border-border bg-muted/30">
+                                {/* Steps timeline */}
+                                {steps && steps.length > 0 && (
+                                  <div className="pt-3">
+                                    <p className="text-xs font-medium mb-2">Registration Steps</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {steps.map((step, i) => (
+                                        <span key={step.step} className="contents">
+                                          {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+                                          <span className="flex items-center gap-1 text-xs">
+                                            {step.status === "completed" ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D] shrink-0" />
+                                            ) : step.status === "error" ? (
+                                              <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                                            ) : (
+                                              <span className="h-3.5 w-3.5 rounded-full bg-muted flex items-center justify-center shrink-0">
+                                                <span className="text-[9px] text-muted-foreground font-bold">{step.step}</span>
+                                              </span>
+                                            )}
+                                            <span className={step.status === "error" ? "text-destructive" : "text-muted-foreground"}>{step.name}</span>
+                                          </span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Error message */}
+                                {(sub.status === "ERROR" || sub.status === "REJECTED") && (() => {
+                                  const errorStep = steps?.find((s) => s.status === "error");
+                                  const details = errorStep?.details as Record<string, unknown> | string | undefined;
+                                  const errorMsg = details
+                                    ? (typeof details === "object" && details.error ? String(details.error) : typeof details === "string" ? details : JSON.stringify(details))
+                                    : response?.receipt?.studyReceiptXml || null;
+                                  if (!errorMsg) return null;
+                                  const errorText = typeof errorMsg === "string" && errorMsg.includes("<ERROR>")
+                                    ? errorMsg.match(/<ERROR>([\s\S]*?)<\/ERROR>/)?.[1] || errorMsg
+                                    : typeof errorMsg === "string" && errorMsg.length > 300
+                                      ? errorMsg.slice(0, 300) + "..."
+                                      : String(errorMsg);
+                                  return (
+                                    <div className="rounded border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                                      {errorText}
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Accession numbers */}
+                                {accessions && Object.keys(accessions).length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-medium mb-1.5">Accession Numbers</p>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                      {Object.entries(accessions).map(([key, val]) => (
+                                        <div key={key} className="flex items-center gap-1.5 text-xs">
+                                          <span className="text-muted-foreground capitalize">{key}:</span>
+                                          <span className="font-mono">{String(val)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* XML content */}
+                                {sub.xmlContent && (
+                                  <details className="group">
+                                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
+                                      <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                                      Submitted XML
+                                    </summary>
+                                    <div className="mt-2 relative">
+                                      <button
+                                        onClick={() => navigator.clipboard.writeText(sub.xmlContent || "")}
+                                        className="absolute top-2 right-2 text-xs bg-background border px-2 py-0.5 rounded hover:bg-muted flex items-center gap-1"
+                                      >
+                                        <Copy className="h-3 w-3" /> Copy
+                                      </button>
+                                      <div className="max-h-48 overflow-y-auto bg-background rounded border p-2 text-xs font-mono whitespace-pre-wrap break-all">
+                                        {sub.xmlContent}
+                                      </div>
+                                    </div>
+                                  </details>
+                                )}
+
+                                {/* Raw response */}
+                                {response && (
+                                  <details className="group">
+                                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
+                                      <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                                      ENA Response
+                                    </summary>
+                                    <div className="mt-2 relative">
+                                      <button
+                                        onClick={() => navigator.clipboard.writeText(JSON.stringify(response, null, 2))}
+                                        className="absolute top-2 right-2 text-xs bg-background border px-2 py-0.5 rounded hover:bg-muted flex items-center gap-1"
+                                      >
+                                        <Copy className="h-3 w-3" /> Copy
+                                      </button>
+                                      <div className="max-h-48 overflow-y-auto bg-background rounded border p-2 text-xs font-mono whitespace-pre-wrap break-all">
+                                        {JSON.stringify(response, null, 2)}
+                                      </div>
+                                    </div>
+                                  </details>
+                                )}
+
+                                {/* Metadata */}
+                                <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
+                                  <span>ID: <span className="font-mono">{sub.id}</span></span>
+                                  <span>Type: {sub.submissionType}</span>
+                                  {response?.server && <span>Server: {response.server}</span>}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         );
-                      })()}
+                      })}
                     </div>
                   )}
                 </div>
@@ -2133,9 +2284,7 @@ export default function StudyDetailPage({
                     </>
                   )}
                   <p className="text-xs text-muted-foreground mt-3">
-                    <Link href="/submissions" className="text-primary hover:underline">
-                      View details in ENA Submissions
-                    </Link>
+                    Details available in Submission History below.
                   </p>
                 </div>
               </div>
