@@ -1914,7 +1914,7 @@ export default function StudyDetailPage({
                   ) : (
                     <div className="divide-y divide-border">
                       {study.submitted && study.studyAccessionId && (
-                        <div className="flex items-center justify-between px-4 py-3">
+                        <Link href="/submissions" className="flex items-center justify-between px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer">
                           <div className="flex items-center gap-3">
                             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
                               <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
@@ -1924,16 +1924,19 @@ export default function StudyDetailPage({
                               <p className="text-xs text-muted-foreground font-mono">{study.studyAccessionId}</p>
                             </div>
                           </div>
-                          {study.submittedAt && (
-                            <span className="text-xs text-muted-foreground">{formatDate(study.submittedAt)}</span>
-                          )}
-                        </div>
+                          <div className="flex items-center gap-3">
+                            {study.submittedAt && (
+                              <span className="text-xs text-muted-foreground">{formatDate(study.submittedAt)}</span>
+                            )}
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        </Link>
                       )}
                       {hasTestRegistration && (() => {
                         const expiration = getTestExpirationStatus(study.testRegisteredAt);
                         const isExpired = expiration?.expired ?? false;
                         return (
-                          <div className="flex items-center justify-between px-4 py-3">
+                          <Link href="/submissions" className="flex items-center justify-between px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer">
                             <div className="flex items-center gap-3">
                               <span className={`flex h-6 w-6 items-center justify-center rounded-full shrink-0 ${
                                 isExpired ? "bg-[#CAD5E2]/20" : "bg-[#FFBA00]/10"
@@ -1952,18 +1955,13 @@ export default function StudyDetailPage({
                                 </p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-3">
                               {study.testRegisteredAt && (
                                 <span className="text-xs text-muted-foreground">{formatDate(study.testRegisteredAt)}</span>
                               )}
-                              {!isExpired && (
-                                <a href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies" target="_blank" rel="noopener noreferrer"
-                                  className="text-xs text-primary hover:underline flex items-center gap-1">
-                                  View <ExternalLink className="h-3 w-3" />
-                                </a>
-                              )}
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
                             </div>
-                          </div>
+                          </Link>
                         );
                       })()}
                     </div>
