@@ -45,7 +45,7 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 function getStatusBadge(status: string) {
   switch (status) {
     case "completed":
-      return <Badge variant="default" className="bg-green-600">Completed</Badge>;
+      return <Badge variant="default" className="bg-[#00BD7D]">Completed</Badge>;
     case "running":
       return (
         <Badge variant="default" className="bg-blue-600">
@@ -70,17 +70,18 @@ function getStatusBadge(status: string) {
 }
 
 function getStepIcon(status: string) {
+  const bg = "rounded-full bg-white";
   switch (status) {
     case "completed":
-      return <CheckCircle2 className="h-5 w-5 text-green-600" />;
+      return <CheckCircle2 className={`h-5 w-5 ${bg}`} style={{ color: "#00BD7D" }} />;
     case "running":
-      return <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />;
+      return <Loader2 className={`h-5 w-5 text-blue-600 animate-spin ${bg}`} />;
     case "failed":
-      return <XCircle className="h-5 w-5 text-destructive" />;
+      return <XCircle className={`h-5 w-5 text-destructive ${bg}`} />;
     case "skipped":
-      return <Clock className="h-5 w-5 text-muted-foreground" />;
+      return <Clock className={`h-5 w-5 text-muted-foreground ${bg}`} />;
     default:
-      return <Clock className="h-5 w-5 text-muted-foreground" />;
+      return <Clock className={`h-5 w-5 text-muted-foreground ${bg}`} />;
   }
 }
 
@@ -278,6 +279,11 @@ interface Run {
       reads: { id: string; file1: string | null; file2: string | null; checksum1: string | null; checksum2: string | null }[];
     }[];
   } | null;
+  order: {
+    id: string;
+    name: string;
+    orderNumber: string;
+  } | null;
   user: { firstName: string; lastName: string; email: string };
   steps: { id: string; stepId: string; stepName: string; status: string; startedAt: string | null; completedAt: string | null }[];
   assembliesCreated: { id: string; assemblyName: string; assemblyFile: string | null; sample: { sampleId: string } }[];
@@ -341,7 +347,7 @@ export default function AnalysisRunDetailPage({
   const [outputCopyError, setOutputCopyError] = useState<string | null>(null);
   const [commandCopyError, setCommandCopyError] = useState<string | null>(null);
   const [showPipelineProgress, setShowPipelineProgress] = useState(true);
-  const [activeTab, setActiveTab] = useState<"activity" | "files" | "details" | "health">("activity");
+  const [activeTab, setActiveTab] = useState<"activity" | "files" | "details">("activity");
   const [queueHeartbeatAt, setQueueHeartbeatAt] = useState<string | null>(null);
   const [syncForbidden, setSyncForbidden] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
@@ -990,176 +996,152 @@ export default function AnalysisRunDetailPage({
   const runningStepCount = stepRows.filter((step) => step.status === "running").length;
   const failedStepCount = stepRows.filter((step) => step.status === "failed").length;
 
-  return (
-    <PageContainer>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div className="flex items-start gap-4">
-          <Button variant="ghost" size="icon" asChild>
-            <Link href="/analysis">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              {getPipelineIcon(run.pipelineIcon)}
-              <h1 className="text-2xl font-bold font-mono">{run.runNumber}</h1>
-              {getStatusBadge(effectiveRunStatus)}
-              {isLive && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full rounded-full bg-blue-500/70 opacity-75 animate-ping" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
-                  </span>
-                  Live
-                </span>
-              )}
-            </div>
-            <p className="text-muted-foreground mt-1">{run.pipelineName}</p>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-              <span>Last event: {formatRelativeTime(lastEventAt)}</span>
-              <Badge variant="outline" className="text-xs">
-                Source: {formatStatusSource(lastEventSource)}
-              </Badge>
-              {queueBadge && queueBadge.status && (
-                <Badge
-                  variant="outline"
-                  className={`text-xs ${
-                    queueBadge.type === "slurm"
-                      ? "bg-slate-50 text-slate-700 border-slate-200"
-                      : "bg-indigo-50 text-indigo-700 border-indigo-200"
-                  }`}
-                  title={queueBadge.reason ? `Reason: ${queueBadge.reason}` : undefined}
-                >
-                  {queueBadge.type === "local" ? "Local process" : "Queue"}: {queueBadge.status}
-                  {queueBadge.reason ? ` (${queueBadge.reason})` : ""}
-                </Badge>
-              )}
-              {isLive && (
-                <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                  Live
-                </Badge>
-              )}
-              {isStale && (
-                <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
-                  No updates
-                </Badge>
-              )}
-              {syncWarning && (
-                <Badge
-                  variant="outline"
-                  className="text-xs bg-amber-50 text-amber-700 border-amber-200"
-                  title={syncWarning}
-                >
-                  Sync warning
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
+  const tabTriggerClass =
+    "relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground";
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleRefresh}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          {["pending", "queued", "running"].includes(effectiveRunStatus) && (
-            <Button variant="destructive" onClick={handleCancel}>
-              <StopCircle className="h-4 w-4 mr-2" />
-              Cancel
+  return (
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) =>
+        setActiveTab(value as "activity" | "files" | "details")
+      }
+    >
+      {/* Sticky header bar — matching form-builder style */}
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="flex items-center h-[52px] px-6 lg:px-8 gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" asChild>
+              <Link href={
+                run.study
+                  ? `/studies/${run.study.id}?tab=pipelines&pipeline=${run.pipelineId}`
+                  : run.order
+                    ? `/orders/${run.order.id}/sequencing?pipeline=${run.pipelineId}`
+                    : "/analysis"
+              }>
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
             </Button>
-          )}
-          {run.status === "failed" && (
-            <Button onClick={handleRetry} disabled={retrying}>
-              {retrying ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RotateCcw className="h-4 w-4 mr-2" />
-              )}
-              Retry
+            <span className="text-sm font-medium">{run.pipelineName}</span>
+          </div>
+          <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1 flex-1 justify-center">
+            <TabsTrigger value="activity" className={tabTriggerClass}>Status</TabsTrigger>
+            <TabsTrigger value="files" className={tabTriggerClass}>Pipeline Output</TabsTrigger>
+            <TabsTrigger value="details" className={tabTriggerClass}>Run Details</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-2 shrink-0">
+            {isLive && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-blue-500/70 opacity-75 animate-ping" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
+                </span>
+                Live
+              </span>
+            )}
+            {isStale && (
+              <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
+                No updates
+              </Badge>
+            )}
+            {syncWarning && (
+              <Badge
+                variant="outline"
+                className="text-xs bg-amber-50 text-amber-700 border-amber-200"
+                title={syncWarning}
+              >
+                Sync warning
+              </Badge>
+            )}
+            <Button variant="outline" size="sm" onClick={handleRefresh}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Refresh
             </Button>
-          )}
+            {["pending", "queued", "running"].includes(effectiveRunStatus) && (
+              <Button variant="destructive" size="sm" onClick={handleCancel}>
+                <StopCircle className="h-3.5 w-3.5 mr-1.5" />
+                Cancel
+              </Button>
+            )}
+            {run.status === "failed" && (
+              <Button size="sm" onClick={handleRetry} disabled={retrying}>
+                {retrying ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Retry
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
       {retryError && (
-        <div className="mb-4 text-sm text-destructive">{retryError}</div>
+        <div className="px-6 lg:px-8 mt-4 text-sm text-destructive">{retryError}</div>
       )}
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) =>
-          setActiveTab(value as "activity" | "files" | "details" | "health")
-        }
-        className="mb-6"
-      >
-        <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="activity">Live Activity</TabsTrigger>
-          <TabsTrigger value="files">Pipeline Files</TabsTrigger>
-          <TabsTrigger value="details">Run Details</TabsTrigger>
-          <TabsTrigger value="health">Run Health</TabsTrigger>
-        </TabsList>
+    <PageContainer>
 
         <TabsContent value="activity" className="mt-4 space-y-6">
           <GlassCard>
-            <div className="flex flex-wrap items-start justify-between gap-4">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4 text-sm">
               <div>
-                <h2 className="text-lg font-semibold">What Is Happening Now</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Live status summary with recent pipeline activity.
-                </p>
+                <dt className="text-muted-foreground mb-0.5">Status</dt>
+                <dd className={`font-medium capitalize ${effectiveRunStatus === "completed" ? "text-[#00BD7D]" : effectiveRunStatus === "failed" ? "text-destructive" : effectiveRunStatus === "running" ? "text-blue-600" : ""}`}>{effectiveRunStatus}</dd>
               </div>
-              <div className="flex gap-2">
-                {run.queueJobId && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={fetchQueueStatus}
-                    disabled={checkingQueue}
-                  >
-                    {checkingQueue ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : null}
-                    Check queue
-                  </Button>
-                )}
-                <Button variant="outline" size="sm" onClick={() => setActiveTab("files")}>
-                  Open files
-                </Button>
+              {!["completed", "failed"].includes(effectiveRunStatus) && (
+                <div>
+                  <dt className="text-muted-foreground mb-0.5">Current Step</dt>
+                  <dd className="font-medium">{effectiveCurrentStep}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Last Update</dt>
+                <dd className="font-medium">{formatRelativeTime(lastEventAt)}</dd>
               </div>
-            </div>
-
-            <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Run Status</dt>
-                <dd className="font-medium mt-1 capitalize">{effectiveRunStatus}</dd>
-              </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Current Step</dt>
-                <dd className="font-medium mt-1">{effectiveCurrentStep}</dd>
-              </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Steps</dt>
-                <dd className="font-medium mt-1">
-                  {completedStepCount} done
-                  {runningStepCount > 0 ? ` • ${runningStepCount} running` : ""}
-                  {failedStepCount > 0 ? ` • ${failedStepCount} failed` : ""}
-                </dd>
-              </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Last Update</dt>
-                <dd className="font-medium mt-1">{formatRelativeTime(lastEventAt)}</dd>
-              </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Queue</dt>
-                <dd className={`font-medium mt-1 ${queueStatusTone}`}>
-                  {queueStatusLine || "Not available"}
-                </dd>
-              </div>
+              {effectiveRunStatus === "running" && (
+                <div>
+                  <dt className="text-muted-foreground mb-0.5">Progress</dt>
+                  <dd className="font-medium">
+                    {completedStepCount} of {stepRows.length} steps done
+                    {runningStepCount > 0 ? ` (${runningStepCount} running)` : ""}
+                    {failedStepCount > 0 ? ` (${failedStepCount} failed)` : ""}
+                  </dd>
+                </div>
+              )}
             </dl>
 
+            {effectiveRunStatus === "running" && run.progress != null && (
+              <div className="mt-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Overall Progress</span>
+                  <span>{run.progress}%</span>
+                </div>
+                <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 transition-all"
+                    style={{ width: `${run.progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {run.status === "failed" && (
+              <div className="mt-4 pt-4 border-t space-y-2">
+                <div className="flex items-start gap-2 text-destructive">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <p className="text-sm font-medium">{primaryFailureSignal}</p>
+                </div>
+                {secondaryFailureSignals.map((signal) => (
+                  <p key={signal} className="text-sm text-muted-foreground">
+                    {signal}
+                  </p>
+                ))}
+              </div>
+            )}
+
             {liveSlurmJobs.length > 0 && (
-              <div className="mt-4 rounded-md border bg-background/70 p-3">
+              <div className="mt-4 pt-4 border-t">
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <h3 className="text-sm font-semibold">Live SLURM Jobs</h3>
                   <Badge variant="outline" className="text-xs">
@@ -1201,111 +1183,50 @@ export default function AnalysisRunDetailPage({
               </div>
             )}
 
-            {effectiveRunStatus === "running" && run.progress != null && (
-              <div className="mt-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Overall Progress</span>
-                  <span>{run.progress}%</span>
+            {recentEvents.length > 0 && (
+              <div className="mt-4 pt-4 border-t">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground">Recent Events ({recentEvents.length})</h3>
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={`/api/pipelines/runs/${run.id}/weblog`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Raw weblog API
+                    </a>
+                  </Button>
                 </div>
-                <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-600 transition-all"
-                    style={{ width: `${run.progress}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {run.status === "failed" && (
-              <div className="mt-4 space-y-2">
-                <div className="flex items-start gap-2 text-destructive">
-                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <p className="text-sm font-medium">{primaryFailureSignal}</p>
-                </div>
-                {secondaryFailureSignals.map((signal) => (
-                  <p key={signal} className="text-sm text-muted-foreground">
-                    {signal}
-                  </p>
-                ))}
-              </div>
-            )}
-          </GlassCard>
-
-          <GlassCard>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div>
-                <h2 className="text-lg font-semibold">Live Event Feed</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Human-readable timeline of workflow and process updates.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" asChild>
-                  <Link
-                    href={`/api/pipelines/runs/${run.id}/weblog`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Raw weblog API
-                  </Link>
-                </Button>
-                <Badge variant="outline">{recentEvents.length} recent events</Badge>
-              </div>
-            </div>
-
-            {recentEvents.length > 0 ? (
-              <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
-                {recentEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    className="rounded-md border bg-background/70 p-3"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium">
-                        {formatHumanEventTitle(event.eventType, event.processName)}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {formatRelativeTime(event.occurredAt)}
+                <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
+                  {recentEvents.map((event) => (
+                    <div
+                      key={event.id}
+                      className="flex items-center justify-between gap-3 text-sm py-1.5 border-b last:border-0"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-medium truncate">
+                          {formatHumanEventTitle(event.eventType, event.processName)}
                         </span>
                         {event.status && (
-                          <Badge variant="outline" className="text-xs">
+                          <Badge variant="outline" className="text-xs shrink-0">
                             {event.status}
                           </Badge>
                         )}
                       </div>
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {formatRelativeTime(event.occurredAt)}
+                      </span>
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>{formatAbsoluteTime(event.occurredAt)}</span>
-                      <Badge variant="outline" className="text-[11px]">
-                        {formatEventType(event.eventType)}
-                      </Badge>
-                      {event.source && (
-                        <Badge variant="outline" className="text-[11px]">
-                          {formatStatusSource(event.source)}
-                        </Badge>
-                      )}
-                      {event.processName && (
-                        <span className="font-mono">{event.processName}</span>
-                      )}
-                    </div>
-                    {event.message && (
-                      <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap break-words">
-                        {event.message}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No events received yet.</p>
             )}
           </GlassCard>
 
           {showPipelineProgress ? (
             <GlassCard>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Pipeline Progress</h2>
+                <h2 className="text-lg font-semibold">Pipeline Steps</h2>
                 {run.status === "failed" && (
                   <Button
                     variant="outline"
@@ -1318,32 +1239,52 @@ export default function AnalysisRunDetailPage({
               </div>
 
               <div className="relative">
-                {stepRows.map((step, index) => (
-                  <div key={step.id} className="flex items-start gap-4 mb-4 last:mb-0">
-                    <div className="flex flex-col items-center">
-                      {getStepIcon(step.status)}
+                {stepRows.map((step, index) => {
+                  const duration = step.startedAt && step.completedAt
+                    ? (() => {
+                        const ms = new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime();
+                        if (ms < 1000) return "<1s";
+                        const s = Math.floor(ms / 1000);
+                        if (s < 60) return `${s}s`;
+                        const m = Math.floor(s / 60);
+                        return `${m}m ${s % 60}s`;
+                      })()
+                    : null;
+                  return (
+                    <div key={step.id} className="relative flex gap-3">
+                      {/* Line segment to next step */}
                       {index < stepRows.length - 1 && (
-                        <div className="w-0.5 h-8 bg-border mt-2" />
+                        <div className="absolute left-[9px] top-[20px] bottom-0 w-0.5" style={{ backgroundColor: "#00BD7D", opacity: 0.3 }} />
                       )}
-                    </div>
-                    <div className="flex-1 pb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{step.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {step.status}
-                        </Badge>
+                      {/* Icon sits on top of the line */}
+                      <div className="relative z-10 shrink-0 mt-0.5">
+                        {getStepIcon(step.status)}
                       </div>
-                      {step.startedAt && (
-                        <p className="text-sm text-muted-foreground">
-                          Started: {new Date(step.startedAt).toLocaleString()}
-                          {step.completedAt && (
-                            <> - Completed: {new Date(step.completedAt).toLocaleString()}</>
+                      {/* Content */}
+                      <div className={`flex-1 ${index < stepRows.length - 1 ? "pb-4" : ""}`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{step.name}</span>
+                          {step.status !== "completed" && (
+                            <Badge variant={step.status === "failed" ? "destructive" : step.status === "running" ? "secondary" : "outline"} className="text-xs">
+                              {step.status}
+                            </Badge>
                           )}
-                        </p>
-                      )}
+                          {duration !== null && (
+                            <span className="text-xs text-muted-foreground">&middot; {duration}</span>
+                          )}
+                        </div>
+                        {step.startedAt && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {formatRelativeTime(step.startedAt)}
+                            {step.completedAt && step.status === "completed" && (
+                              <> &middot; finished {formatRelativeTime(step.completedAt)}</>
+                            )}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {stepRows.length === 0 && (
                   <p className="text-muted-foreground text-center py-4">
@@ -1356,7 +1297,7 @@ export default function AnalysisRunDetailPage({
             <GlassCard>
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">Pipeline Progress</h2>
+                  <h2 className="text-lg font-semibold">Pipeline Steps</h2>
                   <p className="text-sm text-muted-foreground mt-1">
                     Hidden to keep failure diagnostics in focus.
                   </p>
@@ -1366,7 +1307,7 @@ export default function AnalysisRunDetailPage({
                   size="sm"
                   onClick={() => setShowPipelineProgress(true)}
                 >
-                  Show progress
+                  Show steps
                 </Button>
               </div>
             </GlassCard>
@@ -1450,7 +1391,7 @@ export default function AnalysisRunDetailPage({
                                     }
                                   >
                                     {copiedOutputKey === `assembly:${assembly.id}` ? (
-                                      <Check className="h-4 w-4 mr-2 text-green-600" />
+                                      <Check className="h-4 w-4 mr-2 text-[#00BD7D]" />
                                     ) : (
                                       <Copy className="h-4 w-4 mr-2" />
                                     )}
@@ -1526,7 +1467,7 @@ export default function AnalysisRunDetailPage({
                                     }
                                   >
                                     {copiedOutputKey === `bin:${bin.id}` ? (
-                                      <Check className="h-4 w-4 mr-2 text-green-600" />
+                                      <Check className="h-4 w-4 mr-2 text-[#00BD7D]" />
                                     ) : (
                                       <Copy className="h-4 w-4 mr-2" />
                                     )}
@@ -1586,10 +1527,10 @@ export default function AnalysisRunDetailPage({
         <TabsContent value="details" className="mt-4 space-y-6">
           <GlassCard>
             <h2 className="text-lg font-semibold mb-4">Run Information</h2>
-            <dl className="space-y-3">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4 text-sm">
               <div>
-                <dt className="text-sm text-muted-foreground">Study</dt>
-                <dd>
+                <dt className="text-muted-foreground mb-0.5">Study</dt>
+                <dd className="font-medium">
                   {run.study ? (
                     <Link
                       href={`/studies/${run.study.id}`}
@@ -1603,100 +1544,145 @@ export default function AnalysisRunDetailPage({
                 </dd>
               </div>
               <div>
-                <dt className="text-sm text-muted-foreground">Samples</dt>
-                <dd>{run.study?.samples.length || 0}</dd>
+                <dt className="text-muted-foreground mb-0.5">Samples</dt>
+                <dd className="font-medium">{run.study?.samples.length || 0}</dd>
               </div>
               <div>
-                <dt className="text-sm text-muted-foreground">Started By</dt>
-                <dd>{startedBy}</dd>
+                <dt className="text-muted-foreground mb-0.5">Started By</dt>
+                <dd className="font-medium">{startedBy}</dd>
               </div>
               <div>
-                <dt className="text-sm text-muted-foreground">Created</dt>
-                <dd>{formatAbsoluteTime(run.createdAt)}</dd>
+                <dt className="text-muted-foreground mb-0.5">Run Number</dt>
+                <dd className="font-medium font-mono">{run.runNumber}</dd>
               </div>
-              {run.queuedAt && (
-                <div>
-                  <dt className="text-sm text-muted-foreground">Queued</dt>
-                  <dd>{formatAbsoluteTime(run.queuedAt)}</dd>
-                </div>
-              )}
-              {run.startedAt && (
-                <div>
-                  <dt className="text-sm text-muted-foreground">Started</dt>
-                  <dd>{formatAbsoluteTime(run.startedAt)}</dd>
-                </div>
-              )}
-              {run.completedAt && (
-                <div>
-                  <dt className="text-sm text-muted-foreground">Completed</dt>
-                  <dd>{formatAbsoluteTime(run.completedAt)}</dd>
-                </div>
-              )}
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Pipeline</dt>
+                <dd className="font-medium">{run.pipelineName} <span className="text-muted-foreground font-normal">v{run.pipelineVersion}</span></dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Status</dt>
+                <dd className={`font-medium capitalize ${effectiveRunStatus === "completed" ? "text-[#00BD7D]" : effectiveRunStatus === "failed" ? "text-destructive" : effectiveRunStatus === "running" ? "text-blue-600" : ""}`}>{effectiveRunStatus}</dd>
+              </div>
             </dl>
-          </GlassCard>
 
-          {run.queueJobId && (
-            <GlassCard>
-              <h2 className="text-lg font-semibold mb-4">Queue Job</h2>
-              <div className="space-y-2">
-                <p className="font-mono text-sm">{run.queueJobId}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchQueueStatus}
-                  disabled={checkingQueue}
-                >
-                  {checkingQueue ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
-                  Check queue
-                </Button>
-                {queueStatusLine && (
-                  <p className={`text-xs ${queueStatusTone}`}>{queueStatusLine}</p>
+            <div className="mt-6 pt-4 border-t">
+              <h3 className="text-sm font-semibold text-muted-foreground mb-3">Timeline</h3>
+              <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Created</span>{" "}
+                  <span className="font-medium">{formatAbsoluteTime(run.createdAt)}</span>
+                </div>
+                {run.queuedAt && (
+                  <div>
+                    <span className="text-muted-foreground">Queued</span>{" "}
+                    <span className="font-medium">{formatAbsoluteTime(run.queuedAt)}</span>
+                  </div>
+                )}
+                {run.startedAt && (
+                  <div>
+                    <span className="text-muted-foreground">Started</span>{" "}
+                    <span className="font-medium">{formatAbsoluteTime(run.startedAt)}</span>
+                  </div>
+                )}
+                {run.completedAt && (
+                  <div>
+                    <span className="text-muted-foreground">Completed</span>{" "}
+                    <span className="font-medium">{formatAbsoluteTime(run.completedAt)}</span>
+                  </div>
                 )}
               </div>
-            </GlassCard>
-          )}
+            </div>
 
-          {run.config && Object.keys(run.config).length > 0 && (
+            {run.queueJobId && (
+              <div className="mt-6 pt-4 border-t">
+                <h3 className="text-sm font-semibold text-muted-foreground mb-3">Queue</h3>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-mono">{run.queueJobId}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchQueueStatus}
+                    disabled={checkingQueue}
+                  >
+                    {checkingQueue ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Check queue
+                  </Button>
+                  {queueStatusLine && (
+                    <span className={`text-xs ${queueStatusTone}`}>{queueStatusLine}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </GlassCard>
+
+          {run.config && Object.entries(run.config).filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && v.length === 0)).length > 0 && (
             <GlassCard>
               <h2 className="text-lg font-semibold mb-4">Configuration</h2>
-              <dl className="space-y-2 text-sm">
-                {Object.entries(run.config).map(([key, value]) => (
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+                {Object.entries(run.config).filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && v.length === 0)).map(([key, value]) => (
                   <div key={key} className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">{key}</dt>
-                    <dd className="font-mono text-right break-all">
+                    <dd className="font-mono font-medium text-right break-all">
                       {typeof value === "boolean"
                         ? value
                           ? "Yes"
                           : "No"
-                        : String(value)}
+                        : Array.isArray(value)
+                          ? value.join(", ")
+                          : String(value)}
                     </dd>
                   </div>
                 ))}
               </dl>
             </GlassCard>
           )}
-        </TabsContent>
 
-        <TabsContent value="health" className="mt-4">
-          <GlassCard
-            className={
-              run.status === "failed"
-                ? "border-destructive/40 bg-destructive/5"
-                : undefined
-            }
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold">Run Health</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {run.status === "failed"
-                    ? "Primary failure reason and queue diagnostics."
-                    : "Current queue and launcher status at a glance."}
-                </p>
+          {run.status === "failed" && (
+            <GlassCard className="border-destructive/40 bg-destructive/5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <h2 className="text-lg font-semibold text-destructive">Failure Detected</h2>
+                  <p className="text-sm font-medium mt-1">{primaryFailureSignal}</p>
+                  {secondaryFailureSignals.map((signal) => (
+                    <p key={signal} className="text-sm text-muted-foreground mt-1">
+                      {signal}
+                    </p>
+                  ))}
+                  {detectedSlurmLogs.length > 0 && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Detected SLURM logs:{" "}
+                      <span className="font-mono">
+                        {detectedSlurmLogs.map((file) => file.name).join(", ")}
+                      </span>
+                    </p>
+                  )}
+                </div>
               </div>
+            </GlassCard>
+          )}
+
+          <GlassCard>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Diagnostics</h2>
               <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyDebugBundle}
+                  disabled={copyingDebugBundle}
+                >
+                  {copyingDebugBundle ? (
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  ) : debugBundleCopied ? (
+                    <Check className="h-4 w-4 mr-1.5 text-[#00BD7D]" />
+                  ) : (
+                    <Copy className="h-4 w-4 mr-1.5" />
+                  )}
+                  Copy session info
+                </Button>
                 {run.queueJobId && (
                   <Button
                     variant="outline"
@@ -1705,149 +1691,94 @@ export default function AnalysisRunDetailPage({
                     disabled={checkingQueue}
                   >
                     {checkingQueue ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                     ) : null}
                     Check queue
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCopyDebugBundle}
-                  disabled={copyingDebugBundle}
-                >
-                  {copyingDebugBundle ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : debugBundleCopied ? (
-                    <Check className="h-4 w-4 mr-2 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4 mr-2" />
-                  )}
-                  Copy session info
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToSection("logs-section")}
-                >
-                  Go to logs
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setActiveTab("files")}
-                >
-                  Go to files
-                </Button>
               </div>
             </div>
             {debugBundleError && (
-              <p className="mt-3 text-sm text-destructive">{debugBundleError}</p>
+              <p className="mb-3 text-sm text-destructive">{debugBundleError}</p>
             )}
             {debugBundleCopied && (
-              <p className="mt-3 text-sm text-green-700">
+              <p className="mb-3 text-sm text-[#00BD7D]">
                 Session info copied. Paste it directly in chat.
               </p>
             )}
 
-            <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Queue</dt>
-                <dd className="font-medium mt-1">
-                  {queueStatusLine || "Not available"}
-                </dd>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-4 text-sm">
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Queue</dt>
+                <dd className="font-medium">{queueStatusLine || "Not available"}</dd>
               </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Status Source</dt>
-                <dd className="font-medium mt-1">
-                  {formatStatusSource(lastEventSource)}
-                </dd>
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Status Source</dt>
+                <dd className="font-medium">{formatStatusSource(lastEventSource)}</dd>
               </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Last Event</dt>
-                <dd className="font-medium mt-1">
-                  {lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}
-                </dd>
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Last Event</dt>
+                <dd className="font-medium">{lastEventAt ? new Date(lastEventAt).toLocaleString() : "-"}</dd>
               </div>
-              <div className="rounded-md border bg-background/70 p-3">
-                <dt className="text-muted-foreground">Queue Job ID</dt>
-                <dd className="font-mono text-sm mt-1">{run.queueJobId || "-"}</dd>
+              <div>
+                <dt className="text-muted-foreground mb-0.5">Queue Job ID</dt>
+                <dd className="font-mono">{run.queueJobId || "-"}</dd>
               </div>
             </dl>
-
-            {(run.executionCommands?.scriptPath || commandEntries.length > 0) && (
-              <div className="mt-4 rounded-md border bg-background/70 p-3">
-                <h3 className="text-sm font-semibold">Reproduce Manually</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Run these on the same host where SeqDesk starts pipelines.
-                </p>
-
-                {run.executionCommands?.scriptPath && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Script:{" "}
-                    <span className="font-mono break-all">
-                      {run.executionCommands.scriptPath}
-                    </span>
-                  </p>
-                )}
-
-                <div className="mt-3 space-y-3">
-                  {commandEntries.map((entry) => (
-                    <div key={entry.key} className="rounded-md border bg-muted/40 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-medium">{entry.label}</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleCopyCommand(entry.value, entry.key)}
-                        >
-                          {copiedCommandKey === entry.key ? (
-                            <Check className="h-4 w-4 mr-2 text-green-600" />
-                          ) : (
-                            <Copy className="h-4 w-4 mr-2" />
-                          )}
-                          {copiedCommandKey === entry.key ? "Copied" : "Copy"}
-                        </Button>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {entry.description}
-                      </p>
-                      <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs font-mono">
-                        {entry.value}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-                {commandCopyError && (
-                  <p className="mt-2 text-xs text-destructive">{commandCopyError}</p>
-                )}
-              </div>
-            )}
-
-            {run.status === "failed" && (
-              <div className="mt-4 space-y-2">
-                <div className="flex items-start gap-2 text-destructive">
-                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <p className="text-sm font-medium">{primaryFailureSignal}</p>
-                </div>
-                {secondaryFailureSignals.map((signal) => (
-                  <p key={signal} className="text-sm text-muted-foreground">
-                    {signal}
-                  </p>
-                ))}
-                {detectedSlurmLogs.length > 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Detected SLURM logs:{" "}
-                    <span className="font-mono">
-                      {detectedSlurmLogs.map((file) => file.name).join(", ")}
-                    </span>
-                  </p>
-                )}
-              </div>
-            )}
           </GlassCard>
+
+          {(run.executionCommands?.scriptPath || commandEntries.length > 0) && (
+            <GlassCard>
+              <h2 className="text-lg font-semibold mb-1">Reproduce Manually</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Run these on the same host where SeqDesk starts pipelines.
+              </p>
+
+              {run.executionCommands?.scriptPath && (
+                <p className="text-sm text-muted-foreground mb-3">
+                  Script:{" "}
+                  <span className="font-mono break-all">
+                    {run.executionCommands.scriptPath}
+                  </span>
+                </p>
+              )}
+
+              <div className="space-y-3">
+                {commandEntries.map((entry) => (
+                  <div key={entry.key} className="rounded-md border bg-muted/40 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">{entry.label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {entry.description}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleCopyCommand(entry.value, entry.key)}
+                      >
+                        {copiedCommandKey === entry.key ? (
+                          <Check className="h-4 w-4 mr-1.5 text-[#00BD7D]" />
+                        ) : (
+                          <Copy className="h-4 w-4 mr-1.5" />
+                        )}
+                        {copiedCommandKey === entry.key ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                    <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs font-mono">
+                      {entry.value}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+              {commandCopyError && (
+                <p className="mt-2 text-xs text-destructive">{commandCopyError}</p>
+              )}
+            </GlassCard>
+          )}
         </TabsContent>
-      </Tabs>
-    </PageContainer>
+      </PageContainer>
+    </Tabs>
   );
 }

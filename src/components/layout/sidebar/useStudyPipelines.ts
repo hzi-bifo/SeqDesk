@@ -8,12 +8,14 @@ import { getPipelineProgressStatuses } from "./pipelineProgress";
 export interface StudyPipelineNavItem {
   pipelineId: string;
   name: string;
+  category: string;
   status: OrderProgressCompletionStatus;
 }
 
 interface StudyPipelineDefinition {
   pipelineId: string;
   name: string;
+  category: string;
 }
 
 interface PipelineRunSummary {
@@ -39,6 +41,7 @@ async function fetchStudyPipelineDefinitions(): Promise<StudyPipelineDefinition[
     pipelines?: {
       pipelineId: string;
       name: string;
+      category?: string;
       enabled: boolean;
     }[];
   };
@@ -48,6 +51,7 @@ async function fetchStudyPipelineDefinitions(): Promise<StudyPipelineDefinition[
     .map((pipeline) => ({
       pipelineId: pipeline.pipelineId,
       name: pipeline.name,
+      category: pipeline.category ?? "analysis",
     }));
 
   cache.set(cacheKey, items);
@@ -86,6 +90,7 @@ export function useStudyPipelines(
             definitions.map((pipeline) => ({
               pipelineId: pipeline.pipelineId,
               name: pipeline.name,
+              category: pipeline.category,
               status: statusByPipeline[pipeline.pipelineId] ?? "empty",
             }))
           );

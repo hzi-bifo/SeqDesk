@@ -9,6 +9,11 @@ import { RefreshCw, Download, Pause, Play, CheckCircle2, Loader2, XCircle, Clock
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+/** Strip ANSI escape codes (colors, cursor movement, etc.) from log output */
+function stripAnsi(text: string): string {
+  return text.replace(/\x1B(?:\[[0-9;]*[A-Za-z]|\(B)/g, "");
+}
+
 interface StepInfo {
   process: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
@@ -58,8 +63,8 @@ export function LiveLogViewer({
     }
   );
 
-  const outputContent = outputData?.content || initialOutputTail || "";
-  const errorContent = errorData?.content || initialErrorTail || "";
+  const outputContent = stripAnsi(outputData?.content || initialOutputTail || "");
+  const errorContent = stripAnsi(errorData?.content || initialErrorTail || "");
   const steps: StepInfo[] = useMemo(() => outputData?.steps || [], [outputData?.steps]);
 
   // Notify parent of step updates
@@ -125,7 +130,7 @@ export function LiveLogViewer({
   const getStepIcon = (status: string) => {
     switch (status) {
       case 'completed':
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+        return <CheckCircle2 className="h-4 w-4 text-[#00BD7D]" />;
       case 'running':
         return <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />;
       case 'failed':
@@ -143,13 +148,13 @@ export function LiveLogViewer({
             <TabsTrigger value="output">
               Output
               {isRunning && hasOutput && (
-                <span className="ml-2 h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="ml-2 h-2 w-2 rounded-full bg-[#00BD7D] animate-pulse" />
               )}
             </TabsTrigger>
             <TabsTrigger value="error">
               Error
               {hasError && (
-                <span className="ml-2 h-2 w-2 rounded-full bg-red-500" />
+                <span className="ml-2 h-2 w-2 rounded-full" style={{ backgroundColor: "#FFBA00" }} />
               )}
             </TabsTrigger>
             {steps.length > 0 && (
@@ -184,7 +189,7 @@ export function LiveLogViewer({
             title="Copy to clipboard"
           >
             {copied ? (
-              <Check className="h-4 w-4 text-green-600" />
+              <Check className="h-4 w-4 text-[#00BD7D]" />
             ) : (
               <Copy className="h-4 w-4" />
             )}

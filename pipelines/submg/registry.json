@@ -1,6 +1,6 @@
 {
   "id": "submg",
-  "name": "SubMG Submission",
+  "name": "Submit to ENA",
   "description": "Submit study data, reads, assemblies, and bins to ENA using submg",
   "category": "submission",
   "version": "1.0.0",

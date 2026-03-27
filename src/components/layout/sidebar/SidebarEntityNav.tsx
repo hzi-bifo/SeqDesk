@@ -83,10 +83,16 @@ export function SidebarEntityNav({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [entityType, entityId, showAdminControls, pathname]);
-  const isEntityRoute = pathname.startsWith("/orders") || pathname.startsWith("/studies");
+  const isEntityRoute = pathname.startsWith("/orders") || pathname.startsWith("/studies") || (entityType !== null && entityId !== null);
 
-  // Derive active tab from URL
-  const activeTab = pathname.startsWith("/studies") ? "studies" : "orders";
+  // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
+  const activeTab = pathname.startsWith("/studies")
+    ? "studies"
+    : pathname.startsWith("/orders")
+      ? "orders"
+      : entityType === "study"
+        ? "studies"
+        : "orders";
   const requestedStudyTab = searchParams.get("tab");
   const currentStudyTab =
     requestedStudyTab === "ena" ? "publishing" : requestedStudyTab;
@@ -254,12 +260,18 @@ export function SidebarEntityNav({
             item.key === "analysis" &&
             !!entityId &&
             orderPipelines.length > 0;
+          const analysisPipelines = studyPipelines.filter(
+            (p) => p.category !== "submission"
+          );
+          const publishingPipelines = studyPipelines.filter(
+            (p) => p.category === "submission"
+          );
           const shouldShowStudyPipelineSubitems =
             !collapsed &&
             activeTab === "studies" &&
             item.key === "analysis" &&
             !!entityId &&
-            studyPipelines.length > 0;
+            analysisPipelines.length > 0;
           const shouldShowStudyPublishingSubitems =
             !collapsed &&
             activeTab === "studies" &&
@@ -455,7 +467,7 @@ export function SidebarEntityNav({
                     href={`/studies/${entityId}?tab=publishing&publisher=ena`}
                     className={cn(
                       "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                      currentStudyPublishingTarget === "ena"
+                      currentStudyPublishingTarget === "ena" && !searchParams.get("pipeline")
                         ? "bg-secondary text-foreground font-medium"
                         : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                     )}
@@ -464,8 +476,38 @@ export function SidebarEntityNav({
                       className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm"
                       aria-hidden="true"
                     />
-                    <span className="truncate">ENA</span>
+                    <span className="truncate">Register at ENA</span>
                   </Link>
+                  {publishingPipelines.map((pipeline) => {
+                    const isPipelineActive =
+                      currentStudyTab === "publishing" &&
+                      searchParams.get("pipeline") === pipeline.pipelineId;
+                    return (
+                      <Link
+                        key={pipeline.pipelineId}
+                        href={`/studies/${entityId}?tab=publishing&pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                          isPipelineActive
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full shadow-sm",
+                            getOrderProgressIndicatorClassName(pipeline.status),
+                            isPipelineActive && "ring-2 ring-background"
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{pipeline.name}</span>
+                        <span className="sr-only">
+                          {getOrderProgressIndicatorLabel(pipeline.status)}
+                        </span>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
               {shouldShowOrderSubitems && (
@@ -618,7 +660,7 @@ export function SidebarEntityNav({
               )}
               {shouldShowStudyPipelineSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
-                  {studyPipelines.map((pipeline) => {
+                  {analysisPipelines.map((pipeline) => {
                     const isPipelineActive =
                       currentStudyTab === "pipelines" &&
                       searchParams.get("pipeline") === pipeline.pipelineId;

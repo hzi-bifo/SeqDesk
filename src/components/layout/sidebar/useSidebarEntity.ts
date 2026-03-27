@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 
 export interface SidebarEntityData {
@@ -19,6 +19,7 @@ export interface SidebarEntityContext {
 
 export function useSidebarEntity(): SidebarEntityContext {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [entityData, setEntityData] = useState<SidebarEntityData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const cacheRef = useRef<Record<string, SidebarEntityData>>({});
@@ -30,6 +31,7 @@ export function useSidebarEntity(): SidebarEntityContext {
 
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
   const studyMatch = pathname.match(/^\/studies\/([^/]+)(\/(.+))?$/);
+  const analysisMatch = pathname.match(/^\/analysis\/([^/]+)/);
 
   if (orderMatch && orderMatch[1] !== "new") {
     entityType = "order";
@@ -39,6 +41,19 @@ export function useSidebarEntity(): SidebarEntityContext {
     entityType = "study";
     entityId = studyMatch[1];
     currentSubPage = studyMatch[3] || "overview";
+  } else if (analysisMatch) {
+    // On analysis pages, restore sidebar context from query params
+    const fromStudy = searchParams.get("studyId");
+    const fromOrder = searchParams.get("orderId");
+    if (fromStudy) {
+      entityType = "study";
+      entityId = fromStudy;
+      currentSubPage = "pipelines";
+    } else if (fromOrder) {
+      entityType = "order";
+      entityId = fromOrder;
+      currentSubPage = "sequencing";
+    }
   }
 
   useEffect(() => {

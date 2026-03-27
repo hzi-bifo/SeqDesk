@@ -1,6 +1,6 @@
 {
   "pipeline": "submg",
-  "name": "SubMG Submission",
+  "name": "Submit to ENA",
   "description": "Submit reads, assemblies, and bins to ENA and import returned accession numbers",
   "url": "https://github.com/ttubb/submg",
   "version": "1.0.0",

@@ -598,7 +598,7 @@ export function OrderPipelineView({
   const columnCount = 5 + sampleResultColumnCount; // #, Sample, Reads, Source, Action + sample-result columns
   const tableMinWidthClass = sampleResultConfig
     ? sampleResultLayout === "columns"
-      ? "min-w-[1240px]"
+      ? "min-w-[960px]"
       : "min-w-[960px]"
     : "min-w-[720px]";
 
@@ -783,7 +783,7 @@ export function OrderPipelineView({
                   ? sampleResultConfig.values.map((descriptor, index) => (
                       <th
                         key={`${descriptor.path}-${index}`}
-                        className="min-w-[12rem] px-4 py-2.5 text-left font-medium text-muted-foreground"
+                        className="min-w-[6rem] px-4 py-2.5 text-left font-medium text-muted-foreground"
                       >
                         {descriptor.label ?? sampleResultConfig.columnLabel}
                       </th>
@@ -861,7 +861,7 @@ export function OrderPipelineView({
                           return (
                             <td
                               key={`${sample.id}-${descriptor.path}-${index}`}
-                              className="min-w-[12rem] px-4 py-3 align-top"
+                              className="min-w-[6rem] px-4 py-3 align-top"
                             >
                               {item ? (
                                 item.previewPath ? (

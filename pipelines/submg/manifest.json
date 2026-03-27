@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "package": {
     "id": "submg",
-    "name": "SubMG ENA Submission",
+    "name": "Submit to ENA",
     "version": "1.0.0",
     "description": "Submit reads, assemblies, and bins to ENA using submg",
     "website": "https://github.com/ttubb/submg",

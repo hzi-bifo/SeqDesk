@@ -393,8 +393,10 @@ export default function StudyDetailPage({
   const currentTab = normalizeStudyTab(requestedTab);
   const selectedPipelineId =
     currentTab === "pipelines" ? searchParams.get("pipeline") : null;
+  const selectedPublishingPipeline =
+    currentTab === "publishing" ? searchParams.get("pipeline") : null;
   const selectedPublishingTarget =
-    currentTab === "publishing"
+    currentTab === "publishing" && !selectedPublishingPipeline
       ? normalizePublishingTarget(
           requestedTab === "ena" ? "ena" : searchParams.get("publisher")
         )
@@ -921,35 +923,37 @@ export default function StudyDetailPage({
             {study.studyAccessionId && ` \u00B7 ${study.studyAccessionId}`}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 ml-4">
-          {(isOwner || isAdmin) && !study.submitted && study.readyForSubmission && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setUnmarkReadyDialogOpen(true)}
-              disabled={markingReady}
-            >
-              {markingReady ? (
-                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-              )}
-              Back to Draft
-            </Button>
-          )}
-          {isOwner && !study.submitted && !study.readyForSubmission && allMetadataComplete && (
-            <Button
-              size="sm"
-              onClick={() => setMarkReadyDialogOpen(true)}
-              disabled={markingReady}
-            >
-              {markingReady ? (
-                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-              ) : null}
-              Mark as Ready
-            </Button>
-          )}
-        </div>
+        {currentTab !== "pipelines" && (
+          <div className="flex items-center gap-2 shrink-0 ml-4">
+            {(isOwner || isAdmin) && !study.submitted && study.readyForSubmission && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setUnmarkReadyDialogOpen(true)}
+                disabled={markingReady}
+              >
+                {markingReady ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Back to Draft
+              </Button>
+            )}
+            {isOwner && !study.submitted && !study.readyForSubmission && allMetadataComplete && (
+              <Button
+                size="sm"
+                onClick={() => setMarkReadyDialogOpen(true)}
+                disabled={markingReady}
+              >
+                {markingReady ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : null}
+                Mark as Ready
+              </Button>
+            )}
+          </div>
+        )}
       </div>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -1625,6 +1629,7 @@ export default function StudyDetailPage({
               studyId={study.id}
               samples={studySamples}
               selectedPipelineId={selectedPipelineId}
+              categoryFilter="analysis"
             />
           </TabsContent>
         )}
@@ -1632,7 +1637,14 @@ export default function StudyDetailPage({
         {/* Publishing Tab */}
         {!isDemoUser && (
         <TabsContent value="publishing">
-          {!selectedPublishingTarget ? (
+          {selectedPublishingPipeline ? (
+            <StudyPipelinesSection
+              studyId={study.id}
+              samples={studySamples}
+              selectedPipelineId={selectedPublishingPipeline}
+              categoryFilter="submission"
+            />
+          ) : !selectedPublishingTarget ? (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold">Publishing</h2>
@@ -1651,7 +1663,7 @@ export default function StudyDetailPage({
                       <div className="flex items-center justify-between gap-4">
                         <CardTitle className="flex items-center gap-2 text-base">
                           <Send className="h-4 w-4 text-muted-foreground" />
-                          ENA
+                          Register at ENA
                         </CardTitle>
                         <Badge
                           variant="secondary"
@@ -1667,13 +1679,36 @@ export default function StudyDetailPage({
                     </CardHeader>
                     <CardContent className="pt-0">
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>1 publishing route available</span>
-                        <span className="text-border">|</span>
                         <span>{getPublishingSummary(study)}</span>
                       </div>
                     </CardContent>
                   </Card>
                 </Link>
+                {isAdmin && totalSamples > 0 && (
+                  <Link
+                    href={`/studies/${id}?tab=publishing&pipeline=submg`}
+                    className="block"
+                  >
+                    <Card className="cursor-pointer transition-colors hover:bg-muted/30">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between gap-4">
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <Send className="h-4 w-4 text-muted-foreground" />
+                            Submit to ENA
+                          </CardTitle>
+                        </div>
+                        <CardDescription>
+                          Submit reads, assemblies, and bins to ENA using SubMG
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>Pipeline-based data submission</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                )}
               </div>
             </div>
           ) : (() => {

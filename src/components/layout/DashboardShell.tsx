@@ -60,7 +60,7 @@ function derivePageTitle(pathname: string, section: string | null): string | nul
   }
 
   if (pathname === "/analysis") return "Analysis";
-  if (pathname.match(/^\/analysis\/[^/]+$/)) return "Analysis Run";
+  if (pathname.match(/^\/analysis\/[^/]+$/)) return null;
   if (pathname === "/submissions") return "ENA Submissions";
   if (pathname === "/help") return "Help & Guide";
   if (pathname === "/settings") return "Settings";

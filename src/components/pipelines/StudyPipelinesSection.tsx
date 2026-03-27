@@ -29,11 +29,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -41,26 +38,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import {
-  Dna,
   FlaskConical,
-  Upload,
   Loader2,
   Play,
   AlertCircle,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  ChevronDown,
-  Settings,
   ExternalLink,
-  Hash,
-  Layers,
   Trash2,
   MoreHorizontal,
   RefreshCw,
+  Clock,
+  X,
 } from "lucide-react";
-import { PipelineDataFlowSummary } from "@/components/pipelines/PipelineDataFlow";
 import {
   getAvailableAssemblies,
   resolveAssemblySelection,
@@ -73,26 +66,6 @@ const AUTO_ASSEMBLY_SELECTION = "__auto__";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface PipelineInput {
-  id: string;
-  name: string;
-  description: string;
-  fileTypes: string[];
-  source: string;
-  sourceDescription: string;
-}
-
-interface PipelineOutput {
-  id: string;
-  name: string;
-  description: string;
-  fromStep: string;
-  fileTypes: string[];
-  destination: string;
-  destinationField?: string;
-  destinationDescription: string;
-}
 
 interface PrerequisiteCheck {
   id: string;
@@ -177,6 +150,7 @@ interface Pipeline {
 interface Sample {
   id: string;
   sampleId: string;
+  sampleAlias?: string | null;
   reads: {
     id: string;
     file1: string | null;
@@ -184,6 +158,12 @@ interface Sample {
     checksum1?: string | null;
     checksum2?: string | null;
   }[];
+  order?: {
+    id: string;
+    orderNumber: string;
+    name: string | null;
+    status: string;
+  } | null;
   preferredAssemblyId: string | null;
   assemblies: {
     id: string;
@@ -210,9 +190,16 @@ interface PipelineRun {
   progress: number | null;
   currentStep: string | null;
   errorTail: string | null;
+  inputSampleIds?: string | null;
+  runFolder?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  user?: {
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+  } | null;
   _count?: {
     assembliesCreated: number;
     binsCreated: number;
@@ -223,6 +210,8 @@ interface StudyPipelinesSectionProps {
   studyId: string;
   samples: Sample[];
   selectedPipelineId?: string | null;
+  /** When set, only pipelines matching this category are shown. "analysis" excludes "submission". */
+  categoryFilter?: "analysis" | "submission";
 }
 
 interface EnaSettingsResponse {
@@ -233,28 +222,66 @@ interface EnaSettingsResponse {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getPipelineIcon(icon: string) {
-  switch (icon) {
-    case "Dna":
-      return <Dna className="h-5 w-5" />;
-    case "Upload":
-      return <Upload className="h-5 w-5" />;
-    default:
-      return <FlaskConical className="h-5 w-5" />;
-  }
-}
+const STATUS_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "completed", label: "Completed" },
+  { value: "running", label: "Running" },
+  { value: "queued", label: "Queued" },
+  { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
 
 function formatDateTime(value: string | null): string {
   if (!value) return "-";
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatRelativeTime(value: string): string {
+  const now = new Date();
+  const date = new Date(value);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  const diffWeeks = Math.floor(diffDays / 7);
+  const diffMonths = Math.floor(diffDays / 30);
+
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return "yesterday";
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffWeeks < 5) return `${diffWeeks}w ago`;
+  return `${diffMonths}mo ago`;
+}
+
+function formatDuration(start: string | null, end: string | null): string {
+  if (!start) return "-";
+  const startDate = new Date(start);
+  const endDate = end ? new Date(end) : new Date();
+  const diffMs = endDate.getTime() - startDate.getTime();
+  if (diffMs < 0) return "-";
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSecs = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSecs}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  return `${hours}h ${remainingMins}m`;
 }
 
 function getStatusBadge(status: string) {
   switch (status) {
     case "completed":
-      return <Badge className="bg-emerald-600">Completed</Badge>;
+      return <Badge className="bg-[#00BD7D] text-white">Completed</Badge>;
     case "running":
-      return <Badge className="bg-blue-600">Running</Badge>;
+      return <Badge className="bg-blue-600 text-white">Running</Badge>;
     case "queued":
       return <Badge variant="secondary">Queued</Badge>;
     case "failed":
@@ -275,16 +302,26 @@ function getRunDetails(run: PipelineRun): string {
   if (run.currentStep?.trim()) {
     return run.currentStep.trim();
   }
-  if (run.status === "completed") {
-    return "Run completed successfully.";
+  if (run.status === "completed") return "Completed successfully";
+  if (run.status === "queued") return "Waiting for execution";
+  if (run.status === "running") return "Currently running";
+  return "";
+}
+
+function getSampleCount(run: PipelineRun): number | null {
+  if (!run.inputSampleIds) return null;
+  try {
+    const ids = JSON.parse(run.inputSampleIds);
+    return Array.isArray(ids) ? ids.length : null;
+  } catch {
+    return null;
   }
-  if (run.status === "queued") {
-    return "Waiting for execution.";
-  }
-  if (run.status === "running") {
-    return "Pipeline is currently running.";
-  }
-  return "No additional details.";
+}
+
+function getUserDisplay(run: PipelineRun): string {
+  if (!run.user) return "-";
+  const name = [run.user.firstName, run.user.lastName].filter(Boolean).join(" ");
+  return name || run.user.email;
 }
 
 function getFileName(filePath: string | null | undefined): string {
@@ -669,7 +706,7 @@ function getReadinessIssues(params: {
   const selectedSamples = samples.filter((s) => selectedSampleIds.has(s.id));
 
   if (selectedSamples.length === 0) {
-    issues.push("Select at least one sample.");
+    issues.push("No samples with paired reads available.");
     return issues;
   }
 
@@ -792,6 +829,7 @@ export function StudyPipelinesSection({
   studyId,
   samples,
   selectedPipelineId: requestedPipelineId = null,
+  categoryFilter,
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -818,23 +856,26 @@ export function StudyPipelinesSection({
   // --- Pipeline selection state ---
   const [selectedPipelineIdState, setSelectedPipelineId] = useState<string | null>(null);
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
-  const [selectedSamples, setSelectedSamples] = useState<Set<string>>(new Set());
+  // All samples with paired reads are always included (study pipelines run on all samples)
+  const allSampleWithReadsIds = useMemo(
+    () => new Set(samples.filter((s) => s.reads?.some((r) => r.file1 && r.file2)).map((s) => s.id)),
+    [samples]
+  );
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   // --- Validation state ---
   const [prerequisites, setPrerequisites] = useState<PrerequisiteResult | null>(null);
   const [loadingPrereqs, setLoadingPrereqs] = useState(false);
-  const [prereqsExpanded, setPrereqsExpanded] = useState(false);
   const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
   const [loadingMetadata, setLoadingMetadata] = useState(false);
 
-  // --- Pipeline definition for data flow ---
-  const [pipelineDefinition, setPipelineDefinition] = useState<{
-    inputs: PipelineInput[];
-    outputs: PipelineOutput[];
-  } | null>(null);
-  const [showDataFlow, setShowDataFlow] = useState(false);
+  // --- Runs table state ---
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
 
   // --- Assembly selection state ---
   const initialPreferredAssemblyMap = useMemo(() => {
@@ -866,13 +907,21 @@ export function StudyPipelinesSection({
   } | null>(null);
   const [localChecksumOverrides, setLocalChecksumOverrides] = useState<Record<string, true>>({});
 
-  const { systemReady, checkingSystem } = useQuickPrerequisiteStatus();
+  const {
+    systemReady,
+    checkingSystem,
+    refreshSystemReady,
+    initialCheckPending,
+    systemBlocked,
+  } = useQuickPrerequisiteStatus();
 
   // --- Derived data ---
-  const enabledPipelines: Pipeline[] = useMemo(
-    () => pipelinesData?.pipelines || [],
-    [pipelinesData]
-  );
+  const enabledPipelines: Pipeline[] = useMemo(() => {
+    const all = pipelinesData?.pipelines || [];
+    if (!categoryFilter) return all;
+    if (categoryFilter === "analysis") return all.filter((p) => p.category !== "submission");
+    return all.filter((p) => p.category === categoryFilter);
+  }, [pipelinesData, categoryFilter]);
   const pipelineRuns: PipelineRun[] = useMemo(
     () => runsData?.runs || [],
     [runsData?.runs]
@@ -922,6 +971,8 @@ export function StudyPipelinesSection({
   );
 
   const isSubmgSelected = selectedPipeline?.pipelineId === "submg";
+  const isMagSelected = selectedPipeline?.pipelineId === "mag";
+  const showAssemblyColumn = isMagSelected || isSubmgSelected;
 
   const submitBinsEnabled = Boolean(
     localConfig.submitBins ??
@@ -934,14 +985,14 @@ export function StudyPipelinesSection({
     return buildSubmgCoverageSummary({
       validation: metadataValidation,
       samples: samplesWithAssemblySelection,
-      selectedSampleIds: selectedSamples,
+      selectedSampleIds: allSampleWithReadsIds,
       submitBins: submitBinsEnabled,
     });
   }, [
     isSubmgSelected,
     metadataValidation,
     samplesWithAssemblySelection,
-    selectedSamples,
+    allSampleWithReadsIds,
     submitBinsEnabled,
   ]);
 
@@ -958,7 +1009,7 @@ export function StudyPipelinesSection({
   const readinessIssues = getReadinessIssues({
     pipeline: selectedPipeline,
     samples: samplesWithAssemblySelection,
-    selectedSampleIds: selectedSamples,
+    selectedSampleIds: allSampleWithReadsIds,
     metadataValidation,
     loadingMetadata,
     prerequisites,
@@ -984,6 +1035,34 @@ export function StudyPipelinesSection({
     [pipelineRuns, selectedPipeline]
   );
 
+  const filteredRuns = useMemo(
+    () =>
+      statusFilter === "all"
+        ? visibleRuns
+        : visibleRuns.filter((run) => run.status === statusFilter),
+    [visibleRuns, statusFilter]
+  );
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const run of visibleRuns) {
+      counts[run.status] = (counts[run.status] || 0) + 1;
+    }
+    return counts;
+  }, [visibleRuns]);
+
+  const deletableFilteredRuns = useMemo(
+    () => filteredRuns.filter((r) => r.status !== "running"),
+    [filteredRuns]
+  );
+
+  const allFilteredSelected = useMemo(
+    () =>
+      deletableFilteredRuns.length > 0 &&
+      deletableFilteredRuns.every((r) => selectedRunIds.has(r.id)),
+    [deletableFilteredRuns, selectedRunIds]
+  );
+
   const samplesWithAssemblies = useMemo(
     () =>
       samplesWithAssemblySelection.filter(
@@ -994,14 +1073,14 @@ export function StudyPipelinesSection({
 
   // --- Effects ---
 
-  // Auto-select pipeline
+  // Auto-select pipeline (only when a specific pipeline is requested via URL)
   useEffect(() => {
-    if (!enabledPipelines.length) return;
+    if (!enabledPipelines.length || !requestedPipelineId) return;
     setSelectedPipelineId((current) => {
       if (current && enabledPipelines.some((p) => p.pipelineId === current)) {
         return current;
       }
-      if (requestedPipelineId && enabledPipelines.some((p) => p.pipelineId === requestedPipelineId)) {
+      if (enabledPipelines.some((p) => p.pipelineId === requestedPipelineId)) {
         return requestedPipelineId;
       }
       return enabledPipelines[0].pipelineId;
@@ -1015,13 +1094,6 @@ export function StudyPipelinesSection({
   }, [selectedPipeline]);
 
   useEffect(() => {
-    if (!selectedPipeline || samplesWithReads.length === 0) return;
-    setSelectedSamples((current) =>
-      current.size > 0 ? current : new Set(samplesWithReads.map((s) => s.id))
-    );
-  }, [selectedPipeline, samplesWithReads]);
-
-  useEffect(() => {
     setPreferredAssemblyBySample(initialPreferredAssemblyMap);
   }, [initialPreferredAssemblyMap]);
 
@@ -1031,7 +1103,7 @@ export function StudyPipelinesSection({
     setCalculatingChecksums(false);
   }, [studyId]);
 
-  // Fetch prerequisites, metadata, and definition when pipeline changes
+  // Fetch prerequisites and metadata when pipeline changes
   useEffect(() => {
     if (!selectedPipeline) return;
     let cancelled = false;
@@ -1040,35 +1112,25 @@ export function StudyPipelinesSection({
     setLoadingMetadata(true);
     setPrerequisites(null);
     setMetadataValidation(null);
-    setPipelineDefinition(null);
-    setPrereqsExpanded(false);
-    setShowDataFlow(false);
 
     const load = async () => {
       try {
-        const [prereqRes, metadataRes, defRes] = await Promise.all([
+        const [prereqRes, metadataRes] = await Promise.all([
           fetch("/api/admin/settings/pipelines/check-prerequisites"),
           fetch("/api/pipelines/validate-metadata", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ studyId, pipelineId: selectedPipeline.pipelineId }),
           }),
-          fetch(`/api/admin/settings/pipelines/${selectedPipeline.pipelineId}/definition`),
         ]);
 
         if (cancelled) return;
 
         if (prereqRes.ok) {
-          const data = await prereqRes.json();
-          setPrerequisites(data);
-          if (!data.requiredPassed) setPrereqsExpanded(true);
+          setPrerequisites(await prereqRes.json());
         }
         if (metadataRes.ok) {
           setMetadataValidation(await metadataRes.json());
-        }
-        if (defRes.ok) {
-          const data = await defRes.json();
-          setPipelineDefinition({ inputs: data.inputs || [], outputs: data.outputs || [] });
         }
       } catch {
         // ignore
@@ -1117,18 +1179,6 @@ export function StudyPipelinesSection({
     }
   }, [studyId, isSubmgSelected]);
 
-  const handleToggleSample = (sampleId: string) => {
-    setSelectedSamples((current) => {
-      const next = new Set(current);
-      if (next.has(sampleId)) {
-        next.delete(sampleId);
-      } else {
-        next.add(sampleId);
-      }
-      return next;
-    });
-  };
-
   const handleStartPipeline = async () => {
     if (!selectedPipeline) return;
 
@@ -1142,7 +1192,7 @@ export function StudyPipelinesSection({
         body: JSON.stringify({
           pipelineId: selectedPipeline.pipelineId,
           studyId,
-          sampleIds: Array.from(selectedSamples),
+          sampleIds: Array.from(allSampleWithReadsIds),
           config: localConfig,
         }),
       });
@@ -1201,6 +1251,56 @@ export function StudyPipelinesSection({
     } finally {
       setDeletingRun(false);
     }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedRunIds.size === 0) return;
+    setBulkDeleting(true);
+
+    try {
+      const ids = Array.from(selectedRunIds);
+      for (const runId of ids) {
+        const res = await fetch(`/api/pipelines/runs/${runId}/delete`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(
+            getApiErrorMessage(payload as { error?: unknown }, `Failed to delete run ${runId}`)
+          );
+        }
+      }
+
+      setSelectedRunIds(new Set());
+      setSelectMode(false);
+      setShowBulkDeleteConfirm(false);
+      await mutateRuns();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete runs");
+      setShowBulkDeleteConfirm(false);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedRunIds(new Set());
+    } else {
+      setSelectedRunIds(new Set(deletableFilteredRuns.map((r) => r.id)));
+    }
+  };
+
+  const toggleSelectRun = (runId: string) => {
+    setSelectedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
   };
 
   const handleComputeReadChecksums = async () => {
@@ -1352,19 +1452,6 @@ export function StudyPipelinesSection({
     }
   };
 
-  const getPrereqStatusIcon = (status: PrerequisiteCheck["status"]) => {
-    switch (status) {
-      case "pass":
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />;
-      case "fail":
-        return <XCircle className="h-4 w-4 text-red-600" />;
-      case "warning":
-        return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-400" />;
-    }
-  };
-
   // --- Loading state ---
   if (pipelinesLoading && enabledPipelines.length === 0) {
     return (
@@ -1378,884 +1465,880 @@ export function StudyPipelinesSection({
   // --- Empty state ---
   if (enabledPipelines.length === 0) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>No Study Pipelines Enabled</CardTitle>
-          <CardDescription>
-            Enable a study-scoped pipeline in admin settings before using this workspace.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h2 className="text-base font-semibold">No Study Pipelines Enabled</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Enable a study-scoped pipeline in admin settings before using this workspace.
+        </p>
+      </div>
     );
   }
 
-  // --- Main render ---
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3">
+  // --- Overview mode (no pipeline selected) ---
+  if (!requestedPipelineId) {
+    const runsByPipeline = new Map<string, PipelineRun[]>();
+    for (const run of pipelineRuns) {
+      const existing = runsByPipeline.get(run.pipelineId);
+      if (existing) {
+        existing.push(run);
+      } else {
+        runsByPipeline.set(run.pipelineId, [run]);
+      }
+    }
+
+    return (
+      <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-semibold">Study Pipelines</h1>
-          <p className="text-sm text-muted-foreground">
-            Run study-scoped analysis pipelines on linked FASTQ files.
+          <h1 className="text-xl font-semibold">Analysis</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Pipeline overview for this study
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void mutatePipelines();
-            void mutateRuns();
-          }}
-        >
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
 
-      {/* System warning banner */}
-      {!checkingSystem && systemReady && !systemReady.ready ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
-          <div className="flex items-center gap-2 font-medium">
-            <AlertTriangle className="h-4 w-4" />
-            {systemReady.summary}
-          </div>
-          <Link
-            href="/admin/settings/pipelines"
-            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-          >
-            <Settings className="h-3 w-3" />
-            Configure Pipeline Settings
-          </Link>
-        </div>
-      ) : null}
+        <div className="grid gap-4">
+          {enabledPipelines.map((pipeline) => {
+            const runs = runsByPipeline.get(pipeline.pipelineId) ?? [];
+            const completedRuns = runs.filter((r) => r.status === "completed");
+            const activeRuns = runs.filter(
+              (r) => r.status === "running" || r.status === "queued" || r.status === "pending"
+            );
+            const failedRuns = runs.filter((r) => r.status === "failed");
+            const latestRun = runs[0];
 
-      {/* Error banner */}
-      {error ? (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
-        {/* --- Left column --- */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Hash className="h-5 w-5" />
-              Available Pipelines
-            </CardTitle>
-            <CardDescription>
-              Select a pipeline, choose samples, and start the run.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Pipeline selector */}
-            <div className="grid gap-3 md:grid-cols-2">
-              {enabledPipelines.map((pipeline) => {
-                const active = pipeline.pipelineId === selectedPipelineIdState;
-                return (
-                  <button
-                    key={pipeline.pipelineId}
-                    type="button"
-                    onClick={() => setSelectedPipelineId(pipeline.pipelineId)}
-                    className={`rounded-lg border p-4 text-left transition ${
-                      active
-                        ? "border-foreground bg-secondary/40"
-                        : "border-border hover:border-foreground/30"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 font-medium">
-                        {getPipelineIcon(pipeline.icon)}
+            return (
+              <Link
+                key={pipeline.pipelineId}
+                href={`/studies/${studyId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                className="block"
+              >
+                <Card className="hover:bg-muted/30 transition-colors cursor-pointer">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <FlaskConical className="h-4 w-4 text-muted-foreground" />
                         {pipeline.name}
-                      </div>
-                      <Badge variant="outline">{pipeline.category || "analysis"}</Badge>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{pipeline.description}</p>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Selected Samples */}
-            <div className="space-y-3 rounded-lg border p-4">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h2 className="font-medium">Selected Samples</h2>
-                  <p className="text-sm text-muted-foreground">
-                    {samplesWithReads.length} of {samples.length} sample
-                    {samples.length === 1 ? "" : "s"} with paired reads
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedSamples(new Set(samplesWithReads.map((s) => s.id)))
-                    }
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSelectedSamples(new Set())}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-2 md:grid-cols-2">
-                {samples.map((sample) => {
-                  const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
-                  const sampleMissing =
-                    isSubmgSelected && submgCoverage?.sampleMissingRequired[sample.id];
-
-                  return (
-                    <label
-                      key={sample.id}
-                      className="flex items-start gap-3 rounded-lg border px-3 py-2"
-                    >
-                      <Checkbox
-                        checked={selectedSamples.has(sample.id)}
-                        onCheckedChange={() => handleToggleSample(sample.id)}
-                        disabled={!hasPairedReads}
-                      />
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{sample.sampleId}</span>
-                          {hasPairedReads ? (
-                            <Badge variant="outline" className="text-emerald-700">
-                              Reads linked
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-amber-700">
-                              Missing reads
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {hasPairedReads
-                            ? sample.reads.some((r) => r.file1 && r.file2)
-                              ? "Paired-end FASTQ"
-                              : "Single-end FASTQ"
-                            : "No linked FASTQ files"}
-                        </div>
-                        {sampleMissing && sampleMissing.length > 0 && (
-                          <div className="text-[11px] text-destructive">
-                            Missing:{" "}
-                            {formatSampleMissingRequiredLabels(
-                              sampleMissing,
-                              submgCoverage?.sampleMissingMetadataFields[sample.id] || []
-                            ).join(", ")}
-                          </div>
+                      </CardTitle>
+                      <div className="flex items-center gap-2">
+                        {activeRuns.length > 0 && (
+                          <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            Running
+                          </Badge>
+                        )}
+                        {activeRuns.length === 0 && completedRuns.length > 0 && (
+                          <Badge variant="secondary" className="text-xs bg-[#00BD7D]/10 text-[#00BD7D] border-[#00BD7D]/20">
+                            <CheckCircle2 className="mr-1 h-3 w-3" />
+                            Completed
+                          </Badge>
+                        )}
+                        {activeRuns.length === 0 && completedRuns.length === 0 && failedRuns.length > 0 && (
+                          <Badge variant="secondary" className="text-xs bg-destructive/10 text-destructive border-destructive/20">
+                            <AlertCircle className="mr-1 h-3 w-3" />
+                            Failed
+                          </Badge>
+                        )}
+                        {runs.length === 0 && (
+                          <Badge variant="outline" className="text-xs" style={{ color: "#8FA1B9", borderColor: "#CAD5E2" }}>
+                            Not run yet
+                          </Badge>
                         )}
                       </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Pipeline Configuration */}
-            {selectedPipeline &&
-            Object.keys(selectedPipeline.configSchema.properties || {}).length > 0 ? (
-              <div className="space-y-3 rounded-lg border p-4">
-                <div>
-                  <h2 className="font-medium">Pipeline Configuration</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Configure this run before starting it.
-                  </p>
-                </div>
-
-                <div className="grid gap-3">
-                  {Object.entries(selectedPipeline.configSchema.properties).map(
-                    ([key, property]) => {
-                      if (property.type === "boolean") {
-                        return (
-                          <label
-                            key={key}
-                            className="flex items-start gap-3 rounded-lg border px-3 py-3"
-                          >
-                            <Checkbox
-                              checked={Boolean(localConfig[key])}
-                              onCheckedChange={(checked) =>
-                                setLocalConfig((current) => ({
-                                  ...current,
-                                  [key]: checked === true,
-                                }))
-                              }
-                            />
-                            <div className="space-y-1">
-                              <div className="font-medium">{property.title}</div>
-                              {property.description ? (
-                                <div className="text-xs text-muted-foreground">
-                                  {property.description}
-                                </div>
-                              ) : null}
-                            </div>
-                          </label>
-                        );
-                      }
-
-                      if (Array.isArray(property.enum) && property.enum.length > 0) {
-                        return (
-                          <div key={key} className="grid gap-1.5">
-                            <label htmlFor={`pipeline-config-${key}`} className="text-sm font-medium">
-                              {property.title}
-                            </label>
-                            <select
-                              id={`pipeline-config-${key}`}
-                              value={String(localConfig[key] ?? property.default ?? property.enum[0] ?? "")}
-                              onChange={(event) =>
-                                setLocalConfig((current) => ({
-                                  ...current,
-                                  [key]: event.target.value,
-                                }))
-                              }
-                              className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                            >
-                              {property.enum.map((value) => (
-                                <option key={String(value)} value={String(value)}>
-                                  {String(value)}
-                                </option>
-                              ))}
-                            </select>
-                            {property.description ? (
-                              <div className="text-xs text-muted-foreground">
-                                {property.description}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div key={key} className="grid gap-1.5">
-                          <label htmlFor={`pipeline-config-${key}`} className="text-sm font-medium">
-                            {property.title}
-                          </label>
-                          <input
-                            id={`pipeline-config-${key}`}
-                            type={property.type === "number" ? "number" : "text"}
-                            value={String(localConfig[key] ?? property.default ?? "")}
-                            onChange={(event) =>
-                              setLocalConfig((current) => ({
-                                ...current,
-                                [key]:
-                                  property.type === "number"
-                                    ? Number(event.target.value)
-                                    : event.target.value,
-                              }))
-                            }
-                            className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                          />
-                          {property.description ? (
-                            <div className="text-xs text-muted-foreground">
-                              {property.description}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {/* SubMG Scope */}
-            {isSubmgSelected && (
-              <div className="space-y-3 rounded-lg border p-4">
-                <div>
-                  <h2 className="font-medium">SubMG Submission Scope</h2>
-                </div>
-                <p
-                  className={`text-xs ${
-                    enaSubmissionServer?.isTestMode
-                      ? "text-amber-700"
-                      : enaSubmissionServer
-                        ? "text-blue-700"
-                        : "text-muted-foreground"
-                  }`}
-                >
-                  {enaSubmissionServer
-                    ? `ENA target: ${enaSubmissionServer.label} (${enaSubmissionServer.host})${enaSubmissionServer.isTestMode ? " - test submission mode." : ""}`
-                    : "ENA target: loading from Admin > ENA settings..."}
-                </p>
-
-                {loadingMetadata ? (
-                  <p className="text-xs text-muted-foreground">Evaluating selected samples...</p>
-                ) : submgCoverage ? (
-                  <>
-                    <p
-                      className={`text-xs ${
-                        submgCoverage.blocking ? "text-amber-700" : "text-green-700"
-                      }`}
-                    >
-                      {submgCoverage.summary}
-                    </p>
-                    {submgCoverage.missingRequired.length > 0 && (
-                      <p className="text-xs text-destructive">
-                        Missing required: {submgMissingRequiredLabels.join(", ")}
-                      </p>
-                    )}
-                    {submgCoverage.studyAccessionMissing && (
-                      <p className="text-xs text-amber-700">
-                        Study accession comes from ENA Registration in this
-                        study&apos;s Publishing section (Test Server or Production).
-                      </p>
-                    )}
-                    <div className="space-y-1">
-                      {submgCoverage.checks.map((check) => {
-                        const preview = formatSamplePreview(
-                          check.missingSampleIds,
-                          new Map(samplesWithAssemblySelection.map((s) => [s.id, s]))
-                        );
-                        return (
-                          <p key={check.id} className="text-xs text-muted-foreground">
-                            {check.label}: {check.available}/{check.total} selected
-                            {preview ? ` - missing ${preview}` : ""}
-                            {check.missingDetail ? ` - fields: ${check.missingDetail}` : ""}
-                          </p>
-                        );
-                      })}
                     </div>
-                    <p className="text-xs text-muted-foreground">{submgCoverage.binsSummary}</p>
-                    {submgCoverage.binsHint && (
-                      <p className="text-xs text-amber-700">{submgCoverage.binsHint}</p>
-                    )}
-                  </>
-                ) : null}
-
-                {/* Checksum computation */}
-                {isFacilityAdmin && missingChecksumFilePaths.length > 0 && (
-                  <div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8"
-                      disabled={calculatingChecksums}
-                      onClick={() => void handleComputeReadChecksums()}
-                    >
-                      {calculatingChecksums ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : null}
-                      Compute and add read checksums
-                    </Button>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {missingChecksumFilePaths.length} read file
-                      {missingChecksumFilePaths.length === 1 ? "" : "s"} currently missing MD5
-                      values.
-                    </p>
-                  </div>
-                )}
-                {checksumResult && (
-                  <p
-                    className={`text-xs ${
-                      checksumResult.success ? "text-green-700" : "text-destructive"
-                    }`}
-                  >
-                    {checksumResult.message}
-                    {checksumResult.detail ? ` ${checksumResult.detail}` : ""}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Metadata Validation (inline) */}
-            {selectedPipeline && (loadingMetadata || metadataValidation) && (
-              <div className="space-y-2 rounded-lg border p-4">
-                {loadingMetadata ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking study metadata...
-                  </div>
-                ) : metadataValidation ? (
-                  <>
-                    <div className="flex items-center gap-2">
-                      {metadataValidation.valid ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
-                      ) : metadataValidation.issues.some((i) => i.severity === "error") ? (
-                        <XCircle className="h-4 w-4 text-red-600" />
-                      ) : (
-                        <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                    <CardDescription>{pipeline.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <span>{runs.length} run{runs.length !== 1 ? "s" : ""} total</span>
+                      {completedRuns.length > 0 && (
+                        <span className="text-[#00BD7D]">{completedRuns.length} completed</span>
                       )}
-                      <span className="text-sm font-medium">Study Metadata</span>
-                      {metadataValidation.metadata.platform && (
-                        <span className="text-xs text-muted-foreground">
-                          Platform: {metadataValidation.metadata.platform}
-                        </span>
+                      {failedRuns.length > 0 && (
+                        <span className="text-red-600">{failedRuns.length} failed</span>
                       )}
-                    </div>
-                    {metadataValidation.issues.length > 0 && (
-                      <div className="space-y-1 ml-6">
-                        {metadataValidation.issues.map((issue, i) => (
-                          <div
-                            key={i}
-                            className={`text-sm flex items-center gap-2 ${
-                              issue.severity === "error" ? "text-red-600" : "text-yellow-600"
-                            }`}
-                          >
-                            {issue.severity === "error" ? (
-                              <XCircle className="h-3 w-3" />
-                            ) : (
-                              <AlertTriangle className="h-3 w-3" />
-                            )}
-                            <span>{issue.message}</span>
-                            {issue.fixUrl && (
-                              <Link
-                                href={issue.fixUrl}
-                                className="text-primary hover:underline inline-flex items-center gap-0.5"
-                              >
-                                Fix <ExternalLink className="h-3 w-3" />
-                              </Link>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : null}
-              </div>
-            )}
-
-            {/* System Requirements (collapsible) */}
-            {selectedPipeline && (loadingPrereqs || prerequisites) && (
-              <div className="rounded-lg border p-4">
-                {loadingPrereqs ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking system requirements...
-                  </div>
-                ) : prerequisites ? (
-                  <Collapsible open={prereqsExpanded} onOpenChange={setPrereqsExpanded}>
-                    <CollapsibleTrigger asChild>
-                      <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-1 -m-1">
-                        <div className="flex items-center gap-2">
-                          {prerequisites.requiredPassed ? (
-                            <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-red-600" />
-                          )}
-                          <span className="text-sm font-medium">System Requirements</span>
-                          <span
-                            className={`text-xs ${
-                              prerequisites.requiredPassed ? "text-green-600" : "text-red-600"
-                            }`}
-                          >
-                            {prerequisites.summary}
+                      {latestRun && (
+                        <>
+                          <span className="text-border">|</span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Last run: {formatRelativeTime(latestRun.createdAt)}
                           </span>
-                        </div>
-                        <ChevronDown
-                          className={`h-4 w-4 transition-transform ${
-                            prereqsExpanded ? "rotate-180" : ""
-                          }`}
-                        />
-                      </button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="mt-3 max-h-48 overflow-y-auto space-y-2 text-sm pr-1">
-                        {prerequisites.checks
-                          .filter(
-                            (check) =>
-                              check.status === "fail" ||
-                              check.status === "warning" ||
-                              check.required
-                          )
-                          .map((check) => (
-                            <div
-                              key={check.id}
-                              className={`flex items-start gap-2 p-2 rounded ${
-                                check.status === "fail"
-                                  ? "bg-red-50"
-                                  : check.status === "warning"
-                                    ? "bg-yellow-50"
-                                    : ""
-                              }`}
-                            >
-                              {getPrereqStatusIcon(check.status)}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium">{check.name}</span>
-                                  {check.required && check.status !== "pass" && (
-                                    <span className="text-xs text-red-600">required</span>
-                                  )}
-                                </div>
-                                <p className="text-xs text-muted-foreground">{check.message}</p>
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                      <div className="pt-2 mt-2 border-t">
-                        <Link
-                          href="/admin/settings/pipelines"
-                          className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                        >
-                          <Settings className="h-3 w-3" />
-                          Configure Pipeline Settings
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ) : null}
-              </div>
-            )}
-
-            {/* Data Flow (collapsible) */}
-            {pipelineDefinition && pipelineDefinition.inputs.length > 0 && (
-              <div className="rounded-lg border p-4">
-                <Collapsible open={showDataFlow} onOpenChange={setShowDataFlow}>
-                  <CollapsibleTrigger asChild>
-                    <button className="flex items-center justify-between w-full text-left hover:bg-muted/50 rounded p-1 -m-1">
-                      <div className="flex items-center gap-2">
-                        <Layers className="h-4 w-4 text-primary" />
-                        <span className="text-sm font-medium">Data Integration</span>
-                        <span className="text-xs text-muted-foreground">
-                          {pipelineDefinition.inputs.length} inputs, {pipelineDefinition.outputs.length} outputs
-                        </span>
-                      </div>
-                      <ChevronDown
-                        className={`h-4 w-4 transition-transform ${
-                          showDataFlow ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-3">
-                    <PipelineDataFlowSummary
-                      inputs={pipelineDefinition.inputs}
-                      outputs={pipelineDefinition.outputs}
-                    />
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* --- Right column --- */}
-        <div className="space-y-6">
-          {/* Readiness card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>{selectedPipeline?.name || "Pipeline"}</CardTitle>
-              <CardDescription>
-                {selectedPipeline?.description || "Select a pipeline to review readiness."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {readinessIssues.length === 0 ? (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
-                  <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Ready to run
-                  </div>
-                  <p className="mt-1 text-emerald-800">
-                    {selectedSamples.size} selected sample
-                    {selectedSamples.size === 1 ? "" : "s"} meet the current input
-                    requirements.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
-                  <div className="flex items-center gap-2 font-medium">
-                    <AlertCircle className="h-4 w-4" />
-                    Action required
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {readinessIssues.map((issue) => (
-                      <div key={issue}>{issue}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <Button
-                className="w-full"
-                disabled={
-                  !selectedPipeline ||
-                  readinessIssues.length > 0 ||
-                  startingPipelineId !== null ||
-                  loadingPrereqs ||
-                  loadingMetadata
-                }
-                onClick={() => void handleStartPipeline()}
-              >
-                {startingPipelineId === selectedPipeline?.pipelineId ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4" />
-                )}
-                Start Pipeline
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Recent Runs */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Runs</CardTitle>
-              <CardDescription>
-                {selectedPipeline
-                  ? `${selectedPipeline.name} runs for this study.`
-                  : "Study-scoped runs for this study."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {visibleRuns.length === 0 ? (
-                <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-                  No runs started for this pipeline yet.
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-xl border border-border bg-card">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="border-b bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Run
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Pipeline
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Status
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Details
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Created
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Started
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Completed
-                          </th>
-                          <th className="w-[56px] px-3 py-2 text-right font-medium text-muted-foreground">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {visibleRuns.map((run) => (
-                          <tr
-                            key={run.id}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => (window.location.href = `/analysis/${run.id}`)}
-                          >
-                            <td className="px-3 py-2 align-top">
-                              <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
-                                {run.runNumber}
-                              </code>
-                            </td>
-                            <td className="px-3 py-2 align-top font-medium">
-                              {run.pipelineName}
-                            </td>
-                            <td className="px-3 py-2 align-top">{getStatusBadge(run.status)}</td>
-                            <td className="max-w-[320px] px-3 py-2 align-top text-xs text-muted-foreground">
-                              {getRunDetails(run)}
-                            </td>
-                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-                              {formatDateTime(run.createdAt)}
-                            </td>
-                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-                              {formatDateTime(run.startedAt)}
-                            </td>
-                            <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-                              {formatDateTime(run.completedAt)}
-                            </td>
-                            <td className="px-3 py-2 align-top text-right">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    aria-label={`Actions for ${run.runNumber}`}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    variant="destructive"
-                                    disabled={run.status === "running" || deletingRun}
-                                    onSelect={(event) => {
-                                      event.preventDefault();
-                                      setDeleteRunError(null);
-                                      setDeleteTarget(run);
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    Delete run
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Assembly Selection */}
-          {samplesWithAssemblySelection.length > 0 && (
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+          {enabledPipelines.length === 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle>Selected Assembly Per Sample</CardTitle>
-                <CardDescription>
-                  Choose the assembly marked as final for each sample. Automatic mode
-                  always uses the newest available assembly.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-hidden rounded-xl border border-border bg-card">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="border-b bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Sample
-                          </th>
-                          <th className="w-[320px] px-3 py-2 text-left font-medium text-muted-foreground">
-                            Final Assembly
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                            Current Final Selection
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {samplesWithAssemblySelection.map((sample) => {
-                          const availableAssemblies = getAvailableAssemblies(sample);
-                          const activeSelection = resolveAssemblySelection(sample, {
-                            strictPreferred: true,
-                          });
-                          const selectedAssembly = activeSelection.assembly;
-                          const hasExplicitSelection =
-                            Boolean(sample.preferredAssemblyId) &&
-                            availableAssemblies.some(
-                              (assembly) => assembly.id === sample.preferredAssemblyId
-                            );
-                          const stalePreferredValue =
-                            sample.preferredAssemblyId && !hasExplicitSelection
-                              ? `__missing__:${sample.preferredAssemblyId}`
-                              : null;
-                          const currentSelectValue =
-                            stalePreferredValue ||
-                            (hasExplicitSelection
-                              ? (sample.preferredAssemblyId as string)
-                              : AUTO_ASSEMBLY_SELECTION);
-
-                          return (
-                            <tr key={sample.id}>
-                              <td className="px-3 py-2 align-top">
-                                <div className="font-medium text-sm">{sample.sampleId}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {availableAssemblies.length} assembly
-                                  {availableAssemblies.length === 1 ? "" : "ies"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-2 align-top">
-                                <Select
-                                  value={currentSelectValue}
-                                  onValueChange={(value) => {
-                                    if (value.startsWith("__missing__:")) return;
-                                    void handlePreferredAssemblyChange(sample.id, value);
-                                  }}
-                                  disabled={
-                                    (availableAssemblies.length === 0 && !stalePreferredValue) ||
-                                    Boolean(assemblySelectionSaving[sample.id])
-                                  }
-                                >
-                                  <SelectTrigger className="w-full">
-                                    <SelectValue placeholder="Select final assembly" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
-                                      Automatic (latest available assembly)
-                                    </SelectItem>
-                                    {stalePreferredValue && (
-                                      <SelectItem value={stalePreferredValue}>
-                                        Unavailable preferred assembly (choose another)
-                                      </SelectItem>
-                                    )}
-                                    {availableAssemblies.map((assembly) => {
-                                      const runNumber =
-                                        assembly.createdByPipelineRun?.runNumber || "manual";
-                                      const fileName = getFileName(assembly.assemblyFile);
-                                      return (
-                                        <SelectItem key={assembly.id} value={assembly.id}>
-                                          {runNumber} - {fileName}
-                                        </SelectItem>
-                                      );
-                                    })}
-                                  </SelectContent>
-                                </Select>
-                                {activeSelection.preferredMissing && (
-                                  <p className="text-xs text-destructive mt-1">
-                                    Previously selected assembly is no longer available. Pick a new
-                                    final assembly.
-                                  </p>
-                                )}
-                              </td>
-                              <td className="px-3 py-2 align-top text-xs">
-                                {selectedAssembly ? (
-                                  <div className="space-y-1">
-                                    <p className="font-medium text-foreground">
-                                      {activeSelection.source === "preferred"
-                                        ? "Marked as final"
-                                        : "Automatic selection"}
-                                    </p>
-                                    <p className="text-muted-foreground">
-                                      Run{" "}
-                                      {selectedAssembly.createdByPipelineRun?.runNumber || "manual"}
-                                      {selectedAssembly.createdByPipelineRun?.createdAt
-                                        ? ` - ${formatDateTime(String(selectedAssembly.createdByPipelineRun.createdAt))}`
-                                        : ""}
-                                    </p>
-                                    <p className="text-muted-foreground truncate max-w-[360px]">
-                                      {selectedAssembly.assemblyFile}
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <span className="text-destructive">No usable assembly selected</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                {assemblySelectionError && (
-                  <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                    {assemblySelectionError}
-                  </div>
-                )}
-                {samplesWithAssemblies.length === 0 && (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    No assemblies found yet. Run MAG first to generate assemblies.
-                  </p>
-                )}
+              <CardContent className="py-8 text-center text-muted-foreground">
+                No pipelines configured for this study.
               </CardContent>
             </Card>
           )}
         </div>
       </div>
+    );
+  }
 
-      {/* Delete Run Dialog */}
+  // --- Main render (single-column layout matching OrderPipelineView) ---
+  return (
+    <div className="space-y-6">
+      {/* Section 1: Header */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">
+            {selectedPipeline?.name || "Pipeline"}
+          </h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {selectedPipeline?.description || "Select a pipeline to review readiness."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {initialCheckPending ? (
+            <Button size="sm" disabled>
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              Checking environment...
+            </Button>
+          ) : systemBlocked ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#FFBA00] hover:bg-[#FFBA00]/20"
+              disabled={checkingSystem}
+              onClick={() => void refreshSystemReady()}
+              title={systemReady?.summary}
+            >
+              {checkingSystem ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {checkingSystem ? "Re-checking..." : systemReady?.summary || "Env issue"}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              disabled={
+                !selectedPipeline ||
+                readinessIssues.length > 0 ||
+                startingPipelineId !== null ||
+                loadingPrereqs ||
+                loadingMetadata
+              }
+              onClick={() => void handleStartPipeline()}
+              title={
+                readinessIssues.length > 0
+                  ? readinessIssues[0]
+                  : undefined
+              }
+            >
+              {startingPipelineId === selectedPipeline?.pipelineId ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Start Pipeline
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Section 2: Error banner */}
+      {error && (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
+      {/* Section 3: Settings */}
+      {selectedPipeline?.configSchema?.properties &&
+        Object.entries(selectedPipeline.configSchema.properties).some(
+          ([, s]) => s.enum || s.type === "boolean" || s.type === "number"
+        ) && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-medium">Settings</h3>
+          <div className="flex flex-wrap items-end gap-4">
+            {Object.entries(selectedPipeline.configSchema.properties).map(([key, property]) => {
+              const value = localConfig[key] ?? property.default;
+
+              if (Array.isArray(property.enum) && property.enum.length > 0) {
+                const fieldId = `config-${key}`;
+                return (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-xs" htmlFor={fieldId}>
+                      {property.title || key}
+                    </Label>
+                    <Select
+                      value={String(value ?? property.enum[0] ?? "")}
+                      onValueChange={(v) =>
+                        setLocalConfig((prev) => ({ ...prev, [key]: v }))
+                      }
+                    >
+                      <SelectTrigger
+                        id={fieldId}
+                        aria-label={property.title || key}
+                        className="h-8 w-[160px] text-xs"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {property.enum.map((opt) => (
+                          <SelectItem key={String(opt)} value={String(opt)}>
+                            {String(opt)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              }
+
+              if (property.type === "boolean") {
+                const fieldId = `config-${key}`;
+                return (
+                  <div key={key} className="flex items-center gap-2 pb-1">
+                    <Switch
+                      id={fieldId}
+                      checked={!!value}
+                      onCheckedChange={(checked) =>
+                        setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
+                      }
+                    />
+                    <Label htmlFor={fieldId} className="text-xs">
+                      {property.title || key}
+                    </Label>
+                  </div>
+                );
+              }
+
+              if (property.type === "number") {
+                const fieldId = `config-${key}`;
+                return (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-xs" htmlFor={fieldId}>
+                      {property.title || key}
+                    </Label>
+                    <Input
+                      id={fieldId}
+                      type="number"
+                      className="h-8 w-[120px] text-xs"
+                      value={value != null ? String(value) : ""}
+                      onChange={(e) =>
+                        setLocalConfig((prev) => ({
+                          ...prev,
+                          [key]: e.target.value ? Number(e.target.value) : undefined,
+                        }))
+                      }
+                    />
+                  </div>
+                );
+              }
+
+              return null;
+            })}
+          </div>
+          {/* SubMG ENA target info */}
+          {isSubmgSelected && enaSubmissionServer && (
+            <p
+              className={`mt-3 text-xs ${
+                enaSubmissionServer.isTestMode ? "text-amber-700" : "text-blue-700"
+              }`}
+            >
+              ENA target: {enaSubmissionServer.label} ({enaSubmissionServer.host})
+              {enaSubmissionServer.isTestMode ? " - test submission mode" : ""}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Section 4: Samples table */}
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium">Samples</h2>
+            <span className="text-xs text-muted-foreground">
+              {samplesWithReads.length} with reads
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {isFacilityAdmin && isSubmgSelected && missingChecksumFilePaths.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                disabled={calculatingChecksums}
+                onClick={() => void handleComputeReadChecksums()}
+              >
+                {calculatingChecksums && (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                )}
+                Compute checksums ({missingChecksumFilePaths.length})
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-x-auto">
+            <table className={cn("w-full text-sm", showAssemblyColumn ? "min-w-[960px]" : "min-w-[760px]")}>
+              <thead className="border-b bg-secondary/30">
+                <tr>
+                  <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">#</th>
+                  <th className="min-w-[10rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                    Sample
+                  </th>
+                  <th className="min-w-[14rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                    Read Files
+                  </th>
+                  <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                    Source
+                  </th>
+                  <th className="min-w-[10rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                    Issues
+                  </th>
+                  {showAssemblyColumn && (
+                    <th className="min-w-[12rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Assembly
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {samplesWithAssemblySelection.map((sample, index) => {
+                  const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
+                  const sampleMissing =
+                    isSubmgSelected && submgCoverage?.sampleMissingRequired[sample.id];
+                  const sampleMetadataIssues = metadataValidation?.issues.filter((issue) => {
+                    const token = extractSampleToken(issue.message);
+                    return token === sample.sampleId;
+                  }) ?? [];
+                  const sampleErrors = sampleMetadataIssues.filter((i) => i.severity === "error");
+                  const sampleWarnings = sampleMetadataIssues.filter((i) => i.severity === "warning");
+                  const hasIssues =
+                    !hasPairedReads ||
+                    (sampleMissing && sampleMissing.length > 0) ||
+                    sampleErrors.length > 0;
+
+                  // Assembly data
+                  const availableAssemblies = showAssemblyColumn
+                    ? getAvailableAssemblies(sample)
+                    : [];
+                  const activeSelection = showAssemblyColumn
+                    ? resolveAssemblySelection(sample, { strictPreferred: true })
+                    : null;
+                  const hasExplicitSelection =
+                    Boolean(sample.preferredAssemblyId) &&
+                    availableAssemblies.some((a) => a.id === sample.preferredAssemblyId);
+                  const stalePreferredValue =
+                    sample.preferredAssemblyId && !hasExplicitSelection
+                      ? `__missing__:${sample.preferredAssemblyId}`
+                      : null;
+                  const currentSelectValue =
+                    stalePreferredValue ||
+                    (hasExplicitSelection
+                      ? (sample.preferredAssemblyId as string)
+                      : AUTO_ASSEMBLY_SELECTION);
+
+                  return (
+                    <tr
+                      key={sample.id}
+                      className="transition-colors hover:bg-secondary/20"
+                    >
+                      <td className="px-4 py-3 align-top text-muted-foreground tabular-nums">
+                        {index + 1}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="font-medium">{sample.sampleId}</div>
+                        {sample.sampleAlias && (
+                          <div className="text-xs text-muted-foreground">{sample.sampleAlias}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        {(() => {
+                          const pairedRead = sample.reads?.find((r) => r.file1 && r.file2);
+                          if (pairedRead) {
+                            const f1 = pairedRead.file1!.split("/").pop();
+                            const f2 = pairedRead.file2!.split("/").pop();
+                            return (
+                              <div className="space-y-0.5">
+                                <Badge
+                                  variant="outline"
+                                  className="border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D] mb-1"
+                                >
+                                  Paired-end
+                                </Badge>
+                                <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={pairedRead.file1!}>
+                                  R1: {f1}
+                                </div>
+                                <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={pairedRead.file2!}>
+                                  R2: {f2}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <Badge
+                              variant="outline"
+                              className="border-[#FFBA00]/20 bg-[#FFBA00]/10 text-[#FFBA00]"
+                            >
+                              No reads
+                            </Badge>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        {sample.order ? (
+                          <Link
+                            href={`/orders/${sample.order.id}/sequencing`}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            {sample.order.orderNumber}
+                          </Link>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        {hasIssues ? (
+                          <div className="space-y-0.5">
+                            {!hasPairedReads && (
+                              <p className="text-xs text-amber-700">Missing paired reads</p>
+                            )}
+                            {sampleMissing && sampleMissing.length > 0 && (
+                              <p className="text-xs text-destructive">
+                                Missing:{" "}
+                                {formatSampleMissingRequiredLabels(
+                                  sampleMissing,
+                                  submgCoverage?.sampleMissingMetadataFields[sample.id] || []
+                                ).join(", ")}
+                              </p>
+                            )}
+                            {sampleErrors.map((issue, i) => (
+                              <div key={i} className="flex items-center gap-1 text-xs text-destructive">
+                                <span>{issue.message}</span>
+                                {issue.fixUrl && (
+                                  <Link
+                                    href={issue.fixUrl}
+                                    className="text-primary hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    Fix <ExternalLink className="h-3 w-3" />
+                                  </Link>
+                                )}
+                              </div>
+                            ))}
+                            {sampleWarnings.map((issue, i) => (
+                              <div key={i} className="flex items-center gap-1 text-xs text-yellow-600">
+                                <span>{issue.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4 text-[#00BD7D]" />
+                        )}
+                      </td>
+                      {showAssemblyColumn && (
+                        <td className="px-4 py-3 align-top">
+                          {availableAssemblies.length > 0 || stalePreferredValue ? (
+                            <div>
+                              <Select
+                                value={currentSelectValue}
+                                onValueChange={(value) => {
+                                  if (value.startsWith("__missing__:")) return;
+                                  void handlePreferredAssemblyChange(sample.id, value);
+                                }}
+                                disabled={
+                                  (availableAssemblies.length === 0 && !stalePreferredValue) ||
+                                  Boolean(assemblySelectionSaving[sample.id])
+                                }
+                              >
+                                <SelectTrigger className="h-8 w-full text-xs">
+                                  <SelectValue placeholder="Select assembly" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={AUTO_ASSEMBLY_SELECTION}>
+                                    Auto (latest)
+                                  </SelectItem>
+                                  {stalePreferredValue && (
+                                    <SelectItem value={stalePreferredValue}>
+                                      Unavailable (choose another)
+                                    </SelectItem>
+                                  )}
+                                  {availableAssemblies.map((assembly) => {
+                                    const runNumber =
+                                      assembly.createdByPipelineRun?.runNumber || "manual";
+                                    const fileName = getFileName(assembly.assemblyFile);
+                                    return (
+                                      <SelectItem key={assembly.id} value={assembly.id}>
+                                        {runNumber} - {fileName}
+                                      </SelectItem>
+                                    );
+                                  })}
+                                </SelectContent>
+                              </Select>
+                              {activeSelection?.preferredMissing && (
+                                <p className="text-[11px] text-destructive mt-1">
+                                  Previously selected assembly is no longer available.
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No assemblies</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Below-table info */}
+        <div className="mt-3 space-y-2">
+          {/* SubMG coverage summary */}
+          {isSubmgSelected && submgCoverage && (
+            <p
+              className={`text-xs ${submgCoverage.blocking ? "text-amber-700" : "text-[#00BD7D]"}`}
+            >
+              {submgCoverage.summary}
+            </p>
+          )}
+          {isSubmgSelected && submgCoverage?.studyAccessionMissing && (
+            <p className="text-xs text-amber-700">
+              Study accession is missing. Register in Publishing first.
+            </p>
+          )}
+          {checksumResult && (
+            <p
+              className={`text-xs ${checksumResult.success ? "text-[#00BD7D]" : "text-destructive"}`}
+            >
+              {checksumResult.message}
+              {checksumResult.detail ? ` ${checksumResult.detail}` : ""}
+            </p>
+          )}
+          {assemblySelectionError && (
+            <p className="text-xs text-destructive">{assemblySelectionError}</p>
+          )}
+          {/* Study-level metadata issues */}
+          {metadataValidation && !loadingMetadata && metadataValidation.issues.length > 0 && (
+            <div className="space-y-1">
+              {metadataValidation.issues
+                .filter((issue) => !extractSampleToken(issue.message))
+                .map((issue, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-2 text-xs ${
+                      issue.severity === "error" ? "text-destructive" : "text-yellow-600"
+                    }`}
+                  >
+                    {issue.severity === "error" ? (
+                      <XCircle className="h-3 w-3 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                    )}
+                    <span>{issue.message}</span>
+                    {issue.fixUrl && (
+                      <Link
+                        href={issue.fixUrl}
+                        className="text-primary hover:underline inline-flex items-center gap-0.5"
+                      >
+                        Fix <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Section 5: Pipeline Runs table */}
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium">Pipeline Runs</h2>
+            {visibleRuns.length > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {visibleRuns.length}
+              </span>
+            )}
+          </div>
+          {visibleRuns.length > 0 && (
+            <div className="flex items-center gap-2">
+              {selectMode ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedRunIds.size} selected
+                  </span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setShowBulkDeleteConfirm(true)}
+                    disabled={bulkDeleting || selectedRunIds.size === 0}
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setSelectMode(false);
+                      setSelectedRunIds(new Set());
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setSelectMode(true)}
+                  >
+                    Select
+                  </Button>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="h-8 w-[160px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                          {opt.value !== "all" && statusCounts[opt.value] ? (
+                            <span className="ml-1 text-muted-foreground">
+                              ({statusCounts[opt.value]})
+                            </span>
+                          ) : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {statusFilter !== "all" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setStatusFilter("all")}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {visibleRuns.length === 0 ? (
+          <div className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+            No runs started for this pipeline yet.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-secondary/30">
+                  <tr>
+                    {selectMode && (
+                      <th className="w-[40px] px-3 py-2.5">
+                        <Checkbox
+                          checked={allFilteredSelected && deletableFilteredRuns.length > 0}
+                          onCheckedChange={toggleSelectAll}
+                          aria-label="Select all runs"
+                        />
+                      </th>
+                    )}
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Run
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Status
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Details
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Report
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Samples
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Started
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Duration
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Started by
+                    </th>
+                    <th className="w-[48px] px-4 py-2.5">
+                      {/* Actions */}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredRuns.map((run) => {
+                    const details = getRunDetails(run);
+                    const sampleCount = getSampleCount(run);
+
+                    return (
+                      <tr
+                        key={run.id}
+                        className={cn(
+                          "cursor-pointer transition-colors hover:bg-secondary/20",
+                          selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
+                        )}
+                        onClick={() => window.open(`/analysis/${run.id}?studyId=${studyId}`, '_blank')}
+                      >
+                        {selectMode && (
+                          <td
+                            className="px-3 py-3 align-top"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={selectedRunIds.has(run.id)}
+                              onCheckedChange={() => toggleSelectRun(run.id)}
+                              disabled={run.status === "running"}
+                              aria-label={`Select run ${run.runNumber}`}
+                            />
+                          </td>
+                        )}
+                        <td className="px-4 py-3 align-top">
+                          <code
+                            className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
+                            title={run.runNumber}
+                          >
+                            #{run.runNumber.split("-").pop()}
+                          </code>
+                        </td>
+                        <td className="px-4 py-3 align-top">
+                          <div className="flex items-center gap-2">
+                            {getStatusBadge(run.status)}
+                            {run.status === "running" && run.progress != null && run.progress > 0 && (
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {run.progress}%
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="max-w-[280px] px-4 py-3 align-top">
+                          {details ? (
+                            <span
+                              className={`text-xs ${
+                                run.status === "failed"
+                                  ? "font-mono text-destructive"
+                                  : "text-muted-foreground"
+                              }`}
+                              title={details}
+                            >
+                              <span className="line-clamp-2">{details}</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 align-top" onClick={(e) => e.stopPropagation()}>
+                          {run.status === "completed" && run.runFolder ? (
+                            <a
+                              href={`/api/files/preview?path=${encodeURIComponent(`${run.runFolder}/output/report/reads-qc-report.html`)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                            >
+                              View report
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 align-top text-xs text-muted-foreground tabular-nums">
+                          {sampleCount != null ? sampleCount : "-"}
+                        </td>
+                        <td className="px-4 py-3 align-top whitespace-nowrap text-xs text-muted-foreground">
+                          {formatDateTime(run.startedAt || run.createdAt)}
+                        </td>
+                        <td className="px-4 py-3 align-top whitespace-nowrap text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {run.status === "running"
+                              ? formatDuration(run.startedAt, null)
+                              : formatDuration(run.startedAt, run.completedAt)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 align-top whitespace-nowrap text-xs text-muted-foreground">
+                          {getUserDisplay(run)}
+                        </td>
+                        <td
+                          className="px-4 py-3 align-top text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={`Actions for ${run.runNumber}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  window.open(`/analysis/${run.id}?studyId=${studyId}`, '_blank');
+                                }}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                                View details
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={run.status === "running" || deletingRun}
+                                onSelect={(event) => {
+                                  event.preventDefault();
+                                  setDeleteRunError(null);
+                                  setDeleteTarget(run);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete run
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredRuns.length === 0 && statusFilter !== "all" && (
+                    <tr>
+                      <td
+                        colSpan={selectMode ? 10 : 9}
+                        className="px-4 py-8 text-center text-muted-foreground"
+                      >
+                        No {statusFilter} runs found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 6: Delete Run Dialog */}
       <Dialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
@@ -2301,6 +2384,46 @@ export function StudyPipelinesSection({
                 <Trash2 className="mr-2 h-4 w-4" />
               )}
               Delete Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog
+        open={showBulkDeleteConfirm}
+        onOpenChange={(open) => {
+          if (!open) setShowBulkDeleteConfirm(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? "s" : ""}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the selected runs and all their data. This
+              action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowBulkDeleteConfirm(false)}
+              disabled={bulkDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleBulkDelete()}
+              disabled={bulkDeleting}
+            >
+              {bulkDeleting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete {selectedRunIds.size} Run{selectedRunIds.size !== 1 ? "s" : ""}
             </Button>
           </DialogFooter>
         </DialogContent>
