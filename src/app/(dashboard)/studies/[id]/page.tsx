@@ -1753,12 +1753,25 @@ export default function StudyDetailPage({
               </div>
             </div>
           ) : (() => {
+            const uniqueTaxIds = [...new Set(studySamples.map(s => s.taxId).filter(Boolean))];
+            const taxSummary = uniqueTaxIds.length > 0
+              ? uniqueTaxIds.map(id => {
+                  const sample = studySamples.find(s => s.taxId === id);
+                  return sample?.scientificName ? `${sample.scientificName} (${id})` : String(id);
+                }).join(", ")
+              : null;
+            const metadataPct = studySamples.length > 0
+              ? Math.round((studySamples.filter(s => {
+                  // simple check: sample has metadata entries
+                  return s.taxId && s.taxId.trim();
+                }).length / studySamples.length) * 100)
+              : 0;
             const requiredChecks = [
-              { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()) },
-              { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()) },
-              { key: "samples", label: "Samples", passed: totalSamples > 0, count: totalSamples },
-              { key: "taxonomy", label: "Taxonomy ID", passed: studySamples.every(s => s.taxId && s.taxId.trim()) },
-              { key: "metadata", label: "Metadata", passed: allMetadataComplete },
+              { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()), value: study.title?.trim() || null },
+              { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()), value: study.description?.trim() ? (study.description.trim().length > 80 ? study.description.trim().slice(0, 80) + "..." : study.description.trim()) : null },
+              { key: "samples", label: "Samples", passed: totalSamples > 0, value: totalSamples > 0 ? `${totalSamples} sample${totalSamples !== 1 ? "s" : ""} linked` : null },
+              { key: "taxonomy", label: "Taxonomy ID", passed: studySamples.every(s => s.taxId && s.taxId.trim()), value: taxSummary },
+              { key: "metadata", label: "Metadata", passed: allMetadataComplete, value: allMetadataComplete ? "All complete" : `${studySamples.filter(() => allMetadataComplete).length}/${studySamples.length} complete` },
             ];
             const passedChecks = requiredChecks.filter(c => c.passed).length;
             const allPassed = passedChecks === requiredChecks.length;
@@ -1859,11 +1872,13 @@ export default function StudyDetailPage({
                 })()}
 
                 {/* Section 3: Readiness Checks */}
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <h3 className="mb-3 text-sm font-medium">Submission Requirements</h3>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="rounded-xl border border-border bg-card">
+                  <div className="px-4 py-3 border-b border-border">
+                    <h3 className="text-sm font-medium">Submission Requirements</h3>
+                  </div>
+                  <div className="divide-y divide-border">
                     {requiredChecks.map((check) => (
-                      <div key={check.key} className="flex items-center gap-2.5">
+                      <div key={check.key} className="flex items-center gap-3 px-4 py-2.5">
                         {check.passed ? (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
                             <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
@@ -1873,13 +1888,9 @@ export default function StudyDetailPage({
                             <XCircle className="h-3.5 w-3.5 text-destructive" />
                           </span>
                         )}
-                        <span className="text-xs text-muted-foreground">
-                          {check.label}
-                          {check.count !== undefined && (
-                            <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[10px] font-medium">
-                              {check.count}
-                            </span>
-                          )}
+                        <span className="text-xs font-medium w-24 shrink-0">{check.label}</span>
+                        <span className="text-xs text-muted-foreground truncate">
+                          {check.value || (check.passed ? "OK" : "Missing")}
                         </span>
                       </div>
                     ))}
