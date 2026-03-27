@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, use } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
@@ -689,7 +689,10 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   const [resolvedStudyId, setResolvedStudyId] = useState(id);
   const activeStudyId = resolvedStudyId;
   const { setFocusedField } = useFieldHelp();
+  const searchParams = useSearchParams();
+  const requestedSection = searchParams.get("section");
   const [currentStep, setCurrentStep] = useState(0);
+  const [initialSectionApplied, setInitialSectionApplied] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [checklistType, setChecklistType] = useState("");
@@ -1101,6 +1104,16 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
     return steps;
   }, [formConfig, hasPerSampleFields]);
+
+  // Navigate to the requested section from sidebar (e.g. ?section=details)
+  useEffect(() => {
+    if (initialSectionApplied || !requestedSection || STEPS.length === 0) return;
+    const idx = STEPS.findIndex((s) => s.id === requestedSection);
+    if (idx >= 0) {
+      setCurrentStep(idx);
+    }
+    setInitialSectionApplied(true);
+  }, [requestedSection, STEPS, initialSectionApplied]);
 
   const isMetadataStepActive = STEPS[currentStep]?.id === "metadata";
 

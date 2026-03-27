@@ -352,6 +352,10 @@ export default function StudyDetailPage({
   const [markingReady, setMarkingReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [enaCheck, setEnaCheck] = useState<{
+    status: "idle" | "checking" | "ok" | "error";
+    message?: string;
+  }>({ status: "idle" });
   const [studyFormFields, setStudyFormFields] = useState<FormFieldDefinition[]>([]);
   const [studyPerSampleFields, setStudyPerSampleFields] = useState<FormFieldDefinition[]>([]);
   const [studyFormGroups, setStudyFormGroups] = useState<FormFieldGroup[]>(getFixedStudySections());
@@ -475,6 +479,26 @@ export default function StudyDetailPage({
         setStudySchemaLoaded(true);
       });
   }, []);
+
+  // ENA credentials check - runs when user visits the ENA registration page
+  useEffect(() => {
+    if (selectedPublishingTarget !== "ena" || !isAdmin) return;
+    if (enaCheck.status !== "idle") return;
+
+    setEnaCheck({ status: "checking" });
+    fetch("/api/admin/settings/ena/test", { method: "POST" })
+      .then((res) => res.json())
+      .then((data: { success?: boolean; error?: string; message?: string }) => {
+        if (data.success) {
+          setEnaCheck({ status: "ok", message: data.message });
+        } else {
+          setEnaCheck({ status: "error", message: data.error || "ENA check failed" });
+        }
+      })
+      .catch(() => {
+        setEnaCheck({ status: "error", message: "Failed to check ENA credentials" });
+      });
+  }, [selectedPublishingTarget, isAdmin, enaCheck.status]);
 
   const handleDeleteStudy = async () => {
     if (!study) return;
@@ -923,37 +947,6 @@ export default function StudyDetailPage({
             {study.studyAccessionId && ` \u00B7 ${study.studyAccessionId}`}
           </p>
         </div>
-        {currentTab !== "pipelines" && (
-          <div className="flex items-center gap-2 shrink-0 ml-4">
-            {(isOwner || isAdmin) && !study.submitted && study.readyForSubmission && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setUnmarkReadyDialogOpen(true)}
-                disabled={markingReady}
-              >
-                {markingReady ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Back to Draft
-              </Button>
-            )}
-            {isOwner && !study.submitted && !study.readyForSubmission && allMetadataComplete && (
-              <Button
-                size="sm"
-                onClick={() => setMarkReadyDialogOpen(true)}
-                disabled={markingReady}
-              >
-                {markingReady ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : null}
-                Mark as Ready
-              </Button>
-            )}
-          </div>
-        )}
       </div>
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -1431,6 +1424,53 @@ export default function StudyDetailPage({
               </div>
             </div>
           )}
+
+          {!study.submitted && (
+            <div className="bg-card rounded-lg border overflow-hidden mt-4">
+              <div className="px-5 py-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Submission Status</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {study.readyForSubmission
+                      ? "This study is marked as ready for ENA submission."
+                      : allMetadataComplete
+                        ? "All metadata is complete. Mark this study as ready when you want to submit."
+                        : "Complete all metadata before marking this study as ready for submission."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {(isOwner || isAdmin) && study.readyForSubmission && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setUnmarkReadyDialogOpen(true)}
+                      disabled={markingReady}
+                    >
+                      {markingReady ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Back to Draft
+                    </Button>
+                  )}
+                  {isOwner && !study.readyForSubmission && (
+                    <Button
+                      size="sm"
+                      onClick={() => setMarkReadyDialogOpen(true)}
+                      disabled={markingReady || !allMetadataComplete}
+                      title={!allMetadataComplete ? "Complete all metadata first" : undefined}
+                    >
+                      {markingReady ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : null}
+                      Mark as Ready
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* Samples Tab */}
@@ -1751,34 +1791,64 @@ export default function StudyDetailPage({
                           : "User has not marked as ready"}
                     </p>
                   </div>
-                  {!study.submitted && isAdmin && allPassed && (
+                  {!study.submitted && isAdmin && (
                     <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleRegisterWithENA(true)}
-                        disabled={submitting}
-                      >
-                        {submitting ? (
+                      {enaCheck.status === "checking" ? (
+                        <Button size="sm" disabled>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4 mr-2" />
-                        )}
-                        Test Server
-                      </Button>
-                      {study.readyForSubmission && (
+                          Checking ENA...
+                        </Button>
+                      ) : enaCheck.status === "error" ? (
                         <Button
                           size="sm"
-                          onClick={() => handleRegisterWithENA(false)}
-                          disabled={submitting}
+                          variant="outline"
+                          className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#FFBA00] hover:bg-[#FFBA00]/20"
+                          onClick={() => {
+                            setEnaCheck({ status: "idle" });
+                          }}
+                          title={enaCheck.message}
                         >
-                          {submitting ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          ) : (
-                            <Send className="h-4 w-4 mr-2" />
-                          )}
-                          Production
+                          <AlertCircle className="h-4 w-4 mr-2" />
+                          {enaCheck.message?.includes("credentials")
+                            ? "ENA credentials missing"
+                            : "ENA check failed"}
                         </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRegisterWithENA(true)}
+                            disabled={submitting || !allPassed}
+                            title={!allPassed ? "All checks must pass before registration" : undefined}
+                          >
+                            {submitting ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 mr-2" />
+                            )}
+                            Test Server
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleRegisterWithENA(false)}
+                            disabled={submitting || !allPassed || !study.readyForSubmission}
+                            title={
+                              !allPassed
+                                ? "All checks must pass before registration"
+                                : !study.readyForSubmission
+                                  ? "User must mark study as ready first"
+                                  : undefined
+                            }
+                          >
+                            {submitting ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 mr-2" />
+                            )}
+                            Production
+                          </Button>
+                        </>
                       )}
                     </div>
                   )}

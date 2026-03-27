@@ -1652,6 +1652,36 @@ export function StudyPipelinesSection({
         </div>
       )}
 
+      {/* Section 2b: Study-level metadata warnings */}
+      {metadataValidation && !loadingMetadata && (() => {
+        const studyIssues = metadataValidation.issues.filter(
+          (issue) => !extractSampleToken(issue.message)
+        );
+        if (studyIssues.length === 0) return null;
+        return (
+          <div className="rounded-lg border border-[#FFBA00]/30 bg-[#FFBA00]/10 px-4 py-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#FFBA00]" />
+              <div className="space-y-1.5">
+                {studyIssues.map((issue, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm text-foreground">
+                    <span>{issue.message}</span>
+                    {issue.fixUrl && (
+                      <Link
+                        href={issue.fixUrl}
+                        className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                      >
+                        Fix <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Section 3: Settings */}
       {selectedPipeline?.configSchema?.properties &&
         Object.entries(selectedPipeline.configSchema.properties).some(
@@ -1659,86 +1689,105 @@ export function StudyPipelinesSection({
         ) && (
         <div className="rounded-xl border border-border bg-card p-4">
           <h3 className="mb-3 text-sm font-medium">Settings</h3>
-          <div className="flex flex-wrap items-end gap-4">
-            {Object.entries(selectedPipeline.configSchema.properties).map(([key, property]) => {
-              const value = localConfig[key] ?? property.default;
-
-              if (Array.isArray(property.enum) && property.enum.length > 0) {
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-xs" htmlFor={fieldId}>
-                      {property.title || key}
-                    </Label>
-                    <Select
-                      value={String(value ?? property.enum[0] ?? "")}
-                      onValueChange={(v) =>
-                        setLocalConfig((prev) => ({ ...prev, [key]: v }))
-                      }
-                    >
-                      <SelectTrigger
-                        id={fieldId}
-                        aria-label={property.title || key}
-                        className="h-8 w-[160px] text-xs"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {property.enum.map((opt) => (
-                          <SelectItem key={String(opt)} value={String(opt)}>
-                            {String(opt)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+          {(() => {
+            const entries = Object.entries(selectedPipeline.configSchema.properties);
+            const booleanEntries = entries.filter(([, p]) => p.type === "boolean");
+            const otherEntries = entries.filter(([, p]) => p.type !== "boolean" && (Array.isArray(p.enum) || p.type === "number"));
+            return (
+              <div className="space-y-4">
+                {booleanEntries.length > 0 && (
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-4">
+                    {booleanEntries.map(([key, property]) => {
+                      const fieldId = `config-${key}`;
+                      const rawValue = localConfig[key] ?? property.default;
+                      const isSkipKey = key.startsWith("skip");
+                      const checked = isSkipKey ? !rawValue : !!rawValue;
+                      const label = isSkipKey
+                        ? (property.title || key).replace(/^Skip\s+/i, "")
+                        : (property.title || key);
+                      return (
+                        <div key={key} className="flex items-center gap-2.5">
+                          <Switch
+                            id={fieldId}
+                            checked={checked}
+                            onCheckedChange={(c) =>
+                              setLocalConfig((prev) => ({
+                                ...prev,
+                                [key]: isSkipKey ? !c : !!c,
+                              }))
+                            }
+                          />
+                          <Label htmlFor={fieldId} className="text-xs text-muted-foreground cursor-pointer">
+                            {label}
+                          </Label>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              }
-
-              if (property.type === "boolean") {
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="flex items-center gap-2 pb-1">
-                    <Switch
-                      id={fieldId}
-                      checked={!!value}
-                      onCheckedChange={(checked) =>
-                        setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
+                )}
+                {otherEntries.length > 0 && (
+                  <div className="flex flex-wrap items-end gap-4">
+                    {otherEntries.map(([key, property]) => {
+                      const fieldId = `config-${key}`;
+                      const value = localConfig[key] ?? property.default;
+                      if (Array.isArray(property.enum) && property.enum.length > 0) {
+                        return (
+                          <div key={key} className="space-y-1">
+                            <Label className="text-xs" htmlFor={fieldId}>
+                              {property.title || key}
+                            </Label>
+                            <Select
+                              value={String(value ?? property.enum[0] ?? "")}
+                              onValueChange={(v) =>
+                                setLocalConfig((prev) => ({ ...prev, [key]: v }))
+                              }
+                            >
+                              <SelectTrigger
+                                id={fieldId}
+                                aria-label={property.title || key}
+                                className="h-8 w-[160px] text-xs"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {property.enum.map((opt) => (
+                                  <SelectItem key={String(opt)} value={String(opt)}>
+                                    {String(opt)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        );
                       }
-                    />
-                    <Label htmlFor={fieldId} className="text-xs">
-                      {property.title || key}
-                    </Label>
-                  </div>
-                );
-              }
-
-              if (property.type === "number") {
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-xs" htmlFor={fieldId}>
-                      {property.title || key}
-                    </Label>
-                    <Input
-                      id={fieldId}
-                      type="number"
-                      className="h-8 w-[120px] text-xs"
-                      value={value != null ? String(value) : ""}
-                      onChange={(e) =>
-                        setLocalConfig((prev) => ({
-                          ...prev,
-                          [key]: e.target.value ? Number(e.target.value) : undefined,
-                        }))
+                      if (property.type === "number") {
+                        return (
+                          <div key={key} className="space-y-1">
+                            <Label className="text-xs" htmlFor={fieldId}>
+                              {property.title || key}
+                            </Label>
+                            <Input
+                              id={fieldId}
+                              type="number"
+                              className="h-8 w-[120px] text-xs"
+                              value={value != null ? String(value) : ""}
+                              onChange={(e) =>
+                                setLocalConfig((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.value ? Number(e.target.value) : undefined,
+                                }))
+                              }
+                            />
+                          </div>
+                        );
                       }
-                    />
+                      return null;
+                    })}
                   </div>
-                );
-              }
-
-              return null;
-            })}
-          </div>
+                )}
+              </div>
+            );
+          })()}
           {/* SubMG ENA target info */}
           {isSubmgSelected && enaSubmissionServer && (
             <p
@@ -2021,36 +2070,6 @@ export function StudyPipelinesSection({
           )}
           {assemblySelectionError && (
             <p className="text-xs text-destructive">{assemblySelectionError}</p>
-          )}
-          {/* Study-level metadata issues */}
-          {metadataValidation && !loadingMetadata && metadataValidation.issues.length > 0 && (
-            <div className="space-y-1">
-              {metadataValidation.issues
-                .filter((issue) => !extractSampleToken(issue.message))
-                .map((issue, i) => (
-                  <div
-                    key={i}
-                    className={`flex items-center gap-2 text-xs ${
-                      issue.severity === "error" ? "text-destructive" : "text-yellow-600"
-                    }`}
-                  >
-                    {issue.severity === "error" ? (
-                      <XCircle className="h-3 w-3 shrink-0" />
-                    ) : (
-                      <AlertTriangle className="h-3 w-3 shrink-0" />
-                    )}
-                    <span>{issue.message}</span>
-                    {issue.fixUrl && (
-                      <Link
-                        href={issue.fixUrl}
-                        className="text-primary hover:underline inline-flex items-center gap-0.5"
-                      >
-                        Fix <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    )}
-                  </div>
-                ))}
-            </div>
           )}
         </div>
       </div>

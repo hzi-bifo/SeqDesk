@@ -107,8 +107,9 @@ export function SidebarEntityNav({
       ? "facility"
       : "overview";
   const currentStudySubsection = searchParams.get("subsection");
+  const currentStudyEditSection = currentStudySubview === "edit" ? searchParams.get("section") : null;
   const currentStudyOverviewSubsection =
-    currentStudySection === "overview" ? currentStudySubsection : null;
+    currentStudyEditSection ?? (currentStudySection === "overview" ? currentStudySubsection : null);
   const currentStudyFacilitySubsection =
     currentStudySection === "facility" ? currentStudySubsection : null;
 
@@ -360,7 +361,7 @@ export function SidebarEntityNav({
                     return (
                       <Link
                         key={section.id}
-                        href={`/studies/${entityId}?subsection=${section.id}`}
+                        href={`/studies/${entityId}/edit?section=${section.id}`}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isSectionActive
