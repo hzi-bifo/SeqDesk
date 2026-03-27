@@ -1,0 +1,108 @@
+{
+  "pipeline": "reads-qc",
+  "name": "Quality Overview",
+  "description": "Compute per-sample FASTQ statistics and generate an HTML summary report",
+  "version": "0.1.0",
+  "inputs": [
+    {
+      "id": "sample_reads",
+      "name": "Linked FASTQ files",
+      "description": "FASTQ files linked to study samples",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to selected study samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_stats",
+      "name": "Per-sample statistics",
+      "description": "TSV file with read statistics for each sample",
+      "fromStep": "seqkit_stats",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review and download"
+    },
+    {
+      "id": "summary_tsv",
+      "name": "Summary TSV",
+      "description": "Combined statistics across all samples",
+      "fromStep": "collect_stats",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for download"
+    },
+    {
+      "id": "summary_report",
+      "name": "HTML summary report",
+      "description": "Interactive HTML report with per-sample statistics and quality overview",
+      "fromStep": "generate_report",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review"
+    }
+  ],
+  "steps": [
+    {
+      "id": "seqkit_stats",
+      "name": "Compute statistics",
+      "description": "Run seqkit on each sample to compute read statistics",
+      "category": "qc",
+      "dependsOn": [],
+      "processMatchers": [
+        "SEQKIT_STATS"
+      ],
+      "tools": [
+        "seqkit"
+      ],
+      "outputs": [
+        "sample_stats"
+      ]
+    },
+    {
+      "id": "collect_stats",
+      "name": "Collect statistics",
+      "description": "Merge per-sample statistics into a single summary",
+      "category": "qc",
+      "dependsOn": [
+        "seqkit_stats"
+      ],
+      "processMatchers": [
+        "COLLECT_STATS"
+      ],
+      "tools": [],
+      "outputs": [
+        "summary_tsv"
+      ]
+    },
+    {
+      "id": "generate_report",
+      "name": "Generate report",
+      "description": "Create an HTML summary report from the collected statistics",
+      "category": "reporting",
+      "dependsOn": [
+        "collect_stats"
+      ],
+      "processMatchers": [
+        "GENERATE_REPORT"
+      ],
+      "tools": [
+        "python"
+      ],
+      "outputs": [
+        "summary_report"
+      ]
+    }
+  ]
+}

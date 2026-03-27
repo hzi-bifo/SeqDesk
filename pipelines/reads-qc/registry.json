@@ -1,0 +1,57 @@
+{
+  "id": "reads-qc",
+  "name": "Quality Overview",
+  "description": "Compute per-sample FASTQ statistics (read count, bases, quality, GC content) with an HTML summary report",
+  "category": "qc",
+  "version": "0.1.0",
+  "sortOrder": 2,
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "per_sample_stats",
+      "description": "Per-sample TSV with read statistics",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "summary_report",
+      "description": "HTML summary report across all samples",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "study",
+      "samples"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "defaultConfig": {},
+  "icon": "BarChart3"
+}

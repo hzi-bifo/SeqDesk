@@ -1,0 +1,134 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "reads-qc",
+    "name": "Quality Overview",
+    "version": "0.1.0",
+    "description": "Compute per-sample FASTQ statistics (read count, bases, quality, GC content) with an HTML summary report",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "targets": {
+    "supported": [
+      "study"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "runtime": {
+      "allowMacOsArmLocal": true
+    },
+    "defaultParams": {}
+  },
+  "outputs": [
+    {
+      "id": "sample_stats",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "seqkit_stats",
+      "discovery": {
+        "pattern": "per_sample/*.tsv",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "sample_reads_writeback",
+      "scope": "sample",
+      "destination": "sample_reads",
+      "type": "artifact",
+      "fromStep": "seqkit_stats",
+      "writeback": {
+        "target": "Read",
+        "mode": "merge",
+        "fields": {
+          "readCount1": "readCount1",
+          "readCount2": "readCount2",
+          "avgQuality1": "avgQuality1",
+          "avgQuality2": "avgQuality2"
+        }
+      },
+      "discovery": {
+        "pattern": "per_sample/*.tsv",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary_tsv",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "collect_stats",
+      "discovery": {
+        "pattern": "summary/reads-qc-summary.tsv"
+      }
+    },
+    {
+      "id": "summary_report",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "generate_report",
+      "discovery": {
+        "pattern": "report/reads-qc-report.html"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  },
+  "ui": {
+    "sampleResult": {
+      "columnLabel": "Reads QC",
+      "emptyText": "Not computed",
+      "layout": "columns",
+      "values": [
+        {
+          "label": "R1 reads",
+          "path": "read.readCount1",
+          "whenPathExists": "read.file1"
+        },
+        {
+          "label": "R1 avg Q",
+          "path": "read.avgQuality1",
+          "whenPathExists": "read.file1"
+        },
+        {
+          "label": "R2 reads",
+          "path": "read.readCount2",
+          "whenPathExists": "read.file2"
+        },
+        {
+          "label": "R2 avg Q",
+          "path": "read.avgQuality2",
+          "whenPathExists": "read.file2"
+        }
+      ]
+    }
+  }
+}
