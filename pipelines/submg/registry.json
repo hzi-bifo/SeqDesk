@@ -67,6 +67,7 @@
     "minSamples": 1,
     "perSample": {
       "reads": true,
+      "readMode": "paired_only",
       "pairedEnd": true,
       "assemblies": true,
       "bins": false

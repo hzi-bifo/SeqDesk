@@ -44,18 +44,19 @@ process SEQKIT_STATS {
       local FILE="\$1"
       local LABEL="\$2"
 
-      # seqkit stats -a -T gives tab-separated: file, format, type, num_seqs, sum_len, min_len, avg_len, max_len, Q1, Q2, Q3, sum_gap, N50, Q20(%), Q30(%), AvgQual
-      STATS=\$(seqkit stats -a -T "\$FILE" | tail -n 1)
+      # Extract fields by header name so newer seqkit releases can add columns
+      # (for example N50_num) without shifting the values we write downstream.
+      PARSED_STATS=\$(seqkit stats -a -T "\$FILE" | awk -f "${projectDir}/bin/extract_seqkit_stats.awk")
 
-      NUM_READS=\$(echo "\$STATS" | cut -f4)
-      TOTAL_BASES=\$(echo "\$STATS" | cut -f5)
-      MIN_LEN=\$(echo "\$STATS" | cut -f6)
-      AVG_LEN=\$(echo "\$STATS" | cut -f7)
-      MAX_LEN=\$(echo "\$STATS" | cut -f8)
-      N50=\$(echo "\$STATS" | cut -f13)
-      Q20_PCT=\$(echo "\$STATS" | cut -f14)
-      Q30_PCT=\$(echo "\$STATS" | cut -f15)
-      AVG_QUAL=\$(echo "\$STATS" | cut -f16)
+      NUM_READS=\$(echo "\$PARSED_STATS" | cut -f1)
+      TOTAL_BASES=\$(echo "\$PARSED_STATS" | cut -f2)
+      MIN_LEN=\$(echo "\$PARSED_STATS" | cut -f3)
+      AVG_LEN=\$(echo "\$PARSED_STATS" | cut -f4)
+      MAX_LEN=\$(echo "\$PARSED_STATS" | cut -f5)
+      N50=\$(echo "\$PARSED_STATS" | cut -f6)
+      Q20_PCT=\$(echo "\$PARSED_STATS" | cut -f7)
+      Q30_PCT=\$(echo "\$PARSED_STATS" | cut -f8)
+      AVG_QUAL=\$(echo "\$PARSED_STATS" | cut -f9)
 
       # Compute GC content using seqkit fx2tab
       GC=\$(seqkit fx2tab -g -H "\$FILE" | awk 'NR>1 {sum+=\$NF; n++} END {if(n>0) printf "%.2f", sum/n; else print "0"}')

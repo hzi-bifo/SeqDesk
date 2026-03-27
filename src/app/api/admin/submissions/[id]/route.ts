@@ -72,30 +72,43 @@ export async function DELETE(
 
       // Only clear accession numbers for test submissions
       if (isTest) {
-        await db.study.update({
-          where: { id: submission.entityId },
-          data: {
-            studyAccessionId: null,
-            submitted: false,
-            submittedAt: null,
-            testRegisteredAt: null,
-          },
-        });
-
         // Clear sample accession numbers
-        let accessions: Record<string, string> | null = null;
+        let accessions: Record<string, string | null> | null = null;
         try {
           accessions = JSON.parse(submission.accessionNumbers);
         } catch {
           accessions = null;
         }
-        const sampleIds = accessions ? Object.keys(accessions).filter(k => k !== "study") : [];
+        const studyAccession = accessions?.study;
 
-        if (sampleIds.length > 0) {
+        if (studyAccession) {
+          await db.study.updateMany({
+            where: {
+              id: submission.entityId,
+              studyAccessionId: studyAccession,
+            },
+            data: {
+              studyAccessionId: null,
+              submitted: false,
+              submittedAt: null,
+              testRegisteredAt: null,
+            },
+          });
+        }
+
+        const sampleAccessions = accessions
+          ? Object.entries(accessions).filter(
+              ([sampleId, accession]) =>
+                sampleId !== "study" && typeof accession === "string" && accession.length > 0
+            )
+          : [];
+
+        for (const [sampleId, accession] of sampleAccessions) {
           await db.sample.updateMany({
             where: {
-              sampleId: { in: sampleIds },
+              sampleId,
               studyId: submission.entityId,
+              sampleAccessionNumber: accession,
             },
             data: {
               sampleAccessionNumber: null,

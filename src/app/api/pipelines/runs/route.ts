@@ -10,6 +10,21 @@ import { isDemoSession } from '@/lib/demo/server';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
 
+function parseRunResults(rawResults: string | null | undefined): Record<string, unknown> | null {
+  if (!rawResults) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawResults);
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 // GET - List pipeline runs
 export async function GET(request: NextRequest) {
   try {
@@ -70,6 +85,16 @@ export async function GET(request: NextRequest) {
           _count: {
             select: { assembliesCreated: true, binsCreated: true },
           },
+          artifacts: {
+            select: {
+              id: true,
+              name: true,
+              path: true,
+              type: true,
+              sampleId: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
         },
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -85,7 +110,7 @@ export async function GET(request: NextRequest) {
         ...run,
         pipelineName: definition?.name || run.pipelineId,
         pipelineIcon: definition?.icon || 'CircleDot',
-        results: run.results ? JSON.parse(run.results) : null,
+        results: parseRunResults(run.results),
       };
     });
 

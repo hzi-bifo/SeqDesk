@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
+import { normalizePipelinePerSampleInput } from './read-mode';
 import {
   type PackageOutputWriteback,
   type PackageTargetType,
@@ -24,7 +25,7 @@ import type {
   SeqDeskDestination,
   SeqDeskSource,
 } from './definitions';
-import type { PipelineSampleResult } from './types';
+import type { PipelineReadMode, PipelineSampleResult } from './types';
 
 // ============================================================================
 // Package Types
@@ -210,6 +211,9 @@ export interface RegistryConfig {
     perSample: {
       reads: boolean;
       pairedEnd: boolean;
+      readMode?: PipelineReadMode;
+      assemblies?: boolean;
+      bins?: boolean;
     };
   };
   samplesheet: {
@@ -771,7 +775,7 @@ export function packageToPipelineDefinition(packageId: string): PipelineDefiniti
         registry
       ) as PipelineDefinition['input']['supportedScopes'],
       minSamples: registry.input.minSamples,
-      perSample: registry.input.perSample,
+      perSample: normalizePipelinePerSampleInput(registry.input.perSample),
     },
     samplesheet: registry.samplesheet as PipelineDefinition['samplesheet'],
     configSchema: registry.configSchema as PipelineDefinition['configSchema'],

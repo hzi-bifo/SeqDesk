@@ -104,6 +104,7 @@ function baseRegistry(id: string) {
       perSample: {
         reads: false,
         pairedEnd: false,
+        readMode: undefined,
         assemblies: false,
         bins: false,
       },
@@ -246,6 +247,35 @@ describe("package-loader", () => {
     expect(definitionFromCompatibility?.id).toBe(PIPELINE_ID);
     expect(definitionFromCompatibility?.requires.reads).toBe(false);
     expect(definitionFromCompatibility?.input.supportedScopes).toEqual(["study"]);
+  });
+
+  it("normalizes explicit readMode into compatibility definitions", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "readmodepipe");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), baseManifest("readmodepipe"));
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("readmodepipe"));
+    await writeJson(path.join(packageDir, "registry.json"), {
+      ...baseRegistry("readmodepipe"),
+      input: {
+        supportedScopes: ["study"],
+        perSample: {
+          reads: true,
+          pairedEnd: false,
+          readMode: "paired_only",
+          assemblies: false,
+          bins: false,
+        },
+      },
+    });
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: { format: "csv", filename: "readmode.csv", rows: { scope: "study" }, columns: [] },
+    });
+
+    const definition = packageToPipelineDefinition("readmodepipe");
+
+    expect(definition?.input.perSample.readMode).toBe("paired_only");
+    expect(definition?.input.perSample.pairedEnd).toBe(true);
   });
 
   it("omits packages with missing manifest parser files", async () => {

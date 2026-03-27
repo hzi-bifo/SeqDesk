@@ -91,6 +91,15 @@ describe("GET /api/pipelines/runs", () => {
         id: "run-1",
         pipelineId: "simulate-reads",
         results: JSON.stringify({ warnings: ["ok"] }),
+        artifacts: [
+          {
+            id: "artifact-1",
+            name: "run-report.html",
+            path: "/tmp/run-report.html",
+            type: "report",
+            sampleId: null,
+          },
+        ],
       },
     ]);
     mocks.db.pipelineRun.count.mockResolvedValue(1);
@@ -138,6 +147,15 @@ describe("GET /api/pipelines/runs", () => {
           pipelineName: "Simulate Reads",
           pipelineIcon: "FlaskConical",
           results: { warnings: ["ok"] },
+          artifacts: [
+            {
+              id: "artifact-1",
+              name: "run-report.html",
+              path: "/tmp/run-report.html",
+              type: "report",
+              sampleId: null,
+            },
+          ],
         },
       ],
       total: 1,

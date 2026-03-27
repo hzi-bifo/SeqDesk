@@ -43,6 +43,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
+import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
 
@@ -90,6 +91,7 @@ type AdminPipeline = {
     perSample: {
       reads: boolean;
       pairedEnd: boolean;
+      readMode?: "single_or_paired" | "paired_only";
     };
   };
 };
@@ -169,7 +171,7 @@ function getReadinessIssues(
       continue;
     }
 
-    if (pipeline.input.perSample.pairedEnd && !sample.read?.file2) {
+    if (pipelineRequiresPairedReads(pipeline.input.perSample) && !sample.read?.file2) {
       issues.push(`Sample ${sample.sampleId} requires a paired-end R2 file.`);
     }
   }

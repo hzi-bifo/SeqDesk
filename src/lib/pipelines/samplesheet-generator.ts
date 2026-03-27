@@ -51,7 +51,7 @@ function selectRead(
     return reads.find(r => r.file1 && !r.file2) || null;
   }
 
-  return reads.find(r => r.file1) || null;
+  return reads.find(r => r.file1 && r.file2) || reads.find(r => r.file1) || null;
 }
 
 function resolveSource(

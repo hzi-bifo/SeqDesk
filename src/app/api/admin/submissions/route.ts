@@ -10,6 +10,18 @@ import {
   generateSubmissionXml,
 } from "@/lib/ena";
 
+function isExpiredTestRegistration(registeredAt: Date | string | null | undefined): boolean {
+  if (!registeredAt) return false;
+  return Date.now() - new Date(registeredAt).getTime() >= 24 * 60 * 60 * 1000;
+}
+
+class SubmissionInProgressError extends Error {
+  constructor(message = "A submission for this study is already in progress") {
+    super(message);
+    this.name = "SubmissionInProgressError";
+  }
+}
+
 // GET /api/admin/submissions - List all submissions
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -94,9 +106,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let pendingSubmissionId: string | null = null;
+  let pendingSubmissionIsTest: boolean | null = null;
+
   try {
     const body = await request.json();
-    const { entityType, entityId, isTest = true } = body;
+    const entityType = body?.entityType;
+    const entityId = body?.entityId;
+    const requestedIsTest =
+      typeof body?.isTest === "boolean" ? body.isTest : undefined;
 
     if (!entityType || !entityId) {
       return NextResponse.json(
@@ -125,8 +143,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Use test server if user requests it OR if configured in settings
-    const isTestServer = isTest || settings?.enaTestMode !== false;
+    // Respect the caller's explicit target selection when provided.
+    const isTestServer = requestedIsTest ?? (settings?.enaTestMode !== false);
 
     // Validate entity exists
     if (entityType === "study") {
@@ -160,22 +178,6 @@ export async function POST(request: Request) {
         );
       }
 
-      // Edge case: Check for existing pending/submitted submission
-      const existingSubmission = await db.submission.findFirst({
-        where: {
-          entityType: "study",
-          entityId: entityId,
-          status: { in: ["PENDING", "SUBMITTED"] },
-        },
-      });
-
-      if (existingSubmission) {
-        return NextResponse.json(
-          { error: "A submission for this study is already in progress" },
-          { status: 400 }
-        );
-      }
-
       // Edge case: Validate required data
       if (!study.title || study.title.trim() === "") {
         return NextResponse.json(
@@ -205,6 +207,25 @@ export async function POST(request: Request) {
       if (samplesWithoutTaxId.length > 0) {
         return NextResponse.json(
           { error: `${samplesWithoutTaxId.length} sample(s) missing taxonomy ID (TAXON_ID is required by ENA)` },
+          { status: 400 }
+        );
+      }
+
+      const hasProductionStudyRegistration = Boolean(
+        study.studyAccessionId && !study.testRegisteredAt
+      );
+      const hasActiveTestStudyRegistration = Boolean(
+        study.studyAccessionId &&
+          study.testRegisteredAt &&
+          !isExpiredTestRegistration(study.testRegisteredAt)
+      );
+
+      if (isTestServer && hasProductionStudyRegistration) {
+        return NextResponse.json(
+          {
+            error:
+              "Study already has a production ENA accession. Test re-registration is blocked to avoid overwriting the production accession state.",
+          },
           { status: 400 }
         );
       }
@@ -265,9 +286,9 @@ export async function POST(request: Request) {
 
       console.log("Study-level metadata:", studyLevelMetadata);
 
-      // Prepare sample data
-      // Merge studyMetadata, order customFields, sample customFields, and checklistData for sample attributes
-      const sampleDataList = study.samples.map(s => {
+      const buildSampleSubmissionData = (
+        samples: typeof study.samples
+      ) => samples.map((s) => {
         // Start with study-level metadata (applies to all samples)
         const attributes: Record<string, string> = { ...studyLevelMetadata };
 
@@ -332,10 +353,81 @@ export async function POST(request: Request) {
         };
       });
 
+      const reuseExistingStudy = isTestServer
+        ? hasActiveTestStudyRegistration
+        : hasProductionStudyRegistration;
+      const existingSampleAccessions = reuseExistingStudy
+        ? Object.fromEntries(
+            study.samples
+              .filter((sample) => Boolean(sample.sampleAccessionNumber))
+              .map((sample) => [sample.sampleId, sample.sampleAccessionNumber as string])
+          )
+        : {};
+      const samplesToSubmit = reuseExistingStudy
+        ? study.samples.filter((sample) => !sample.sampleAccessionNumber)
+        : study.samples;
+      const sampleDataList = buildSampleSubmissionData(samplesToSubmit);
+      if (isTestServer && reuseExistingStudy && sampleDataList.length === 0) {
+        return NextResponse.json(
+          { error: "Study and samples are already registered on the ENA Test Server" },
+          { status: 400 }
+        );
+      }
+
+      try {
+        const pendingSubmission = await db.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`submission:study:${entityId}`}))`;
+
+          const existingSubmission = await tx.submission.findFirst({
+            where: {
+              entityType: "study",
+              entityId: entityId,
+              status: { in: ["PENDING", "SUBMITTED"] },
+            },
+          });
+
+          if (existingSubmission) {
+            throw new SubmissionInProgressError();
+          }
+
+          return tx.submission.create({
+            data: {
+              submissionType: "STUDY",
+              status: "PENDING",
+              entityType: "study",
+              entityId,
+              response: JSON.stringify({
+                server: serverUrl,
+                isTest: isTestServer,
+                message: "Submission queued",
+                timestamp: new Date().toISOString(),
+                steps,
+              }),
+            },
+          });
+        });
+
+        pendingSubmissionId = pendingSubmission.id;
+        pendingSubmissionIsTest = isTestServer;
+      } catch (error) {
+        if (error instanceof SubmissionInProgressError) {
+          return NextResponse.json(
+            { error: error.message },
+            { status: 400 }
+          );
+        }
+        throw error;
+      }
+
+      const previewSampleXml = generateSampleXml(
+        buildSampleSubmissionData(study.samples)
+      );
+
       // Step 2: Generate XML
       const studyXml = generateStudyXml(studyData);
-      const sampleXml = generateSampleXml(sampleDataList);
       const submissionXml = generateSubmissionXml("ADD");
+      const sampleXml =
+        sampleDataList.length > 0 ? generateSampleXml(sampleDataList) : previewSampleXml;
 
       steps.push({
         step: 2,
@@ -344,13 +436,17 @@ export async function POST(request: Request) {
         timestamp: new Date().toISOString(),
         details: {
           studyXml,
-          sampleXml,
+          sampleXml: previewSampleXml,
           submissionXml,
-          totalSize: `${(studyXml.length + sampleXml.length + submissionXml.length)} bytes`,
+          totalSize: `${(studyXml.length + previewSampleXml.length + submissionXml.length)} bytes`,
         },
       });
 
       let sampleAccessions: Record<string, string> = {};
+      let studyAccession = reuseExistingStudy ? study.studyAccessionId || "" : "";
+      let studyReceiptXml = "";
+      let studyResultAccessions: Record<string, unknown> | undefined;
+      let samplesReceiptXml: string | null = null;
 
       const credentials = {
         username: settings!.enaUsername!,
@@ -358,106 +454,136 @@ export async function POST(request: Request) {
         testMode: isTestServer,
       };
 
-      // Submit study
-      const studyResult = await submitStudyToENA(credentials, studyData);
-
-      // Step 3: Send to ENA (final status based on result)
-      steps.push({
-        step: 3,
-        name: "Send to ENA",
-        status: studyResult.success ? "completed" : "error",
-        timestamp: new Date().toISOString(),
-        details: {
-          endpoint: serverUrl,
-          method: "POST",
-          contentType: "multipart/form-data",
-          server: isTestServer ? "ENA Test Server (wwwdev.ebi.ac.uk)" : "ENA Production Server (www.ebi.ac.uk)",
-          note: isTestServer
-            ? "Test submissions are automatically deleted after 24 hours"
-            : "Production submissions are permanent",
-          ...(studyResult.success
-            ? {}
-            : { error: studyResult.error || "ENA study submission failed" }),
-        },
-      });
-
-      if (!studyResult.success) {
-        // Create failed submission record
-        await db.submission.create({
-          data: {
-            submissionType: "STUDY",
-            status: "ERROR",
-            entityType: "study",
-            entityId: entityId,
-            xmlContent: `<!-- STUDY XML -->\n${studyXml}\n\n<!-- SUBMISSION XML -->\n${submissionXml}`,
-            response: JSON.stringify({
-              server: serverUrl,
-              isTest: isTestServer,
-              error: studyResult.error,
-              receiptXml: studyResult.receiptXml,
-              steps,
-            }),
-          },
-        });
-
-        return NextResponse.json(
-          { error: studyResult.error || "ENA study submission failed" },
-          { status: 500 }
-        );
-      }
-
-      const studyAccession = studyResult.accessions?.study || "";
-      const enaResponse = studyResult.receiptXml || "";
-
-      // Log the ENA response for debugging
-      console.log("ENA Study Submission Result:", {
-        success: studyResult.success,
-        accessions: studyResult.accessions,
-        studyAccession,
-        receiptXmlLength: enaResponse.length,
-        receiptXmlPreview: enaResponse.substring(0, 500),
-      });
-
-      // Submit samples
-      const samplesResult = await submitSamplesToENA(credentials, sampleDataList);
-      let samplesError: string | undefined;
-
-      if (!samplesResult.success) {
-        samplesError = samplesResult.error;
-        // Study succeeded but samples failed - record partial success
+      if (reuseExistingStudy) {
         steps.push({
-          step: 4,
-          name: "Parse Response",
-          status: "error",
-          timestamp: new Date().toISOString(),
-          details: {
-            studySuccess: true,
-            studyAccession,
-            samplesSuccess: false,
-            samplesError: samplesResult.error,
-          },
-        });
-      } else {
-        sampleAccessions = samplesResult.accessions?.samples || {};
-
-        steps.push({
-          step: 4,
-          name: "Parse Response",
+          step: 3,
+          name: "Reuse Existing Study",
           status: "completed",
           timestamp: new Date().toISOString(),
           details: {
-            success: true,
             studyAccession,
-            sampleAccessions,
-            receiptXml: enaResponse,
+            server: isTestServer
+              ? "ENA Test Server (wwwdev.ebi.ac.uk)"
+              : "ENA Production Server (www.ebi.ac.uk)",
+            note: "Skipped project re-registration and reused the existing study accession for this target.",
           },
         });
+      } else {
+        const studyResult = await submitStudyToENA(credentials, studyData);
+
+        // Step 3: Send study to ENA (final status based on result)
+        steps.push({
+          step: 3,
+          name: "Send Study to ENA",
+          status: studyResult.success ? "completed" : "error",
+          timestamp: new Date().toISOString(),
+          details: {
+            endpoint: serverUrl,
+            method: "POST",
+            contentType: "multipart/form-data",
+            server: isTestServer ? "ENA Test Server (wwwdev.ebi.ac.uk)" : "ENA Production Server (www.ebi.ac.uk)",
+            note: isTestServer
+              ? "Test submissions are automatically deleted after 24 hours"
+              : "Production submissions are permanent",
+            ...(studyResult.success
+              ? {}
+              : { error: studyResult.error || "ENA study submission failed" }),
+          },
+        });
+
+        if (!studyResult.success) {
+          await db.submission.update({
+            where: { id: pendingSubmissionId! },
+            data: {
+              status: "ERROR",
+              xmlContent: `<!-- STUDY XML -->\n${studyXml}\n\n<!-- SUBMISSION XML -->\n${submissionXml}`,
+              response: JSON.stringify({
+                server: serverUrl,
+                isTest: isTestServer,
+                error: studyResult.error,
+                receiptXml: studyResult.receiptXml,
+                steps,
+              }),
+            },
+          });
+
+          return NextResponse.json(
+            { error: studyResult.error || "ENA study submission failed" },
+            { status: 500 }
+          );
+        }
+
+        studyAccession = studyResult.accessions?.study || "";
+        studyReceiptXml = studyResult.receiptXml || "";
+        studyResultAccessions = studyResult.accessions;
+
+        console.log("ENA Study Submission Result:", {
+          success: studyResult.success,
+          accessions: studyResult.accessions,
+          studyAccession,
+          receiptXmlLength: studyReceiptXml.length,
+          receiptXmlPreview: studyReceiptXml.substring(0, 500),
+        });
+      }
+
+      let samplesError: string | undefined;
+
+      if (sampleDataList.length === 0) {
+        steps.push({
+          step: 4,
+          name: "Send Samples to ENA",
+          status: "completed",
+          timestamp: new Date().toISOString(),
+          details: {
+            studyAccession,
+            submittedSamples: 0,
+            reusedSamples: Object.keys(existingSampleAccessions).length,
+            note: "All samples already have accessions for the current ENA target.",
+          },
+        });
+      } else {
+        const samplesResult = await submitSamplesToENA(credentials, sampleDataList);
+        samplesReceiptXml = samplesResult.receiptXml || null;
+
+        if (!samplesResult.success) {
+          samplesError = samplesResult.error;
+          steps.push({
+            step: 4,
+            name: "Send Samples to ENA",
+            status: "error",
+            timestamp: new Date().toISOString(),
+            details: {
+              studyAccession,
+              submittedSamples: sampleDataList.length,
+              samplesError: samplesResult.error,
+            },
+          });
+        } else {
+          sampleAccessions = samplesResult.accessions?.samples || {};
+
+          steps.push({
+            step: 4,
+            name: "Send Samples to ENA",
+            status: "completed",
+            timestamp: new Date().toISOString(),
+            details: {
+              studyAccession,
+              submittedSamples: sampleDataList.length,
+              sampleAccessions,
+              receiptXml: samplesReceiptXml,
+            },
+          });
+        }
       }
 
       // Determine overall status
       const hasStudyAccession = Boolean(studyAccession);
-      const hasSampleAccessions = Object.keys(sampleAccessions).length > 0;
-      const allSamplesSucceeded = hasSampleAccessions && Object.keys(sampleAccessions).length === study.samples.length;
+      const combinedSampleAccessions = {
+        ...existingSampleAccessions,
+        ...sampleAccessions,
+      };
+      const allSamplesSucceeded =
+        Object.keys(combinedSampleAccessions).length === study.samples.length;
       const markSubmitted = !isTestServer && hasStudyAccession && allSamplesSucceeded;
 
       let submissionStatus: string;
@@ -465,9 +591,19 @@ export async function POST(request: Request) {
 
       if (hasStudyAccession && allSamplesSucceeded) {
         submissionStatus = "ACCEPTED";
-        submissionMessage = isTestServer
-          ? "Successfully registered study and samples with ENA Test Server"
-          : "Successfully registered study and samples with ENA Production Server";
+        if (reuseExistingStudy && sampleDataList.length === 0) {
+          submissionMessage = isTestServer
+            ? "Study and samples are already registered with the ENA Test Server"
+            : "Study and samples are already registered with the ENA Production Server";
+        } else if (reuseExistingStudy) {
+          submissionMessage = isTestServer
+            ? "Reused the existing ENA Test study and registered the remaining samples"
+            : "Reused the existing ENA Production study and registered the remaining samples";
+        } else {
+          submissionMessage = isTestServer
+            ? "Successfully registered study and samples with ENA Test Server"
+            : "Successfully registered study and samples with ENA Production Server";
+        }
       } else if (hasStudyAccession && !allSamplesSucceeded) {
         submissionStatus = "PARTIAL";
         submissionMessage = samplesError
@@ -488,6 +624,7 @@ export async function POST(request: Request) {
           studyUpdated: hasStudyAccession,
           studyAccessionId: studyAccession || "(not received)",
           samplesUpdated: Object.keys(sampleAccessions).length,
+          samplesReused: Object.keys(existingSampleAccessions).length,
           samplesTotal: study.samples.length,
           markedAsSubmitted: markSubmitted,
         },
@@ -497,12 +634,10 @@ export async function POST(request: Request) {
       const fullXmlContent = `<!-- STUDY XML -->\n${studyXml}\n\n<!-- SAMPLE XML -->\n${sampleXml}\n\n<!-- SUBMISSION XML -->\n${submissionXml}`;
 
       // Create submission record
-      const submission = await db.submission.create({
+      const submission = await db.submission.update({
+        where: { id: pendingSubmissionId! },
         data: {
-          submissionType: "STUDY",
           status: submissionStatus,
-          entityType: "study",
-          entityId: entityId,
           xmlContent: fullXmlContent,
           response: JSON.stringify({
             server: serverUrl,
@@ -512,21 +647,23 @@ export async function POST(request: Request) {
             steps,
             receipt: {
               success: hasStudyAccession && allSamplesSucceeded,
-              studyReceiptXml: enaResponse,
-              samplesReceiptXml: samplesResult.receiptXml || null,
+              studyReceiptXml: studyReceiptXml || null,
+              samplesReceiptXml,
               studyAccession: studyAccession || null,
               sampleCount: study.samples.length,
-              samplesRegistered: Object.keys(sampleAccessions).length,
+              samplesSubmitted: Object.keys(sampleAccessions).length,
+              samplesRegistered: Object.keys(combinedSampleAccessions).length,
             },
             samplesError: samplesError || null,
             debug: {
-              studyResultAccessions: studyResult.accessions,
-              samplesResultAccessions: samplesResult.accessions,
+              reuseExistingStudy,
+              studyResultAccessions: studyResultAccessions,
+              samplesResultAccessions: sampleAccessions,
             },
           }),
           accessionNumbers: JSON.stringify({
             study: studyAccession || null,
-            ...sampleAccessions,
+            ...combinedSampleAccessions,
           }),
         },
       });
@@ -534,14 +671,19 @@ export async function POST(request: Request) {
       // Update study with accession number
       // Only mark as fully submitted for production submissions
       // Test submissions get accession but aren't marked as "submitted" since they expire
+      const studyUpdateData: Record<string, unknown> = {
+        submitted: markSubmitted,
+        submittedAt: markSubmitted ? new Date() : null,
+      };
+      if (!reuseExistingStudy) {
+        studyUpdateData.studyAccessionId = studyAccession;
+        studyUpdateData.testRegisteredAt = isTestServer ? new Date() : null;
+      } else if (!isTestServer) {
+        studyUpdateData.testRegisteredAt = null;
+      }
       await db.study.update({
         where: { id: entityId },
-        data: {
-          submitted: markSubmitted,
-          submittedAt: markSubmitted ? new Date() : null,
-          testRegisteredAt: isTestServer ? new Date() : null,
-          studyAccessionId: studyAccession,
-        },
+        data: studyUpdateData,
       });
 
       // Update samples with accession numbers
@@ -558,9 +700,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         submission,
-        message: isTestServer
-          ? "Successfully registered with ENA Test Server (expires in 24 hours)"
-          : "Successfully registered with ENA Production Server",
+        message: submissionMessage,
       });
     }
 
@@ -569,6 +709,23 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   } catch (error) {
+    if (pendingSubmissionId) {
+      try {
+        await db.submission.update({
+          where: { id: pendingSubmissionId },
+          data: {
+            status: "ERROR",
+            response: JSON.stringify({
+              isTest: pendingSubmissionIsTest,
+              error: error instanceof Error ? error.message : "Failed to create submission",
+              timestamp: new Date().toISOString(),
+            }),
+          },
+        });
+      } catch (updateError) {
+        console.error("Failed to update pending submission after error:", updateError);
+      }
+    }
     console.error("Error creating submission:", error);
     return NextResponse.json(
       { error: "Failed to create submission" },

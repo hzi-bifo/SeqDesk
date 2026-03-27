@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     },
     study: {
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     sample: {
       updateMany: vi.fn(),
@@ -137,15 +138,15 @@ describe("DELETE /api/admin/submissions/[id]", () => {
       accessionNumbers: JSON.stringify({ study: "ERP123", "SAMPLE-1": "ERS001" }),
       response: JSON.stringify({ isTest: true }),
     });
-    mocks.db.study.update.mockResolvedValue({});
+    mocks.db.study.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.sample.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.submission.delete.mockResolvedValue({});
 
     const response = await DELETE(new Request("http://localhost"), makeParams("sub-1"));
 
     expect(response.status).toBe(200);
-    expect(mocks.db.study.update).toHaveBeenCalledWith({
-      where: { id: "study-1" },
+    expect(mocks.db.study.updateMany).toHaveBeenCalledWith({
+      where: { id: "study-1", studyAccessionId: "ERP123" },
       data: {
         studyAccessionId: null,
         submitted: false,
@@ -153,7 +154,61 @@ describe("DELETE /api/admin/submissions/[id]", () => {
         testRegisteredAt: null,
       },
     });
-    expect(mocks.db.sample.updateMany).toHaveBeenCalled();
+    expect(mocks.db.sample.updateMany).toHaveBeenCalledWith({
+      where: {
+        sampleId: "SAMPLE-1",
+        studyId: "study-1",
+        sampleAccessionNumber: "ERS001",
+      },
+      data: {
+        sampleAccessionNumber: null,
+      },
+    });
+  });
+
+  it("only clears matching accession values when deleting a historical test submission", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.submission.findUnique.mockResolvedValue({
+      id: "sub-old-test",
+      entityType: "study",
+      entityId: "study-1",
+      accessionNumbers: JSON.stringify({
+        study: "ERP-OLD-TEST",
+        "SAMPLE-1": "ERS-OLD-TEST",
+      }),
+      response: JSON.stringify({ isTest: true }),
+    });
+    mocks.db.study.updateMany.mockResolvedValue({ count: 0 });
+    mocks.db.sample.updateMany.mockResolvedValue({ count: 0 });
+    mocks.db.submission.delete.mockResolvedValue({});
+
+    const response = await DELETE(
+      new Request("http://localhost"),
+      makeParams("sub-old-test")
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.study.updateMany).toHaveBeenCalledWith({
+      where: { id: "study-1", studyAccessionId: "ERP-OLD-TEST" },
+      data: {
+        studyAccessionId: null,
+        submitted: false,
+        submittedAt: null,
+        testRegisteredAt: null,
+      },
+    });
+    expect(mocks.db.sample.updateMany).toHaveBeenCalledWith({
+      where: {
+        sampleId: "SAMPLE-1",
+        studyId: "study-1",
+        sampleAccessionNumber: "ERS-OLD-TEST",
+      },
+      data: {
+        sampleAccessionNumber: null,
+      },
+    });
   });
 });
 

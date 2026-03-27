@@ -160,7 +160,7 @@ describe("samplesheet-generator", () => {
     expect(result.content).toBe("");
   });
 
-  it("generates CSV rows with transforms, defaults, and legacy paired-read source", async () => {
+  it("prefers paired reads when optional R2 inputs are available", async () => {
     mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
     mocks.db.sample.findMany.mockResolvedValue([
       {
@@ -188,7 +188,37 @@ describe("samplesheet-generator", () => {
     expect(result.content).toBe(
       [
         "sample,r1,r2,platform,study,r1_full,mapped",
-        "S1,reads/S1_single.fastq.gz,reads/S1_R2.fastq.gz,ILLUMINA,Study Title,/data/base/reads/S1_single.fastq.gz,ILMN",
+        "S1,reads/S1_R1.fastq.gz,reads/S1_R2.fastq.gz,ILLUMINA,Study Title,/data/base/reads/S1_R1.fastq.gz,ILMN",
+      ].join("\n")
+    );
+  });
+
+  it("falls back to single-end reads when no paired record exists", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        sampleId: "S1",
+        reads: [{ file1: "reads/S1_single.fastq.gz", file2: null }],
+        order: { id: "order-1", platform: "illumina", customFields: null },
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("mag");
+    const result = await generator.generate({
+      target: { type: "study", studyId: "study-1" },
+      dataBasePath: "/data/base",
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.sampleCount).toBe(1);
+    expect(result.content).toBe(
+      [
+        "sample,r1,r2,platform,study,r1_full,mapped",
+        "S1,reads/S1_single.fastq.gz,NA,ILLUMINA,Study Title,/data/base/reads/S1_single.fastq.gz,ILMN",
       ].join("\n")
     );
   });

@@ -39,6 +39,7 @@ import {
   Download,
   HardDrive,
   ChevronRight,
+  Pencil,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
@@ -295,8 +296,10 @@ function normalizeStudyTab(
   }
 }
 
-function normalizePublishingTarget(value: string | null): "ena" | null {
-  return value === "ena" ? "ena" : null;
+function normalizePublishingTarget(value: string | null): "ena" | "submg" | null {
+  if (value === "ena") return "ena";
+  if (value === "submg") return "submg";
+  return null;
 }
 
 function getPublishingStatus(
@@ -385,6 +388,7 @@ export default function StudyDetailPage({
   const [markingReady, setMarkingReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [enaRegistrationMode, setEnaRegistrationMode] = useState<"test" | "production">("test");
   const [enaCheck, setEnaCheck] = useState<{
     status: "idle" | "checking" | "ok" | "error";
     message?: string;
@@ -1798,7 +1802,7 @@ export default function StudyDetailPage({
                 </Link>
                 {isAdmin && totalSamples > 0 && (
                   <Link
-                    href={`/studies/${id}?tab=publishing&pipeline=submg`}
+                    href={`/studies/${id}?tab=publishing&publisher=submg`}
                     className="block"
                   >
                     <Card className="cursor-pointer transition-colors hover:bg-muted/30">
@@ -1823,6 +1827,97 @@ export default function StudyDetailPage({
                 )}
               </div>
             </div>
+          ) : selectedPublishingTarget === "submg" ? (
+            <div className="space-y-6">
+              {/* SubMG Header */}
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h1 className="text-xl font-semibold">Submit to ENA</h1>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Submit study data, reads, assemblies, and bins to ENA using SubMG.
+                  </p>
+                </div>
+              </div>
+
+              {/* SubMG Submission Requirements */}
+              {(() => {
+                const hasStudyAccession = Boolean(study.studyAccessionId);
+                const allSamplesHaveAccessions =
+                  totalSamples > 0 &&
+                  studySamples.every((sample) => Boolean(sample.sampleAccessionNumber));
+                const isRegistered = Boolean(study.submitted);
+                const submgChecks = [
+                  {
+                    key: "studyAccession",
+                    label: "Study Accession",
+                    passed: hasStudyAccession,
+                    value: hasStudyAccession
+                      ? study.studyAccessionId
+                      : "Register study at ENA first",
+                  },
+                  {
+                    key: "sampleAccessions",
+                    label: "Sample Accessions",
+                    passed: allSamplesHaveAccessions,
+                    value: allSamplesHaveAccessions
+                      ? `All ${totalSamples} sample${totalSamples !== 1 ? "s" : ""} have accession IDs`
+                      : totalSamples > 0
+                        ? `${studySamples.filter(s => s.sampleAccessionNumber).length}/${totalSamples} samples have accession IDs`
+                        : "No samples linked",
+                  },
+                  {
+                    key: "registered",
+                    label: "Production Registration",
+                    passed: isRegistered,
+                    value: isRegistered
+                      ? `Registered${study.submittedAt ? ` on ${formatDate(study.submittedAt)}` : ""}`
+                      : "Register at ENA Production first",
+                  },
+                ];
+                const submgPassedCount = submgChecks.filter(c => c.passed).length;
+                const submgAllPassed = submgPassedCount === submgChecks.length;
+
+                return (
+                  <div className="rounded-xl border border-border bg-card">
+                    <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                      <h3 className="text-sm font-medium">Submission Requirements</h3>
+                      {submgAllPassed ? (
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#00BD7D]/10 text-[#00BD7D]">All passed</span>
+                      ) : (
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{submgPassedCount}/{submgChecks.length}</span>
+                      )}
+                    </div>
+                    <div className="divide-y divide-border">
+                      {submgChecks.map((check) => (
+                        <div key={check.key} className="flex items-center gap-3 px-4 py-2.5">
+                          {check.passed ? (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
+                            </span>
+                          ) : (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 shrink-0">
+                              <XCircle className="h-3.5 w-3.5 text-destructive" />
+                            </span>
+                          )}
+                          <span className="text-xs font-medium w-40 shrink-0">{check.label}</span>
+                          <span className="text-xs text-muted-foreground truncate flex-1 min-w-0">
+                            {check.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* SubMG Pipeline Section */}
+              <StudyPipelinesSection
+                studyId={study.id}
+                samples={studySamples}
+                selectedPipelineId="submg"
+                categoryFilter="submission"
+              />
+            </div>
           ) : (() => {
             const uniqueTaxIds = [...new Set(studySamples.map(s => s.taxId).filter(Boolean))];
             const taxSummary = uniqueTaxIds.length > 0
@@ -1841,10 +1936,10 @@ export default function StudyDetailPage({
               totalSamples > 0 &&
               studySamples.every((sample) => Boolean(sample.sampleAccessionNumber));
             const requiredChecks = [
-              { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()), value: study.title?.trim() || null },
-              { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()), value: study.description?.trim() ? (study.description.trim().length > 80 ? study.description.trim().slice(0, 80) + "..." : study.description.trim()) : null },
-              { key: "samples", label: "Samples", passed: totalSamples > 0, value: totalSamples > 0 ? `${totalSamples} sample${totalSamples !== 1 ? "s" : ""} linked` : null },
-              { key: "taxonomy", label: "Taxonomy ID", passed: totalSamples > 0 && studySamples.every(s => s.taxId && s.taxId.trim()), value: taxSummary },
+              { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()), value: study.title?.trim() || null, editHref: `/studies/${id}/edit?section=details` },
+              { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()), value: study.description?.trim() ? (study.description.trim().length > 80 ? study.description.trim().slice(0, 80) + "..." : study.description.trim()) : null, editHref: `/studies/${id}/edit?section=details` },
+              { key: "samples", label: "Samples", passed: totalSamples > 0, value: totalSamples > 0 ? `${totalSamples} sample${totalSamples !== 1 ? "s" : ""} linked` : null, editHref: `/studies/${id}/edit?section=samples` },
+              { key: "taxonomy", label: "Taxonomy ID", passed: totalSamples > 0 && studySamples.every(s => s.taxId && s.taxId.trim()), value: taxSummary, editHref: `/studies/${id}/edit?section=samples` },
               {
                 key: "metadata",
                 label: "Metadata",
@@ -1856,6 +1951,7 @@ export default function StudyDetailPage({
                     ? "All complete"
                     : `${samplesWithMetadata}/${studySamples.length} complete`)
                   : "Not required for this study",
+                editHref: `/studies/${id}/edit?section=metadata`,
               },
             ];
             const passedChecks = requiredChecks.filter(c => c.passed).length;
@@ -1878,9 +1974,35 @@ export default function StudyDetailPage({
                       Register your study and samples with the European Nucleotide Archive.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
                     {!study.submitted && isAdmin && (
                       <>
+                        {/* Test / Production toggle */}
+                        <div className="inline-flex rounded-lg border border-border bg-muted/50 p-0.5">
+                          <button
+                            type="button"
+                            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                              enaRegistrationMode === "test"
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                            onClick={() => setEnaRegistrationMode("test")}
+                          >
+                            Test
+                          </button>
+                          <button
+                            type="button"
+                            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                              enaRegistrationMode === "production"
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                            onClick={() => setEnaRegistrationMode("production")}
+                          >
+                            Production
+                          </button>
+                        </div>
+                        {/* Register button */}
                         {enaCheck.status === "checking" ? (
                           <Button size="sm" disabled>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1897,33 +2019,31 @@ export default function StudyDetailPage({
                             <AlertCircle className="h-4 w-4 mr-2" />
                             {enaCheck.message?.includes("credentials") ? "ENA credentials missing" : "ENA check failed"}
                           </Button>
+                        ) : enaRegistrationMode === "test" ? (
+                          <Button
+                            size="sm"
+                            onClick={() => handleRegisterWithENA(true)}
+                            disabled={
+                              submitting ||
+                              !allPassed ||
+                              hasPartialProductionRegistration ||
+                              (activeTestRegistration && allSamplesHaveAccessions)
+                            }
+                            title={testButtonDisabledReason}
+                          >
+                            {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                            Register at Test Server
+                          </Button>
                         ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRegisterWithENA(true)}
-                              disabled={
-                                submitting ||
-                                !allPassed ||
-                                hasPartialProductionRegistration ||
-                                (activeTestRegistration && allSamplesHaveAccessions)
-                              }
-                              title={testButtonDisabledReason}
-                            >
-                              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                              Test Server
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => handleRegisterWithENA(false)}
-                              disabled={submitting || !allPassed || !study.readyForSubmission}
-                              title={!allPassed ? "All checks must pass" : !study.readyForSubmission ? "Mark study as ready first" : undefined}
-                            >
-                              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                              Production
-                            </Button>
-                          </>
+                          <Button
+                            size="sm"
+                            onClick={() => handleRegisterWithENA(false)}
+                            disabled={submitting || !allPassed || !study.readyForSubmission || !activeTestRegistration}
+                            title={!allPassed ? "All checks must pass" : !activeTestRegistration ? "Register on test server first" : !study.readyForSubmission ? "Mark study as ready first" : undefined}
+                          >
+                            {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                            Register at Production
+                          </Button>
                         )}
                       </>
                     )}
@@ -1944,31 +2064,80 @@ export default function StudyDetailPage({
                 )}
 
 
-                {/* Section 3: Readiness Checks */}
-                <div className="rounded-xl border border-border bg-card">
-                  <div className="px-4 py-3 border-b border-border">
-                    <h3 className="text-sm font-medium">Submission Requirements</h3>
-                  </div>
-                  <div className="divide-y divide-border">
-                    {requiredChecks.map((check) => (
-                      <div key={check.key} className="flex items-center gap-3 px-4 py-2.5">
-                        {check.passed ? (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
-                          </span>
+                {/* Section 3: Requirements (conditional on mode) */}
+                {(() => {
+                  const productionChecks = !study.submitted && isAdmin ? [
+                    {
+                      key: "allChecks",
+                      label: "Requirements",
+                      passed: allPassed,
+                      value: allPassed ? "All submission requirements met" : `${passedChecks}/${requiredChecks.length} checks passed`,
+                    },
+                    {
+                      key: "testRegistration",
+                      label: "Test Registration",
+                      passed: activeTestRegistration,
+                      value: activeTestRegistration
+                        ? `Registered${study.studyAccessionId ? ` (${study.studyAccessionId})` : ""}`
+                        : hasTestRegistration && testExpiration?.expired
+                          ? "Expired — re-register on test server"
+                          : "Not yet registered on test server",
+                    },
+                    {
+                      key: "readyForSubmission",
+                      label: "Marked as Ready",
+                      passed: Boolean(study.readyForSubmission),
+                      value: study.readyForSubmission
+                        ? "Study marked as ready for submission"
+                        : "Mark as ready on the Overview tab",
+                    },
+                  ] : [];
+                  const displayChecks = enaRegistrationMode === "test" ? requiredChecks : productionChecks;
+                  const displayTitle = enaRegistrationMode === "test" ? "Submission Requirements" : "Production Requirements";
+                  const displayPassedCount = displayChecks.filter(c => c.passed).length;
+                  const displayAllPassed = displayPassedCount === displayChecks.length;
+
+                  return (
+                    <div className="rounded-xl border border-border bg-card">
+                      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                        <h3 className="text-sm font-medium">{displayTitle}</h3>
+                        {displayAllPassed ? (
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#00BD7D]/10 text-[#00BD7D]">All passed</span>
                         ) : (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 shrink-0">
-                            <XCircle className="h-3.5 w-3.5 text-destructive" />
-                          </span>
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{displayPassedCount}/{displayChecks.length}</span>
                         )}
-                        <span className="text-xs font-medium w-24 shrink-0">{check.label}</span>
-                        <span className="text-xs text-muted-foreground truncate">
-                          {check.value || (check.passed ? "OK" : "Missing")}
-                        </span>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                      <div className="divide-y divide-border">
+                        {displayChecks.map((check) => (
+                          <div key={check.key} className="flex items-center gap-3 px-4 py-2.5">
+                            {check.passed ? (
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
+                              </span>
+                            ) : (
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 shrink-0">
+                                <XCircle className="h-3.5 w-3.5 text-destructive" />
+                              </span>
+                            )}
+                            <span className="text-xs font-medium w-32 shrink-0">{check.label}</span>
+                            <span className="text-xs text-muted-foreground truncate flex-1 min-w-0">
+                              {check.value || (check.passed ? "OK" : "Missing")}
+                            </span>
+                            {"editHref" in check && check.editHref && !study.submitted && (
+                              <Link
+                                href={check.editHref as string}
+                                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                                title={`Edit ${check.label}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Link>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Section 4: Submission History */}
                 <div className="rounded-xl border border-border bg-card">

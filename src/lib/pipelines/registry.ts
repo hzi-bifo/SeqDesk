@@ -8,6 +8,7 @@ import {
   getAllPackageIds,
   packageToPipelineDefinition,
 } from './package-loader';
+import { pipelineRequiresPairedReads } from './read-mode';
 
 /**
  * Build the pipeline registry from loaded packages
@@ -115,7 +116,7 @@ export function canRunPipeline(
       }
     }
 
-    if (pipeline.input.perSample.pairedEnd) {
+    if (pipelineRequiresPairedReads(pipeline.input.perSample)) {
       const hasPairedReads = sample.reads.some(r => r.file1 && r.file2);
       if (!hasPairedReads) {
         issues.push('All samples must have paired-end reads');

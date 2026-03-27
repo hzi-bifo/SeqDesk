@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -88,6 +89,7 @@ type AdminPipeline = {
     perSample: {
       reads: boolean;
       pairedEnd: boolean;
+      readMode?: "single_or_paired" | "paired_only";
     };
   };
 };
@@ -329,7 +331,7 @@ export function OrderPipelineView({
       if (pipeline.input.perSample.reads && !sample.read?.file1) {
         return { ready: false, reason: "Missing reads" };
       }
-      if (pipeline.input.perSample.pairedEnd && !sample.read?.file2) {
+      if (pipelineRequiresPairedReads(pipeline.input.perSample) && !sample.read?.file2) {
         return { ready: false, reason: "Missing R2 file" };
       }
       return { ready: true };

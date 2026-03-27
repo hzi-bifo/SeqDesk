@@ -3,10 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   db: {
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
     submission: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
       create: vi.fn(),
+      update: vi.fn(),
     },
     study: {
       findUnique: vi.fn(),
@@ -151,6 +154,18 @@ describe("GET /api/admin/submissions", () => {
 describe("POST /api/admin/submissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.db.$queryRaw.mockResolvedValue(undefined);
+    mocks.db.$transaction.mockImplementation(async (callback) => callback(mocks.db));
+    mocks.db.submission.create.mockImplementation(async ({ data }) => ({
+      id: "sub-pending",
+      ...data,
+    }));
+    mocks.db.submission.update.mockImplementation(async ({ where, data }) => ({
+      id: where.id,
+      ...data,
+    }));
+    mocks.db.study.update.mockResolvedValue({});
+    mocks.db.sample.update.mockResolvedValue({});
     mocks.generateStudyXml.mockReturnValue("<STUDY/>");
     mocks.generateSampleXml.mockReturnValue("<SAMPLE/>");
     mocks.generateSubmissionXml.mockReturnValue("<SUBMISSION/>");
@@ -260,6 +275,78 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toContain("already registered");
+  });
+
+  it("uses the requested production target even when admin settings default to test mode", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "user",
+      enaPassword: "pass",
+      enaTestMode: true,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "s1",
+      title: "My Study",
+      description: "Study description",
+      alias: "alias-1",
+      submitted: false,
+      studyAccessionId: null,
+      testRegisteredAt: null,
+      studyMetadata: null,
+      checklistType: null,
+      samples: [
+        {
+          id: "sam-1",
+          sampleId: "S001",
+          sampleTitle: "Sample 1",
+          sampleAccessionNumber: null,
+          taxId: "9606",
+          scientificName: "Homo sapiens",
+          customFields: null,
+          checklistData: null,
+          order: null,
+        },
+      ],
+      user: { id: "u1" },
+    });
+    mocks.db.submission.findFirst.mockResolvedValue(null);
+    mocks.submitStudyToENA.mockResolvedValue({
+      success: true,
+      accessions: { study: "ERP123456" },
+      receiptXml: "<RECEIPT/>",
+    });
+    mocks.submitSamplesToENA.mockResolvedValue({
+      success: true,
+      accessions: { samples: { S001: "ERS999" } },
+      receiptXml: "<RECEIPT/>",
+    });
+    mocks.db.submission.create.mockImplementation(async ({ data }) => ({
+      id: "sub-new",
+      ...data,
+    }));
+    mocks.db.study.update.mockResolvedValue({});
+    mocks.db.sample.update.mockResolvedValue({});
+
+    const request = new Request("http://localhost/api/admin/submissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        entityType: "study",
+        entityId: "s1",
+        isTest: false,
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    expect(mocks.submitStudyToENA).toHaveBeenCalledWith(
+      expect.objectContaining({ testMode: false }),
+      expect.any(Object)
+    );
+    expect(mocks.submitSamplesToENA).toHaveBeenCalledWith(
+      expect.objectContaining({ testMode: false }),
+      expect.any(Array)
+    );
   });
 
   it("returns 400 when study has no samples", async () => {
@@ -415,7 +502,21 @@ describe("POST /api/admin/submissions", () => {
       description: "Desc",
       submitted: false,
       studyAccessionId: null,
-      samples: [],
+      studyMetadata: null,
+      checklistType: null,
+      samples: [
+        {
+          id: "sam-1",
+          sampleId: "S001",
+          sampleTitle: "Sample 1",
+          taxId: "9606",
+          scientificName: "Homo sapiens",
+          customFields: null,
+          checklistData: null,
+          order: null,
+        },
+      ],
+      user: { id: "u1" },
     });
     mocks.db.submission.findFirst.mockResolvedValue({
       id: "existing-sub",
@@ -432,6 +533,7 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toContain("already in progress");
+    expect(mocks.db.submission.create).not.toHaveBeenCalled();
   });
 
   it("returns 500 when ENA study submission fails", async () => {
@@ -470,7 +572,6 @@ describe("POST /api/admin/submissions", () => {
       error: "ENA rejected the study XML",
       receiptXml: "<ERROR/>",
     });
-    mocks.db.submission.create.mockResolvedValue({ id: "sub-fail" });
 
     const request = new Request("http://localhost/api/admin/submissions", {
       method: "POST",
@@ -482,8 +583,13 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body.error).toContain("ENA rejected the study XML");
-    // Should create a failed submission record
     expect(mocks.db.submission.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "PENDING",
+      }),
+    });
+    expect(mocks.db.submission.update).toHaveBeenCalledWith({
+      where: { id: "sub-pending" },
       data: expect.objectContaining({
         status: "ERROR",
       }),
@@ -531,11 +637,6 @@ describe("POST /api/admin/submissions", () => {
       error: "Sample XML rejected",
       receiptXml: null,
     });
-    mocks.db.submission.create.mockImplementation(async ({ data }) => ({
-      id: "sub-partial",
-      ...data,
-    }));
-    mocks.db.study.update.mockResolvedValue({});
 
     const request = new Request("http://localhost/api/admin/submissions", {
       method: "POST",
@@ -547,14 +648,161 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.submission).toBeDefined();
-    // Should create a PARTIAL submission record
     expect(mocks.db.submission.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "PENDING",
+      }),
+    });
+    expect(mocks.db.submission.update).toHaveBeenCalledWith({
+      where: { id: "sub-pending" },
       data: expect.objectContaining({
         status: "PARTIAL",
       }),
     });
-    // No samples updated since they failed
     expect(mocks.db.sample.update).not.toHaveBeenCalled();
+  });
+
+  it("reuses an existing production accession and submits only missing samples", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "user",
+      enaPassword: "pass",
+      enaTestMode: true,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "s1",
+      title: "My Study",
+      description: "Study description",
+      alias: "alias-1",
+      submitted: false,
+      studyAccessionId: "ERP999",
+      testRegisteredAt: null,
+      studyMetadata: null,
+      checklistType: null,
+      samples: [
+        {
+          id: "sam-1",
+          sampleId: "S001",
+          sampleTitle: "Sample 1",
+          sampleAccessionNumber: "ERS001",
+          taxId: "9606",
+          scientificName: "Homo sapiens",
+          customFields: null,
+          checklistData: null,
+          order: null,
+        },
+        {
+          id: "sam-2",
+          sampleId: "S002",
+          sampleTitle: "Sample 2",
+          sampleAccessionNumber: null,
+          taxId: "9606",
+          scientificName: "Homo sapiens",
+          customFields: null,
+          checklistData: null,
+          order: null,
+        },
+      ],
+      user: { id: "u1" },
+    });
+    mocks.db.submission.findFirst.mockResolvedValue(null);
+    mocks.submitSamplesToENA.mockResolvedValue({
+      success: true,
+      accessions: { samples: { S002: "ERS002" } },
+      receiptXml: "<RECEIPT/>",
+    });
+    mocks.db.submission.create.mockImplementation(async ({ data }) => ({
+      id: "sub-retry",
+      ...data,
+    }));
+    mocks.db.study.update.mockResolvedValue({});
+    mocks.db.sample.update.mockResolvedValue({});
+
+    const request = new Request("http://localhost/api/admin/submissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        entityType: "study",
+        entityId: "s1",
+        isTest: false,
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    expect(mocks.submitStudyToENA).not.toHaveBeenCalled();
+    expect(mocks.submitSamplesToENA).toHaveBeenCalledWith(
+      expect.objectContaining({ testMode: false }),
+      [
+        expect.objectContaining({
+          alias: "S002",
+        }),
+      ]
+    );
+    expect(mocks.db.study.update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: expect.objectContaining({
+        submitted: true,
+        testRegisteredAt: null,
+      }),
+    });
+    expect(mocks.db.submission.update).toHaveBeenCalledWith({
+      where: { id: "sub-retry" },
+      data: expect.objectContaining({
+        status: "ACCEPTED",
+      }),
+    });
+  });
+
+  it("returns 400 for an already-complete active test registration without reserving a pending row", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "user",
+      enaPassword: "pass",
+      enaTestMode: true,
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "s1",
+      title: "My Study",
+      description: "Study description",
+      alias: "alias-1",
+      submitted: false,
+      studyAccessionId: "ERPTEST123",
+      testRegisteredAt: new Date(),
+      studyMetadata: null,
+      checklistType: null,
+      samples: [
+        {
+          id: "sam-1",
+          sampleId: "S001",
+          sampleTitle: "Sample 1",
+          sampleAccessionNumber: "ERS001",
+          taxId: "9606",
+          scientificName: "Homo sapiens",
+          customFields: null,
+          checklistData: null,
+          order: null,
+        },
+      ],
+      user: { id: "u1" },
+    });
+
+    const request = new Request("http://localhost/api/admin/submissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        entityType: "study",
+        entityId: "s1",
+        isTest: true,
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("already registered on the ENA Test Server");
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+    expect(mocks.db.submission.create).not.toHaveBeenCalled();
   });
 
   it("returns 500 when POST throws an unexpected error", async () => {
@@ -730,5 +978,16 @@ describe("POST /api/admin/submissions", () => {
     expect(mocks.submitStudyToENA).toHaveBeenCalledTimes(1);
     expect(mocks.submitSamplesToENA).toHaveBeenCalledTimes(1);
     expect(mocks.db.sample.update).toHaveBeenCalledTimes(1);
+    expect(mocks.db.submission.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "PENDING",
+      }),
+    });
+    expect(mocks.db.submission.update).toHaveBeenCalledWith({
+      where: { id: "sub-new" },
+      data: expect.objectContaining({
+        status: "ACCEPTED",
+      }),
+    });
   });
 });

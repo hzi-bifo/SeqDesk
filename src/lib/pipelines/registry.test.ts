@@ -45,6 +45,7 @@ function makePipelineDefinition(overrides: Partial<PipelineDefinition> = {}): Pi
       perSample: {
         reads: false,
         pairedEnd: false,
+        readMode: undefined,
         assemblies: false,
         bins: false,
       },
@@ -235,6 +236,30 @@ describe("registry", () => {
       })
     );
     expect(missingBins.issues).toContain("All samples must have bins");
+  });
+
+  it("prefers explicit readMode when checking paired-read requirements", () => {
+    const def = makePipelineDefinition({
+      input: {
+        supportedScopes: ["study"],
+        perSample: {
+          reads: true,
+          pairedEnd: false,
+          readMode: "paired_only",
+        },
+      },
+    });
+    mocks.getAllPackages.mockReturnValue([{ id: "mag" }]);
+    mocks.packageToPipelineDefinition.mockReturnValue(def);
+
+    const result = canRunPipeline(
+      "mag",
+      makeStudy({
+        samples: [{ reads: [{ file1: "/tmp/r1.fastq.gz", file2: null }], assemblies: [], bins: [] }],
+      })
+    );
+
+    expect(result.issues).toContain("All samples must have paired-end reads");
   });
 
   it("checks study-level reads and assemblies requirements", () => {

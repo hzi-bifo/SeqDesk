@@ -79,14 +79,6 @@ function toCompletionStatus(
 }
 
 export function sampleHasStudyOverviewMetadata(sample: StudyOverviewSampleLike): boolean {
-  const hasCoreSampleData = [
-    sample.taxId,
-    sample.scientificName,
-    sample.sampleTitle,
-    sample.sampleAlias,
-  ].some((value) => hasProgressValue(value));
-  if (hasCoreSampleData) return true;
-
   const customFields = parseJsonObject(sample.customFields);
   if (Object.values(customFields).some((value) => hasProgressValue(value))) {
     return true;

@@ -12,6 +12,7 @@ export type OutputType =
 export type InputScope = 'study' | 'order' | 'samples' | 'sample';
 
 export type PipelineTargetType = 'study' | 'order';
+export type PipelineReadMode = 'single_or_paired' | 'paired_only';
 
 export interface StudyPipelineTarget {
   type: 'study';
@@ -36,16 +37,19 @@ export interface PipelineOutput {
   downloadable?: boolean;
 }
 
+export interface PipelinePerSampleInput {
+  reads: boolean;
+  pairedEnd: boolean;
+  readMode?: PipelineReadMode;
+  assemblies?: boolean;
+  bins?: boolean;
+}
+
 export interface PipelineInput {
   supportedScopes: InputScope[];
   minSamples?: number;
   maxSamples?: number;
-  perSample: {
-    reads: boolean;
-    pairedEnd: boolean;
-    assemblies?: boolean;
-    bins?: boolean;
-  };
+  perSample: PipelinePerSampleInput;
 }
 
 export interface PipelineConfigSchema {

@@ -271,15 +271,6 @@ export default function SubmissionsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [typeFilter, setTypeFilter] = useState<string>("");
 
-  if (session?.user?.isDemo) {
-    return (
-      <DemoFeatureNotice
-        title="ENA submission is disabled in the public demo"
-        description="The researcher demo uses real app screens, but external archive submission is blocked so the hosted environment never creates or simulates ENA records."
-      />
-    );
-  }
-
   const safeJsonParse = (value: unknown) => {
     if (!value) return null;
     if (typeof value !== "string") return value;
@@ -292,6 +283,7 @@ export default function SubmissionsPage() {
 
   useEffect(() => {
     if (sessionStatus === "loading") return;
+    if (session?.user?.isDemo) return;
     if (!session || session.user.role !== "FACILITY_ADMIN") {
       router.push("/orders");
       return;
@@ -429,6 +421,15 @@ export default function SubmissionsPage() {
   const acceptedCount = submissions.filter((s) => s.status === "ACCEPTED").length;
   const pendingCount = submissions.filter((s) => s.status === "PENDING" || s.status === "SUBMITTED").length;
   const issueCount = submissions.filter((s) => s.status === "REJECTED" || s.status === "ERROR" || s.status === "PARTIAL").length;
+
+  if (session?.user?.isDemo) {
+    return (
+      <DemoFeatureNotice
+        title="ENA submission is disabled in the public demo"
+        description="The researcher demo uses real app screens, but external archive submission is blocked so the hosted environment never creates or simulates ENA records."
+      />
+    );
+  }
 
   if (sessionStatus === "loading" || loading) {
     return (
@@ -759,7 +760,7 @@ export default function SubmissionsPage() {
 
                         {/* Actions */}
                         <div className="flex gap-2">
-                          {(submission.status === "REJECTED" || submission.status === "ERROR") &&
+                          {(submission.status === "REJECTED" || submission.status === "ERROR" || submission.status === "PARTIAL") &&
                             submission.entityType === "study" && (
                             <Button
                               size="sm"

@@ -482,11 +482,11 @@ export function SidebarEntityNav({
                   {publishingPipelines.map((pipeline) => {
                     const isPipelineActive =
                       currentStudyTab === "publishing" &&
-                      searchParams.get("pipeline") === pipeline.pipelineId;
+                      (searchParams.get("publisher") === pipeline.pipelineId || searchParams.get("pipeline") === pipeline.pipelineId);
                     return (
                       <Link
                         key={pipeline.pipelineId}
-                        href={`/studies/${entityId}?tab=publishing&pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                        href={`/studies/${entityId}?tab=publishing&publisher=${encodeURIComponent(pipeline.pipelineId)}`}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isPipelineActive

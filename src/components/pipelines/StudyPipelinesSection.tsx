@@ -59,6 +59,16 @@ import {
   resolveAssemblySelection,
 } from "@/lib/pipelines/assembly-selection";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import {
+  getEligibleStudySampleIds,
+  getPreferredStudyRead,
+  getStudyPipelineRunDetails,
+  getStudyPipelineRunReportPath,
+  getStudySampleReadIssue,
+  getStudySelectionEmptyMessage,
+  runHasOutputErrors,
+  sampleHasRequiredReads,
+} from "./study-pipeline-utils";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 const AUTO_ASSEMBLY_SELECTION = "__auto__";
@@ -145,6 +155,13 @@ interface Pipeline {
     >;
   };
   defaultConfig: Record<string, unknown>;
+  input?: {
+    perSample?: {
+      reads?: boolean;
+      pairedEnd?: boolean;
+      readMode?: "single_or_paired" | "paired_only";
+    };
+  } | null;
 }
 
 interface Sample {
@@ -192,6 +209,17 @@ interface PipelineRun {
   errorTail: string | null;
   inputSampleIds?: string | null;
   runFolder?: string | null;
+  results?: {
+    errors?: string[];
+    warnings?: string[];
+  } | null;
+  artifacts?: {
+    id: string;
+    name: string | null;
+    path: string;
+    type: string;
+    sampleId: string | null;
+  }[];
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -293,19 +321,6 @@ function getStatusBadge(status: string) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
-}
-
-function getRunDetails(run: PipelineRun): string {
-  if (run.status === "failed" && run.errorTail?.trim()) {
-    return run.errorTail.trim();
-  }
-  if (run.currentStep?.trim()) {
-    return run.currentStep.trim();
-  }
-  if (run.status === "completed") return "Completed successfully";
-  if (run.status === "queued") return "Waiting for execution";
-  if (run.status === "running") return "Currently running";
-  return "";
 }
 
 function getSampleCount(run: PipelineRun): number | null {
@@ -706,7 +721,7 @@ function getReadinessIssues(params: {
   const selectedSamples = samples.filter((s) => selectedSampleIds.has(s.id));
 
   if (selectedSamples.length === 0) {
-    issues.push("No samples with paired reads available.");
+    issues.push(getStudySelectionEmptyMessage(pipeline));
     return issues;
   }
 
@@ -743,11 +758,11 @@ function getReadinessIssues(params: {
 
   // MAG-specific
   if (pipeline.pipelineId === "mag") {
-    const samplesWithPairedReads = selectedSamples.filter((s) =>
-      s.reads?.some((r) => r.file1 && r.file2)
+    const samplesWithRequiredReads = selectedSamples.filter((sample) =>
+      sampleHasRequiredReads(sample, pipeline)
     );
-    if (samplesWithPairedReads.length === 0) {
-      issues.push("No selected samples have paired reads linked.");
+    if (samplesWithRequiredReads.length === 0) {
+      issues.push(getStudySelectionEmptyMessage(pipeline));
     }
     if (metadataValidation && !loadingMetadata) {
       const errors = metadataValidation.issues.filter((i) => i.severity === "error");
@@ -760,9 +775,9 @@ function getReadinessIssues(params: {
 
   // Generic pipeline
   for (const sample of selectedSamples) {
-    const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
-    if (!hasPairedReads) {
-      issues.push(`Sample ${sample.sampleId} is missing paired reads.`);
+    const readIssue = getStudySampleReadIssue(sample, pipeline);
+    if (readIssue) {
+      issues.push(`Sample ${sample.sampleId}: ${readIssue}.`);
     }
   }
 
@@ -856,11 +871,6 @@ export function StudyPipelinesSection({
   // --- Pipeline selection state ---
   const [selectedPipelineIdState, setSelectedPipelineId] = useState<string | null>(null);
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
-  // All samples with paired reads are always included (study pipelines run on all samples)
-  const allSampleWithReadsIds = useMemo(
-    () => new Set(samples.filter((s) => s.reads?.some((r) => r.file1 && r.file2)).map((s) => s.id)),
-    [samples]
-  );
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -946,9 +956,14 @@ export function StudyPipelinesSection({
   const samplesWithReads = useMemo(
     () =>
       samplesWithAssemblySelection.filter((s) =>
-        s.reads?.some((r) => r.file1 && r.file2)
+        sampleHasRequiredReads(s, selectedPipeline)
       ),
-    [samplesWithAssemblySelection]
+    [samplesWithAssemblySelection, selectedPipeline]
+  );
+
+  const eligibleSampleIds = useMemo(
+    () => getEligibleStudySampleIds(samplesWithAssemblySelection, selectedPipeline),
+    [samplesWithAssemblySelection, selectedPipeline]
   );
 
   const enaSubmissionServer = useMemo(() => {
@@ -985,14 +1000,14 @@ export function StudyPipelinesSection({
     return buildSubmgCoverageSummary({
       validation: metadataValidation,
       samples: samplesWithAssemblySelection,
-      selectedSampleIds: allSampleWithReadsIds,
+      selectedSampleIds: eligibleSampleIds,
       submitBins: submitBinsEnabled,
     });
   }, [
     isSubmgSelected,
     metadataValidation,
     samplesWithAssemblySelection,
-    allSampleWithReadsIds,
+    eligibleSampleIds,
     submitBinsEnabled,
   ]);
 
@@ -1009,7 +1024,7 @@ export function StudyPipelinesSection({
   const readinessIssues = getReadinessIssues({
     pipeline: selectedPipeline,
     samples: samplesWithAssemblySelection,
-    selectedSampleIds: allSampleWithReadsIds,
+    selectedSampleIds: eligibleSampleIds,
     metadataValidation,
     loadingMetadata,
     prerequisites,
@@ -1188,7 +1203,7 @@ export function StudyPipelinesSection({
         body: JSON.stringify({
           pipelineId: selectedPipeline.pipelineId,
           studyId,
-          sampleIds: Array.from(allSampleWithReadsIds),
+          sampleIds: Array.from(eligibleSampleIds),
           config: localConfig,
         }),
       });
@@ -1804,7 +1819,7 @@ export function StudyPipelinesSection({
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium">Samples</h2>
             <span className="text-xs text-muted-foreground">
-              {samplesWithReads.length} with reads
+              {samplesWithReads.length} eligible for this pipeline
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1852,7 +1867,7 @@ export function StudyPipelinesSection({
               </thead>
               <tbody className="divide-y divide-border">
                 {samplesWithAssemblySelection.map((sample, index) => {
-                  const hasPairedReads = sample.reads?.some((r) => r.file1 && r.file2);
+                  const readIssue = getStudySampleReadIssue(sample, selectedPipeline);
                   const sampleMissing =
                     isSubmgSelected && submgCoverage?.sampleMissingRequired[sample.id];
                   const sampleMetadataIssues = metadataValidation?.issues.filter((issue) => {
@@ -1862,7 +1877,7 @@ export function StudyPipelinesSection({
                   const sampleErrors = sampleMetadataIssues.filter((i) => i.severity === "error");
                   const sampleWarnings = sampleMetadataIssues.filter((i) => i.severity === "warning");
                   const hasIssues =
-                    !hasPairedReads ||
+                    readIssue !== null ||
                     (sampleMissing && sampleMissing.length > 0) ||
                     sampleErrors.length > 0;
 
@@ -1902,24 +1917,31 @@ export function StudyPipelinesSection({
                       </td>
                       <td className="px-4 py-3 align-top">
                         {(() => {
-                          const pairedRead = sample.reads?.find((r) => r.file1 && r.file2);
-                          if (pairedRead) {
-                            const f1 = pairedRead.file1!.split("/").pop();
-                            const f2 = pairedRead.file2!.split("/").pop();
+                          const selectedRead = getPreferredStudyRead(sample);
+                          if (selectedRead?.file1) {
+                            const f1 = selectedRead.file1.split("/").pop();
+                            const f2 = selectedRead.file2?.split("/").pop() ?? null;
                             return (
                               <div className="space-y-0.5">
                                 <Badge
                                   variant="outline"
-                                  className="border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D] mb-1"
+                                  className={cn(
+                                    "mb-1",
+                                    f2
+                                      ? "border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D]"
+                                      : "border-blue-200 bg-blue-50 text-blue-700"
+                                  )}
                                 >
-                                  Paired-end
+                                  {f2 ? "Paired-end" : "Single-end"}
                                 </Badge>
-                                <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={pairedRead.file1!}>
+                                <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={selectedRead.file1}>
                                   R1: {f1}
                                 </div>
-                                <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={pairedRead.file2!}>
-                                  R2: {f2}
-                                </div>
+                                {f2 && (
+                                  <div className="text-xs text-muted-foreground font-mono truncate max-w-[220px]" title={selectedRead.file2 ?? undefined}>
+                                    R2: {f2}
+                                  </div>
+                                )}
                               </div>
                             );
                           }
@@ -1948,8 +1970,8 @@ export function StudyPipelinesSection({
                       <td className="px-4 py-3 align-top">
                         {hasIssues ? (
                           <div className="space-y-0.5">
-                            {!hasPairedReads && (
-                              <p className="text-xs text-amber-700">Missing paired reads</p>
+                            {readIssue && (
+                              <p className="text-xs text-amber-700">{readIssue}</p>
                             )}
                             {sampleMissing && sampleMissing.length > 0 && (
                               <p className="text-xs text-destructive">
@@ -2203,8 +2225,10 @@ export function StudyPipelinesSection({
                 </thead>
                 <tbody className="divide-y divide-border">
                   {filteredRuns.map((run) => {
-                    const details = getRunDetails(run);
+                    const details = getStudyPipelineRunDetails(run);
                     const sampleCount = getSampleCount(run);
+                    const reportPath = getStudyPipelineRunReportPath(run);
+                    const hasOutputErrors = runHasOutputErrors(run);
 
                     return (
                       <tr
@@ -2250,7 +2274,7 @@ export function StudyPipelinesSection({
                           {details ? (
                             <span
                               className={`text-xs ${
-                                run.status === "failed"
+                                run.status === "failed" || hasOutputErrors
                                   ? "font-mono text-destructive"
                                   : "text-muted-foreground"
                               }`}
@@ -2263,9 +2287,9 @@ export function StudyPipelinesSection({
                           )}
                         </td>
                         <td className="px-4 py-3 align-top" onClick={(e) => e.stopPropagation()}>
-                          {run.status === "completed" && run.runFolder ? (
+                          {run.status === "completed" && reportPath ? (
                             <a
-                              href={`/api/files/preview?path=${encodeURIComponent(`${run.runFolder}/output/report/reads-qc-report.html`)}`}
+                              href={`/api/files/preview?path=${encodeURIComponent(reportPath)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
@@ -2273,6 +2297,8 @@ export function StudyPipelinesSection({
                               View report
                               <ExternalLink className="h-3 w-3" />
                             </a>
+                          ) : run.status === "completed" && hasOutputErrors ? (
+                            <span className="text-xs text-destructive">Output error</span>
                           ) : (
                             <span className="text-xs text-muted-foreground">-</span>
                           )}

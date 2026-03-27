@@ -22,6 +22,7 @@
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once",
     "pipeline:e2e:checksum": "bash scripts/run-fastq-checksum-e2e.sh",
     "pipeline:e2e:fastqc": "bash scripts/run-fastqc-e2e.sh",
+    "pipeline:e2e:reads-qc": "bash scripts/run-reads-qc-e2e.sh",
     "pipeline:e2e:order": "bash scripts/run-order-pipeline-e2e.sh",
     "pipeline:e2e:study": "bash scripts/run-study-pipeline-e2e.sh",
     "test": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run",
