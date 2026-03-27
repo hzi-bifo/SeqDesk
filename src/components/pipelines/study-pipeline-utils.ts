@@ -52,7 +52,16 @@ function pipelineRequiresReads(pipeline: StudyPipelineLike | null | undefined): 
 function studyPipelineRequiresPairedReads(
   pipeline: StudyPipelineLike | null | undefined
 ): boolean {
-  return pipelineRequiresPairedReads(pipeline?.input?.perSample);
+  const perSample = pipeline?.input?.perSample;
+  if (!perSample?.reads) {
+    return false;
+  }
+
+  return pipelineRequiresPairedReads({
+    reads: true,
+    pairedEnd: perSample.pairedEnd ?? false,
+    readMode: perSample.readMode,
+  });
 }
 
 export function sampleHasAnyReads(sample: StudySampleLike): boolean {

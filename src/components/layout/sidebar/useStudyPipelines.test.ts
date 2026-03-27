@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchMock = vi.fn();
 
@@ -17,6 +17,10 @@ describe("useStudyPipelines hook", () => {
     vi.clearAllMocks();
     vi.resetModules();
     vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("returns no pipelines when admin controls are hidden or no study is selected", async () => {
@@ -59,11 +63,13 @@ describe("useStudyPipelines hook", () => {
         {
           pipelineId: "mag",
           name: "MAG",
+          category: "analysis",
           status: "complete",
         },
         {
           pipelineId: "submg",
           name: "SubMG",
+          category: "analysis",
           status: "partial",
         },
       ]);
@@ -98,6 +104,7 @@ describe("useStudyPipelines hook", () => {
         {
           pipelineId: "mag",
           name: "MAG",
+          category: "analysis",
           status: "empty",
         },
       ]);
@@ -111,6 +118,7 @@ describe("useStudyPipelines hook", () => {
         {
           pipelineId: "mag",
           name: "MAG",
+          category: "analysis",
           status: "empty",
         },
       ]);
@@ -134,4 +142,21 @@ describe("useStudyPipelines hook", () => {
       expect(result.current).toEqual([]);
     });
   });
+
+  it("falls back to an empty study pipeline list when definitions response is not ok", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/admin/settings/pipelines?enabled=true&catalog=study") {
+        return jsonResponse({}, false);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const { useStudyPipelines } = await import("./useStudyPipelines");
+    const { result } = renderHook(() => useStudyPipelines(true, "study-1"));
+
+    await waitFor(() => {
+      expect(result.current).toEqual([]);
+    });
+  });
+
 });

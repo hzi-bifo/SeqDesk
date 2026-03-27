@@ -239,6 +239,7 @@ interface Run {
   runNumber: string;
   pipelineId: string;
   pipelineName: string;
+  pipelineVersion?: string | null;
   pipelineIcon: string;
   pipelineDescription: string;
   status: string;
@@ -1557,7 +1558,12 @@ export default function AnalysisRunDetailPage({
               </div>
               <div>
                 <dt className="text-muted-foreground mb-0.5">Pipeline</dt>
-                <dd className="font-medium">{run.pipelineName} <span className="text-muted-foreground font-normal">v{run.pipelineVersion}</span></dd>
+                <dd className="font-medium">
+                  {run.pipelineName}
+                  {run.pipelineVersion ? (
+                    <span className="text-muted-foreground font-normal"> v{run.pipelineVersion}</span>
+                  ) : null}
+                </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground mb-0.5">Status</dt>
