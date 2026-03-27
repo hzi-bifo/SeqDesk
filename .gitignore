@@ -90,6 +90,7 @@ PIPELINE_STORE_INTEGRATION_REVIEW.md
 # local AI tooling state
 .claude/
 .codex/
+CLAUDE.md
 
 # config file (may contain sensitive paths)
 seqdesk.config.json
