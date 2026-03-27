@@ -299,7 +299,12 @@ function normalizePublishingTarget(value: string | null): "ena" | null {
   return value === "ena" ? "ena" : null;
 }
 
-function getPublishingStatus(study: Pick<Study, "submitted" | "readyForSubmission">): {
+function getPublishingStatus(
+  study: Pick<
+    Study,
+    "submitted" | "readyForSubmission" | "studyAccessionId" | "testRegisteredAt"
+  >
+): {
   label: string;
   className: string;
 } {
@@ -307,6 +312,21 @@ function getPublishingStatus(study: Pick<Study, "submitted" | "readyForSubmissio
     return {
       label: "Registered",
       className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  if (study.studyAccessionId && !study.testRegisteredAt) {
+    return {
+      label: "Partial",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+    };
+  }
+  if (study.studyAccessionId && study.testRegisteredAt) {
+    const expiration = getTestExpirationStatus(study.testRegisteredAt);
+    return {
+      label: expiration?.expired ? "Test Expired" : "Test Registered",
+      className: expiration?.expired
+        ? "border-slate-200 bg-slate-50 text-slate-600"
+        : "border-amber-200 bg-amber-50 text-amber-700",
     };
   }
   if (study.readyForSubmission) {
@@ -322,13 +342,25 @@ function getPublishingStatus(study: Pick<Study, "submitted" | "readyForSubmissio
 }
 
 function getPublishingSummary(
-  study: Pick<Study, "submitted" | "readyForSubmission" | "studyAccessionId">
+  study: Pick<
+    Study,
+    "submitted" | "readyForSubmission" | "studyAccessionId" | "testRegisteredAt"
+  >
 ): string {
   if (study.submitted && study.studyAccessionId) {
     return `Accession ${study.studyAccessionId} assigned`;
   }
   if (study.submitted) {
     return "Study has been registered";
+  }
+  if (study.studyAccessionId && !study.testRegisteredAt) {
+    return `Study accession ${study.studyAccessionId} assigned; sample registration incomplete`;
+  }
+  if (study.studyAccessionId && study.testRegisteredAt) {
+    const expiration = getTestExpirationStatus(study.testRegisteredAt);
+    return expiration?.expired
+      ? `Expired ENA test accession ${study.studyAccessionId}`
+      : `ENA test accession ${study.studyAccessionId} active`;
   }
   if (study.readyForSubmission) {
     return "Ready for registration";
@@ -713,8 +745,11 @@ export default function StudyDetailPage({
         setSubmitSuccess("");
       }
 
-      // Refresh study data after a short delay
-      setTimeout(fetchStudy, 500);
+      // Refresh study data and submission history after a short delay.
+      setTimeout(() => {
+        void fetchStudy();
+        fetchEnaSubmissions();
+      }, 500);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create submission";
       setRegisterSteps([
@@ -950,12 +985,20 @@ export default function StudyDetailPage({
   }
 
   // Calculate metadata completion
-  const samplesWithMetadata = studySamples.filter(sampleHasStudyOverviewMetadata).length;
   const totalSamples = studySamples.length;
-  const allMetadataComplete = totalSamples > 0 && samplesWithMetadata === totalSamples;
+  const metadataEvaluationReady = studySchemaLoaded;
+  const sampleMetadataRequired = metadataEvaluationReady && hasSampleMetadataSection;
+  const samplesWithMetadata = !metadataEvaluationReady
+    ? 0
+    : sampleMetadataRequired
+      ? studySamples.filter(sampleHasStudyOverviewMetadata).length
+      : totalSamples;
+  const allMetadataComplete =
+    metadataEvaluationReady && totalSamples > 0 && samplesWithMetadata === totalSamples;
   const metadataCompletionPercent = totalSamples > 0
     ? Math.round((samplesWithMetadata / totalSamples) * 100)
     : 0;
+  const publishingStatus = getPublishingStatus(study);
   const ownerDisplayName = study.user.firstName && study.user.lastName
     ? `${study.user.firstName} ${study.user.lastName}`
     : study.user.email;
@@ -972,7 +1015,7 @@ export default function StudyDetailPage({
         <div className="min-w-0">
           <h1 className="text-lg font-semibold truncate">{study.title}</h1>
           <p className="text-sm text-muted-foreground">
-            {study.submitted ? "Registered" : study.readyForSubmission ? "Ready for submission" : "Draft"}
+            {publishingStatus.label}
             {study.studyAccessionId && ` \u00B7 ${study.studyAccessionId}`}
           </p>
         </div>
@@ -1788,22 +1831,42 @@ export default function StudyDetailPage({
                   return sample?.scientificName ? `${sample.scientificName} (${id})` : String(id);
                 }).join(", ")
               : null;
-            const metadataPct = studySamples.length > 0
-              ? Math.round((studySamples.filter(s => {
-                  // simple check: sample has metadata entries
-                  return s.taxId && s.taxId.trim();
-                }).length / studySamples.length) * 100)
-              : 0;
+            const hasTestRegistration = Boolean(study.testRegisteredAt && study.studyAccessionId);
+            const testExpiration = getTestExpirationStatus(study.testRegisteredAt);
+            const activeTestRegistration = hasTestRegistration && !(testExpiration?.expired ?? false);
+            const hasPartialProductionRegistration = Boolean(
+              study.studyAccessionId && !study.submitted && !study.testRegisteredAt
+            );
+            const allSamplesHaveAccessions =
+              totalSamples > 0 &&
+              studySamples.every((sample) => Boolean(sample.sampleAccessionNumber));
             const requiredChecks = [
               { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()), value: study.title?.trim() || null },
               { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()), value: study.description?.trim() ? (study.description.trim().length > 80 ? study.description.trim().slice(0, 80) + "..." : study.description.trim()) : null },
               { key: "samples", label: "Samples", passed: totalSamples > 0, value: totalSamples > 0 ? `${totalSamples} sample${totalSamples !== 1 ? "s" : ""} linked` : null },
-              { key: "taxonomy", label: "Taxonomy ID", passed: studySamples.every(s => s.taxId && s.taxId.trim()), value: taxSummary },
-              { key: "metadata", label: "Metadata", passed: allMetadataComplete, value: allMetadataComplete ? "All complete" : `${studySamples.filter(() => allMetadataComplete).length}/${studySamples.length} complete` },
+              { key: "taxonomy", label: "Taxonomy ID", passed: totalSamples > 0 && studySamples.every(s => s.taxId && s.taxId.trim()), value: taxSummary },
+              {
+                key: "metadata",
+                label: "Metadata",
+                passed: metadataEvaluationReady && (!sampleMetadataRequired || allMetadataComplete),
+                value: !metadataEvaluationReady
+                  ? "Checking..."
+                  : sampleMetadataRequired
+                  ? (allMetadataComplete
+                    ? "All complete"
+                    : `${samplesWithMetadata}/${studySamples.length} complete`)
+                  : "Not required for this study",
+              },
             ];
             const passedChecks = requiredChecks.filter(c => c.passed).length;
             const allPassed = passedChecks === requiredChecks.length;
-            const hasTestRegistration = Boolean(study.testRegisteredAt);
+            const testButtonDisabledReason = !allPassed
+              ? "All checks must pass before registration"
+              : hasPartialProductionRegistration
+                ? "Study already has a production accession. Test re-registration would overwrite the stored production accession."
+                : activeTestRegistration && allSamplesHaveAccessions
+                  ? "Study and samples are already registered on the ENA Test Server"
+                  : undefined;
 
             return (
               <div className="space-y-6">
@@ -1840,8 +1903,13 @@ export default function StudyDetailPage({
                               size="sm"
                               variant="outline"
                               onClick={() => handleRegisterWithENA(true)}
-                              disabled={submitting || !allPassed}
-                              title={!allPassed ? "All checks must pass before registration" : undefined}
+                              disabled={
+                                submitting ||
+                                !allPassed ||
+                                hasPartialProductionRegistration ||
+                                (activeTestRegistration && allSamplesHaveAccessions)
+                              }
+                              title={testButtonDisabledReason}
                             >
                               {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                               Test Server
@@ -1875,29 +1943,6 @@ export default function StudyDetailPage({
                   </div>
                 )}
 
-                {hasTestRegistration && (() => {
-                  const expiration = getTestExpirationStatus(study.testRegisteredAt);
-                  const isExpired = expiration?.expired ?? false;
-                  return (
-                    <div className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between ${
-                      isExpired ? "border-[#CAD5E2] bg-[#CAD5E2]/10" : "border-[#FFBA00]/20 bg-[#FFBA00]/10"
-                    }`}>
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className={`h-4 w-4 shrink-0 ${isExpired ? "text-[#8FA1B9]" : "text-[#FFBA00]"}`} />
-                        <span>
-                          Test registration: <span className={`font-mono ${isExpired ? "line-through text-[#8FA1B9]" : ""}`}>{study.studyAccessionId}</span>
-                          <span className="ml-2 text-muted-foreground">({expiration?.text ?? "expires 24h"})</span>
-                        </span>
-                      </div>
-                      {!isExpired && (
-                        <a href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies" target="_blank" rel="noopener noreferrer"
-                          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                          View <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
-                    </div>
-                  );
-                })()}
 
                 {/* Section 3: Readiness Checks */}
                 <div className="rounded-xl border border-border bg-card">
@@ -1969,7 +2014,7 @@ export default function StudyDetailPage({
                               onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
                               className="flex items-center justify-between px-4 py-3 w-full text-left hover:bg-secondary/20 transition-colors"
                             >
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
                                 <span className="flex h-6 w-6 items-center justify-center rounded-full shrink-0" style={{ backgroundColor: `${statusColor}15` }}>
                                   {sub.status === "ACCEPTED" ? (
                                     <CheckCircle2 className="h-3.5 w-3.5" style={{ color: statusColor }} />
@@ -1981,20 +2026,20 @@ export default function StudyDetailPage({
                                     <Clock className="h-3.5 w-3.5" style={{ color: statusColor }} />
                                   )}
                                 </span>
-                                <div>
-                                  <p className="text-sm font-medium">
-                                    {isTest ? "Test" : "Production"} registration
-                                    <span className="ml-2 text-xs font-normal px-1.5 py-0.5 rounded" style={{ color: statusColor, backgroundColor: `${statusColor}15` }}>
-                                      {sub.status}
-                                    </span>
-                                  </p>
-                                  {studyAccession && (
-                                    <p className="text-xs text-muted-foreground font-mono">{studyAccession}</p>
-                                  )}
-                                </div>
+                                <span className="text-sm font-medium whitespace-nowrap">
+                                  {isTest ? "Test" : "Production"}
+                                </span>
+                                <span className="text-xs font-normal px-1.5 py-0.5 rounded whitespace-nowrap" style={{ color: statusColor, backgroundColor: `${statusColor}15` }}>
+                                  {sub.status}
+                                </span>
                               </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-xs text-muted-foreground">{formatDate(sub.createdAt)}</span>
+                              <div className="flex items-center gap-4 shrink-0">
+                                {studyAccession ? (
+                                  <span className="text-xs font-mono text-muted-foreground">{studyAccession}</span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">--</span>
+                                )}
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">{formatDate(sub.createdAt)}</span>
                                 <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                               </div>
                             </button>
