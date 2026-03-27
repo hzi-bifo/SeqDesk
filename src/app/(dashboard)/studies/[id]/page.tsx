@@ -38,6 +38,7 @@ import {
   RotateCcw,
   Download,
   HardDrive,
+  ChevronRight,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
@@ -1752,146 +1753,104 @@ export default function StudyDetailPage({
               </div>
             </div>
           ) : (() => {
-            const requiredChecks = {
-              hasTitle: Boolean(study.title && study.title.trim()),
-              hasDescription: Boolean(study.description && study.description.trim()),
-              hasSamples: totalSamples > 0,
-              allSamplesHaveOrganism: studySamples.every(s =>
-                s.taxId && s.taxId.trim()
-              ),
-              allSamplesHaveMetadata: allMetadataComplete,
-            };
-            const passedChecks = Object.values(requiredChecks).filter(Boolean).length;
-            const totalChecks = Object.keys(requiredChecks).length;
-            const allPassed = passedChecks === totalChecks;
+            const requiredChecks = [
+              { key: "title", label: "Title", passed: Boolean(study.title && study.title.trim()) },
+              { key: "description", label: "Description", passed: Boolean(study.description && study.description.trim()) },
+              { key: "samples", label: "Samples", passed: totalSamples > 0, count: totalSamples },
+              { key: "taxonomy", label: "Taxonomy ID", passed: studySamples.every(s => s.taxId && s.taxId.trim()) },
+              { key: "metadata", label: "Metadata", passed: allMetadataComplete },
+            ];
+            const passedChecks = requiredChecks.filter(c => c.passed).length;
+            const allPassed = passedChecks === requiredChecks.length;
             const hasTestRegistration = Boolean(study.testRegisteredAt);
-            const publishingStatus = getPublishingStatus(study);
 
             return (
-              <div className="bg-card rounded-lg border p-5">
-                <div className="flex items-start justify-between mb-4">
+              <div className="space-y-6">
+                {/* Section 1: Header */}
+                <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="font-semibold flex items-center gap-2">
-                      ENA Registration
-                      <Badge
-                        variant="secondary"
-                        className={publishingStatus.className}
-                      >
-                        {publishingStatus.label}
-                      </Badge>
-                      <span className="text-sm font-normal text-muted-foreground">
-                        ({passedChecks}/{totalChecks} checks)
-                      </span>
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {study.submitted
-                        ? "Study already registered with ENA"
-                        : study.readyForSubmission
-                          ? "User marked ready"
-                          : "User has not marked as ready"}
+                    <h1 className="text-xl font-semibold">Register at ENA</h1>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      Register your study and samples with the European Nucleotide Archive.
                     </p>
                   </div>
-                  {!study.submitted && isAdmin && (
-                    <div className="flex items-center gap-2">
-                      {enaCheck.status === "checking" ? (
-                        <Button size="sm" disabled>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Checking ENA...
-                        </Button>
-                      ) : enaCheck.status === "error" ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#FFBA00] hover:bg-[#FFBA00]/20"
-                          onClick={() => {
-                            setEnaCheck({ status: "idle" });
-                          }}
-                          title={enaCheck.message}
-                        >
-                          <AlertCircle className="h-4 w-4 mr-2" />
-                          {enaCheck.message?.includes("credentials")
-                            ? "ENA credentials missing"
-                            : "ENA check failed"}
-                        </Button>
-                      ) : (
-                        <>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!study.submitted && isAdmin && (
+                      <>
+                        {enaCheck.status === "checking" ? (
+                          <Button size="sm" disabled>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Checking ENA...
+                          </Button>
+                        ) : enaCheck.status === "error" ? (
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleRegisterWithENA(true)}
-                            disabled={submitting || !allPassed}
-                            title={!allPassed ? "All checks must pass before registration" : undefined}
+                            className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#FFBA00] hover:bg-[#FFBA00]/20"
+                            onClick={() => setEnaCheck({ status: "idle" })}
+                            title={enaCheck.message}
                           >
-                            {submitting ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <Send className="h-4 w-4 mr-2" />
-                            )}
-                            Test Server
+                            <AlertCircle className="h-4 w-4 mr-2" />
+                            {enaCheck.message?.includes("credentials") ? "ENA credentials missing" : "ENA check failed"}
                           </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleRegisterWithENA(false)}
-                            disabled={submitting || !allPassed || !study.readyForSubmission}
-                            title={
-                              !allPassed
-                                ? "All checks must pass before registration"
-                                : !study.readyForSubmission
-                                  ? "User must mark study as ready first"
-                                  : undefined
-                            }
-                          >
-                            {submitting ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <Send className="h-4 w-4 mr-2" />
-                            )}
-                            Production
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  )}
+                        ) : (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRegisterWithENA(true)}
+                              disabled={submitting || !allPassed}
+                              title={!allPassed ? "All checks must pass before registration" : undefined}
+                            >
+                              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                              Test Server
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleRegisterWithENA(false)}
+                              disabled={submitting || !allPassed || !study.readyForSubmission}
+                              title={!allPassed ? "All checks must pass" : !study.readyForSubmission ? "Mark study as ready first" : undefined}
+                            >
+                              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                              Production
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
 
+                {/* Section 2: Warnings */}
                 {study.submitted && study.studyAccessionId && (
-                  <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                    Registered accession:{" "}
-                    <span className="font-mono">{study.studyAccessionId}</span>
-                    {study.submittedAt ? (
-                      <span className="ml-2 text-emerald-700">
-                        on {formatDate(study.submittedAt)}
-                      </span>
-                    ) : null}
+                  <div className="rounded-lg border border-[#00BD7D]/20 bg-[#00BD7D]/10 px-4 py-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-[#00BD7D] shrink-0" />
+                      <span>Registered accession: <span className="font-mono font-medium">{study.studyAccessionId}</span></span>
+                      {study.submittedAt && (
+                        <span className="text-muted-foreground">on {formatDate(study.submittedAt)}</span>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                {/* Test Registration Status */}
                 {hasTestRegistration && (() => {
                   const expiration = getTestExpirationStatus(study.testRegisteredAt);
                   const isExpired = expiration?.expired ?? false;
                   return (
-                    <div className={`mb-4 p-3 rounded border flex items-center justify-between ${
-                      isExpired
-                        ? "border-stone-300 bg-stone-100"
-                        : "border-amber-200 bg-amber-50"
+                    <div className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between ${
+                      isExpired ? "border-[#CAD5E2] bg-[#CAD5E2]/10" : "border-[#FFBA00]/20 bg-[#FFBA00]/10"
                     }`}>
-                      <div className="flex items-center gap-2 text-sm">
-                        <AlertCircle className={`h-4 w-4 ${isExpired ? "text-stone-500" : "text-amber-600"}`} />
-                        <span className={isExpired ? "text-stone-600" : "text-amber-800"}>
-                          Test: <span className={`font-mono ${isExpired ? "line-through" : ""}`}>{study.studyAccessionId}</span>
-                          <span className={`ml-2 ${isExpired ? "text-stone-500" : "text-amber-600"}`}>
-                            ({expiration?.text ?? "expires 24h"})
-                          </span>
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className={`h-4 w-4 shrink-0 ${isExpired ? "text-[#8FA1B9]" : "text-[#FFBA00]"}`} />
+                        <span>
+                          Test registration: <span className={`font-mono ${isExpired ? "line-through text-[#8FA1B9]" : ""}`}>{study.studyAccessionId}</span>
+                          <span className="ml-2 text-muted-foreground">({expiration?.text ?? "expires 24h"})</span>
                         </span>
                       </div>
                       {!isExpired && (
-                        <a
-                          href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-amber-700 hover:underline flex items-center gap-1"
-                        >
+                        <a href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies" target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                           View <ExternalLink className="h-3 w-3" />
                         </a>
                       )}
@@ -1899,53 +1858,105 @@ export default function StudyDetailPage({
                   );
                 })()}
 
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    {requiredChecks.hasTitle ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>Title</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {requiredChecks.hasDescription ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>Description</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {requiredChecks.hasSamples ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>Samples ({totalSamples})</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {requiredChecks.allSamplesHaveOrganism ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>Taxonomy ID</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {requiredChecks.allSamplesHaveMetadata ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>Metadata</span>
+                {/* Section 3: Readiness Checks */}
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <h3 className="mb-3 text-sm font-medium">Submission Requirements</h3>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                    {requiredChecks.map((check) => (
+                      <div key={check.key} className="flex items-center gap-2.5">
+                        {check.passed ? (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
+                          </span>
+                        ) : (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 shrink-0">
+                            <XCircle className="h-3.5 w-3.5 text-destructive" />
+                          </span>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {check.label}
+                          {check.count !== undefined && (
+                            <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[10px] font-medium">
+                              {check.count}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t text-sm text-muted-foreground">
-                  Created by: {study.user.firstName && study.user.lastName
-                    ? `${study.user.firstName} ${study.user.lastName}`
-                    : study.user.email}
+                {/* Section 4: Submission History */}
+                <div className="rounded-xl border border-border bg-card">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                    <h3 className="text-sm font-medium">Submission History</h3>
+                    <span className="text-xs text-muted-foreground">
+                      Created by {study.user.firstName && study.user.lastName
+                        ? `${study.user.firstName} ${study.user.lastName}`
+                        : study.user.email}
+                    </span>
+                  </div>
+                  {!study.submitted && !hasTestRegistration ? (
+                    <div className="rounded-b-xl border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                      No submissions yet. Use the buttons above to register with ENA.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border">
+                      {study.submitted && study.studyAccessionId && (
+                        <div className="flex items-center justify-between px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#00BD7D]/10 shrink-0">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium">Production registration</p>
+                              <p className="text-xs text-muted-foreground font-mono">{study.studyAccessionId}</p>
+                            </div>
+                          </div>
+                          {study.submittedAt && (
+                            <span className="text-xs text-muted-foreground">{formatDate(study.submittedAt)}</span>
+                          )}
+                        </div>
+                      )}
+                      {hasTestRegistration && (() => {
+                        const expiration = getTestExpirationStatus(study.testRegisteredAt);
+                        const isExpired = expiration?.expired ?? false;
+                        return (
+                          <div className="flex items-center justify-between px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className={`flex h-6 w-6 items-center justify-center rounded-full shrink-0 ${
+                                isExpired ? "bg-[#CAD5E2]/20" : "bg-[#FFBA00]/10"
+                              }`}>
+                                {isExpired ? (
+                                  <Clock className="h-3.5 w-3.5 text-[#8FA1B9]" />
+                                ) : (
+                                  <AlertCircle className="h-3.5 w-3.5 text-[#FFBA00]" />
+                                )}
+                              </span>
+                              <div>
+                                <p className={`text-sm font-medium ${isExpired ? "text-[#8FA1B9]" : ""}`}>Test registration</p>
+                                <p className="text-xs text-muted-foreground">
+                                  <span className={`font-mono ${isExpired ? "line-through" : ""}`}>{study.studyAccessionId}</span>
+                                  <span className="ml-1.5">({expiration?.text ?? "expires 24h"})</span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {study.testRegisteredAt && (
+                                <span className="text-xs text-muted-foreground">{formatDate(study.testRegisteredAt)}</span>
+                              )}
+                              {!isExpired && (
+                                <a href="https://wwwdev.ebi.ac.uk/ena/submit/webin/report/studies" target="_blank" rel="noopener noreferrer"
+                                  className="text-xs text-primary hover:underline flex items-center gap-1">
+                                  View <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -2021,7 +2032,7 @@ export default function StudyDetailPage({
       <Dialog open={registerDialogOpen} onOpenChange={(open) => {
         if (!submitting) setRegisterDialogOpen(open);
       }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Send className="h-5 w-5" />
@@ -2036,96 +2047,50 @@ export default function StudyDetailPage({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-4">
-            <div className="space-y-2">
-              {registerSteps.map((step) => (
-                <div
-                  key={step.step}
-                  className="flex items-center gap-3 p-2 rounded border"
-                >
-                  <div className="flex-shrink-0">
+          <div className="flex-1 overflow-y-auto py-2 space-y-3">
+            {/* Steps */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {registerSteps.map((step, i) => (
+                <span key={step.step} className="contents">
+                  {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  <span className="flex items-center gap-1.5 text-sm">
                     {step.status === "completed" ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <CheckCircle2 className="h-4 w-4 text-[#00BD7D] shrink-0" />
                     ) : step.status === "running" ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
                     ) : step.status === "error" ? (
-                      <XCircle className="h-4 w-4 text-red-500" />
+                      <XCircle className="h-4 w-4 text-red-500 shrink-0" />
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-stone-300 flex items-center justify-center">
-                        <span className="text-[10px] text-white font-bold">{step.step}</span>
-                      </div>
+                      <span className="h-4 w-4 rounded-full bg-muted flex items-center justify-center shrink-0">
+                        <span className="text-[10px] text-muted-foreground font-bold">{step.step}</span>
+                      </span>
                     )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm">{step.name}</p>
-                    {step.details && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {step.details}
-                      </p>
-                    )}
-                  </div>
-                </div>
+                    <span className={step.status === "error" ? "text-red-600" : ""}>{step.name}</span>
+                  </span>
+                </span>
               ))}
             </div>
 
-            {/* Generated XML - for debugging */}
-            {generatedXml && (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Generated XML:</p>
-
-                {generatedXml.sampleXml && (
-                  <div className="border rounded p-2 bg-muted/50">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium">Sample XML</span>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedXml.sampleXml || "");
-                        }}
-                        className="text-xs bg-stone-200 text-stone-600 px-2 py-0.5 rounded hover:bg-stone-300 flex items-center gap-1"
-                      >
-                        <Copy className="h-3 w-3" /> Copy
-                      </button>
-                    </div>
-                    <div className="max-h-32 overflow-y-auto bg-white rounded p-2 border text-xs font-mono whitespace-pre-wrap break-all">
-                      {generatedXml.sampleXml}
-                    </div>
-                  </div>
-                )}
-
-                {generatedXml.studyXml && (
-                  <div className="border rounded p-2 bg-muted/50">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium">Study XML</span>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedXml.studyXml || "");
-                        }}
-                        className="text-xs bg-stone-200 text-stone-600 px-2 py-0.5 rounded hover:bg-stone-300 flex items-center gap-1"
-                      >
-                        <Copy className="h-3 w-3" /> Copy
-                      </button>
-                    </div>
-                    <div className="max-h-24 overflow-y-auto bg-white rounded p-2 border text-xs font-mono whitespace-pre-wrap break-all">
-                      {generatedXml.studyXml}
-                    </div>
-                  </div>
-                )}
+            {/* Step error details */}
+            {registerSteps.some((s) => s.status === "error" && s.details) && (
+              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {registerSteps.find((s) => s.status === "error")?.details}
               </div>
             )}
 
             {/* Result */}
             {registerResult && (
-              <div className={`mt-4 p-4 rounded-lg border ${
+              <div className={`p-4 rounded-lg border ${
                 registerResult.success
-                  ? "bg-green-50 border-green-200"
+                  ? "bg-[#00BD7D]/10 border-[#00BD7D]/20"
                   : registerResult.isPartial
-                    ? "bg-amber-50 border-amber-200"
+                    ? "bg-[#FFBA00]/10 border-[#FFBA00]/20"
                     : "bg-red-50 border-red-200"
               }`}>
                 <div className="text-center">
                   {registerResult.success ? (
                     <>
-                      <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-2" />
+                      <CheckCircle2 className="h-6 w-6 text-[#00BD7D] mx-auto mb-2" />
                       <p className="font-medium">Registration Successful</p>
                       {registerResult.accession && (
                         <p className="text-sm text-muted-foreground mt-1 font-mono">
@@ -2133,14 +2098,14 @@ export default function StudyDetailPage({
                         </p>
                       )}
                       {registerResult.isTest && (
-                        <p className="text-xs text-amber-600 mt-2">Test server - expires in 24h</p>
+                        <p className="text-xs text-[#FFBA00] mt-2">Test server - expires in 24h</p>
                       )}
                     </>
                   ) : registerResult.isPartial ? (
                     <>
-                      <AlertCircle className="h-6 w-6 text-amber-600 mx-auto mb-2" />
-                      <p className="font-medium text-amber-800">Partial Registration</p>
-                      <p className="text-sm text-amber-700 mt-1">Study OK, samples had errors</p>
+                      <AlertCircle className="h-6 w-6 text-[#FFBA00] mx-auto mb-2" />
+                      <p className="font-medium">Partial Registration</p>
+                      <p className="text-sm text-muted-foreground mt-1">Study OK, samples had errors</p>
                       {registerResult.accession && (
                         <p className="text-sm text-muted-foreground mt-1 font-mono">
                           {registerResult.accession}
@@ -2165,6 +2130,55 @@ export default function StudyDetailPage({
                   </p>
                 </div>
               </div>
+            )}
+
+            {/* Generated XML - collapsible debug section */}
+            {generatedXml && (
+              <details className="group">
+                <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
+                  <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                  Generated XML
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {generatedXml.sampleXml && (
+                    <div className="border rounded p-2 bg-muted/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">Sample XML</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(generatedXml.sampleXml || "");
+                          }}
+                          className="text-xs bg-stone-200 text-stone-600 px-2 py-0.5 rounded hover:bg-stone-300 flex items-center gap-1"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </button>
+                      </div>
+                      <div className="max-h-32 overflow-y-auto bg-white rounded p-2 border text-xs font-mono whitespace-pre-wrap break-all">
+                        {generatedXml.sampleXml}
+                      </div>
+                    </div>
+                  )}
+
+                  {generatedXml.studyXml && (
+                    <div className="border rounded p-2 bg-muted/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">Study XML</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(generatedXml.studyXml || "");
+                          }}
+                          className="text-xs bg-stone-200 text-stone-600 px-2 py-0.5 rounded hover:bg-stone-300 flex items-center gap-1"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </button>
+                      </div>
+                      <div className="max-h-24 overflow-y-auto bg-white rounded p-2 border text-xs font-mono whitespace-pre-wrap break-all">
+                        {generatedXml.studyXml}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </details>
             )}
           </div>
 

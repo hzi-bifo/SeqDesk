@@ -1073,18 +1073,14 @@ export function StudyPipelinesSection({
 
   // --- Effects ---
 
-  // Auto-select pipeline (only when a specific pipeline is requested via URL)
+  // Auto-select pipeline from URL — always follow the URL when it changes
   useEffect(() => {
     if (!enabledPipelines.length || !requestedPipelineId) return;
-    setSelectedPipelineId((current) => {
-      if (current && enabledPipelines.some((p) => p.pipelineId === current)) {
-        return current;
-      }
-      if (enabledPipelines.some((p) => p.pipelineId === requestedPipelineId)) {
-        return requestedPipelineId;
-      }
-      return enabledPipelines[0].pipelineId;
-    });
+    if (enabledPipelines.some((p) => p.pipelineId === requestedPipelineId)) {
+      setSelectedPipelineId(requestedPipelineId);
+    } else {
+      setSelectedPipelineId(enabledPipelines[0].pipelineId);
+    }
   }, [enabledPipelines, requestedPipelineId]);
 
   // Init config and samples when pipeline changes
@@ -1634,12 +1630,12 @@ export function StudyPipelinesSection({
                   : undefined
               }
             >
-              {startingPipelineId === selectedPipeline?.pipelineId ? (
+              {startingPipelineId === selectedPipeline?.pipelineId || loadingPrereqs || loadingMetadata ? (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Play className="mr-1.5 h-3.5 w-3.5" />
               )}
-              Start Pipeline
+              {loadingPrereqs || loadingMetadata ? "Loading..." : "Start Pipeline"}
             </Button>
           )}
         </div>
