@@ -346,7 +346,7 @@ export function OrderPipelineView({
     };
     setLocalConfig(
       pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID
-        ? normalizeSimulateReadsConfig(mergedConfig)
+        ? { ...normalizeSimulateReadsConfig(mergedConfig) } as Record<string, unknown>
         : mergedConfig
     );
     setSimulateReadsAdvancedOpen(false);
@@ -375,7 +375,7 @@ export function OrderPipelineView({
           merged.simulationMode = "synthetic";
         }
 
-        return normalizeSimulateReadsConfig(merged);
+        return { ...normalizeSimulateReadsConfig(merged) } as Record<string, unknown>;
       });
     },
     []

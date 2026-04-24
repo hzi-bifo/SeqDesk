@@ -217,7 +217,7 @@ export function normalizePipelineRunConfig(
   rawConfig?: Record<string, unknown> | null,
 ): Record<string, unknown> {
   if (pipelineId === SIMULATE_READS_PIPELINE_ID) {
-    return normalizeSimulateReadsConfig(rawConfig);
+    return { ...normalizeSimulateReadsConfig(rawConfig) };
   }
   return rawConfig ?? {};
 }
@@ -227,7 +227,7 @@ export function getPipelineRunConfigIssues(
   config: Record<string, unknown>,
 ): string[] {
   if (pipelineId === SIMULATE_READS_PIPELINE_ID) {
-    return getSimulateReadsConfigIssues(config as SimulateReadsConfig);
+    return getSimulateReadsConfigIssues(normalizeSimulateReadsConfig(config));
   }
   return [];
 }
