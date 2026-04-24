@@ -113,7 +113,7 @@ export async function goToNewOrderSamplesStep(
   await page.getByTestId("next-step-button").click();
 
   await completeSequencingParameters(page);
-  await expect(page.getByText("Add your samples below.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Samples" })).toBeVisible();
 }
 
 export async function fillRequiredSampleRow(
@@ -268,24 +268,15 @@ export async function createDraftOrder(
 }
 
 export async function setAllowDeleteSubmittedOrders(page: Page, enabled: boolean) {
-  await page.goto("/admin/form-builder?tab=settings#data-handling");
-  await expect(page.getByRole("heading", { name: "Advanced Settings" })).toBeVisible();
-
-  const deleteSwitch = page.getByRole("checkbox", {
-    name: /allow deletion of submitted orders/i,
+  const response = await page.request.put("/api/admin/settings/access", {
+    headers: {
+      "Content-Type": "application/json",
+    },
+    data: {
+      allowDeleteSubmittedOrders: enabled,
+    },
   });
-  await expect(deleteSwitch).toBeVisible();
-
-  const isChecked = await deleteSwitch.isChecked();
-  if (isChecked !== enabled) {
-    await deleteSwitch.setChecked(enabled, { force: true });
-  }
-
-  if (enabled) {
-    await expect(deleteSwitch).toBeChecked();
-  } else {
-    await expect(deleteSwitch).not.toBeChecked();
-  }
+  expect(response.ok()).toBeTruthy();
 }
 
 export async function withAllowDeleteSubmittedOrdersLock<T>(

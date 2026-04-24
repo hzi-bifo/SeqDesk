@@ -239,6 +239,12 @@ function buildRunConfig(
     );
   }
 
+  if (pipelineId === 'simulate-reads' && settings.dataBasePath.trim()) {
+    sections.push(
+      `params {\n  dataBasePath = '${escapeNextflowString(settings.dataBasePath.trim())}'\n}`
+    );
+  }
+
   if (sections.length === 0) return null;
   return `${sections.join('\n\n')}\n`;
 }
@@ -249,6 +255,21 @@ function normalizeParamKey(value: string): string {
 
 function isBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length === 0;
+}
+
+// Wrap a value as a single POSIX shell token. Values that are only made up of
+// safe characters are emitted verbatim; anything else is single-quoted with
+// embedded single quotes escaped via the standard '\'' dance. This is the
+// boundary that prevents user-config values from becoming shell syntax when
+// they get written into run.sh.
+function shellQuote(value: string): string {
+  if (value === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isSafeFlagKey(key: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_-]*$/.test(key);
 }
 
 /**
@@ -412,8 +433,8 @@ function buildPipelineFlags(
         // null/undefined/blank -> skip
         continue;
       } else {
-        // Other values -> add flag with value
-        flags.push(`${trimmedFlag} ${value}`);
+        // Other values -> add flag with shell-escaped value
+        flags.push(`${trimmedFlag} ${shellQuote(String(value))}`);
       }
 
       // Remove from merged so we don't process it again
@@ -425,6 +446,7 @@ function buildPipelineFlags(
       // Skip internal/processed keys
       if (key.startsWith('_')) continue;
       if (mappedFlags.has(normalizeParamKey(key))) continue;
+      if (!isSafeFlagKey(key)) continue;
 
       if (value === true) {
         flags.push(`--${key}`);
@@ -433,13 +455,14 @@ function buildPipelineFlags(
       } else if (value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
-        flags.push(`--${key} ${value}`);
+        flags.push(`--${key} ${shellQuote(String(value))}`);
       }
     }
   } else {
     // No paramMap - direct conversion: key -> --key
     for (const [key, value] of Object.entries(merged)) {
       if (key.startsWith('_')) continue;
+      if (!isSafeFlagKey(key)) continue;
 
       if (value === true) {
         flags.push(`--${key}`);
@@ -448,7 +471,7 @@ function buildPipelineFlags(
       } else if (value === null || value === undefined || isBlankString(value)) {
         continue;
       } else {
-        flags.push(`--${key} ${value}`);
+        flags.push(`--${key} ${shellQuote(String(value))}`);
       }
     }
   }
@@ -460,7 +483,7 @@ function buildPipelineFlags(
         if (typeof item === 'string') {
           flags.push(item);
         } else {
-          flags.push(`${item.flag} ${item.value}`);
+          flags.push(`${item.flag} ${shellQuote(String(item.value))}`);
         }
       }
     }

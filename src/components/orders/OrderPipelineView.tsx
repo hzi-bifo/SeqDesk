@@ -5,6 +5,11 @@ import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -42,6 +47,16 @@ import {
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
+import {
+  normalizeSimulateReadsConfig,
+  SIMULATE_READS_ADVANCED_FIELDS,
+  SIMULATE_READS_BASIC_FIELDS,
+  SIMULATE_READS_ENUM_LABELS,
+  SIMULATE_READS_PIPELINE_ID,
+  type SimulateReadsConfig,
+  type SimulateReadsMode,
+  type SimulateReadsSimulationMode,
+} from "@/lib/pipelines/simulate-reads-config";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -70,6 +85,8 @@ type ConfigSchemaProperty = {
   description?: string;
   enum?: string[];
   default?: unknown;
+  minimum?: number;
+  maximum?: number;
 };
 
 type AdminPipeline = {
@@ -214,6 +231,7 @@ export function OrderPipelineView({
   isDemo,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [simulateReadsAdvancedOpen, setSimulateReadsAdvancedOpen] = useState(false);
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
   const [error, setError] = useState("");
@@ -322,8 +340,46 @@ export function OrderPipelineView({
 
   useEffect(() => {
     if (!pipeline) return;
-    setLocalConfig({ ...(pipeline.config || pipeline.defaultConfig || {}) });
+    const mergedConfig = {
+      ...(pipeline.defaultConfig || {}),
+      ...(pipeline.config || {}),
+    };
+    setLocalConfig(
+      pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID
+        ? normalizeSimulateReadsConfig(mergedConfig)
+        : mergedConfig
+    );
+    setSimulateReadsAdvancedOpen(false);
   }, [pipeline]);
+
+  const simulateReadsConfig = useMemo(
+    () =>
+      pipeline?.pipelineId === SIMULATE_READS_PIPELINE_ID
+        ? normalizeSimulateReadsConfig(localConfig)
+        : null,
+    [localConfig, pipeline?.pipelineId]
+  );
+
+  const updateSimulateReadsConfig = useCallback(
+    (patch: Partial<SimulateReadsConfig>) => {
+      setLocalConfig((prev) => {
+        const merged = {
+          ...normalizeSimulateReadsConfig(prev),
+          ...patch,
+        };
+
+        if (
+          patch.mode === "longRead" &&
+          merged.simulationMode === "template"
+        ) {
+          merged.simulationMode = "synthetic";
+        }
+
+        return normalizeSimulateReadsConfig(merged);
+      });
+    },
+    []
+  );
 
   const getSampleReadiness = useCallback(
     (sample: (typeof samples)[0]): { ready: boolean; reason?: string } => {
@@ -604,6 +660,287 @@ export function OrderPipelineView({
       : "min-w-[960px]"
     : "min-w-[720px]";
 
+  const renderGenericSettings = () => {
+    if (!pipeline?.configSchema?.properties) return null;
+
+    return (
+      <div className="flex flex-wrap items-end gap-4">
+        {Object.entries(pipeline.configSchema.properties).map(([key, schema]) => {
+          const value = localConfig[key] ?? schema.default;
+
+          if (schema.enum) {
+            const fieldId = `config-${key}`;
+            return (
+              <div key={key} className="space-y-1">
+                <Label className="text-xs" htmlFor={fieldId}>
+                  {schema.title || key}
+                </Label>
+                <Select
+                  value={String(value ?? "")}
+                  onValueChange={(v) => setLocalConfig((prev) => ({ ...prev, [key]: v }))}
+                >
+                  <SelectTrigger
+                    id={fieldId}
+                    aria-label={schema.title || key}
+                    className="h-8 w-[160px] text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {schema.enum.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {SIMULATE_READS_ENUM_LABELS[opt] || opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            );
+          }
+
+          if (schema.type === "boolean") {
+            const fieldId = `config-${key}`;
+            return (
+              <div key={key} className="flex items-center gap-2 pb-1">
+                <Switch
+                  id={fieldId}
+                  checked={!!value}
+                  onCheckedChange={(checked) =>
+                    setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
+                  }
+                />
+                <Label htmlFor={fieldId} className="text-xs">
+                  {schema.title || key}
+                </Label>
+              </div>
+            );
+          }
+
+          if (schema.type === "number") {
+            const fieldId = `config-${key}`;
+            return (
+              <div key={key} className="space-y-1">
+                <Label className="text-xs" htmlFor={fieldId}>
+                  {schema.title || key}
+                </Label>
+                <Input
+                  id={fieldId}
+                  type="number"
+                  className="h-8 w-[120px] text-xs"
+                  min={schema.minimum}
+                  max={schema.maximum}
+                  value={value != null ? String(value) : ""}
+                  onChange={(e) =>
+                    setLocalConfig((prev) => ({
+                      ...prev,
+                      [key]: e.target.value ? Number(e.target.value) : undefined,
+                    }))
+                  }
+                />
+              </div>
+            );
+          }
+
+          return null;
+        })}
+      </div>
+    );
+  };
+
+  const renderSimulateReadsSettings = () => {
+    if (!pipeline?.configSchema?.properties || !simulateReadsConfig) {
+      return null;
+    }
+
+    const templateMode = simulateReadsConfig.simulationMode === "template";
+    const longReadMode = simulateReadsConfig.mode === "longRead";
+    const pairedSyntheticMode =
+      simulateReadsConfig.mode === "shortReadPaired" && !templateMode;
+    const schema = pipeline.configSchema.properties;
+
+    const renderField = (
+      key: keyof SimulateReadsConfig,
+      options?: {
+        disabled?: boolean;
+        helperText?: string;
+      }
+    ) => {
+      const fieldSchema = schema[key];
+      if (!fieldSchema) return null;
+      const fieldId = `config-${String(key)}`;
+      const disabled = options?.disabled ?? false;
+      const value = simulateReadsConfig[key];
+
+      if (fieldSchema.enum) {
+        return (
+          <div key={key} className="space-y-1">
+            <Label className="text-xs" htmlFor={fieldId}>
+              {fieldSchema.title || key}
+            </Label>
+            <Select
+              value={String(value ?? "")}
+              onValueChange={(nextValue) => {
+                if (key === "mode") {
+                  updateSimulateReadsConfig({
+                    mode: nextValue as SimulateReadsMode,
+                  });
+                  return;
+                }
+
+                if (key === "simulationMode") {
+                  updateSimulateReadsConfig({
+                    simulationMode: nextValue as SimulateReadsSimulationMode,
+                  });
+                  return;
+                }
+
+                updateSimulateReadsConfig({ [key]: nextValue } as Partial<SimulateReadsConfig>);
+              }}
+              disabled={disabled}
+            >
+              <SelectTrigger
+                id={fieldId}
+                aria-label={fieldSchema.title || key}
+                className="h-8 w-[180px] text-xs"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {fieldSchema.enum.map((option) => (
+                  <SelectItem
+                    key={option}
+                    value={option}
+                    disabled={key === "simulationMode" && option === "template" && longReadMode}
+                  >
+                    {SIMULATE_READS_ENUM_LABELS[option] || option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {options?.helperText ? (
+              <p className="max-w-[220px] text-[11px] text-muted-foreground">
+                {options.helperText}
+              </p>
+            ) : null}
+          </div>
+        );
+      }
+
+      if (fieldSchema.type === "boolean") {
+        return (
+          <div key={key} className="flex items-center gap-2 pt-5">
+            <Switch
+              id={fieldId}
+              checked={Boolean(value)}
+              disabled={disabled}
+              onCheckedChange={(checked) =>
+                updateSimulateReadsConfig({
+                  [key]: checked,
+                } as Partial<SimulateReadsConfig>)
+              }
+            />
+            <Label htmlFor={fieldId} className="text-xs">
+              {fieldSchema.title || key}
+            </Label>
+          </div>
+        );
+      }
+
+      return (
+        <div key={key} className="space-y-1">
+          <Label className="text-xs" htmlFor={fieldId}>
+            {fieldSchema.title || key}
+          </Label>
+          <Input
+            id={fieldId}
+            type="number"
+            className="h-8 w-[120px] text-xs"
+            min={fieldSchema.minimum}
+            max={fieldSchema.maximum}
+            disabled={disabled}
+            value={value != null ? String(value) : ""}
+            onChange={(e) =>
+              updateSimulateReadsConfig({
+                [key]: e.target.value ? Number(e.target.value) : null,
+              } as Partial<SimulateReadsConfig>)
+            }
+          />
+          {options?.helperText ? (
+            <p className="max-w-[220px] text-[11px] text-muted-foreground">
+              {options.helperText}
+            </p>
+          ) : null}
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start gap-4">
+          {SIMULATE_READS_BASIC_FIELDS.map((key) => {
+            switch (key) {
+              case "readCount":
+              case "readLength":
+                return renderField(key, {
+                  disabled: templateMode,
+                  helperText: templateMode
+                    ? "Template replay uses the read count and read lengths from the selected FASTQ pair."
+                    : undefined,
+                });
+              case "qualityProfile":
+                return renderField(key, {
+                  disabled: templateMode,
+                  helperText: templateMode
+                    ? "Template replay preserves the quality profile already present in the template FASTQs."
+                    : undefined,
+                });
+              default:
+                return renderField(key);
+            }
+          })}
+        </div>
+
+        {longReadMode ? (
+          <p className="text-xs text-muted-foreground">
+            Long-read mode always runs with synthetic generation. Template replay is disabled for this mode.
+          </p>
+        ) : null}
+
+        <Collapsible
+          open={simulateReadsAdvancedOpen}
+          onOpenChange={setSimulateReadsAdvancedOpen}
+        >
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="sm" type="button">
+              {simulateReadsAdvancedOpen ? "Hide advanced settings" : "Advanced settings"}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-3">
+            <div className="flex flex-wrap items-start gap-4">
+              {SIMULATE_READS_ADVANCED_FIELDS.map((key) => {
+                if (key === "insertMean" || key === "insertStdDev") {
+                  return renderField(key, {
+                    disabled: !pairedSyntheticMode,
+                    helperText: !pairedSyntheticMode
+                      ? "Insert sizing only applies to synthetic paired-end reads."
+                      : undefined,
+                  });
+                }
+
+                return renderField(key, {
+                  helperText:
+                    templateMode && key === "seed"
+                      ? "When multiple template pairs are available, the seed controls deterministic template selection."
+                      : undefined,
+                });
+              })}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -682,89 +1019,9 @@ export function OrderPipelineView({
       ) && (
         <div className="rounded-xl border border-border bg-card p-4">
           <h3 className="mb-3 text-sm font-medium">Settings</h3>
-          <div className="flex flex-wrap items-end gap-4">
-            {Object.entries(pipeline.configSchema.properties).map(([key, schema]) => {
-              const value = localConfig[key] ?? schema.default;
-
-              if (schema.enum) {
-                const ENUM_LABELS: Record<string, string> = {
-                  shortReadPaired: "Paired-end",
-                  shortReadSingle: "Single-end",
-                  longRead: "Long read",
-                };
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-xs" htmlFor={fieldId}>
-                      {schema.title || key}
-                    </Label>
-                    <Select
-                      value={String(value ?? "")}
-                      onValueChange={(v) => setLocalConfig((prev) => ({ ...prev, [key]: v }))}
-                    >
-                      <SelectTrigger
-                        id={fieldId}
-                        aria-label={schema.title || key}
-                        className="h-8 w-[160px] text-xs"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {schema.enum.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {ENUM_LABELS[opt] || opt}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                );
-              }
-
-              if (schema.type === "boolean") {
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="flex items-center gap-2 pb-1">
-                    <Switch
-                      id={fieldId}
-                      checked={!!value}
-                      onCheckedChange={(checked) =>
-                        setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
-                      }
-                    />
-                    <Label htmlFor={fieldId} className="text-xs">
-                      {schema.title || key}
-                    </Label>
-                  </div>
-                );
-              }
-
-              if (schema.type === "number") {
-                const fieldId = `config-${key}`;
-                return (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-xs" htmlFor={fieldId}>
-                      {schema.title || key}
-                    </Label>
-                    <Input
-                      id={fieldId}
-                      type="number"
-                      className="h-8 w-[120px] text-xs"
-                      value={value != null ? String(value) : ""}
-                      onChange={(e) =>
-                        setLocalConfig((prev) => ({
-                          ...prev,
-                          [key]: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                    />
-                  </div>
-                );
-              }
-
-              return null;
-            })}
-          </div>
+          {pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID
+            ? renderSimulateReadsSettings()
+            : renderGenericSettings()}
         </div>
       )}
 
@@ -1380,12 +1637,6 @@ export function OrderPipelineView({
           parsedConfig = detailRun.config ? JSON.parse(detailRun.config) : null;
         } catch { /* ignore */ }
 
-        const ENUM_LABELS: Record<string, string> = {
-          shortReadPaired: "Paired-end",
-          shortReadSingle: "Single-end",
-          longRead: "Long read",
-        };
-
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
@@ -1442,8 +1693,11 @@ export function OrderPipelineView({
                         let displayValue: string;
                         if (typeof value === "boolean") {
                           displayValue = value ? "Yes" : "No";
-                        } else if (typeof value === "string" && ENUM_LABELS[value]) {
-                          displayValue = ENUM_LABELS[value];
+                        } else if (
+                          typeof value === "string" &&
+                          SIMULATE_READS_ENUM_LABELS[value]
+                        ) {
+                          displayValue = SIMULATE_READS_ENUM_LABELS[value];
                         } else {
                           displayValue = String(value ?? "-");
                         }

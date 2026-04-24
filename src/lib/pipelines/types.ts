@@ -60,6 +60,8 @@ export interface PipelineConfigSchema {
     description?: string;
     default?: unknown;
     enum?: unknown[];
+    minimum?: number;
+    maximum?: number;
   }>;
   required?: string[];
 }

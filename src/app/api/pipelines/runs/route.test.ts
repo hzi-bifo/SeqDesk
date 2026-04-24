@@ -286,6 +286,37 @@ describe("POST /api/pipelines/runs", () => {
     });
   });
 
+  it("rejects invalid simulate-reads config combinations", async () => {
+    const adapter = {
+      validateInputs: vi.fn().mockResolvedValue({
+        valid: true,
+      }),
+    };
+    mocks.createGenericAdapter.mockReturnValue(adapter);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "simulate-reads",
+          orderId: "order-1",
+          config: {
+            simulationMode: "template",
+            mode: "longRead",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Pipeline config validation failed",
+      details: [
+        "Template simulation is not supported for long-read mode. Choose synthetic or auto mode, or switch to a short-read mode.",
+      ],
+    });
+  });
+
   it("creates a pending order run and persists selected sample ids", async () => {
     const adapter = {
       validateInputs: vi.fn().mockResolvedValue({
@@ -302,7 +333,16 @@ describe("POST /api/pipelines/runs", () => {
           orderId: "order-1",
           sampleIds: ["sample-1"],
           config: {
-            profile: "test",
+            simulationMode: "synthetic",
+            mode: "shortReadPaired",
+            readCount: 999999,
+            readLength: 90,
+            replaceExisting: false,
+            qualityProfile: "noisy",
+            insertMean: 420,
+            insertStdDev: 25,
+            seed: 7,
+            templateDir: "facility/templates",
           },
         }),
       })
@@ -317,7 +357,18 @@ describe("POST /api/pipelines/runs", () => {
         orderId: "order-1",
         studyId: null,
         userId: "admin-1",
-        config: JSON.stringify({ profile: "test" }),
+        config: JSON.stringify({
+          simulationMode: "synthetic",
+          mode: "shortReadPaired",
+          readCount: 50000,
+          readLength: 90,
+          replaceExisting: false,
+          qualityProfile: "noisy",
+          insertMean: 420,
+          insertStdDev: 25,
+          seed: 7,
+          templateDir: "facility/templates",
+        }),
         inputSampleIds: JSON.stringify(["sample-1"]),
       }),
     });

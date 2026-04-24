@@ -16,6 +16,11 @@ import { getLocalCondaCompatibilityBlockMessage, shouldSkipCondaOnMacArm } from 
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
+import {
+  getPipelineRunConfigIssues,
+  normalizePipelineRunConfig,
+} from '@/lib/pipelines/simulate-reads-config';
+import { summarizePipelineFailure } from '@/lib/pipelines/run-log-summary';
 import { isDemoSession } from '@/lib/demo/server';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
@@ -108,13 +113,25 @@ async function finalizeLocalRun(
       console.error('[Pipeline Run] Output resolution failed:', err);
     });
   } else {
-    const message = `Pipeline exited with code ${exitCode ?? 'unknown'}`;
+    const run = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: {
+        outputPath: true,
+        errorPath: true,
+      },
+    });
+    const { outputTail, errorTail } = await summarizePipelineFailure({
+      outputPath: run?.outputPath ?? null,
+      errorPath: run?.errorPath ?? null,
+      exitCode,
+    });
     await db.pipelineRun.update({
       where: { id: runId },
       data: {
         status: 'failed',
         currentStep: 'Failed',
-        errorTail: message,
+        outputTail,
+        errorTail,
         completedAt,
         statusSource: 'process',
         lastEventAt: completedAt,
@@ -203,6 +220,25 @@ export async function POST(
           { status: 400 }
         );
       }
+    }
+    config = normalizePipelineRunConfig(run.pipelineId, config);
+    const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
+    if (configIssues.length > 0) {
+      const message = configIssues.join('\n');
+      await db.pipelineRun.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          errorTail: message,
+          completedAt: new Date(),
+          statusSource: 'launcher',
+          lastEventAt: new Date(),
+        },
+      });
+      return NextResponse.json(
+        { error: 'Pipeline config validation failed', details: configIssues },
+        { status: 400 }
+      );
     }
 
     // Parse sample selection from run or request body
@@ -409,10 +445,19 @@ export async function POST(
       );
     }
 
+    const normalizedConfigJson = JSON.stringify(config);
     if (selectedSampleIds && !run.inputSampleIds) {
       await db.pipelineRun.update({
         where: { id: run.id },
-        data: { inputSampleIds: JSON.stringify(selectedSampleIds) },
+        data: {
+          inputSampleIds: JSON.stringify(selectedSampleIds),
+          config: normalizedConfigJson,
+        },
+      });
+    } else if (run.config !== normalizedConfigJson) {
+      await db.pipelineRun.update({
+        where: { id: run.id },
+        data: { config: normalizedConfigJson },
       });
     }
 

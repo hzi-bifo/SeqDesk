@@ -57,7 +57,16 @@ async function main() {
           sourceFile2: file2Name ? path.join(payload.outputDir, "reads", file2Name) : null,
           readCount1: parsed.readCount1 ?? null,
           readCount2: parsed.readCount2 ?? null,
+          readLength: parsed.readLength ?? null,
           replaceExisting: parsed.replaceExisting !== false,
+          simulationModeRequested: parsed.simulationModeRequested ?? null,
+          simulationModeUsed: parsed.simulationModeUsed ?? null,
+          qualityProfile: parsed.qualityProfile ?? null,
+          insertMean: parsed.insertMean ?? null,
+          insertStdDev: parsed.insertStdDev ?? null,
+          seed: parsed.seed ?? null,
+          templateLabel: parsed.templateLabel ?? null,
+          templateDir: parsed.templateDir ?? null,
         },
       });
     }

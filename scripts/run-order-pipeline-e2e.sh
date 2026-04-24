@@ -223,6 +223,34 @@ assert_summary_field_present() {
   fi
 }
 
+assert_summary_field_equals() {
+  local file="$1"
+  local sample="$2"
+  local column="$3"
+  local expected="$4"
+
+  local actual
+  actual="$(awk -F'\t' -v sample="$sample" -v column="$column" '
+    NR == 1 {
+      for (i = 1; i <= NF; i += 1) {
+        if ($i == column) {
+          target = i
+          break
+        }
+      }
+      next
+    }
+    $1 == sample && target > 0 {
+      print $target
+      exit
+    }
+  ' "$file")"
+
+  if [[ "$actual" != "$expected" ]]; then
+    fail_e2e "Expected $column=$expected for $sample in ${file#"$TMP_DIR"/}, got ${actual:-<empty>}"
+  fi
+}
+
 if [[ -n "${PIPELINE_E2E_TMPDIR:-}" ]]; then
   TMP_DIR="${PIPELINE_E2E_TMPDIR}"
   rm -rf "$TMP_DIR"
@@ -234,9 +262,12 @@ fi
 SIM_SAMPLESHEET="$TMP_DIR/sim-samplesheet.csv"
 CHECKSUM_SAMPLESHEET="$TMP_DIR/checksum-samplesheet.csv"
 FASTQC_SAMPLESHEET="$TMP_DIR/fastqc-samplesheet.csv"
+TEMPLATE_SAMPLESHEET="$TMP_DIR/template-samplesheet.csv"
 SIM_OUT="$TMP_DIR/sim-output"
 CHECKSUM_OUT="$TMP_DIR/checksum-output"
 FASTQC_OUT="$TMP_DIR/fastqc-output"
+TEMPLATE_OUT="$TMP_DIR/template-output"
+TEMPLATE_DIR="$TMP_DIR/template-input"
 SUMMARY_FILE="$TMP_DIR/ORDER_PIPELINE_E2E_SUMMARY.md"
 ARTIFACT_MANIFEST="$TMP_DIR/ORDER_PIPELINE_E2E_ARTIFACTS.txt"
 
@@ -252,9 +283,14 @@ echo "Running simulate-reads with Conda env '$ENV_NAME'..."
 conda run -n "$ENV_NAME" nextflow run pipelines/simulate-reads/workflow/main.nf \
   --input "$SIM_SAMPLESHEET" \
   --outdir "$SIM_OUT" \
+  --simulationMode synthetic \
   --mode shortReadPaired \
   --readCount 4 \
-  --readLength 75
+  --readLength 75 \
+  --qualityProfile noisy \
+  --insertMean 420 \
+  --insertStdDev 25 \
+  --seed 77
 
 for path in \
   "$SIM_OUT/reads/SAMPLE_A_R1.fastq.gz" \
@@ -269,6 +305,65 @@ done
 
 grep -q 'SAMPLE_A' "$SIM_OUT/summary/simulation-summary.tsv"
 grep -q 'SAMPLE_B' "$SIM_OUT/summary/simulation-summary.tsv"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "simulation_mode_requested" "synthetic"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "simulation_mode_used" "synthetic"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "quality_profile" "noisy"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "insert_mean" "420"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "insert_std_dev" "25"
+assert_summary_field_equals "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "seed" "77"
+assert_summary_field_present "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "read_count1"
+assert_summary_field_present "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "read_count2"
+assert_summary_field_present "$SIM_OUT/summary/simulation-summary.tsv" "SAMPLE_A" "read_length"
+
+mkdir -p "$TEMPLATE_DIR"
+cat <<'EOF' | gzip -c > "$TEMPLATE_DIR/template_1_1.fastq.gz"
+@TPL:1 1:N:0:TPL
+ACGTAC
++
+IIIIII
+@TPL:2 1:N:0:TPL
+TTGGCC
++
+IIIIII
+EOF
+cat <<'EOF' | gzip -c > "$TEMPLATE_DIR/template_1_2.fastq.gz"
+@TPL:1 2:N:0:TPL
+GTACGT
++
+IIIIII
+@TPL:2 2:N:0:TPL
+GGCCAA
++
+IIIIII
+EOF
+cat > "$TEMPLATE_SAMPLESHEET" <<'EOF'
+sample_id,order_id
+TEMPLATE_SAMPLE,ORDER_X
+EOF
+
+echo "Running simulate-reads template replay with Conda env '$ENV_NAME'..."
+conda run -n "$ENV_NAME" nextflow run pipelines/simulate-reads/workflow/main.nf \
+  --input "$TEMPLATE_SAMPLESHEET" \
+  --outdir "$TEMPLATE_OUT" \
+  --simulationMode template \
+  --mode shortReadPaired \
+  --templateDir "$TEMPLATE_DIR"
+
+for path in \
+  "$TEMPLATE_OUT/reads/TEMPLATE_SAMPLE_R1.fastq.gz" \
+  "$TEMPLATE_OUT/reads/TEMPLATE_SAMPLE_R2.fastq.gz" \
+  "$TEMPLATE_OUT/manifests/TEMPLATE_SAMPLE.json" \
+  "$TEMPLATE_OUT/summary/simulation-summary.tsv"; do
+  require_output_file "$path" "simulate-reads template"
+done
+
+cmp -s "$TEMPLATE_DIR/template_1_1.fastq.gz" "$TEMPLATE_OUT/reads/TEMPLATE_SAMPLE_R1.fastq.gz"
+cmp -s "$TEMPLATE_DIR/template_1_2.fastq.gz" "$TEMPLATE_OUT/reads/TEMPLATE_SAMPLE_R2.fastq.gz"
+assert_summary_field_equals "$TEMPLATE_OUT/summary/simulation-summary.tsv" "TEMPLATE_SAMPLE" "simulation_mode_requested" "template"
+assert_summary_field_equals "$TEMPLATE_OUT/summary/simulation-summary.tsv" "TEMPLATE_SAMPLE" "simulation_mode_used" "template"
+assert_summary_field_equals "$TEMPLATE_OUT/summary/simulation-summary.tsv" "TEMPLATE_SAMPLE" "template_label" "template_1"
+assert_summary_field_equals "$TEMPLATE_OUT/summary/simulation-summary.tsv" "TEMPLATE_SAMPLE" "read_count1" "2"
+assert_summary_field_equals "$TEMPLATE_OUT/summary/simulation-summary.tsv" "TEMPLATE_SAMPLE" "read_count2" "2"
 SIMULATE_STATUS="passed"
 
 cat > "$CHECKSUM_SAMPLESHEET" <<EOF

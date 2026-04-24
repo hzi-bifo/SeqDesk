@@ -3,7 +3,7 @@
   "name": "Simulate Reads",
   "description": "Generate dummy sequencing files for the samples in an order",
   "category": "qc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "sortOrder": 1,
   "requires": {
     "reads": false,
@@ -51,6 +51,17 @@
   "configSchema": {
     "type": "object",
     "properties": {
+      "simulationMode": {
+        "type": "string",
+        "title": "Simulation Source",
+        "description": "Use synthetic generation, replay facility template FASTQ pairs, or auto-select templates when available.",
+        "default": "auto",
+        "enum": [
+          "auto",
+          "synthetic",
+          "template"
+        ]
+      },
       "mode": {
         "type": "string",
         "title": "Simulation Mode",
@@ -66,27 +77,78 @@
         "type": "number",
         "title": "Read Count",
         "description": "Number of reads per sample. For long-read mode this is the number of long reads.",
-        "default": 1000
+        "default": 1000,
+        "minimum": 2,
+        "maximum": 50000
       },
       "readLength": {
         "type": "number",
         "title": "Read Length",
         "description": "Read length for short-read modes, or target average length for long-read mode.",
-        "default": 150
+        "default": 150,
+        "minimum": 25,
+        "maximum": 30000
+      },
+      "qualityProfile": {
+        "type": "string",
+        "title": "Quality Profile",
+        "description": "Synthetic-only quality/error preset for generated reads.",
+        "default": "standard",
+        "enum": [
+          "standard",
+          "highAccuracy",
+          "noisy"
+        ]
+      },
+      "insertMean": {
+        "type": "number",
+        "title": "Insert Mean",
+        "description": "Synthetic paired-end mean insert size in bases.",
+        "default": 350,
+        "minimum": 200,
+        "maximum": 5000
+      },
+      "insertStdDev": {
+        "type": "number",
+        "title": "Insert Std Dev",
+        "description": "Synthetic paired-end insert size standard deviation in bases.",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 1000
+      },
+      "seed": {
+        "type": "number",
+        "title": "Seed",
+        "description": "Optional seed to make synthetic output and template selection reproducible across runs.",
+        "default": null,
+        "minimum": 0,
+        "maximum": 2147483647
       },
       "replaceExisting": {
         "type": "boolean",
         "title": "Replace Existing Reads",
         "description": "Delete existing linked read files and replace them with the simulated outputs.",
         "default": true
+      },
+      "templateDir": {
+        "type": "string",
+        "title": "Template Directory",
+        "description": "Admin setting only. Optional absolute or data-base-path-relative directory containing template FASTQ pairs.",
+        "default": ""
       }
     }
   },
   "defaultConfig": {
+    "simulationMode": "auto",
     "mode": "shortReadPaired",
     "readCount": 1000,
     "readLength": 150,
-    "replaceExisting": true
+    "replaceExisting": true,
+    "qualityProfile": "standard",
+    "insertMean": 350,
+    "insertStdDev": 30,
+    "seed": null,
+    "templateDir": ""
   },
   "icon": "FileCode"
 }

@@ -281,6 +281,28 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(body.error).toContain("invalid JSON");
   });
 
+  it("returns 400 when simulate-reads config is invalid", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      pipelineId: "simulate-reads",
+      config: JSON.stringify({
+        simulationMode: "template",
+        mode: "longRead",
+      }),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({
+      error: "Pipeline config validation failed",
+      details: [
+        "Template simulation is not supported for long-read mode. Choose synthetic or auto mode, or switch to a short-read mode.",
+      ],
+    });
+  });
+
   it("returns 400 when metadata validation fails", async () => {
     mocks.validatePipelineMetadata.mockResolvedValue({
       issues: [{ severity: "error", message: "Missing required field" }],

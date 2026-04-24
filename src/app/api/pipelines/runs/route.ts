@@ -6,6 +6,10 @@ import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
+import {
+  getPipelineRunConfigIssues,
+  normalizePipelineRunConfig,
+} from '@/lib/pipelines/simulate-reads-config';
 import { isDemoSession } from '@/lib/demo/server';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
@@ -23,6 +27,13 @@ function parseRunResults(rawResults: string | null | undefined): Record<string, 
   } catch {
     return null;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
 }
 
 // GET - List pipeline runs
@@ -277,6 +288,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const normalizedConfig = normalizePipelineRunConfig(
+      pipelineId,
+      asRecord(config),
+    );
+    const configIssues = getPipelineRunConfigIssues(
+      pipelineId,
+      normalizedConfig,
+    );
+    if (configIssues.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Pipeline config validation failed',
+          details: configIssues,
+        },
+        { status: 400 }
+      );
+    }
+
     // Generate a unique temporary run number (will be updated to proper format by executor)
     const tempRunNumber = `${pipelineId.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
@@ -295,7 +324,10 @@ export async function POST(request: NextRequest) {
         studyId: target.type === 'study' ? target.studyId : null,
         orderId: target.type === 'order' ? target.orderId : null,
         userId: session.user.id,
-        config: config ? JSON.stringify(config) : null,
+        config:
+          Object.keys(normalizedConfig).length > 0
+            ? JSON.stringify(normalizedConfig)
+            : null,
         inputSampleIds,
       },
     });

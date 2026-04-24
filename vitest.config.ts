@@ -15,10 +15,10 @@ const testTier = resolveTestTier(process.env.SEQDESK_TEST_TIER);
 const serialExecution = testTier === "risk" || testTier === "live";
 
 const includeByTier: Record<TestTier, string[]> = {
-  fast: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  fast: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts"],
   risk: ["src/**/*.risk.test.ts", "src/**/*.risk.test.tsx"],
   live: ["src/**/*.live.test.ts", "src/**/*.live.test.tsx"],
-  all: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  all: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts"],
 };
 
 const excludeByTier: Record<TestTier, string[]> = {

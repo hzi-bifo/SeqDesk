@@ -12,6 +12,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SidebarEntityContext } from "./useSidebarEntity";
 import { useOrderFormSteps } from "./useOrderFormSteps";
@@ -47,13 +48,14 @@ export function SidebarEntityNav({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { entityType, entityId } = entityContext;
-  const { steps: orderFormSteps, facilitySections } = useOrderFormSteps(
+  const { steps: orderFormSteps, facilitySections, loading: orderFormLoading } = useOrderFormSteps(
     showAdminControls,
     entityType === "order" ? entityId : null
   );
   const {
     overviewSections: studyOverviewSections,
     facilitySections: studyFacilitySections,
+    loading: studyFormLoading,
   } = useStudyFormSteps(showAdminControls, entityType === "study" ? entityId : null);
   const orderPipelines = useOrderPipelines(
     showAdminControls,
@@ -226,19 +228,19 @@ export function SidebarEntityNav({
             activeTab === "orders" &&
             item.key === "details" &&
             !!entityId &&
-            detailOrderSteps.length > 0;
+            (detailOrderSteps.length > 0 || orderFormLoading);
           const shouldShowStudyOverviewSubitems =
             !collapsed &&
             activeTab === "studies" &&
             item.key === "overview" &&
             !!entityId &&
-            studyOverviewSections.length > 0;
+            (studyOverviewSections.length > 0 || studyFormLoading);
           const shouldShowStudyFacilitySubitems =
             !collapsed &&
             activeTab === "studies" &&
             item.key === "facility" &&
             !!entityId &&
-            studyFacilitySections.length > 0;
+            (studyFacilitySections.length > 0 || studyFormLoading);
           const shouldShowStudySequencingSubitems =
             !collapsed &&
             activeTab === "studies" &&
@@ -249,7 +251,7 @@ export function SidebarEntityNav({
             activeTab === "orders" &&
             item.key === "facility" &&
             !!entityId &&
-            facilitySections.length > 0;
+            (facilitySections.length > 0 || orderFormLoading);
           const shouldShowSequencingDataSubitems =
             !collapsed &&
             activeTab === "orders" &&
@@ -355,7 +357,14 @@ export function SidebarEntityNav({
               {link}
               {shouldShowStudyOverviewSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
-                  {studyOverviewSections.map((section) => {
+                  {studyFormLoading && studyOverviewSections.length === 0 ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1">
+                        <Skeleton className="h-2 w-2 rounded-full shrink-0" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    ))
+                  ) : studyOverviewSections.map((section) => {
                     const isSectionActive =
                       currentStudyOverviewSubsection === section.id;
                     return (
@@ -388,7 +397,14 @@ export function SidebarEntityNav({
               )}
               {shouldShowStudyFacilitySubitems && (
                 <div className="ml-5 border-l border-slate-200 pl-2">
-                  {studyFacilitySections.map((section) => {
+                  {studyFormLoading && studyFacilitySections.length === 0 ? (
+                    Array.from({ length: 2 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1">
+                        <Skeleton className="h-2 w-2 rounded-full shrink-0" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    ))
+                  ) : studyFacilitySections.map((section) => {
                     const isSectionActive =
                       currentStudyFacilitySubsection === section.id;
                     return (
@@ -513,7 +529,14 @@ export function SidebarEntityNav({
               )}
               {shouldShowOrderSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
-                  {detailOrderSteps.map((step) => {
+                  {orderFormLoading && detailOrderSteps.length === 0 ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1">
+                        <Skeleton className="h-2 w-2 rounded-full shrink-0" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    ))
+                  ) : detailOrderSteps.map((step) => {
                     const isStepActive =
                       currentOrderSubview === "edit"
                         ? currentOrderEditStep === step.id
@@ -549,7 +572,14 @@ export function SidebarEntityNav({
               )}
               {shouldShowFacilitySubitems && (
                 <div className="ml-5 border-l border-slate-200 pl-2">
-                  {facilitySections.map((section) => {
+                  {orderFormLoading && facilitySections.length === 0 ? (
+                    Array.from({ length: 2 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1">
+                        <Skeleton className="h-2 w-2 rounded-full shrink-0" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    ))
+                  ) : facilitySections.map((section) => {
                     const facilitySectionHref =
                       section.id === "order-fields"
                         ? `/orders/${entityId}/edit?step=_facility&scope=facility`

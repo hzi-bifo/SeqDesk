@@ -485,6 +485,44 @@ describe("generic-executor", () => {
     expect(result.errors[0]).toContain("Failed to prepare run: Unexpected crash");
   });
 
+  it("shell-escapes flag values containing metacharacters so they cannot inject commands", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {
+            templateDir: "--template-dir",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-inject",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {
+        templateDir: "foo; rm -rf /",
+        "bad;key": "x",
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("--template-dir 'foo; rm -rf /'");
+    expect(script).not.toContain("--template-dir foo; rm -rf /");
+    expect(script).not.toContain("--bad;key");
+  });
+
   it("generates conda activation bootstrap when condaPath is set", async () => {
     const adapter = createAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);

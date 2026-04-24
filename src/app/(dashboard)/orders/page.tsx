@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { Skeleton } from "@/components/ui/skeleton";
 import { HelpBox } from "@/components/ui/help-box";
 import {
   Dialog,
@@ -348,8 +349,46 @@ export default function OrdersPage() {
 
   if (loading) {
     return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <PageContainer>
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-4 w-20 mt-1.5" />
+          </div>
+          <Skeleton className="h-8 w-24 rounded-md" />
+        </div>
+        {/* Table skeleton */}
+        <div className="bg-card rounded-xl overflow-hidden border border-border">
+          <div className="px-4 py-3 border-b border-border">
+            <Skeleton className="h-9 w-full rounded-lg" />
+          </div>
+          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50">
+            <Skeleton className="col-span-3 h-3 w-16" />
+            <Skeleton className="col-span-3 h-3 w-12" />
+            <Skeleton className="col-span-2 h-3 w-20" />
+            <Skeleton className="col-span-1 h-3 w-14 ml-auto" />
+            <Skeleton className="col-span-2 h-3 w-16" />
+            <div className="col-span-1" />
+          </div>
+          <div className="divide-y divide-border">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="hidden md:grid grid-cols-12 gap-4 px-5 py-4 items-center">
+                <div className="col-span-3 space-y-1.5">
+                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+                <div className="col-span-3">
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                </div>
+                <Skeleton className="col-span-2 h-3 w-24" />
+                <Skeleton className="col-span-1 h-3 w-6 ml-auto" />
+                <Skeleton className="col-span-2 h-3 w-20" />
+                <div className="col-span-1" />
+              </div>
+            ))}
+          </div>
+        </div>
       </PageContainer>
     );
   }

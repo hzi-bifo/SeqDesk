@@ -2,7 +2,7 @@
   "pipeline": "simulate-reads",
   "name": "Simulate Reads",
   "description": "Generate dummy sequencing reads for order samples and wire them back into SeqDesk.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "steps": [
     {
       "id": "simulate_reads",
