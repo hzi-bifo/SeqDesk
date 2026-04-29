@@ -18,6 +18,9 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Database,
+  ClipboardList,
+  ExternalLink,
 } from "lucide-react";
 import { InfrastructureSetupStatus } from "@/components/admin/infrastructure/InfrastructureSetupStatus";
 
@@ -31,13 +34,6 @@ interface InfrastructureImportResponse {
 
 const EXAMPLE_INFRA_CONFIG = {
   port: 8000,
-  pipelinesEnabled: true,
-  nextAuthUrl: "http://seqdesk-host:8000",
-  databaseUrl:
-    "postgresql://seqdesk:replace-with-password@127.0.0.1:5432/seqdesk?schema=public",
-  directUrl:
-    "postgresql://seqdesk:replace-with-password@127.0.0.1:5432/seqdesk?schema=public",
-  anthropicApiKey: "replace-with-anthropic-api-key",
   sequencingDataDir: "/data/sequencing",
   pipelineRunDir: "/data/pipeline_runs",
   useSlurm: true,
@@ -252,10 +248,48 @@ export default function InfrastructureOverviewPage() {
               <div className="space-y-1">
                 <h2 className="text-base font-semibold">Import Setup JSON</h2>
                 <p className="text-sm text-muted-foreground">
-                  Paste setup JSON and validate before saving. Upload is optional.
+                  Import infrastructure runtime values for this SeqDesk instance. Upload is optional.
                 </p>
               </div>
               <Badge variant="outline">Optional</Badge>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  Included here
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Data storage path, pipeline run directory, Slurm settings, conda settings,
+                  Nextflow profile, webhook URL/secret, and app port.
+                </p>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-950">
+                  <ClipboardList className="h-4 w-4" />
+                  Not included
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-amber-900">
+                  Order and study form definitions are managed separately. Installer preset
+                  paths like <code>orderFormSettings</code> are bootstrap inputs and are ignored
+                  by this in-app import.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button asChild variant="outline" size="sm" className="h-8 bg-white">
+                    <Link href="/admin/form-builder?tab=import-export">
+                      Order Form Import / Export
+                      <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                  <Button asChild variant="outline" size="sm" className="h-8 bg-white">
+                    <Link href="/admin/study-form-builder?tab=import-export">
+                      Study Form Import / Export
+                      <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
             </div>
 
             <input
@@ -322,7 +356,7 @@ export default function InfrastructureOverviewPage() {
                 {importing ? "Saving..." : "Save Infrastructure Setup"}
               </Button>
               <p className="text-xs text-muted-foreground">
-                Supports flat keys and `seqdesk.config.json`-style nested keys.
+                Supports flat infrastructure keys and <code>seqdesk.config.json</code>-style nested keys.
               </p>
             </div>
 

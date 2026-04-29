@@ -51,6 +51,7 @@ import {
   FIELD_TYPE_LABELS,
 } from "@/types/form-config";
 import { useModule } from "@/lib/modules";
+import { isFieldAvailableForModules as isFieldAvailableForModuleState } from "@/lib/modules/form-integration";
 import {
   STUDY_INFORMATION_SECTION_ID,
   getFixedStudySections,
@@ -704,9 +705,13 @@ export default function StudyFormBuilderPage() {
   }, [fields, groups, loading, persistConfiguration]);
 
   const isFieldAvailableForModules = (field: FormFieldDefinition) => {
-    if (field.type === "mixs" && !mixsModuleEnabled) return false;
-    if (field.type === "funding" && !fundingModuleEnabled) return false;
-    return true;
+    return isFieldAvailableForModuleState(field, {
+      globalDisabled: false,
+      modules: {
+        "mixs-metadata": mixsModuleEnabled,
+        "funding-info": fundingModuleEnabled,
+      },
+    });
   };
 
   const visibleFields = fields.filter(isFieldAvailableForModules);

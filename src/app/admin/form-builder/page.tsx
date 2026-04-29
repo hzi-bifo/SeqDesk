@@ -72,6 +72,7 @@ import { FundingAdminEditor } from "@/lib/field-types/funding/FundingAdminEditor
 import { BillingAdminEditor } from "@/lib/field-types/billing/BillingAdminEditor";
 import { SequencingTechAdminEditor } from "@/lib/field-types/sequencing-tech/SequencingTechAdminEditor";
 import { useModule, useModules, ModuleGate } from "@/lib/modules";
+import { isFieldAvailableForModules as isFieldAvailableForModuleState } from "@/lib/modules/form-integration";
 import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
 
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
@@ -910,13 +911,16 @@ export default function FormBuilderPage() {
   };
 
   const isFieldAvailableForModules = (field: FormFieldDefinition) => {
-    if (field.type === "mixs" && !mixsModuleEnabled) return false;
-    if (field.type === "funding" && !fundingModuleEnabled) return false;
-    if (field.type === "billing" && !billingModuleEnabled) return false;
-    if (field.type === "sequencing-tech" && !sequencingTechModuleEnabled) return false;
-    if (field.type === "barcode" && !sequencingTechModuleEnabled) return false;
-    if (field.moduleSource === "ena-sample-fields" && !enaSampleFieldsEnabled) return false;
-    return true;
+    return isFieldAvailableForModuleState(field, {
+      globalDisabled: false,
+      modules: {
+        "mixs-metadata": mixsModuleEnabled,
+        "funding-info": fundingModuleEnabled,
+        "billing-info": billingModuleEnabled,
+        "sequencing-tech": sequencingTechModuleEnabled,
+        "ena-sample-fields": enaSampleFieldsEnabled,
+      },
+    });
   };
 
   const visibleFields = fields.filter(isFieldAvailableForModules);

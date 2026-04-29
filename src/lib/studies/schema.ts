@@ -1,19 +1,21 @@
 import { db } from "@/lib/db";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 import {
   ensureStudyModuleDefaultFields,
   STUDY_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
+import {
+  filterFieldsByModules,
+  isModuleEnabled,
+  parseModulesConfig,
+  type ModulesConfig,
+} from "@/lib/modules/form-integration";
 import {
   getFixedStudySections,
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
 import type { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 
-export interface StudyModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
+export type StudyModulesConfig = ModulesConfig;
 
 export interface LoadedStudyFormSchema {
   fields: FormFieldDefinition[];
@@ -33,50 +35,20 @@ interface LoadStudyFormSchemaOptions {
   applyModuleFilter?: boolean;
 }
 
-export function parseStudyModulesConfig(configString: string | null): StudyModulesConfig {
-  if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-}
+export const parseStudyModulesConfig = parseModulesConfig;
 
 export function isStudyModuleEnabled(
   config: StudyModulesConfig,
   moduleId: string
 ): boolean {
-  if (config.globalDisabled) return false;
-  return config.modules[moduleId] ?? false;
+  return isModuleEnabled(config, moduleId);
 }
 
 export function filterStudyFieldsByModules(
   fields: FormFieldDefinition[],
   modulesConfig: StudyModulesConfig
 ): FormFieldDefinition[] {
-  return fields.filter((field) => {
-    if (field.type === "mixs" && !isStudyModuleEnabled(modulesConfig, "mixs-metadata")) {
-      return false;
-    }
-    if (field.type === "funding" && !isStudyModuleEnabled(modulesConfig, "funding-info")) {
-      return false;
-    }
-    return true;
-  });
+  return filterFieldsByModules(fields, modulesConfig);
 }
 
 export function filterStudyFieldsForRole(

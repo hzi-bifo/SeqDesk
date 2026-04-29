@@ -33,7 +33,6 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useModule, useModules } from "@/lib/modules/ModuleContext";
 import {
   FlowCell,
   SequencerDevice,
@@ -114,8 +113,6 @@ const SEQUENCING_TECH_TABS: Array<{ value: SequencingTechTab; label: string }> =
 ];
 
 export default function SequencingTechPage() {
-  const { enabled: moduleEnabled } = useModule("sequencing-tech");
-  const { loading: moduleLoading } = useModules();
   const [activeTab, setActiveTab] = useState<SequencingTechTab>("platforms");
   const [config, setConfig] = useState<SequencingTechConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -670,47 +667,11 @@ export default function SequencingTechPage() {
     return date.toLocaleString();
   };
 
-  if (moduleLoading || loading) {
+  if (loading) {
     return (
       <PageContainer>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </PageContainer>
-    );
-  }
-
-  if (!moduleEnabled) {
-    return (
-      <PageContainer>
-        <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Dna className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">Sequencing Technologies</h1>
-              <p className="text-muted-foreground">
-                Configure available sequencing platforms
-              </p>
-            </div>
-          </div>
-
-          <GlassCard className="p-8">
-            <div className="flex items-center gap-3 text-amber-600">
-              <AlertCircle className="h-5 w-5" />
-              <div>
-                <h3 className="font-medium">Module Not Enabled</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Enable the &quot;Sequencing Technologies&quot; module in{" "}
-                  <a href="/admin/modules" className="text-primary hover:underline">
-                    Modules
-                  </a>{" "}
-                  to configure this feature.
-                </p>
-              </div>
-            </div>
-          </GlassCard>
         </div>
       </PageContainer>
     );

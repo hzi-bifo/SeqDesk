@@ -2,36 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
-
-interface ModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
-
-function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    // Handle old format (just module states) vs new format (with globalDisabled)
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-    // Old format - just module states directly
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
-  }
-}
+import { parseModulesConfig } from "@/lib/modules/form-integration";
 
 // GET module configuration
 export async function GET() {

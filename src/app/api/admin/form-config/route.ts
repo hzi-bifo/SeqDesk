@@ -7,48 +7,18 @@ import {
   FormFieldGroup,
   DEFAULT_FORM_SCHEMA,
 } from "@/types/form-config";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 import {
   ensureOrderModuleDefaultFields,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
 import {
+  isModuleEnabled,
+  parseModulesConfig,
+} from "@/lib/modules/form-integration";
+import {
   getFixedOrderSections,
   normalizeOrderFormSchema,
 } from "@/lib/orders/fixed-sections";
-
-interface ModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
-
-function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-}
-
-function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
-  if (config.globalDisabled) return false;
-  return config.modules[moduleId] ?? false;
-}
 
 // GET current form configuration
 export async function GET() {

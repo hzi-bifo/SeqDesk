@@ -221,6 +221,47 @@ describe("POST /api/admin/infrastructure/import", () => {
     expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
   });
 
+  it("warns that form settings are not applied by infrastructure import", async () => {
+    const response = await POST(
+      makeRequest({
+        dryRun: true,
+        config: {
+          sequencingDataDir: "/data/sequencing",
+          forms: {
+            orderFormSettings: "/opt/seqdesk/order-form.json",
+            studyFormSettings: "/opt/seqdesk/study-form.json",
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.applied.dataBasePath).toBe("/data/sequencing");
+    expect(
+      body.warnings.some((warning: string) =>
+        warning.includes("not imported here")
+      )
+    ).toBe(true);
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns a targeted error when only form settings are provided", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          orderFormSettings: "/opt/seqdesk/order-form.json",
+          studyFormSettings: "/opt/seqdesk/study-form.json",
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain("form setup");
+  });
+
   it("merges with existing extraSettings from database", async () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       dataBasePath: "/old/data",

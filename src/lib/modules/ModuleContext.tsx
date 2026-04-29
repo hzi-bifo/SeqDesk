@@ -1,7 +1,13 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { AVAILABLE_MODULES, DEFAULT_MODULE_STATES, getModuleDefinition, ModuleDefinition } from "./types";
+import {
+  AVAILABLE_MODULES,
+  DEFAULT_MODULE_STATES,
+  getModuleDefinition,
+  isAlwaysEnabledModule,
+  ModuleDefinition,
+} from "./types";
 
 interface ModuleContextValue {
   // Check if a module is enabled
@@ -55,6 +61,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isModuleEnabled = (moduleId: string): boolean => {
+    if (isAlwaysEnabledModule(moduleId)) return true;
     // If global disabled, everything is off
     if (globalDisabled) return false;
     // If loading, assume enabled to avoid flash of disabled content

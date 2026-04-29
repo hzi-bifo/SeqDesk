@@ -18,7 +18,7 @@ export interface ModuleDefinition {
 // Category labels and descriptions
 export const MODULE_CATEGORIES: Record<ModuleCategory, { label: string; description: string }> = {
   "order-form": {
-    label: "Form Extensions",
+    label: "Form Modules",
     description: "Add specialized field types to your order and study forms",
   },
   validation: {
@@ -34,6 +34,12 @@ export const MODULE_CATEGORIES: Record<ModuleCategory, { label: string; descript
     description: "User notifications and messaging",
   },
 };
+
+export const ALWAYS_ENABLED_MODULE_IDS = new Set(["sequencing-tech"]);
+
+export function isAlwaysEnabledModule(moduleId: string): boolean {
+  return ALWAYS_ENABLED_MODULE_IDS.has(moduleId);
+}
 
 export interface ModuleConfig {
   moduleId: string;
@@ -68,14 +74,6 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     id: "billing-info",
     name: "Cost Center & PSP",
     description: "Internal billing and cost allocation for orders. Collect Cost Center codes and PSP Elements (SAP project structure plan) with configurable format validation (e.g., 1-1234567-99). For institutions with SAP systems, direct API integration is available.",
-    category: "order-form",
-    featureLocation: "Configuration > Order Forms",
-    hasSettings: true,
-  },
-  {
-    id: "sequencing-tech",
-    name: "Sequencing Technologies",
-    description: "Interactive technology selector for orders with pre-configured information about sequencing platforms (Illumina, Nanopore, PacBio, etc.). Shows specs, pros/cons, and best-use cases. Fully customizable by admins.",
     category: "order-form",
     featureLocation: "Configuration > Order Forms",
     hasSettings: true,
@@ -121,7 +119,6 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "account-validation": false,
   "funding-info": false,
   "billing-info": false,
-  "sequencing-tech": true,
   "ena-sample-fields": true, // Enabled by default - essential for ENA submission
   "notifications": false,
 };

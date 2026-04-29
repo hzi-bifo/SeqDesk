@@ -10,7 +10,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useModule } from "@/lib/modules";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SidebarAdminNavProps {
@@ -21,7 +20,6 @@ interface SidebarAdminNavProps {
 export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { enabled: sequencingTechEnabled } = useModule("sequencing-tech");
 
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -243,11 +241,9 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
               Modules
             </Link>
-            {sequencingTechEnabled && (
-              <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
-                Sequencers
-              </Link>
-            )}
+            <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
+              Sequencers
+            </Link>
             <Link
               href="/admin/data-compute"
               className={cn(

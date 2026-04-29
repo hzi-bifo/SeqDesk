@@ -32,6 +32,18 @@ interface InfrastructureImportValues {
   port?: number;
 }
 
+const FORM_CONFIG_KEYS = [
+  "orderFormSettings",
+  "order_form_settings",
+  "studyFormSettings",
+  "study_form_settings",
+  "orderFormConfig",
+  "studyFormConfig",
+  "orderForm",
+  "studyForm",
+  "forms",
+];
+
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -90,6 +102,40 @@ function toOptionalInt(value: unknown): number | undefined {
     }
   }
   return undefined;
+}
+
+function hasFormConfigKeys(config: unknown): boolean {
+  const root = toRecord(config);
+  if (!root) {
+    return false;
+  }
+
+  if (FORM_CONFIG_KEYS.some((key) => root[key] !== undefined)) {
+    return true;
+  }
+
+  const forms = toRecord(root.forms);
+  return Boolean(
+    forms &&
+      [
+        "order",
+        "study",
+        "orderFormSettings",
+        "order_form_settings",
+        "studyFormSettings",
+        "study_form_settings",
+      ].some((key) => forms[key] !== undefined)
+  );
+}
+
+function getFormConfigWarnings(config: unknown): string[] {
+  if (!hasFormConfigKeys(config)) {
+    return [];
+  }
+
+  return [
+    "Order and study form settings were detected but were not imported here. Use the Order Form or Study Form Import / Export tabs for full form definitions; installer-only form preset paths are ignored by this in-app infrastructure import.",
+  ];
 }
 
 function parseImportValues(config: unknown): InfrastructureImportValues {
@@ -199,6 +245,11 @@ function parseImportValues(config: unknown): InfrastructureImportValues {
 
   const hasAnyValue = Object.values(values).some((value) => value !== undefined);
   if (!hasAnyValue) {
+    if (hasFormConfigKeys(root)) {
+      throw new Error(
+        "This JSON looks like form setup, not infrastructure setup. Import order and study form definitions from their Form Builder Import / Export tabs."
+      );
+    }
     throw new Error(
       "No supported settings found. Include keys like sequencingDataDir, pipelineRunDir, condaPath, condaEnv, useSlurm, nextflowWeblogUrl, or port."
     );
@@ -263,6 +314,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as InfrastructureImportRequest;
     const dryRun = body?.dryRun === true;
     const values = parseImportValues(body?.config);
+    const formConfigWarnings = getFormConfigWarnings(body?.config);
 
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
@@ -353,7 +405,7 @@ export async function POST(request: NextRequest) {
     if (values.port !== undefined) applied.port = values.port;
 
     if (dryRun) {
-      const warnings: string[] = [];
+      const warnings: string[] = [...formConfigWarnings];
       if (values.port !== undefined) {
         warnings.push("Saving will update app.port in seqdesk.config.json and requires a restart.");
       }
@@ -386,7 +438,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const warnings: string[] = [];
+    const warnings: string[] = [...formConfigWarnings];
     let updatedConfigFile: string | undefined;
     if (values.port !== undefined) {
       try {

@@ -20,6 +20,14 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertTriangle,
   Loader2,
@@ -38,6 +46,9 @@ import {
   FileArchive,
   Layers,
   CheckCircle2,
+  ChevronDown,
+  Wrench,
+  MoreHorizontal,
 } from "lucide-react";
 import { PipelineDagViewer, DagNode, DagEdge, PipelineInfo } from "@/components/pipelines/PipelineDagViewer";
 import { PipelineIntegrationDetails } from "@/components/pipelines/PipelineIntegrationDetails";
@@ -281,6 +292,8 @@ interface DescriptorLintResult {
     file?: string;
   }>;
 }
+
+type CatalogView = "installed" | "available" | "needs-setup";
 
 function getPipelineIcon(icon: string) {
   switch (icon) {
@@ -529,6 +542,9 @@ export default function PipelineSettingsPage() {
   const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
   const [savingAssemblyDownloadSetting, setSavingAssemblyDownloadSetting] = useState(false);
   const [assemblyDownloadSettingError, setAssemblyDownloadSettingError] = useState<string | null>(null);
+  const [advancedToolsOpen, setAdvancedToolsOpen] = useState(false);
+  const [showPipelineDetails, setShowPipelineDetails] = useState(false);
+  const [catalogView, setCatalogView] = useState<CatalogView>("installed");
 
   useEffect(() => {
     let mounted = true;
@@ -1065,6 +1081,32 @@ export default function PipelineSettingsPage() {
   const availablePipelineCount = visibleStorePipelines.filter(
     (pipeline) => !installedPipelineIds.has(pipeline.id)
   ).length;
+  const pipelineNeedsSetup = (pipeline: PipelineConfig) => {
+    const latestStoreEntry = preferredStorePipelineMap.get(pipeline.pipelineId);
+    const latestVersion = latestStoreEntry?.latestVersion || latestStoreEntry?.version;
+    const packageUpdateAvailable =
+      latestVersion &&
+      pipeline.version &&
+      compareVersions(latestVersion, pipeline.version) > 0;
+    const codeUpdateAvailable =
+      pipeline.download?.status === "downloaded" &&
+      pipeline.download.expectedVersion &&
+      pipeline.download.version &&
+      compareVersions(pipeline.download.expectedVersion, pipeline.download.version) > 0;
+
+    return Boolean(
+      !pipeline.enabled ||
+        pipeline.readiness?.status !== "ready" ||
+        pipeline.download?.status === "missing" ||
+        pipeline.download?.job?.state === "error" ||
+        pipeline.databaseDownloads?.some(
+          (database) =>
+            database.status === "missing" || database.job?.state === "error"
+        ) ||
+        packageUpdateAvailable ||
+        codeUpdateAvailable
+    );
+  };
   const configEntries = selectedPipeline
     ? Object.entries(selectedPipeline.configSchema.properties)
     : [];
@@ -1101,8 +1143,19 @@ export default function PipelineSettingsPage() {
   const tabFilteredAvailablePipelines = availablePipelines.filter(
     (p) => !p.catalogs || p.catalogs.length === 0 || p.catalogs.includes(activeTab)
   );
+  const tabInstalledCount = tabFilteredInstalledPipelines.length;
+  const tabAvailableCount = tabFilteredAvailablePipelines.length;
+  const tabNeedsSetupCount = tabFilteredInstalledPipelines.filter(pipelineNeedsSetup).length;
+  const visibleInstalledPipelines =
+    catalogView === "needs-setup"
+      ? tabFilteredInstalledPipelines.filter(pipelineNeedsSetup)
+      : catalogView === "installed"
+        ? tabFilteredInstalledPipelines
+        : [];
+  const visibleAvailablePipelines =
+    catalogView === "available" ? tabFilteredAvailablePipelines : [];
   const tabVisiblePipelineCount =
-    tabFilteredInstalledPipelines.length + tabFilteredAvailablePipelines.length;
+    visibleInstalledPipelines.length + visibleAvailablePipelines.length;
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -1149,35 +1202,46 @@ export default function PipelineSettingsPage() {
         <div className="mb-4 mt-6">
           <h1 className="text-xl font-semibold">Pipelines</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Install, update, and cache nf-core pipelines used by analysis workflows.
+            Manage the analysis workflows available to orders and studies.
           </p>
         </div>
 
         <section id="pipelines" className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Pipelines</p>
-              <h2 className="text-base font-semibold">Pipelines</h2>
+              <h2 className="text-base font-semibold">Pipeline Catalog</h2>
               <p className="text-sm text-muted-foreground mt-2">
-                Installed and not-installed pipelines in one list.
+                Install missing packages, enable workflows, and finish setup checks from one list.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="bg-white"
-                onClick={() => {
-                  setSmokeArtifactDialogOpen(true);
-                  setSmokeArtifactError(null);
-                }}
-              >
-                <FileArchive className="h-4 w-4 mr-2" />
-                Inspect smoke artifact
-              </Button>
+              <div className="flex rounded-lg border border-border bg-white p-1">
+                {[
+                  { value: "installed", label: "Installed", count: tabInstalledCount },
+                  { value: "needs-setup", label: "Needs setup", count: tabNeedsSetupCount },
+                  { value: "available", label: "Available", count: tabAvailableCount },
+                ].map((item) => (
+                  <Button
+                    key={item.value}
+                    type="button"
+                    variant={catalogView === item.value ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setCatalogView(item.value as CatalogView)}
+                  >
+                    {item.label}
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      {item.count}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+              <Label htmlFor="pipeline-category-filter" className="sr-only">
+                Filter pipelines by category
+              </Label>
               <div className="w-52">
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="bg-white">
+                  <SelectTrigger id="pipeline-category-filter" aria-label="Filter pipelines by category" className="bg-white">
                     <SelectValue placeholder="All categories" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1196,32 +1260,134 @@ export default function PipelineSettingsPage() {
               <Badge variant={storeError ? "destructive" : "outline"} className="h-6 px-3">
                 {storeLoading ? "Checking..." : storeError ? "Registry unavailable" : `${availablePipelineCount} available`}
               </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => setShowPipelineDetails((value) => !value)}
+              >
+                {showPipelineDetails ? "Hide details" : "Show details"}
+              </Button>
             </div>
           </div>
 
-          <GlassCard>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium">Researcher Assembly Downloads</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Show final assemblies in researcher portal UI.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {savingAssemblyDownloadSetting && (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                )}
-                <Switch
-                  checked={allowUserAssemblyDownload}
-                  onCheckedChange={(checked) => {
-                    void handleAllowUserAssemblyDownloadChange(checked);
-                  }}
-                  disabled={savingAssemblyDownloadSetting}
-                  aria-label="Toggle researcher assembly downloads"
-                />
-              </div>
-            </div>
-          </GlassCard>
+          <Collapsible open={advancedToolsOpen} onOpenChange={setAdvancedToolsOpen}>
+            <GlassCard className="p-0">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <Wrench className="h-4 w-4 text-muted-foreground" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">Advanced Tools</span>
+                      <span className="block text-xs text-muted-foreground">
+                        Output access policy and smoke artifact inspection.
+                      </span>
+                    </span>
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                      advancedToolsOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="grid gap-3 border-t border-border px-4 py-4 md:grid-cols-2">
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Researcher Assembly Downloads</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Show final assemblies in researcher-facing order pages.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {savingAssemblyDownloadSetting && (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                        <Switch
+                          checked={allowUserAssemblyDownload}
+                          onCheckedChange={(checked) => {
+                            void handleAllowUserAssemblyDownloadChange(checked);
+                          }}
+                          disabled={savingAssemblyDownloadSetting}
+                          aria-label="Toggle researcher assembly downloads"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Smoke Artifact Import</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Inspect a test ZIP and infer output globs without changing installed pipelines.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-white"
+                        onClick={() => {
+                          setSmokeArtifactDialogOpen(true);
+                          setSmokeArtifactError(null);
+                        }}
+                      >
+                        <FileArchive className="h-4 w-4 mr-2" />
+                        Inspect ZIP
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3 md:col-span-2">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Descriptor Linter</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Developer check for installed package descriptors, output patterns, and parser references.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {installedPipelines.length > 0 ? (
+                          installedPipelines.map((pipeline) => (
+                            <Button
+                              key={pipeline.pipelineId}
+                              variant="outline"
+                              size="sm"
+                              className="h-8 bg-white"
+                              onClick={() => {
+                                void handleLintDescriptor(pipeline);
+                              }}
+                              disabled={
+                                descriptorLintLoading &&
+                                descriptorLintTarget?.pipelineId === pipeline.pipelineId
+                              }
+                            >
+                              {descriptorLintLoading &&
+                              descriptorLintTarget?.pipelineId === pipeline.pipelineId ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <FileBarChart className="h-4 w-4 mr-2" />
+                              )}
+                              {pipeline.name}
+                            </Button>
+                          ))
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            Install a pipeline before running descriptor lint.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </GlassCard>
+          </Collapsible>
 
           {assemblyDownloadSettingError && (
             <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
@@ -1312,7 +1478,7 @@ export default function PipelineSettingsPage() {
             </div>
           ) : tabVisiblePipelineCount > 0 ? (
             <div className="grid gap-4 md:grid-cols-2">
-              {tabFilteredInstalledPipelines.map((pipeline: PipelineConfig) => (
+              {visibleInstalledPipelines.map((pipeline: PipelineConfig) => (
                 <GlassCard key={pipeline.pipelineId} className="relative">
                   {(() => {
                     const storeEntry = preferredStorePipelineMap.get(pipeline.pipelineId);
@@ -1395,14 +1561,11 @@ export default function PipelineSettingsPage() {
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2 mb-1">
                                 <h3 className="font-semibold truncate">{pipeline.name}</h3>
-                                {pipeline.version && (
+                                {showPipelineDetails && pipeline.version && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     v{pipeline.version}
                                   </Badge>
                                 )}
-                                <Badge variant="outline" className="text-xs font-normal">
-                                  Installed
-                                </Badge>
                                 <Badge
                                   variant={pipeline.enabled ? "outline" : "secondary"}
                                   className="text-xs font-normal"
@@ -1410,17 +1573,17 @@ export default function PipelineSettingsPage() {
                                 {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
                                 {getReadinessBadge(pipeline)}
-                                {storeEntry && (
+                                {showPipelineDetails && storeEntry && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     {getSourceBadgeLabel(storeEntry.source)}
                                   </Badge>
                                 )}
-                                {privateStorePipeline && (
+                                {showPipelineDetails && privateStorePipeline && (
                                   <Badge variant="secondary" className="text-xs">
                                     Private license
                                   </Badge>
                                 )}
-                                {codeStatus === "downloaded" && (
+                                {showPipelineDetails && codeStatus === "downloaded" && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     Pipeline cached
                                   </Badge>
@@ -1440,12 +1603,12 @@ export default function PipelineSettingsPage() {
                                     Pipeline not cached
                                   </Badge>
                                 )}
-                                {codeStatus === "unsupported" && (
+                                {showPipelineDetails && codeStatus === "unsupported" && (
                                   <Badge variant="secondary" className="text-xs">
                                     External pipeline
                                   </Badge>
                                 )}
-                                {databaseDownloads.length > 0 && databaseAvailable.length > 0 && (
+                                {showPipelineDetails && databaseDownloads.length > 0 && databaseAvailable.length > 0 && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     DB ready
                                   </Badge>
@@ -1465,9 +1628,11 @@ export default function PipelineSettingsPage() {
                                     DB download failed
                                   </Badge>
                                 )}
-                                <Badge variant="secondary" className="text-xs capitalize">
+                                {showPipelineDetails && (
+                                  <Badge variant="secondary" className="text-xs capitalize">
                                   {pipeline.category}
-                                </Badge>
+                                  </Badge>
+                                )}
                                 {updateAvailable && (
                                   <Badge variant="secondary" className="text-xs">
                                     Package update
@@ -1482,188 +1647,197 @@ export default function PipelineSettingsPage() {
                               <p className="text-sm text-muted-foreground line-clamp-2">
                                 {pipeline.description}
                               </p>
-                              <p className="text-xs text-muted-foreground font-mono mt-1">
-                                {pipeline.pipelineId}
-                              </p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {latestVersion
-                                    ? `Latest version: v${latestVersion}`
-                                    : "Latest version: unknown"}
+                              {readiness && !showPipelineDetails && (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  Setup: {readiness.summary}
                                 </p>
-                                {privateStorePipeline && (
+                              )}
+                              {showPipelineDetails && (
+                                <>
+                                  <p className="text-xs text-muted-foreground font-mono mt-1">
+                                    {pipeline.pipelineId}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {latestVersion
+                                      ? `Latest version: v${latestVersion}`
+                                      : "Latest version: unknown"}
+                                  </p>
+                                  {privateStorePipeline && (
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Package install requires a private access key.
                                   </p>
-                                )}
-                                {gitHubStorePipeline && storeEntry?.source.repository && (
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    Managed via GitHub import ({storeEntry.source.repository}, ref: {storeEntry.source.refDefault || DEFAULT_GITHUB_REF}).
-                                  </p>
-                                )}
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {codeStatus === "downloaded"
-                                    ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
-                                    : codeStatus === "missing"
-                                      ? "Pipeline cache: not downloaded"
-                                    : codeStatus === "unsupported"
-                                      ? "Pipeline cache: managed externally"
-                                      : "Pipeline cache: unknown"}
-                                {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
-                              </p>
-                              {databaseDownloads.map((database) => {
-                                const databaseRunning = database.job?.state === "running";
-                                const databaseFailedState = database.job?.state === "error";
-                                const databaseUnavailable = database.status === "missing";
-                                const databaseProgress = database.job?.progressPercent;
-                                const databaseBytes = database.job?.bytesDownloaded;
-                                const databaseTotal = database.job?.totalBytes;
-                                const manualCommands = getManualDbDownloadCommands(database);
-                                return (
-                                  <div key={database.id} className="mt-1 space-y-1">
-                                    <p className="text-xs text-muted-foreground">
-                                      {database.label}:{" "}
-                                      {database.status === "downloaded"
-                                        ? `downloaded${database.version ? ` (v${database.version})` : ""}`
-                                        : "not downloaded"}
+                                  )}
+                                  {gitHubStorePipeline && storeEntry?.source.repository && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Managed via GitHub import ({storeEntry.source.repository}, ref: {storeEntry.source.refDefault || DEFAULT_GITHUB_REF}).
                                     </p>
-                                    {database.path && (
+                                  )}
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {codeStatus === "downloaded"
+                                      ? `Pipeline cache: ${downloadedCodeVersion ? `v${downloadedCodeVersion}` : "version unknown"}`
+                                      : codeStatus === "missing"
+                                        ? "Pipeline cache: not downloaded"
+                                      : codeStatus === "unsupported"
+                                        ? "Pipeline cache: managed externally"
+                                        : "Pipeline cache: unknown"}
+                                    {expectedCodeVersion ? ` • Expected v${expectedCodeVersion}` : ""}
+                                  </p>
+                                  {databaseDownloads.map((database) => {
+                                    const databaseRunning = database.job?.state === "running";
+                                    const databaseFailedState = database.job?.state === "error";
+                                    const databaseUnavailable = database.status === "missing";
+                                    const databaseProgress = database.job?.progressPercent;
+                                    const databaseBytes = database.job?.bytesDownloaded;
+                                    const databaseTotal = database.job?.totalBytes;
+                                    const manualCommands = getManualDbDownloadCommands(database);
+                                    return (
+                                      <div key={database.id} className="mt-1 space-y-1">
+                                        <p className="text-xs text-muted-foreground">
+                                          {database.label}:{" "}
+                                          {database.status === "downloaded"
+                                            ? `downloaded${database.version ? ` (v${database.version})` : ""}`
+                                            : "not downloaded"}
+                                        </p>
+                                        {database.path && (
                                       <p className="text-xs text-muted-foreground break-all">
                                         Path: {database.path}
                                       </p>
-                                    )}
-                                    {database.detail && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {database.detail}
-                                      </p>
-                                    )}
-                                    {databaseRunning && (
-                                      <p className="text-xs text-muted-foreground">
-                                        Downloading: {databaseProgress != null ? `${databaseProgress}%` : "in progress"}
-                                        {typeof databaseBytes === "number"
-                                          ? ` (${formatBytes(databaseBytes)}`
-                                          : ""}
-                                        {typeof databaseBytes === "number" && typeof databaseTotal === "number"
-                                          ? ` / ${formatBytes(databaseTotal)})`
-                                          : typeof databaseBytes === "number"
-                                            ? ")"
-                                            : ""}
-                                      </p>
-                                    )}
-                                    {databaseFailedState && (
-                                      <p className={`text-xs ${databaseUnavailable ? "text-destructive" : "text-muted-foreground"}`}>
-                                        {database.job?.error
-                                          ? databaseUnavailable
-                                            ? `${database.label} download failed: ${database.job.error}`
-                                            : `Last ${database.label} re-download attempt failed: ${database.job.error}`
-                                          : databaseUnavailable
-                                            ? `${database.label} download failed`
-                                            : `Last ${database.label} re-download attempt failed`}
-                                      </p>
-                                    )}
-                                    {(databaseUnavailable || databaseFailedState) && manualCommands && (
-                                      <div className="mt-1 rounded-md border border-border/60 bg-muted/40 p-2">
-                                        <p className="text-[11px] text-muted-foreground">
-                                          Manual terminal fallback (run on the SeqDesk server):
-                                        </p>
-                                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-[11px] text-foreground">{manualCommands.join("\n")}</pre>
+                                        )}
+                                        {database.detail && (
+                                          <p className="text-xs text-muted-foreground">
+                                            {database.detail}
+                                          </p>
+                                        )}
+                                        {databaseRunning && (
+                                          <p className="text-xs text-muted-foreground">
+                                            Downloading: {databaseProgress != null ? `${databaseProgress}%` : "in progress"}
+                                            {typeof databaseBytes === "number"
+                                              ? ` (${formatBytes(databaseBytes)}`
+                                              : ""}
+                                            {typeof databaseBytes === "number" && typeof databaseTotal === "number"
+                                              ? ` / ${formatBytes(databaseTotal)})`
+                                              : typeof databaseBytes === "number"
+                                                ? ")"
+                                                : ""}
+                                          </p>
+                                        )}
+                                        {databaseFailedState && (
+                                          <p className={`text-xs ${databaseUnavailable ? "text-destructive" : "text-muted-foreground"}`}>
+                                            {database.job?.error
+                                              ? databaseUnavailable
+                                                ? `${database.label} download failed: ${database.job.error}`
+                                                : `Last ${database.label} re-download attempt failed: ${database.job.error}`
+                                              : databaseUnavailable
+                                                ? `${database.label} download failed`
+                                                : `Last ${database.label} re-download attempt failed`}
+                                          </p>
+                                        )}
+                                        {(databaseUnavailable || databaseFailedState) && manualCommands && (
+                                          <div className="mt-1 rounded-md border border-border/60 bg-muted/40 p-2">
+                                            <p className="text-[11px] text-muted-foreground">
+                                              Manual terminal fallback (run on the SeqDesk server):
+                                            </p>
+                                            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-[11px] text-foreground">{manualCommands.join("\n")}</pre>
+                                          </div>
+                                        )}
+                                        {database.job?.state === "success" && database.job.finishedAt && (
+                                          <p className="text-xs text-muted-foreground">
+                                            Last DB download {formatStoreDate(database.job.finishedAt)}
+                                          </p>
+                                        )}
                                       </div>
-                                    )}
-                                    {database.job?.state === "success" && database.job.finishedAt && (
-                                      <p className="text-xs text-muted-foreground">
-                                        Last DB download {formatStoreDate(database.job.finishedAt)}
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              {readiness && (
-                                <div className="mt-3 rounded-md border border-border/70 bg-muted/30 p-3">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div>
-                                      <p className="text-xs font-medium">Setup checklist</p>
-                                      <p className="text-xs text-muted-foreground mt-0.5">
-                                        {readiness.summary}
-                                      </p>
-                                    </div>
-                                    {nextReadinessItem && nextReadinessActionLabel && (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-7 bg-white text-xs"
-                                        onClick={() => {
-                                          if (nextReadinessItem.action === "download-db") {
-                                            const database =
-                                              databaseDownloads.find((entry) => entry.status === "missing") ||
-                                              databaseDownloads[0];
-                                            if (database) {
-                                              void handleDownloadPipelineDatabase(
-                                                pipeline.pipelineId,
-                                                database.id,
-                                                database.status === "downloaded"
-                                              );
+                                    );
+                                  })}
+                                  {readiness && (
+                                    <div className="mt-3 rounded-md border border-border/70 bg-muted/30 p-3">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                          <p className="text-xs font-medium">Setup checklist</p>
+                                          <p className="text-xs text-muted-foreground mt-0.5">
+                                            {readiness.summary}
+                                          </p>
+                                        </div>
+                                        {nextReadinessItem && nextReadinessActionLabel && (
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 bg-white text-xs"
+                                            onClick={() => {
+                                              if (nextReadinessItem.action === "download-db") {
+                                                const database =
+                                                  databaseDownloads.find((entry) => entry.status === "missing") ||
+                                                  databaseDownloads[0];
+                                                if (database) {
+                                                  void handleDownloadPipelineDatabase(
+                                                    pipeline.pipelineId,
+                                                    database.id,
+                                                    database.status === "downloaded"
+                                                  );
+                                                }
+                                                return;
+                                              }
+                                              if (nextReadinessItem.action === "sync" && githubInstallTarget) {
+                                                openGitHubInstallDialog(githubInstallTarget, "update");
+                                                return;
+                                              }
+                                              if (nextReadinessItem.action === "configure") {
+                                                openConfigDialog(pipeline);
+                                                return;
+                                              }
+                                              if (nextReadinessItem.action === "enable") {
+                                                void handleTogglePipelineEnabled(pipeline);
+                                                return;
+                                              }
+                                              if (nextReadinessItem.action === "review-outputs") {
+                                                void handleLintDescriptor(pipeline);
+                                              }
+                                            }}
+                                            disabled={
+                                              downloadingDatabase?.startsWith(`${pipeline.pipelineId}:`) ||
+                                              githubSubmitting ||
+                                              togglingPipeline === pipeline.pipelineId
                                             }
-                                            return;
-                                          }
-                                          if (nextReadinessItem.action === "sync" && githubInstallTarget) {
-                                            openGitHubInstallDialog(githubInstallTarget, "update");
-                                            return;
-                                          }
-                                          if (nextReadinessItem.action === "configure") {
-                                            openConfigDialog(pipeline);
-                                            return;
-                                          }
-                                          if (nextReadinessItem.action === "enable") {
-                                            void handleTogglePipelineEnabled(pipeline);
-                                            return;
-                                          }
-                                          if (nextReadinessItem.action === "review-outputs") {
-                                            void handleLintDescriptor(pipeline);
-                                          }
-                                        }}
-                                        disabled={
-                                          downloadingDatabase?.startsWith(`${pipeline.pipelineId}:`) ||
-                                          githubSubmitting ||
-                                          togglingPipeline === pipeline.pipelineId
-                                        }
-                                      >
-                                        {nextReadinessActionLabel}
-                                      </Button>
-                                    )}
-                                  </div>
-                                  <div className="mt-2 grid gap-1.5">
-                                    {readiness.items.map((item) => (
-                                      <div
-                                        key={item.id}
-                                        className="flex items-start gap-2 text-xs"
-                                      >
-                                        <span className="mt-0.5 shrink-0">
-                                          {getReadinessStatusIcon(item.status)}
-                                        </span>
-                                        <span>
-                                          <span className="font-medium">{item.label}</span>
-                                          {item.detail ? (
-                                            <span className="text-muted-foreground"> - {item.detail}</span>
-                                          ) : null}
-                                        </span>
+                                          >
+                                            {nextReadinessActionLabel}
+                                          </Button>
+                                        )}
                                       </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                              {downloadInProgress && downloadJob?.startedAt && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Download started {formatStoreDate(downloadJob.startedAt)}
-                                </p>
-                              )}
-                              {downloadFailed && (
-                                <p className="text-xs text-destructive mt-1">
-                                  {downloadJob?.error ? `Pipeline download failed: ${downloadJob.error}` : "Pipeline download failed"}
-                                </p>
-                              )}
-                              {downloadJob?.state === "success" && downloadFinishedAt && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Last download {formatStoreDate(downloadFinishedAt)}
-                                </p>
+                                      <div className="mt-2 grid gap-1.5">
+                                        {readiness.items.map((item) => (
+                                          <div
+                                            key={item.id}
+                                            className="flex items-start gap-2 text-xs"
+                                          >
+                                            <span className="mt-0.5 shrink-0">
+                                              {getReadinessStatusIcon(item.status)}
+                                            </span>
+                                            <span>
+                                              <span className="font-medium">{item.label}</span>
+                                              {item.detail ? (
+                                                <span className="text-muted-foreground"> - {item.detail}</span>
+                                              ) : null}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {downloadInProgress && downloadJob?.startedAt && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Download started {formatStoreDate(downloadJob.startedAt)}
+                                    </p>
+                                  )}
+                                  {downloadFailed && (
+                                    <p className="text-xs text-destructive mt-1">
+                                      {downloadJob?.error ? `Pipeline download failed: ${downloadJob.error}` : "Pipeline download failed"}
+                                    </p>
+                                  )}
+                                  {downloadJob?.state === "success" && downloadFinishedAt && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Last download {formatStoreDate(downloadFinishedAt)}
+                                    </p>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
@@ -1777,54 +1951,64 @@ export default function PipelineSettingsPage() {
                                 {githubSubmitting ? "Syncing..." : "Sync from GitHub"}
                               </Button>
                             )}
+                            {!pipeline.enabled && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleTogglePipelineEnabled(pipeline)}
+                                className="h-8"
+                                disabled={togglingPipeline === pipeline.pipelineId}
+                              >
+                                {togglingPipeline === pipeline.pipelineId ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-4 w-4 mr-1" />
+                                )}
+                                Enable
+                              </Button>
+                            )}
                             <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleTogglePipelineEnabled(pipeline)}
-                              className="h-8"
-                              disabled={togglingPipeline === pipeline.pipelineId}
-                            >
-                              {togglingPipeline === pipeline.pipelineId ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <Settings2 className="h-4 w-4 mr-1" />
-                              )}
-                              {pipeline.enabled ? "Disable" : "Enable"}
-                            </Button>
-                            <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
                               onClick={() => openDagDialog(pipeline)}
-                              className="h-8"
+                              className="h-8 bg-white"
                             >
                               <Eye className="h-4 w-4 mr-1" />
                               View
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                void handleLintDescriptor(pipeline);
-                              }}
-                              className="h-8"
-                              disabled={descriptorLintLoading && descriptorLintTarget?.pipelineId === pipeline.pipelineId}
-                            >
-                              {descriptorLintLoading && descriptorLintTarget?.pipelineId === pipeline.pipelineId ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <FileBarChart className="h-4 w-4 mr-1" />
-                              )}
-                              Lint
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openConfigDialog(pipeline)}
-                              className="h-8"
-                            >
-                              <Settings2 className="h-4 w-4 mr-1" />
-                              Configure
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 px-2"
+                                  aria-label={`More actions for ${pipeline.name}`}
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-52">
+                                <DropdownMenuLabel>Pipeline actions</DropdownMenuLabel>
+                                <DropdownMenuItem onSelect={() => openConfigDialog(pipeline)}>
+                                  <Settings2 className="h-4 w-4" />
+                                  Configure
+                                </DropdownMenuItem>
+                                {pipeline.enabled && (
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    disabled={togglingPipeline === pipeline.pipelineId}
+                                    onSelect={() => handleTogglePipelineEnabled(pipeline)}
+                                  >
+                                    {togglingPipeline === pipeline.pipelineId ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <XCircle className="h-4 w-4" />
+                                    )}
+                                    Disable
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                       </>
@@ -1833,8 +2017,8 @@ export default function PipelineSettingsPage() {
                 </GlassCard>
               ))}
 
-              {tabFilteredAvailablePipelines.map((pipeline) => (
-                <GlassCard key={`${pipeline.id}:${pipeline.source.sourceId}`} className="relative">
+              {visibleAvailablePipelines.map((pipeline) => (
+                <GlassCard key={`${pipeline.id}:${pipeline.source.sourceId}`} className="relative border-dashed bg-muted/20">
                   {(() => {
                     const privateStorePipeline = isPrivateStorePipeline(pipeline);
                     const gitHubStorePipeline = isGitHubStorePipeline(pipeline);
@@ -1862,42 +2046,52 @@ export default function PipelineSettingsPage() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
                           <h3 className="font-semibold truncate">{pipeline.name}</h3>
-                          <Badge variant="outline" className="text-xs font-normal">
+                          {showPipelineDetails && (
+                            <Badge variant="outline" className="text-xs font-normal">
                             v{pipeline.version}
-                          </Badge>
+                            </Badge>
+                          )}
                           <Badge variant="secondary" className="text-xs">
                             Not installed
                           </Badge>
-                          <Badge variant="outline" className="text-xs font-normal">
+                          {showPipelineDetails && (
+                            <Badge variant="outline" className="text-xs font-normal">
                             {getSourceBadgeLabel(pipeline.source)}
-                          </Badge>
-                          {privateStorePipeline && (
+                            </Badge>
+                          )}
+                          {showPipelineDetails && privateStorePipeline && (
                             <Badge variant="secondary" className="text-xs">
                               Private license
                             </Badge>
                           )}
-                          <Badge variant="secondary" className="text-xs capitalize">
+                          {showPipelineDetails && (
+                            <Badge variant="secondary" className="text-xs capitalize">
                             {pipeline.category}
-                          </Badge>
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground line-clamp-2">
                           {pipeline.description}
                         </p>
-                        <p className="text-xs text-muted-foreground font-mono mt-1">
-                          {pipeline.id}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
-                        </p>
-                        {privateStorePipeline && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Installation requires package URL and private access key.
-                          </p>
-                        )}
-                        {gitHubStorePipeline && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Add from GitHub by providing repository access details and a token.
-                          </p>
+                        {showPipelineDetails && (
+                          <>
+                            <p className="text-xs text-muted-foreground font-mono mt-1">
+                              {pipeline.id}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              by {pipeline.author || "unknown"} | {(pipeline.downloads || 0).toLocaleString()} installs
+                            </p>
+                            {privateStorePipeline && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Installation requires package URL and private access key.
+                              </p>
+                            )}
+                            {gitHubStorePipeline && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Add from GitHub by providing repository access details and a token.
+                              </p>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -1944,14 +2138,22 @@ export default function PipelineSettingsPage() {
             <div className="rounded-xl border border-dashed bg-muted/30 px-6 py-10 text-center">
               <Package className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
               <h3 className="text-sm font-semibold">
-                {selectedCategory === "all"
-                  ? "No pipelines found"
-                  : "No pipelines in this category"}
+                {catalogView === "needs-setup"
+                  ? "No pipelines need setup"
+                  : catalogView === "available"
+                    ? "No available pipelines"
+                    : selectedCategory === "all"
+                      ? "No installed pipelines"
+                      : "No pipelines in this category"}
               </h3>
               <p className="text-sm text-muted-foreground mt-2">
-                {selectedCategory === "all"
-                  ? "No installed pipelines and no store entries are currently available."
-                  : "Try another category or refresh the store registry."}
+                {catalogView === "needs-setup"
+                  ? "Installed pipelines in this view are ready."
+                  : catalogView === "available"
+                    ? "All registry pipelines for this tab are already installed."
+                    : selectedCategory === "all"
+                      ? "Use Available to install a pipeline from the registry."
+                      : "Try another category or clear the category filter."}
               </p>
             </div>
           )}

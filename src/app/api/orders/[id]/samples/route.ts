@@ -3,18 +3,17 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { DEFAULT_FORM_SCHEMA, type FormFieldDefinition } from "@/types/form-config";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 import {
   ensureOrderModuleDefaultFields,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
+import {
+  filterFieldsByModules,
+  isModuleEnabled,
+  parseModulesConfig,
+} from "@/lib/modules/form-integration";
 import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
 import { mapPerSampleFieldToColumn, type CoreSampleColumn } from "@/lib/sample-fields";
-
-interface ModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
 
 const sampleSelect = {
   id: true,
@@ -40,65 +39,6 @@ interface SampleRecord {
   checklistData: string | null;
   checklistUnits: string | null;
   customFields: string | null;
-}
-
-function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-}
-
-function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
-  if (config.globalDisabled) return false;
-  return config.modules[moduleId] ?? false;
-}
-
-function filterFieldsByModules(
-  fields: FormFieldDefinition[],
-  modulesConfig: ModulesConfig
-): FormFieldDefinition[] {
-  return fields.filter((field) => {
-    if (field.type === "mixs" && !isModuleEnabled(modulesConfig, "mixs-metadata")) {
-      return false;
-    }
-    if (field.type === "funding" && !isModuleEnabled(modulesConfig, "funding-info")) {
-      return false;
-    }
-    if (field.type === "billing" && !isModuleEnabled(modulesConfig, "billing-info")) {
-      return false;
-    }
-    if (
-      field.type === "sequencing-tech" &&
-      !isModuleEnabled(modulesConfig, "sequencing-tech")
-    ) {
-      return false;
-    }
-    if (
-      field.moduleSource === "ena-sample-fields" &&
-      !isModuleEnabled(modulesConfig, "ena-sample-fields")
-    ) {
-      return false;
-    }
-
-    return true;
-  });
 }
 
 function parseJsonObject(value: string | null | undefined): Record<string, unknown> {

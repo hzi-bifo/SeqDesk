@@ -28,6 +28,10 @@ import {
   DEFAULT_BILLING_SETTINGS,
 } from "@/lib/modules/types";
 import {
+  getFormModuleIntegration,
+  hasModuleField,
+} from "@/lib/modules/form-integration";
+import {
   type FormFieldDefinition,
   type FormFieldGroup,
 } from "@/types/form-config";
@@ -583,6 +587,25 @@ export default function ModulesPage() {
                     const isUpdating = updating === module.id;
                     const isComingSoon = module.comingSoon;
                     const builderLinks = MODULE_BUILDER_LINKS[module.id] ?? [];
+                    const formIntegration = getFormModuleIntegration(module.id);
+                    const hasOrderModuleField = Boolean(
+                      formIntegration?.targets.includes("order") &&
+                        orderFormConfig &&
+                        hasModuleField(module.id, orderFormConfig.fields)
+                    );
+                    const hasStudyModuleField = Boolean(
+                      formIntegration?.targets.includes("study") &&
+                        studyFormConfig &&
+                        hasModuleField(module.id, studyFormConfig.fields)
+                    );
+                    const hasConfiguredFormField =
+                      hasOrderModuleField || hasStudyModuleField;
+                    const formTargets = formIntegration?.targets
+                      .map((target) => target === "order" ? "Order Form" : "Study Form")
+                      .join(", ");
+                    const fieldTypeList = formIntegration?.fieldTypes
+                      .map((fieldType) => fieldType)
+                      .join(", ");
 
                     return (
                       <GlassCard
@@ -612,6 +635,31 @@ export default function ModulesPage() {
                                 </span>
                               )}
                             </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {module.hasSettings && (
+                                <span className="rounded bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                  Settings available
+                                </span>
+                              )}
+                              {formIntegration && (
+                                <>
+                                  <span
+                                    className={`rounded px-2 py-0.5 text-xs font-medium ${
+                                      hasConfiguredFormField
+                                        ? "bg-emerald-500/10 text-emerald-700"
+                                        : "bg-amber-500/10 text-amber-700"
+                                    }`}
+                                  >
+                                    {hasConfiguredFormField ? "Field added" : "Missing field"}
+                                  </span>
+                                  {!isEffectivelyEnabled && (
+                                    <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                      Hidden from users when disabled
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
                             <p className="text-sm text-muted-foreground">
                               {module.description}
                             </p>
@@ -634,6 +682,26 @@ export default function ModulesPage() {
                                     <Link href={target.href}>{target.label}</Link>
                                   </Button>
                                 ))}
+                              </div>
+                            )}
+
+                            {formIntegration && (
+                              <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                                <p className="font-medium text-foreground">Form integration</p>
+                                <p className="mt-1">{formIntegration.summary}</p>
+                                <p className="mt-1">
+                                  Used in: {formTargets}. Field type{formIntegration.fieldTypes.length === 1 ? "" : "s"}: {fieldTypeList}.
+                                </p>
+                                {formIntegration.settingsHref && (
+                                  <Button
+                                    asChild
+                                    variant="link"
+                                    size="sm"
+                                    className="mt-1 h-auto p-0 text-xs"
+                                  >
+                                    <Link href={formIntegration.settingsHref}>Open module settings</Link>
+                                  </Button>
+                                )}
                               </div>
                             )}
 
@@ -710,7 +778,7 @@ export default function ModulesPage() {
                               return (
                                 <div className="space-y-2 pt-1">
                                   <p className="text-xs text-muted-foreground">
-                                    Quick add
+                                    Form actions
                                   </p>
                                   <div className="flex flex-wrap gap-2">
                                     {quickActions.map((action) => {

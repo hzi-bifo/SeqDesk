@@ -1,34 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
-
-interface ModulesConfig {
-  modules: Record<string, boolean>;
-  globalDisabled: boolean;
-}
-
-function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-
-  try {
-    const parsed = JSON.parse(configString);
-    if (typeof parsed.modules === "object") {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    return {
-      modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-      globalDisabled: false,
-    };
-  } catch {
-    return { modules: DEFAULT_MODULE_STATES, globalDisabled: false };
-  }
-}
+import { parseModulesConfig } from "@/lib/modules/form-integration";
 
 export async function GET() {
   try {
