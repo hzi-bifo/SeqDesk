@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     access: vi.fn(),
     stat: vi.fn(),
     readFile: vi.fn(),
+    readdir: vi.fn(),
   },
   db: {
     pipelineRun: {
@@ -67,6 +68,7 @@ describe("GET /api/pipelines/runs/[id]", () => {
     });
     mocks.isDemoSession.mockReturnValue(false);
     mocks.fs.access.mockResolvedValue(undefined);
+    mocks.fs.readdir.mockRejectedValue(new Error("no output dir"));
     mocks.fs.readFile.mockResolvedValue(
       '#!/usr/bin/env bash\n"${NEXTFLOW_RUNNER[@]}" run main.nf \\\n  --input samplesheet.csv \\\n  --outdir results\n'
     );
@@ -321,6 +323,66 @@ describe("GET /api/pipelines/runs/[id]", () => {
     // Both log files should be detected since fs.access returns success
     expect(body.run.detectedLogFiles.length).toBeGreaterThan(0);
     expect(body.run.executionCommands.launchCommand).toContain("sbatch");
+  });
+
+  it("scans run output files for preview and download browsing", async () => {
+    mocks.fs.readdir.mockImplementation(async (dir: string) => {
+      if (dir === "/runs/run-1/output") {
+        return [
+          { name: "results", isDirectory: () => true, isFile: () => false },
+          { name: "work", isDirectory: () => true, isFile: () => false },
+        ];
+      }
+      if (dir === "/runs/run-1/output/results") {
+        return [
+          { name: "run_20260309", isDirectory: () => true, isFile: () => false },
+        ];
+      }
+      if (dir === "/runs/run-1/output/results/run_20260309") {
+        return [
+          { name: "final", isDirectory: () => true, isFile: () => false },
+          { name: "profiling", isDirectory: () => true, isFile: () => false },
+        ];
+      }
+      if (dir === "/runs/run-1/output/results/run_20260309/final") {
+        return [
+          { name: "metaxpath.combined_report.top50.html", isDirectory: () => false, isFile: () => true },
+          { name: "metaxpath.combined_report.simple.dotplot.pdf", isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      if (dir === "/runs/run-1/output/results/run_20260309/profiling") {
+        return [
+          { name: "test_sample.metax.profile.txt", isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      return [];
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.run.runOutputFiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "metaxpath.combined_report.top50.html",
+          path: "/runs/run-1/output/results/run_20260309/final/metaxpath.combined_report.top50.html",
+          type: "report",
+          size: 101,
+        }),
+        expect.objectContaining({
+          name: "metaxpath.combined_report.simple.dotplot.pdf",
+          type: "report",
+        }),
+        expect.objectContaining({
+          name: "test_sample.metax.profile.txt",
+          type: "data",
+        }),
+      ])
+    );
   });
 
   it("returns 500 on unexpected errors", async () => {

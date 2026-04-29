@@ -1,0 +1,71 @@
+{
+  "id": "study-demo-report",
+  "name": "Study Demo Report",
+  "description": "Generate example pipeline outputs to verify study-level pipeline execution and preview handling",
+  "category": "analysis",
+  "version": "0.1.0",
+  "sortOrder": 99,
+  "requires": {
+    "reads": false,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "demo_html_report",
+      "description": "Study-level HTML report",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "demo_markdown_report",
+      "description": "Markdown report for in-app preview testing",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "sample_summary",
+      "description": "TSV table with one row per sample",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "study"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": false,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "report_title": {
+        "type": "string",
+        "title": "Report title",
+        "default": "SeqDesk demo pipeline report"
+      }
+    }
+  },
+  "defaultConfig": {
+    "report_title": "SeqDesk demo pipeline report"
+  },
+  "icon": "FileText"
+}

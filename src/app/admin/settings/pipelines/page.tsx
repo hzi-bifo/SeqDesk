@@ -35,7 +35,9 @@ import {
   Package,
   Microscope,
   FileBarChart,
+  FileArchive,
   Layers,
+  CheckCircle2,
 } from "lucide-react";
 import { PipelineDagViewer, DagNode, DagEdge, PipelineInfo } from "@/components/pipelines/PipelineDagViewer";
 import { PipelineIntegrationDetails } from "@/components/pipelines/PipelineIntegrationDetails";
@@ -125,6 +127,21 @@ interface PipelineConfig {
     }>;
   };
   defaultConfig: Record<string, unknown>;
+  readiness?: PipelineReadiness;
+}
+
+interface PipelineReadiness {
+  status: "ready" | "warning" | "missing";
+  summary: string;
+  items: PipelineReadinessItem[];
+}
+
+interface PipelineReadinessItem {
+  id: string;
+  label: string;
+  status: "ready" | "warning" | "missing";
+  detail?: string;
+  action?: "install" | "sync" | "download-db" | "configure" | "enable" | "review-outputs";
 }
 
 interface PipelineDatabaseDownloadInfo {
@@ -226,6 +243,43 @@ interface GitHubInstallTarget {
   name: string;
   source: StorePipeline["source"];
   version?: string;
+}
+
+interface SmokeArtifactInspection {
+  fileName?: string;
+  summary: {
+    totalFiles: number;
+    publishedFiles: number;
+    ignoredWorkFiles: number;
+    suggestedOutputs: number;
+  };
+  entries: Array<{
+    path: string;
+    sizeBytes: number;
+    type: string;
+  }>;
+  suggestions: Array<{
+    id: string;
+    label: string;
+    pattern: string;
+    destination: string;
+    type: string;
+    count: number;
+  }>;
+}
+
+interface DescriptorLintResult {
+  packageId: string;
+  packageDir: string;
+  valid: boolean;
+  errors: number;
+  warnings: number;
+  issues: Array<{
+    level: "error" | "warning";
+    code: string;
+    message: string;
+    file?: string;
+  }>;
 }
 
 function getPipelineIcon(icon: string) {
@@ -355,6 +409,47 @@ function getManualDbDownloadCommands(database: PipelineDatabaseDownloadInfo): st
   ];
 }
 
+function getReadinessStatusIcon(status: PipelineReadinessItem["status"]) {
+  if (status === "ready") {
+    return <CheckCircle2 className="h-4 w-4 text-[#00BD7D]" />;
+  }
+  if (status === "warning") {
+    return <AlertTriangle className="h-4 w-4 text-amber-600" />;
+  }
+  return <XCircle className="h-4 w-4 text-destructive" />;
+}
+
+function getReadinessBadge(pipeline: PipelineConfig) {
+  const readiness = pipeline.readiness;
+  if (!readiness) return null;
+  if (readiness.status === "ready") {
+    return <Badge variant="outline" className="text-xs font-normal">Ready</Badge>;
+  }
+  if (readiness.status === "warning") {
+    return <Badge variant="secondary" className="text-xs">Setup review</Badge>;
+  }
+  return <Badge variant="secondary" className="text-xs">Setup incomplete</Badge>;
+}
+
+function getReadinessActionLabel(action?: PipelineReadinessItem["action"]) {
+  switch (action) {
+    case "install":
+      return "Install package";
+    case "sync":
+      return "Sync package";
+    case "download-db":
+      return "Install DB";
+    case "configure":
+      return "Configure";
+    case "enable":
+      return "Enable";
+    case "review-outputs":
+      return "Review outputs";
+    default:
+      return null;
+  }
+}
+
 export default function PipelineSettingsPage() {
   const { data, error, isLoading, mutate } = useSWR(
     "/api/admin/settings/pipelines",
@@ -414,6 +509,16 @@ export default function PipelineSettingsPage() {
   const [githubToken, setGithubToken] = useState("");
   const [githubInstallError, setGithubInstallError] = useState<string | null>(null);
   const [githubSubmitting, setGithubSubmitting] = useState(false);
+  const [smokeArtifactDialogOpen, setSmokeArtifactDialogOpen] = useState(false);
+  const [smokeArtifactFile, setSmokeArtifactFile] = useState<File | null>(null);
+  const [smokeArtifactInspecting, setSmokeArtifactInspecting] = useState(false);
+  const [smokeArtifactError, setSmokeArtifactError] = useState<string | null>(null);
+  const [smokeArtifactResult, setSmokeArtifactResult] = useState<SmokeArtifactInspection | null>(null);
+  const [descriptorLintDialogOpen, setDescriptorLintDialogOpen] = useState(false);
+  const [descriptorLintTarget, setDescriptorLintTarget] = useState<PipelineConfig | null>(null);
+  const [descriptorLintLoading, setDescriptorLintLoading] = useState(false);
+  const [descriptorLintError, setDescriptorLintError] = useState<string | null>(null);
+  const [descriptorLintResult, setDescriptorLintResult] = useState<DescriptorLintResult | null>(null);
   const [downloadingPipeline, setDownloadingPipeline] = useState<string | null>(null);
   const [downloadAction, setDownloadAction] = useState<"download" | "update" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -627,6 +732,64 @@ export default function PipelineSettingsPage() {
       setGithubToken("");
       setInstallingPipeline(null);
       setInstallAction(null);
+    }
+  };
+
+  const handleInspectSmokeArtifact = async () => {
+    if (!smokeArtifactFile) {
+      setSmokeArtifactError("Choose a smoke artifact ZIP first.");
+      return;
+    }
+
+    setSmokeArtifactInspecting(true);
+    setSmokeArtifactError(null);
+    setSmokeArtifactResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("artifact", smokeArtifactFile);
+      const res = await fetch("/api/admin/settings/pipelines/smoke-artifact", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          payload?.details || payload?.error || "Smoke artifact inspection failed."
+        );
+      }
+      setSmokeArtifactResult(payload as SmokeArtifactInspection);
+    } catch (error) {
+      setSmokeArtifactError(
+        error instanceof Error ? error.message : "Smoke artifact inspection failed."
+      );
+    } finally {
+      setSmokeArtifactInspecting(false);
+    }
+  };
+
+  const handleLintDescriptor = async (pipeline: PipelineConfig) => {
+    setDescriptorLintTarget(pipeline);
+    setDescriptorLintDialogOpen(true);
+    setDescriptorLintLoading(true);
+    setDescriptorLintError(null);
+    setDescriptorLintResult(null);
+
+    try {
+      const res = await fetch(
+        `/api/admin/settings/pipelines/${encodeURIComponent(pipeline.pipelineId)}/lint`
+      );
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || "Descriptor lint failed.");
+      }
+      setDescriptorLintResult(payload.result as DescriptorLintResult);
+    } catch (error) {
+      setDescriptorLintError(
+        error instanceof Error ? error.message : "Descriptor lint failed."
+      );
+    } finally {
+      setDescriptorLintLoading(false);
     }
   };
 
@@ -902,8 +1065,6 @@ export default function PipelineSettingsPage() {
   const availablePipelineCount = visibleStorePipelines.filter(
     (pipeline) => !installedPipelineIds.has(pipeline.id)
   ).length;
-  const visiblePipelineCount =
-    filteredInstalledPipelines.length + availablePipelines.length;
   const configEntries = selectedPipeline
     ? Object.entries(selectedPipeline.configSchema.properties)
     : [];
@@ -1002,6 +1163,18 @@ export default function PipelineSettingsPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => {
+                  setSmokeArtifactDialogOpen(true);
+                  setSmokeArtifactError(null);
+                }}
+              >
+                <FileArchive className="h-4 w-4 mr-2" />
+                Inspect smoke artifact
+              </Button>
               <div className="w-52">
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                   <SelectTrigger className="bg-white">
@@ -1204,6 +1377,13 @@ export default function PipelineSettingsPage() {
                     const databaseAvailable = databaseDownloads.filter(
                       (database) => database.status === "downloaded"
                     );
+                    const readiness = pipeline.readiness;
+                    const nextReadinessItem =
+                      readiness?.items.find((item) => item.status === "missing") ||
+                      readiness?.items.find((item) => item.status === "warning");
+                    const nextReadinessActionLabel = getReadinessActionLabel(
+                      nextReadinessItem?.action
+                    );
 
                     return (
                       <>
@@ -1227,8 +1407,9 @@ export default function PipelineSettingsPage() {
                                   variant={pipeline.enabled ? "outline" : "secondary"}
                                   className="text-xs font-normal"
                                 >
-                                  {pipeline.enabled ? "Enabled" : "Disabled"}
+                                {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
+                                {getReadinessBadge(pipeline)}
                                 {storeEntry && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     {getSourceBadgeLabel(storeEntry.source)}
@@ -1395,6 +1576,80 @@ export default function PipelineSettingsPage() {
                                   </div>
                                 );
                               })}
+                              {readiness && (
+                                <div className="mt-3 rounded-md border border-border/70 bg-muted/30 p-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <p className="text-xs font-medium">Setup checklist</p>
+                                      <p className="text-xs text-muted-foreground mt-0.5">
+                                        {readiness.summary}
+                                      </p>
+                                    </div>
+                                    {nextReadinessItem && nextReadinessActionLabel && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 bg-white text-xs"
+                                        onClick={() => {
+                                          if (nextReadinessItem.action === "download-db") {
+                                            const database =
+                                              databaseDownloads.find((entry) => entry.status === "missing") ||
+                                              databaseDownloads[0];
+                                            if (database) {
+                                              void handleDownloadPipelineDatabase(
+                                                pipeline.pipelineId,
+                                                database.id,
+                                                database.status === "downloaded"
+                                              );
+                                            }
+                                            return;
+                                          }
+                                          if (nextReadinessItem.action === "sync" && githubInstallTarget) {
+                                            openGitHubInstallDialog(githubInstallTarget, "update");
+                                            return;
+                                          }
+                                          if (nextReadinessItem.action === "configure") {
+                                            openConfigDialog(pipeline);
+                                            return;
+                                          }
+                                          if (nextReadinessItem.action === "enable") {
+                                            void handleTogglePipelineEnabled(pipeline);
+                                            return;
+                                          }
+                                          if (nextReadinessItem.action === "review-outputs") {
+                                            void handleLintDescriptor(pipeline);
+                                          }
+                                        }}
+                                        disabled={
+                                          downloadingDatabase?.startsWith(`${pipeline.pipelineId}:`) ||
+                                          githubSubmitting ||
+                                          togglingPipeline === pipeline.pipelineId
+                                        }
+                                      >
+                                        {nextReadinessActionLabel}
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 grid gap-1.5">
+                                    {readiness.items.map((item) => (
+                                      <div
+                                        key={item.id}
+                                        className="flex items-start gap-2 text-xs"
+                                      >
+                                        <span className="mt-0.5 shrink-0">
+                                          {getReadinessStatusIcon(item.status)}
+                                        </span>
+                                        <span>
+                                          <span className="font-medium">{item.label}</span>
+                                          {item.detail ? (
+                                            <span className="text-muted-foreground"> - {item.detail}</span>
+                                          ) : null}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {downloadInProgress && downloadJob?.startedAt && (
                                 <p className="text-xs text-muted-foreground mt-1">
                                   Download started {formatStoreDate(downloadJob.startedAt)}
@@ -1544,6 +1799,22 @@ export default function PipelineSettingsPage() {
                             >
                               <Eye className="h-4 w-4 mr-1" />
                               View
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                void handleLintDescriptor(pipeline);
+                              }}
+                              className="h-8"
+                              disabled={descriptorLintLoading && descriptorLintTarget?.pipelineId === pipeline.pipelineId}
+                            >
+                              {descriptorLintLoading && descriptorLintTarget?.pipelineId === pipeline.pipelineId ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <FileBarChart className="h-4 w-4 mr-1" />
+                              )}
+                              Lint
                             </Button>
                             <Button
                               variant="ghost"
@@ -1774,6 +2045,253 @@ export default function PipelineSettingsPage() {
                   ? "Sync from GitHub"
                   : "Add from GitHub"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={smokeArtifactDialogOpen}
+        onOpenChange={(open) => {
+          setSmokeArtifactDialogOpen(open);
+          if (!open) {
+            setSmokeArtifactFile(null);
+            setSmokeArtifactError(null);
+            setSmokeArtifactResult(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl w-[94vw]">
+          <DialogHeader>
+            <DialogTitle>Inspect smoke artifact</DialogTitle>
+            <DialogDescription>
+              Upload a pipeline smoke-test ZIP to inspect published result paths and draft output globs. This does not install or modify a pipeline.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="smoke-artifact">Smoke artifact ZIP</Label>
+              <Input
+                id="smoke-artifact"
+                type="file"
+                accept=".zip,application/zip"
+                className="bg-white"
+                onChange={(event) => {
+                  setSmokeArtifactFile(event.target.files?.[0] || null);
+                  setSmokeArtifactResult(null);
+                  setSmokeArtifactError(null);
+                }}
+              />
+            </div>
+
+            {smokeArtifactError && (
+              <p className="text-sm text-destructive">{smokeArtifactError}</p>
+            )}
+
+            {smokeArtifactResult && (
+              <div className="space-y-4">
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Files</p>
+                    <p className="text-lg font-semibold">{smokeArtifactResult.summary.totalFiles}</p>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Published</p>
+                    <p className="text-lg font-semibold">{smokeArtifactResult.summary.publishedFiles}</p>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Ignored work</p>
+                    <p className="text-lg font-semibold">{smokeArtifactResult.summary.ignoredWorkFiles}</p>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Suggestions</p>
+                    <p className="text-lg font-semibold">{smokeArtifactResult.summary.suggestedOutputs}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium">Suggested output globs</p>
+                  <div className="mt-2 space-y-2">
+                    {smokeArtifactResult.suggestions.length > 0 ? (
+                      smokeArtifactResult.suggestions.map((suggestion) => (
+                        <div
+                          key={suggestion.id}
+                          className="rounded-md border border-border/70 bg-muted/30 p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">{suggestion.label}</p>
+                            <Badge variant="outline" className="text-xs">
+                              {suggestion.count} file{suggestion.count === 1 ? "" : "s"}
+                            </Badge>
+                          </div>
+                          <code className="mt-2 block break-all rounded bg-background p-2 text-xs">
+                            {suggestion.pattern}
+                          </code>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {suggestion.destination} • {suggestion.type}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No result patterns were inferred. Check that the artifact contains published result files outside work/.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium">Detected result files</p>
+                  <div className="mt-2 max-h-52 overflow-auto rounded-md border border-border/70">
+                    {smokeArtifactResult.entries.slice(0, 80).map((entry) => (
+                      <div
+                        key={entry.path}
+                        className="flex items-center justify-between gap-3 border-b border-border/50 px-3 py-2 last:border-0"
+                      >
+                        <code className="min-w-0 flex-1 truncate text-xs" title={entry.path}>
+                          {entry.path}
+                        </code>
+                        <Badge variant="secondary" className="text-xs">
+                          {entry.type}
+                        </Badge>
+                      </div>
+                    ))}
+                    {smokeArtifactResult.entries.length > 80 && (
+                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                        Showing first 80 of {smokeArtifactResult.entries.length} result files.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSmokeArtifactDialogOpen(false)}
+              disabled={smokeArtifactInspecting}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={handleInspectSmokeArtifact}
+              disabled={smokeArtifactInspecting || !smokeArtifactFile}
+            >
+              {smokeArtifactInspecting && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              Inspect artifact
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={descriptorLintDialogOpen}
+        onOpenChange={(open) => {
+          setDescriptorLintDialogOpen(open);
+          if (!open) {
+            setDescriptorLintTarget(null);
+            setDescriptorLintError(null);
+            setDescriptorLintResult(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl w-[94vw]">
+          <DialogHeader>
+            <DialogTitle>
+              Descriptor lint{descriptorLintTarget ? `: ${descriptorLintTarget.name}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              Validate the installed package descriptor, samplesheet, output patterns, parser references, and pipeline-specific contracts.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {descriptorLintLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Checking descriptor...
+              </div>
+            )}
+
+            {descriptorLintError && (
+              <p className="text-sm text-destructive">{descriptorLintError}</p>
+            )}
+
+            {descriptorLintResult && (
+              <>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <p className="text-lg font-semibold">
+                      {descriptorLintResult.valid ? "Valid" : "Needs fixes"}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Errors</p>
+                    <p className="text-lg font-semibold">{descriptorLintResult.errors}</p>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Warnings</p>
+                    <p className="text-lg font-semibold">{descriptorLintResult.warnings}</p>
+                  </div>
+                </div>
+
+                <div className="max-h-80 overflow-auto rounded-md border border-border/70">
+                  {descriptorLintResult.issues.length > 0 ? (
+                    descriptorLintResult.issues.map((issue, index) => (
+                      <div
+                        key={`${issue.code}-${index}`}
+                        className="border-b border-border/50 px-3 py-3 last:border-0"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge
+                            variant={issue.level === "error" ? "destructive" : "secondary"}
+                            className="text-xs"
+                          >
+                            {issue.level}
+                          </Badge>
+                          <code className="text-xs text-muted-foreground">{issue.code}</code>
+                          {issue.file && (
+                            <code className="text-xs text-muted-foreground">{issue.file}</code>
+                          )}
+                        </div>
+                        <p className="mt-1 text-sm">{issue.message}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="px-3 py-4 text-sm text-muted-foreground">
+                      No descriptor issues found.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDescriptorLintDialogOpen(false)}
+            >
+              Close
+            </Button>
+            {descriptorLintTarget && (
+              <Button
+                onClick={() => {
+                  void handleLintDescriptor(descriptorLintTarget);
+                }}
+                disabled={descriptorLintLoading}
+              >
+                {descriptorLintLoading && (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                )}
+                Run again
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

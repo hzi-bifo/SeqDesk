@@ -4,6 +4,7 @@ import * as fs from "fs";
 import {
   buildPipelineDatabaseTargetPath,
   buildPipelineDatabaseRoot,
+  buildPipelineDatabaseInstallDir,
   calculateProgressPercent,
   createDatabaseDownloadLogPath,
   getDatabaseDownloadJobStatus,
@@ -40,11 +41,22 @@ describe("database-downloads", () => {
 
   it("returns the pipeline definitions for known and unknown IDs", () => {
     expect(getPipelineDatabaseDefinitions("mag")).toHaveLength(1);
+    expect(getPipelineDatabaseDefinitions("metaxpath")).toHaveLength(1);
     expect(getPipelineDatabaseDefinitions("unknown")).toEqual([]);
 
     const def = getPipelineDatabaseDefinition("mag", "gtdb");
     expect(def).not.toBeNull();
     expect(def?.id).toBe("gtdb");
+    const metaxpathDef = getPipelineDatabaseDefinition("metaxpath", "db-bundle");
+    expect(metaxpathDef).toMatchObject({
+      id: "db-bundle",
+      configKey: "paramsFile",
+      fileName: "metaxpath_db_bundle.tar",
+      install: {
+        type: "metaxpath_db_bundle",
+        paramsFileName: "metaxpath.downloaded.params.yaml",
+      },
+    });
     expect(getPipelineDatabaseDefinition("mag", "missing")).toBeNull();
   });
 
@@ -56,6 +68,9 @@ describe("database-downloads", () => {
   it("builds database directories and report paths", () => {
     expect(buildPipelineDatabaseRoot("/run/root")).toBe(path.join(path.resolve("/run/root"), "databases"));
     expect(buildPipelineDatabaseTargetPath("/run/root", "mag", "gtdb", "gtdb.tar.gz")).toContain("databases/mag/gtdb/gtdb.tar.gz");
+    expect(buildPipelineDatabaseInstallDir("/run/root", "metaxpath", "db-bundle")).toBe(
+      path.join(path.resolve("/run/root"), "databases", "metaxpath", "db-bundle", "installed")
+    );
   });
 
   it("calculates download progress with safe clamp", () => {

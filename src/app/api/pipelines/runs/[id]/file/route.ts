@@ -23,11 +23,31 @@ const TEXT_EXTENSIONS = new Set([
   "dot",
 ]);
 
+const INLINE_CONTENT_TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  pdf: "application/pdf",
+  txt: "text/plain; charset=utf-8",
+  log: "text/plain; charset=utf-8",
+  out: "text/plain; charset=utf-8",
+  err: "text/plain; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  tsv: "text/tab-separated-values; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  yaml: "text/yaml; charset=utf-8",
+  yml: "text/yaml; charset=utf-8",
+  dot: "text/vnd.graphviz; charset=utf-8",
+};
+
 function isTextLikeFile(filePath: string): boolean {
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".out") || lower.endsWith(".err")) return true;
   const ext = lower.split(".").pop();
   return !!ext && TEXT_EXTENSIONS.has(ext);
+}
+
+function getExtension(filePath: string): string {
+  return filePath.toLowerCase().split(".").pop() || "";
 }
 
 async function readTail(filePath: string, size: number): Promise<Buffer> {
@@ -90,6 +110,9 @@ export async function GET(
     const downloadRequested =
       searchParams.get("download") === "1" ||
       searchParams.get("mode") === "download";
+    const inlineRequested =
+      searchParams.get("inline") === "1" ||
+      searchParams.get("mode") === "inline";
     if (!targetPath) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
     }
@@ -118,6 +141,28 @@ export async function GET(
           "Content-Type": "application/octet-stream",
           "Content-Disposition": `attachment; filename="${fileName}"`,
           "Content-Length": String(stat.size),
+        },
+      });
+    }
+
+    if (inlineRequested) {
+      const ext = getExtension(absolutePath);
+      const contentType = INLINE_CONTENT_TYPES[ext];
+      if (!contentType) {
+        return NextResponse.json(
+          { error: "Inline preview is not supported for this file type" },
+          { status: 400 }
+        );
+      }
+
+      const stream = createReadStream(absolutePath);
+      const webStream = Readable.toWeb(stream) as ReadableStream;
+      return new Response(webStream, {
+        headers: {
+          "Content-Type": contentType,
+          "Content-Length": String(stat.size),
+          "Content-Disposition": `inline; filename="${path.basename(absolutePath)}"`,
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }

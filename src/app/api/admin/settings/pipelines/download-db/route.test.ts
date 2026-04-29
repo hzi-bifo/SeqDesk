@@ -17,12 +17,14 @@ const mocks = vi.hoisted(() => ({
   updateDatabaseDownloadRecord: vi.fn(),
   createDatabaseDownloadLogPath: vi.fn(),
   buildPipelineDatabaseTargetPath: vi.fn(),
+  buildPipelineDatabaseInstallDir: vi.fn(),
   calculateProgressPercent: vi.fn(),
   getPipelineDatabaseStatuses: vi.fn(),
   PIPELINE_REGISTRY: {} as Record<string, unknown>,
   spawn: vi.fn(),
   exec: vi.fn(),
   fsStat: vi.fn(),
+  fsAccess: vi.fn(),
   fsMkdir: vi.fn(),
   fsRm: vi.fn(),
 }));
@@ -54,6 +56,7 @@ vi.mock("@/lib/pipelines/database-downloads", () => ({
   updateDatabaseDownloadRecord: mocks.updateDatabaseDownloadRecord,
   createDatabaseDownloadLogPath: mocks.createDatabaseDownloadLogPath,
   buildPipelineDatabaseTargetPath: mocks.buildPipelineDatabaseTargetPath,
+  buildPipelineDatabaseInstallDir: mocks.buildPipelineDatabaseInstallDir,
   calculateProgressPercent: mocks.calculateProgressPercent,
   getPipelineDatabaseStatuses: mocks.getPipelineDatabaseStatuses,
 }));
@@ -89,6 +92,7 @@ vi.mock("fs/promises", () => ({
     mkdir: (...args: unknown[]) => mocks.fsMkdir(...args),
     rm: (...args: unknown[]) => mocks.fsRm(...args),
     stat: (...args: unknown[]) => mocks.fsStat(...args),
+    access: (...args: unknown[]) => mocks.fsAccess(...args),
   },
 }));
 
@@ -151,6 +155,9 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     mocks.buildPipelineDatabaseTargetPath.mockReturnValue(
       "/data/runs/mag/databases/gtdb.tar.gz"
     );
+    mocks.buildPipelineDatabaseInstallDir.mockReturnValue(
+      "/data/runs/metaxpath/databases/db-bundle/installed"
+    );
     mocks.updateDatabaseDownloadJobStatus.mockResolvedValue(undefined);
     mocks.updateDatabaseDownloadRecord.mockResolvedValue(undefined);
     mocks.createDatabaseDownloadLogPath.mockResolvedValue("/tmp/db-log.txt");
@@ -163,6 +170,7 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     mocks.fsMkdir.mockResolvedValue(undefined);
     mocks.fsRm.mockResolvedValue(undefined);
     mocks.fsStat.mockResolvedValue({ size: 0 });
+    mocks.fsAccess.mockResolvedValue(undefined);
 
     // Default: curl exists, no --retry-all-errors support
     mocks.exec.mockImplementation(
@@ -381,6 +389,72 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
       (call: { 0: string; 1: string; 2: { state?: string } }) => call[2]?.state === "success"
     );
     expect(successCall).toBeDefined();
+  });
+
+  it("runs the MetaxPath DB bundle installer and stores the generated params file", async () => {
+    mocks.getPipelineDatabaseDefinition.mockReturnValue({
+      id: "db-bundle",
+      label: "MetaxPath Database Bundle",
+      downloadUrl: "https://example.com/metaxpath_db_bundle.tar",
+      fileName: "metaxpath_db_bundle.tar",
+      version: "published",
+      configKey: "paramsFile",
+      install: {
+        type: "metaxpath_db_bundle",
+        paramsFileName: "metaxpath.downloaded.params.yaml",
+      },
+    });
+    mocks.buildPipelineDatabaseTargetPath.mockReturnValue(
+      "/data/runs/databases/metaxpath/db-bundle/metaxpath_db_bundle.tar"
+    );
+    mocks.fsStat
+      .mockResolvedValueOnce({ size: 0 })
+      .mockResolvedValueOnce({ size: 1000000 })
+      .mockResolvedValueOnce({ size: 2048 });
+
+    const response = await POST(
+      makeRequest({ pipelineId: "metaxpath", databaseId: "db-bundle" })
+    );
+
+    expect(response.status).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(mocks.fsAccess).toHaveBeenCalledWith(
+      expect.stringContaining("pipelines/metaxpath/workflow/scripts/install_db_bundle.sh")
+    );
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "bash",
+      expect.arrayContaining([
+        expect.stringContaining("install_db_bundle.sh"),
+        "--archive",
+        "/data/runs/databases/metaxpath/db-bundle/metaxpath_db_bundle.tar",
+        "--skip-download",
+        "--dest",
+        "/data/runs/metaxpath/databases/db-bundle/installed",
+        "--force",
+      ]),
+      expect.any(Object)
+    );
+    expect(mocks.updateDatabaseDownloadRecord).toHaveBeenCalledWith(
+      "metaxpath",
+      "db-bundle",
+      expect.objectContaining({
+        path: "/data/runs/metaxpath/databases/db-bundle/installed/metaxpath.downloaded.params.yaml",
+        sizeBytes: 2048,
+      })
+    );
+    expect(mocks.db.pipelineConfig.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          pipelineId: "metaxpath",
+          config: JSON.stringify({
+            paramsFile:
+              "/data/runs/metaxpath/databases/db-bundle/installed/metaxpath.downloaded.params.yaml",
+          }),
+        }),
+      })
+    );
   });
 
   it("process exit code 18 marks download as partial transfer (resumable)", async () => {

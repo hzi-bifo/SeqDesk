@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY, getAllPipelineIds } from '@/lib/pipelines';
 import { getPipelineDatabaseStatuses } from '@/lib/pipelines/database-downloads';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
-import { getPackageManifest } from '@/lib/pipelines/package-loader';
+import { getPackage, getPackageManifest, type PackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
 import {
   deriveManifestTargets,
@@ -15,6 +15,22 @@ import {
   type PipelineCatalog,
 } from '@/lib/pipelines/package-contracts';
 import type { PipelineConfigSchema } from '@/lib/pipelines/types';
+import fs from 'fs/promises';
+import path from 'path';
+
+interface PipelineReadinessItem {
+  id: string;
+  label: string;
+  status: 'ready' | 'warning' | 'missing';
+  detail?: string;
+  action?: 'install' | 'sync' | 'download-db' | 'configure' | 'enable' | 'review-outputs';
+}
+
+interface PipelineReadiness {
+  status: 'ready' | 'warning' | 'missing';
+  summary: string;
+  items: PipelineReadinessItem[];
+}
 
 function parsePipelineConfig(rawConfig: string | null | undefined): Record<string, unknown> {
   if (!rawConfig) return {};
@@ -76,6 +92,147 @@ function isLocalPipelineRef(pipelineRef: string | null | undefined): boolean {
   );
 }
 
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveLocalPipelinePath(
+  packageBasePath: string | undefined,
+  manifest: PackageManifest | null
+): string | null {
+  const pipelineRef = manifest?.execution?.pipeline;
+  if (!pipelineRef || !isLocalPipelineRef(pipelineRef) || !packageBasePath) {
+    return null;
+  }
+  return path.isAbsolute(pipelineRef)
+    ? pipelineRef
+    : path.resolve(packageBasePath, pipelineRef);
+}
+
+function deriveReadinessStatus(items: PipelineReadinessItem[]): PipelineReadiness['status'] {
+  if (items.some((item) => item.status === 'missing')) return 'missing';
+  if (items.some((item) => item.status === 'warning')) return 'warning';
+  return 'ready';
+}
+
+function buildReadinessSummary(
+  status: PipelineReadiness['status'],
+  items: PipelineReadinessItem[]
+): string {
+  if (status === 'ready') return 'Ready to run';
+  const nextItem = items.find((item) => item.status === 'missing') ||
+    items.find((item) => item.status === 'warning');
+  return nextItem?.detail || nextItem?.label || 'Setup needs attention';
+}
+
+async function buildPipelineReadiness(args: {
+  pipelineId: string;
+  enabled: boolean;
+  manifest: PackageManifest | null;
+  resolvedConfig: Record<string, unknown>;
+  databaseDownloads: Awaited<ReturnType<typeof getPipelineDatabaseStatuses>>;
+}): Promise<PipelineReadiness> {
+  const pkg = getPackage(args.pipelineId);
+  const localPipelinePath = resolveLocalPipelinePath(pkg?.basePath, args.manifest);
+  const packageOutputCount = args.manifest?.outputs?.length ?? 0;
+  const items: PipelineReadinessItem[] = [];
+
+  items.push({
+    id: 'package',
+    label: 'Pipeline package',
+    status: args.manifest ? 'ready' : 'missing',
+    detail: args.manifest
+      ? 'Descriptor package is installed.'
+      : 'Install or sync the pipeline package first.',
+    action: args.manifest ? undefined : 'install',
+  });
+
+  if (localPipelinePath) {
+    const workflowExists = await pathExists(localPipelinePath);
+    items.push({
+      id: 'workflow',
+      label: 'Workflow snapshot',
+      status: workflowExists ? 'ready' : 'missing',
+      detail: workflowExists
+        ? 'Workflow files are available locally.'
+        : 'Workflow files are missing. Sync the private GitHub package again.',
+      action: workflowExists ? undefined : 'sync',
+    });
+  } else if (args.manifest?.execution?.pipeline) {
+    items.push({
+      id: 'workflow',
+      label: 'Workflow source',
+      status: 'ready',
+      detail: `Nextflow will use ${args.manifest.execution.pipeline}.`,
+    });
+  }
+
+  if (args.databaseDownloads.length > 0) {
+    const missingDatabase = args.databaseDownloads.find((database) => database.status !== 'downloaded');
+    items.push({
+      id: 'databases',
+      label: 'Runtime databases',
+      status: missingDatabase ? 'missing' : 'ready',
+      detail: missingDatabase
+        ? `${missingDatabase.label} is not installed.`
+        : 'Required database assets are installed.',
+      action: missingDatabase ? 'download-db' : undefined,
+    });
+  }
+
+  if (args.pipelineId === 'metaxpath') {
+    const paramsFile = args.resolvedConfig.paramsFile;
+    const paramsFileExists = hasNonEmptyString(paramsFile)
+      ? await pathExists(paramsFile)
+      : false;
+    items.push({
+      id: 'params-file',
+      label: 'MetaxPath params file',
+      status: paramsFileExists ? 'ready' : 'missing',
+      detail: paramsFileExists
+        ? 'SeqDesk will pass the installed DB params file to Nextflow.'
+        : 'Install the MetaxPath DB bundle so metaxpath.downloaded.params.yaml is configured.',
+      action: paramsFileExists ? undefined : 'download-db',
+    });
+  }
+
+  items.push({
+    id: 'outputs',
+    label: 'Output browsing',
+    status: packageOutputCount > 0 ? 'ready' : 'warning',
+    detail: packageOutputCount > 0
+      ? `${packageOutputCount} output pattern${packageOutputCount === 1 ? '' : 's'} configured; run output folder browsing is also available.`
+      : 'Raw run output browsing is available, but curated output patterns are not configured.',
+    action: packageOutputCount > 0 ? undefined : 'review-outputs',
+  });
+
+  items.push({
+    id: 'enabled',
+    label: 'Enabled for users',
+    status: args.enabled ? 'ready' : 'warning',
+    detail: args.enabled
+      ? 'Pipeline is enabled.'
+      : 'Pipeline is installed but disabled.',
+    action: args.enabled ? undefined : 'enable',
+  });
+
+  const status = deriveReadinessStatus(items);
+  return {
+    status,
+    summary: buildReadinessSummary(status, items),
+    items,
+  };
+}
+
 function parseCatalogParam(value: string | null): PipelineCatalog | 'all' | null {
   if (!value || value === 'all') return 'all';
   if (value === 'order' || value === 'study') return value;
@@ -124,7 +281,7 @@ export async function GET(request: NextRequest) {
         ...extendedDefaultConfig,
         ...parsePipelineConfig(dbConfig?.config),
       };
-      const manifest = getPackageManifest(pipelineId);
+      const manifest = getPackageManifest(pipelineId) || null;
       const supportedTargets = deriveManifestTargets(manifest, definition);
       const catalogs = derivePipelineCatalogs(supportedTargets);
       const capabilities = derivePipelineCapabilities(manifest, definition);
@@ -151,6 +308,13 @@ export async function GET(request: NextRequest) {
         resolvedConfig,
         executionSettings.pipelineRunDir
       );
+      const readiness = await buildPipelineReadiness({
+        pipelineId,
+        enabled: dbConfig ? dbConfig.enabled : true,
+        manifest,
+        resolvedConfig,
+        databaseDownloads,
+      });
 
       return {
         pipelineId,
@@ -173,6 +337,7 @@ export async function GET(request: NextRequest) {
         outputs: definition.outputs,
         download: downloadStatus,
         databaseDownloads,
+        readiness,
       };
     }));
 

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   },
   getAllPipelineIds: vi.fn(),
   getExecutionSettings: vi.fn(),
+  getPackage: vi.fn(),
   getPackageManifest: vi.fn(),
   getPipelineDownloadStatus: vi.fn(),
   getPipelineDatabaseStatuses: vi.fn(),
@@ -106,6 +107,7 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
 }));
 
 vi.mock("@/lib/pipelines/package-loader", () => ({
+  getPackage: mocks.getPackage,
   getPackageManifest: mocks.getPackageManifest,
 }));
 
@@ -135,6 +137,10 @@ describe("GET /api/admin/settings/pipelines", () => {
       status: "downloaded",
       detail: "ok",
     });
+    mocks.getPackage.mockImplementation((pipelineId: string) => ({
+      id: pipelineId,
+      basePath: `/tmp/packages/${pipelineId}`,
+    }));
     mocks.getPackageManifest.mockImplementation((pipelineId: string) => {
       if (pipelineId === "fastqc") {
         return {
@@ -235,6 +241,17 @@ describe("GET /api/admin/settings/pipelines", () => {
     expect(response.status).toBe(200);
     // Should include both fastqc and mag even though fastqc is disabled
     expect(payload.pipelines).toHaveLength(2);
+    expect(payload.pipelines[0].readiness).toEqual(
+      expect.objectContaining({
+        status: expect.any(String),
+        summary: expect.any(String),
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: "package", label: "Pipeline package" }),
+          expect.objectContaining({ id: "outputs", label: "Output browsing" }),
+          expect.objectContaining({ id: "enabled", label: "Enabled for users" }),
+        ]),
+      })
+    );
   });
 
   it("filters to the study catalog", async () => {

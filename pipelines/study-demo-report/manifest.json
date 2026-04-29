@@ -1,0 +1,87 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "study-demo-report",
+    "name": "Study Demo Report",
+    "version": "0.1.0",
+    "description": "Generate deterministic study-level HTML, Markdown, and TSV outputs for testing SeqDesk pipeline integration",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md"
+  },
+  "targets": {
+    "supported": [
+      "study"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "samples",
+      "scope": "sample",
+      "source": "sample.sampleId",
+      "required": true
+    },
+    {
+      "id": "study",
+      "scope": "study",
+      "source": "study.title",
+      "required": false
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [],
+    "runtime": {
+      "allowMacOsArmLocal": true
+    },
+    "defaultParams": {
+      "report_title": "SeqDesk demo pipeline report"
+    }
+  },
+  "outputs": [
+    {
+      "id": "html_report",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "demo_report",
+      "discovery": {
+        "pattern": "report/demo-report.html"
+      }
+    },
+    {
+      "id": "markdown_report",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "report",
+      "fromStep": "demo_report",
+      "discovery": {
+        "pattern": "report/demo-report.md"
+      }
+    },
+    {
+      "id": "sample_summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "demo_report",
+      "discovery": {
+        "pattern": "tables/sample-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Study",
+      "Sample",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

@@ -14,6 +14,10 @@ export interface PipelineDatabaseDefinition {
   fileName: string;
   downloadUrl: string;
   configKey: string;
+  install?: {
+    type: 'metaxpath_db_bundle';
+    paramsFileName: string;
+  };
 }
 
 export interface PipelineDatabaseDownloadRecord {
@@ -68,6 +72,23 @@ interface PipelineDatabaseDownloadStatusIndex {
 }
 
 const PIPELINE_DATABASES: Record<string, PipelineDatabaseDefinition[]> = {
+  metaxpath: [
+    {
+      id: 'db-bundle',
+      label: 'MetaxPath Database Bundle',
+      description:
+        'Published MetaxPath runtime database bundle. The installer extracts the bundle and writes the Nextflow params file used by SeqDesk.',
+      version: 'published',
+      fileName: 'metaxpath_db_bundle.tar',
+      downloadUrl:
+        'https://research.bifo.helmholtz-hzi.de/downloads/genomenet/metaxpath_db_bundle.tar',
+      configKey: 'paramsFile',
+      install: {
+        type: 'metaxpath_db_bundle',
+        paramsFileName: 'metaxpath.downloaded.params.yaml',
+      },
+    },
+  ],
   mag: [
     {
       id: 'gtdb',
@@ -207,6 +228,14 @@ export function buildPipelineDatabaseTargetPath(
   fileName: string
 ): string {
   return path.join(buildPipelineDatabaseRoot(pipelineRunDir), pipelineId, databaseId, fileName);
+}
+
+export function buildPipelineDatabaseInstallDir(
+  pipelineRunDir: string,
+  pipelineId: string,
+  databaseId: string
+): string {
+  return path.join(buildPipelineDatabaseRoot(pipelineRunDir), pipelineId, databaseId, 'installed');
 }
 
 export function calculateProgressPercent(

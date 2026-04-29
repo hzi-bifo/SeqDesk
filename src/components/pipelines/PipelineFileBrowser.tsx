@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +80,9 @@ function getFileIcon(filename: string, type: string) {
   if (ext === "html") {
     return <FileText className="h-4 w-4 text-blue-600" />;
   }
+  if (ext === "pdf") {
+    return <FileText className="h-4 w-4 text-red-600" />;
+  }
   if (ext === "fasta" || ext === "fa" || ext === "fna" || ext === "faa") {
     return <FileCode className="h-4 w-4 text-purple-600" />;
   }
@@ -102,11 +106,114 @@ const TEXT_EXTENSIONS = new Set([
   "dot",
 ]);
 
+const INLINE_PREVIEW_EXTENSIONS = new Set(["html", "htm", "pdf"]);
+
 function isTextLikeFile(filename: string): boolean {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".out") || lower.endsWith(".err")) return true;
   const ext = lower.split(".").pop();
   return !!ext && TEXT_EXTENSIONS.has(ext);
+}
+
+function getExtension(filename: string): string {
+  return filename.toLowerCase().split(".").pop() || "";
+}
+
+function isMarkdownFile(filename: string): boolean {
+  return getExtension(filename) === "md";
+}
+
+function isDelimitedFile(filename: string): boolean {
+  const ext = getExtension(filename);
+  return ext === "tsv" || ext === "csv";
+}
+
+function parseDelimitedPreview(content: string, delimiter: string): string[][] {
+  return content
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .slice(0, 51)
+    .map((line) => line.split(delimiter));
+}
+
+function renderFilePreview(filename: string, content: string | null) {
+  const body = content || "";
+
+  if (!body) {
+    return <div className="p-4 text-sm text-muted-foreground">No content</div>;
+  }
+
+  if (isMarkdownFile(filename)) {
+    return (
+      <div className="p-4 text-sm leading-6">
+        <ReactMarkdown
+          components={{
+            h1: ({ children }) => <h1 className="text-xl font-semibold mb-3">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-lg font-semibold mt-4 mb-2">{children}</h2>,
+            h3: ({ children }) => <h3 className="font-semibold mt-3 mb-1">{children}</h3>,
+            p: ({ children }) => <p className="mb-3">{children}</p>,
+            ul: ({ children }) => <ul className="list-disc pl-5 mb-3">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal pl-5 mb-3">{children}</ol>,
+            code: ({ children }) => (
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{children}</code>
+            ),
+            table: ({ children }) => (
+              <div className="my-3 overflow-x-auto rounded-md border">
+                <table className="w-full border-collapse text-xs">{children}</table>
+              </div>
+            ),
+            th: ({ children }) => (
+              <th className="border-b bg-muted px-3 py-2 text-left font-medium">{children}</th>
+            ),
+            td: ({ children }) => <td className="border-b px-3 py-2">{children}</td>,
+          }}
+        >
+          {body}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  if (isDelimitedFile(filename)) {
+    const delimiter = getExtension(filename) === "tsv" ? "\t" : ",";
+    const rows = parseDelimitedPreview(body, delimiter);
+    const [header, ...dataRows] = rows;
+
+    return (
+      <div className="overflow-auto">
+        <table className="w-full border-collapse text-xs">
+          {header && (
+            <thead>
+              <tr>
+                {header.map((cell, index) => (
+                  <th key={`${cell}-${index}`} className="sticky top-0 border-b bg-muted px-3 py-2 text-left font-medium">
+                    {cell || "-"}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          )}
+          <tbody>
+            {dataRows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td key={`${rowIndex}-${cellIndex}`} className="border-b px-3 py-2 font-mono">
+                    {cell || "-"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  return (
+    <pre className="p-4 text-xs whitespace-pre-wrap font-mono">
+      {body}
+    </pre>
+  );
 }
 
 // File type badge
@@ -164,8 +271,10 @@ function FilePreviewDialog({
   const [previewTruncated, setPreviewTruncated] = useState(false);
 
   const canPreview = !!file && !!runId && isTextLikeFile(file.name);
+  const canOpenInline =
+    !!file && !!runId && INLINE_PREVIEW_EXTENSIONS.has(getExtension(file.name));
 
-  const loadPreview = async () => {
+  const loadPreview = useCallback(async () => {
     if (!file || !runId || !isTextLikeFile(file.name)) return;
     setPreviewLoading(true);
     setPreviewError(null);
@@ -191,7 +300,7 @@ function FilePreviewDialog({
     } finally {
       setPreviewLoading(false);
     }
-  };
+  }, [file, runId]);
 
   useEffect(() => {
     if (!open) return;
@@ -202,7 +311,7 @@ function FilePreviewDialog({
       setPreviewError(null);
       setPreviewTruncated(false);
     }
-  }, [open, file?.path, runId]);
+  }, [open, canPreview, loadPreview]);
 
   const copyPath = () => {
     if (file?.path) {
@@ -216,7 +325,7 @@ function FilePreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className={canOpenInline ? "max-w-5xl" : "max-w-2xl"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {getFileIcon(file.name, file.type)}
@@ -286,12 +395,15 @@ function FilePreviewDialog({
               <Copy className="h-4 w-4 mr-2" />
               Copy Path
             </Button>
-            {/* For HTML files, we could add a preview button */}
-            {file.name.endsWith(".html") && (
+            {canOpenInline && (
               <Button variant="outline" className="flex-1" asChild>
-                <a href={`/api/files/preview?path=${encodeURIComponent(file.path)}`} target="_blank" rel="noopener noreferrer">
+                <a
+                  href={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   <ExternalLink className="h-4 w-4 mr-2" />
-                  Open Report
+                  Open Preview
                 </a>
               </Button>
             )}
@@ -309,20 +421,30 @@ function FilePreviewDialog({
             </div>
             {!canPreview && (
               <div className="text-xs text-muted-foreground">
-                Preview available for text-based files (e.g., .out, .err, .log, .txt).
+                {canOpenInline
+                  ? "Inline preview uses the secured run-file endpoint."
+                  : "Preview available for text-based files (e.g., .out, .err, .log, .txt)."}
               </div>
             )}
             {previewError && (
               <div className="text-xs text-destructive">{previewError}</div>
+            )}
+            {canOpenInline && (
+              <div className="overflow-hidden rounded-md border bg-background">
+                <iframe
+                  title={`${file.name} preview`}
+                  src={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
+                  className="h-[480px] w-full"
+                  sandbox="allow-downloads allow-popups"
+                />
+              </div>
             )}
             {canPreview && !previewError && (
               <div className="bg-muted rounded-md border max-h-[320px] overflow-auto">
                 {previewLoading ? (
                   <div className="p-4 text-sm text-muted-foreground">Loading...</div>
                 ) : (
-                  <pre className="p-4 text-xs whitespace-pre-wrap font-mono">
-                    {previewContent || "No content"}
-                  </pre>
+                  renderFilePreview(file.name, previewContent)
                 )}
               </div>
             )}
@@ -390,22 +512,6 @@ export function PipelineFileBrowser({
       return true;
     });
   }, [allFiles, search, typeFilter, sampleFilter]);
-
-  // Group files by sample
-  const groupedBySample = useMemo(() => {
-    const groups = new Map<string, PipelineFile[]>();
-    groups.set("_general", []);
-
-    filteredFiles.forEach((file) => {
-      const key = file.sampleId || "_general";
-      if (!groups.has(key)) {
-        groups.set(key, []);
-      }
-      groups.get(key)!.push(file);
-    });
-
-    return groups;
-  }, [filteredFiles]);
 
   const hasFilters = search || typeFilter !== "all" || sampleFilter !== "all";
 

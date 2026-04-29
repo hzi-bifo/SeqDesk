@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import {
+  buildPipelineDatabaseInstallDir,
   buildPipelineDatabaseTargetPath,
   calculateProgressPercent,
   createDatabaseDownloadLogPath,
@@ -18,6 +19,7 @@ import { createWriteStream } from 'fs';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
+import type { WriteStream } from 'fs';
 import path from 'path';
 
 const execAsync = promisify(exec);
@@ -161,6 +163,103 @@ async function setPipelineDatabasePath(
   });
 }
 
+async function getFileSizeOrUndefined(targetPath: string): Promise<number | undefined> {
+  try {
+    const stats = await fs.stat(targetPath);
+    return stats.size;
+  } catch {
+    return undefined;
+  }
+}
+
+function getMetaxPathInstallerPath(): string {
+  return path.join(
+    process.cwd(),
+    'pipelines',
+    'metaxpath',
+    'workflow',
+    'scripts',
+    'install_db_bundle.sh'
+  );
+}
+
+async function installDatabaseIfNeeded(
+  pipelineRunDir: string,
+  pipelineId: string,
+  databaseId: string,
+  archivePath: string,
+  database: NonNullable<ReturnType<typeof getPipelineDatabaseDefinition>>,
+  logStream?: WriteStream
+): Promise<{ runtimePath: string; sizeBytes: number }> {
+  if (database.install?.type !== 'metaxpath_db_bundle') {
+    return {
+      runtimePath: archivePath,
+      sizeBytes: await getFileSize(archivePath),
+    };
+  }
+
+  const installerPath = getMetaxPathInstallerPath();
+  try {
+    await fs.access(installerPath);
+  } catch {
+    throw new Error(
+      `MetaxPath DB installer not found at ${installerPath}. Install or update the private MetaxPath pipeline package first.`
+    );
+  }
+
+  const installDir = buildPipelineDatabaseInstallDir(
+    pipelineRunDir,
+    pipelineId,
+    databaseId
+  );
+  await fs.mkdir(installDir, { recursive: true });
+
+  const args = [
+    installerPath,
+    '--archive',
+    archivePath,
+    '--skip-download',
+    '--dest',
+    installDir,
+    '--force',
+  ];
+  logStream?.write(
+    `[${new Date().toISOString()}] Installing database bundle: bash ${args.join(' ')}\n`
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('bash', args, {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    if (child.stdout && logStream) child.stdout.pipe(logStream, { end: false });
+    if (child.stderr && logStream) child.stderr.pipe(logStream, { end: false });
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`MetaxPath database installer exited with code ${code}`));
+      }
+    });
+  });
+
+  const paramsPath = path.join(installDir, database.install.paramsFileName);
+  const sizeBytes = await getFileSizeOrUndefined(paramsPath);
+  if (typeof sizeBytes !== 'number') {
+    throw new Error(
+      `MetaxPath database installer did not create ${database.install.paramsFileName}`
+    );
+  }
+
+  return {
+    runtimePath: paramsPath,
+    sizeBytes,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
 
@@ -230,13 +329,20 @@ export async function POST(req: NextRequest) {
       localBytes >= totalBytes;
 
     if (hasCompleteExistingFile) {
+      const installed = await installDatabaseIfNeeded(
+        executionSettings.pipelineRunDir,
+        pipelineId,
+        databaseId,
+        targetPath,
+        database
+      );
       await updateDatabaseDownloadRecord(pipelineId, databaseId, {
         version: database.version,
-        path: targetPath,
+        path: installed.runtimePath,
         sourceUrl: database.downloadUrl,
-        sizeBytes: localBytes,
+        sizeBytes: installed.sizeBytes,
       });
-      await setPipelineDatabasePath(pipelineId, database.configKey, targetPath);
+      await setPipelineDatabasePath(pipelineId, database.configKey, installed.runtimePath);
       await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
         state: 'success',
         sourceUrl: database.downloadUrl,
@@ -340,13 +446,21 @@ export async function POST(req: NextRequest) {
           const finishedAt = new Date().toISOString();
           if (code === 0) {
             const bytesDownloaded = await getFileSize(targetPath);
+            const installed = await installDatabaseIfNeeded(
+              executionSettings.pipelineRunDir,
+              pipelineId,
+              databaseId,
+              targetPath,
+              database,
+              logStream
+            );
             await updateDatabaseDownloadRecord(pipelineId, databaseId, {
               version: database.version,
-              path: targetPath,
+              path: installed.runtimePath,
               sourceUrl: database.downloadUrl,
-              sizeBytes: bytesDownloaded,
+              sizeBytes: installed.sizeBytes,
             });
-            await setPipelineDatabasePath(pipelineId, database.configKey, targetPath);
+            await setPipelineDatabasePath(pipelineId, database.configKey, installed.runtimePath);
             await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
               state: 'success',
               finishedAt,

@@ -252,6 +252,49 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     );
   });
 
+  it("streams HTML reports inline through the run file endpoint", async () => {
+    mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/output/report.html");
+    mocks.fs.stat.mockResolvedValue({
+      size: 13,
+      isFile: () => true,
+    });
+    mocks.createReadStream.mockReturnValue(Readable.from([Buffer.from("<h1>ok</h1>")]));
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/pipelines/runs/run-1/file?path=output/report.html&inline=1"
+      ),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'inline; filename="report.html"'
+    );
+    expect(await response.text()).toBe("<h1>ok</h1>");
+  });
+
+  it("rejects inline preview for unsupported binary files", async () => {
+    mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/output/data.bin");
+    mocks.fs.stat.mockResolvedValue({
+      size: 13,
+      isFile: () => true,
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/pipelines/runs/run-1/file?path=output/data.bin&inline=1"
+      ),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Inline preview is not supported for this file type",
+    });
+  });
+
   it("returns 500 when an unexpected error occurs", async () => {
     mocks.fs.stat.mockRejectedValue(new Error("Disk error"));
 

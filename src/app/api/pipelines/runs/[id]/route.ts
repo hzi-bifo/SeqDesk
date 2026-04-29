@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
+import type { Dirent } from 'fs';
 import path from 'path';
 import { isDemoSession } from '@/lib/demo/server';
 
@@ -26,6 +27,84 @@ async function getFileSize(filePath: string | null | undefined): Promise<number 
   } catch {
     return null;
   }
+}
+
+function inferRunOutputType(filePath: string): 'report' | 'qc' | 'dag' | 'log' | 'data' {
+  const lower = filePath.toLowerCase();
+  const baseName = path.basename(lower);
+  if (baseName === 'dag.dot' || lower.endsWith('.dot')) return 'dag';
+  if (lower.endsWith('.html') || lower.endsWith('.pdf')) return 'report';
+  if (lower.includes('/qc/') || lower.includes('/quality/')) return 'qc';
+  if (
+    lower.endsWith('.log') ||
+    lower.endsWith('.out') ||
+    lower.endsWith('.err') ||
+    baseName === 'trace.txt'
+  ) {
+    return 'log';
+  }
+  return 'data';
+}
+
+async function scanRunOutputFiles(
+  runFolder: string | null,
+  options: { maxFiles?: number; maxDepth?: number } = {}
+): Promise<Array<{
+  id: string;
+  name: string;
+  path: string;
+  type: 'report' | 'qc' | 'dag' | 'log' | 'data';
+  size?: number;
+}>> {
+  if (!runFolder) return [];
+
+  const outputDir = path.join(runFolder, 'output');
+  const maxFiles = options.maxFiles ?? 1000;
+  const maxDepth = options.maxDepth ?? 10;
+  const files: Array<{
+    id: string;
+    name: string;
+    path: string;
+    type: 'report' | 'qc' | 'dag' | 'log' | 'data';
+    size?: number;
+  }> = [];
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (files.length >= maxFiles || depth > maxDepth) return;
+
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (files.length >= maxFiles) return;
+      if (entry.name.startsWith('.')) continue;
+
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      const relativePath = path.relative(outputDir, absolutePath);
+      const size = await getFileSize(absolutePath);
+      files.push({
+        id: `output:${relativePath}`,
+        name: entry.name,
+        path: absolutePath,
+        type: inferRunOutputType(absolutePath),
+        size: size ?? undefined,
+      });
+    }
+  }
+
+  await walk(outputDir, 0);
+  return files;
 }
 
 function shellQuote(value: string): string {
@@ -316,6 +395,8 @@ export async function GET(
       size?: number;
     }[] = [];
 
+    const runOutputFiles = await scanRunOutputFiles(run.runFolder);
+
     if (run.runFolder && run.queueJobId && /^\d+$/.test(run.queueJobId)) {
       const outPath = path.join(run.runFolder, 'logs', `slurm-${run.queueJobId}.out`);
       const errPath = path.join(run.runFolder, 'logs', `slurm-${run.queueJobId}.err`);
@@ -348,6 +429,9 @@ export async function GET(
       sizeProbePaths.add(file.path);
     }
     for (const file of detectedLogFiles) {
+      sizeProbePaths.add(file.path);
+    }
+    for (const file of runOutputFiles) {
       sizeProbePaths.add(file.path);
     }
     for (const artifact of run.artifacts) {
@@ -415,6 +499,7 @@ export async function GET(
       results: parseJson<Record<string, unknown>>(run.results),
       inputSampleIds: selectedSampleIds,
       inputFiles: inputFilesWithSize,
+      runOutputFiles,
       detectedLogFiles: detectedLogFilesWithSize,
       fileSizeByPath,
       outputPathSize: run.outputPath ? fileSizeByPath[run.outputPath] ?? null : null,

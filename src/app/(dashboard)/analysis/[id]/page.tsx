@@ -291,6 +291,7 @@ interface Run {
   binsCreated: { id: string; binName: string; binFile: string | null; completeness: number | null; contamination: number | null; sample: { sampleId: string } }[];
   artifacts: { id: string; type: string; name: string; path: string; size?: bigint; checksum?: string; producedByStepId?: string; metadata?: string; sampleId?: string }[];
   inputFiles: { id: string; name: string; path: string; type: string; sampleId?: string; checksum?: string; size?: number }[];
+  runOutputFiles?: { id: string; name: string; path: string; type: string; size?: number }[];
   inputSampleIds?: string[] | null;
   detectedLogFiles?: { id: string; name: string; path: string; type: string; size?: number }[];
   fileSizeByPath?: Record<string, number>;
@@ -445,6 +446,16 @@ export default function AnalysisRunDetailPage({
         producedByStepId: artifact.producedByStepId,
         checksum: artifact.checksum,
         metadata: artifact.metadata,
+      });
+    }
+
+    for (const file of run.runOutputFiles || []) {
+      addOutput({
+        id: file.id,
+        name: file.name,
+        path: file.path,
+        type: file.type,
+        size: file.size ?? fileSizeByPath[file.path],
       });
     }
 
