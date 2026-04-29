@@ -3,26 +3,6 @@ nextflow.enable.dsl=2
 params.input = null
 params.outdir = 'output'
 
-if (!params.input) {
-  error "Missing --input samplesheet"
-}
-
-Channel
-  .fromPath(params.input)
-  .splitCsv(header: true)
-  .map { row ->
-    def sampleId = (row.sample_id ?: '').toString()
-    def fastq1 = (row.fastq_1 ?: '').toString()
-    def fastq2 = (row.fastq_2 ?: '').toString()
-
-    if (!sampleId || !fastq1) {
-      error "Each row must define sample_id and fastq_1"
-    }
-
-    tuple(sampleId, fastq1, fastq2)
-  }
-  .set { checksum_inputs }
-
 process CALCULATE_CHECKSUMS {
   tag "${sample_id}"
 
@@ -89,6 +69,25 @@ process SUMMARIZE_CHECKSUMS {
 }
 
 workflow {
+  if (!params.input) {
+    error "Missing --input samplesheet"
+  }
+
+  checksum_inputs = Channel
+    .fromPath(params.input)
+    .splitCsv(header: true)
+    .map { row ->
+      def sampleId = (row.sample_id ?: '').toString()
+      def fastq1 = (row.fastq_1 ?: '').toString()
+      def fastq2 = (row.fastq_2 ?: '').toString()
+
+      if (!sampleId || !fastq1) {
+        error "Each row must define sample_id and fastq_1"
+      }
+
+      tuple(sampleId, fastq1, fastq2)
+    }
+
   CALCULATE_CHECKSUMS(checksum_inputs)
   SUMMARIZE_CHECKSUMS(CALCULATE_CHECKSUMS.out.checksum_tsv.collect())
 }

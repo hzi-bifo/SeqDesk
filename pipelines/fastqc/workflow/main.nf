@@ -3,26 +3,6 @@ nextflow.enable.dsl=2
 params.input = null
 params.outdir = 'output'
 
-if (!params.input) {
-  error "Missing --input samplesheet"
-}
-
-Channel
-  .fromPath(params.input)
-  .splitCsv(header: true)
-  .map { row ->
-    def sampleId = (row.sample_id ?: '').toString()
-    def fastq1 = (row.fastq_1 ?: '').toString()
-    def fastq2 = (row.fastq_2 ?: '').toString()
-
-    if (!sampleId || !fastq1) {
-      error "Each row must define sample_id and fastq_1"
-    }
-
-    tuple(sampleId, fastq1, fastq2)
-  }
-  .set { fastqc_inputs }
-
 process RUN_FASTQC {
   tag "${sample_id}"
   conda "bioconda::fastqc=0.12.1"
@@ -137,6 +117,25 @@ process SUMMARIZE_FASTQC {
 }
 
 workflow {
+  if (!params.input) {
+    error "Missing --input samplesheet"
+  }
+
+  fastqc_inputs = Channel
+    .fromPath(params.input)
+    .splitCsv(header: true)
+    .map { row ->
+      def sampleId = (row.sample_id ?: '').toString()
+      def fastq1 = (row.fastq_1 ?: '').toString()
+      def fastq2 = (row.fastq_2 ?: '').toString()
+
+      if (!sampleId || !fastq1) {
+        error "Each row must define sample_id and fastq_1"
+      }
+
+      tuple(sampleId, fastq1, fastq2)
+    }
+
   RUN_FASTQC(fastqc_inputs)
   SUMMARIZE_FASTQC(RUN_FASTQC.out.summary_row.collect())
 }

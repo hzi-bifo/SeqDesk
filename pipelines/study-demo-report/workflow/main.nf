@@ -4,10 +4,6 @@ params.input = null
 params.outdir = 'output'
 params.report_title = 'SeqDesk demo pipeline report'
 
-if (!params.input) {
-  error "Missing --input samplesheet"
-}
-
 process BUILD_DEMO_REPORT {
   tag "study-demo-report"
 
@@ -91,5 +87,9 @@ EOF
 }
 
 workflow {
+  if (!params.input) {
+    error "Missing --input samplesheet"
+  }
+
   BUILD_DEMO_REPORT(file(params.input))
 }

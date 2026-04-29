@@ -14,25 +14,6 @@ params.seed = null
 params.templateDir = ''
 params.dataBasePath = null
 
-if (!params.input) {
-  error "Missing --input samplesheet"
-}
-
-Channel
-  .fromPath(params.input)
-  .splitCsv(header: true)
-  .map { row ->
-    def sampleId = (row.sample_id ?: '').toString().trim()
-    def orderId = (row.order_id ?: '').toString().trim()
-
-    if (!sampleId || !orderId) {
-      error "Each row must define sample_id and order_id"
-    }
-
-    tuple(sampleId, orderId)
-  }
-  .set { simulation_inputs }
-
 process SIMULATE_READS {
   tag "${sample_id}"
 
@@ -101,6 +82,24 @@ process SUMMARIZE_SIMULATION {
 }
 
 workflow {
+  if (!params.input) {
+    error "Missing --input samplesheet"
+  }
+
+  simulation_inputs = Channel
+    .fromPath(params.input)
+    .splitCsv(header: true)
+    .map { row ->
+      def sampleId = (row.sample_id ?: '').toString().trim()
+      def orderId = (row.order_id ?: '').toString().trim()
+
+      if (!sampleId || !orderId) {
+        error "Each row must define sample_id and order_id"
+      }
+
+      tuple(sampleId, orderId)
+    }
+
   SIMULATE_READS(simulation_inputs)
   SUMMARIZE_SIMULATION(SIMULATE_READS.out.summary_rows.collect())
 }
