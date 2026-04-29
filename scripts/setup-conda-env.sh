@@ -426,7 +426,7 @@ if [[ "$RUN_TESTS" -eq 1 ]]; then
       :
     fi
     if [[ "$DRY_RUN" -eq 0 ]]; then
-      run "$CONDA_BIN" run -n "${ENV_NAME}" nextflow run nf-core/mag -profile test,conda -stub --outdir "${TEST_OUTDIR}"
+      run env NXF_SYNTAX_PARSER=v1 "$CONDA_BIN" run -n "${ENV_NAME}" nextflow run nf-core/mag -profile test,conda -stub --outdir "${TEST_OUTDIR}"
     fi
   fi
 fi

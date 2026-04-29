@@ -236,7 +236,7 @@ EOF
 CURRENT_STAGE="mag"
 MAG_STATUS="running"
 echo "Running nf-core/mag (lightweight assembly-only) with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run nf-core/mag \
+NXF_SYNTAX_PARSER=v1 conda run -n "$ENV_NAME" nextflow run nf-core/mag \
   -r 3.0.0 \
   -profile conda \
   --input "$MAG_SAMPLESHEET" \
