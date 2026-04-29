@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import {
+  DEFAULT_FORM_SCHEMA,
   FormFieldDefinition,
   FormFieldGroup,
   FieldType,
@@ -176,6 +177,7 @@ export default function FormBuilderPage() {
     groups: FormFieldGroup[];
     settings?: ImportableOrderSettings;
   } | null>(null);
+  const [importSaving, setImportSaving] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
 
   // Field templates loaded from JSON files
@@ -237,7 +239,10 @@ export default function FormBuilderPage() {
   const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
   const requestedTab = searchParams.get("tab");
   const initialTab =
-    requestedTab === "per-sample" || requestedTab === "settings" || requestedTab === "facility"
+    requestedTab === "per-sample" ||
+    requestedTab === "settings" ||
+    requestedTab === "facility" ||
+    requestedTab === "import-export"
       ? requestedTab
       : "fields";
   const facilityLockedFieldTypes = new Set<FieldType>([
@@ -379,6 +384,21 @@ export default function FormBuilderPage() {
 
   const handleResetInstructions = () => {
     setPostSubmissionInstructions(DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
+  };
+
+  const handleResetToDefaults = () => {
+    const confirmed = window.confirm(
+      "Reset the order form fields to SeqDesk defaults? Export the current configuration first if you want a backup."
+    );
+    if (!confirmed) return;
+
+    const normalized = normalizeOrderFormSchema({
+      fields: DEFAULT_FORM_SCHEMA.fields,
+      groups: DEFAULT_FORM_SCHEMA.groups,
+    });
+    setFields(normalized.fields);
+    setGroups(normalized.groups);
+    setAutoSaveStatus("dirty");
   };
 
   const handleAllowDeleteSubmittedChange = async (enabled: boolean) => {
@@ -901,14 +921,6 @@ export default function FormBuilderPage() {
 
   const visibleFields = fields.filter(isFieldAvailableForModules);
   const hiddenByDisabledModulesCount = fields.length - visibleFields.length;
-  const enabledMixsChecklistNames = Array.from(
-    new Set(
-      visibleFields.flatMap((field) =>
-        field.type === "mixs" ? field.mixsChecklists || [] : []
-      )
-    )
-  );
-
   const orderFields = visibleFields
     .filter((f) => !f.perSample)
     .sort((a, b) => a.order - b.order);
@@ -1029,24 +1041,48 @@ export default function FormBuilderPage() {
     e.target.value = "";
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     if (!pendingImport) return;
-    setFields(pendingImport.fields);
-    setGroups(pendingImport.groups);
-    if (pendingImport.settings) {
-      if (pendingImport.settings.postSubmissionInstructions !== undefined) {
-        setPostSubmissionInstructions(pendingImport.settings.postSubmissionInstructions);
+
+    setImportSaving(true);
+    setError("");
+
+    try {
+      if (pendingImport.settings) {
+        const res = await fetch("/api/admin/settings/access", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingImport.settings),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error || "Failed to import order settings");
+          return;
+        }
       }
-      if (pendingImport.settings.allowDeleteSubmittedOrders !== undefined) {
-        setAllowDeleteSubmittedOrders(pendingImport.settings.allowDeleteSubmittedOrders);
+
+      setFields(pendingImport.fields);
+      setGroups(pendingImport.groups);
+      if (pendingImport.settings) {
+        if (pendingImport.settings.postSubmissionInstructions !== undefined) {
+          setPostSubmissionInstructions(pendingImport.settings.postSubmissionInstructions);
+        }
+        if (pendingImport.settings.allowDeleteSubmittedOrders !== undefined) {
+          setAllowDeleteSubmittedOrders(pendingImport.settings.allowDeleteSubmittedOrders);
+        }
+        if (pendingImport.settings.allowUserAssemblyDownload !== undefined) {
+          setAllowUserAssemblyDownload(pendingImport.settings.allowUserAssemblyDownload);
+        }
       }
-      if (pendingImport.settings.allowUserAssemblyDownload !== undefined) {
-        setAllowUserAssemblyDownload(pendingImport.settings.allowUserAssemblyDownload);
-      }
+      setImportDialogOpen(false);
+      setPendingImport(null);
+      setAutoSaveStatus("dirty");
+    } catch {
+      setError("Failed to import order settings");
+    } finally {
+      setImportSaving(false);
     }
-    setImportDialogOpen(false);
-    setPendingImport(null);
-    setAutoSaveStatus("dirty");
   };
 
   const moduleFieldMeta: Record<
@@ -1128,6 +1164,12 @@ export default function FormBuilderPage() {
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
             >
               Settings
+            </TabsTrigger>
+            <TabsTrigger
+              value="import-export"
+              className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
+            >
+              Import / Export
             </TabsTrigger>
           </TabsList>
           <div className="absolute right-6 lg:right-8 flex items-center gap-2">
@@ -2540,49 +2582,61 @@ export default function FormBuilderPage() {
         </div>
       </div>
 
-      {/* Import / Export */}
-      <div className="mt-8">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
-            <Download className="h-4 w-4 text-muted-foreground" />
+      </TabsContent>
+
+      {/* ===== Tab: Import / Export ===== */}
+      <TabsContent value="import-export">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+              <Download className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <h2 className="text-base font-semibold">Import / Export</h2>
           </div>
-          <h2 className="text-base font-semibold">Import / Export</h2>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          Export the current form configuration as a JSON file, or import a previously exported configuration.
-        </p>
+          <p className="text-sm text-muted-foreground mb-4">
+            Export the current form configuration as a JSON file, or import a previously exported configuration.
+          </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <GlassCard className="p-6">
-            <h3 className="text-sm font-medium mb-2">Export Configuration</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <GlassCard className="p-6">
+              <h3 className="text-sm font-medium mb-2">Export Configuration</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Download the current field definitions, fixed sections, and settings as a JSON file.
+              </p>
+              <Button onClick={handleExportConfig} variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" />
+                Export Config
+              </Button>
+            </GlassCard>
+
+            <GlassCard className="p-6">
+              <h3 className="text-sm font-medium mb-2">Import Configuration</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Upload a JSON config file to replace the current fields and settings. Legacy groups are mapped into the fixed sections automatically.
+              </p>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json"
+                onChange={handleImportFile}
+                className="hidden"
+              />
+              <Button onClick={() => importFileRef.current?.click()} variant="outline" size="sm">
+                <Upload className="h-4 w-4 mr-2" />
+                Import Config
+              </Button>
+            </GlassCard>
+          </div>
+          <GlassCard className="mt-4 p-6">
+            <h3 className="text-sm font-medium mb-2">Reset to Defaults</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Download the current field definitions, fixed sections, and settings as a JSON file.
+              Restore SeqDesk&apos;s built-in order fields and fixed sections. This does not change post-submission instructions or data handling settings.
             </p>
-            <Button onClick={handleExportConfig} variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" />
-              Export Config
+            <Button onClick={handleResetToDefaults} variant="outline" size="sm">
+              Reset to Defaults
             </Button>
           </GlassCard>
-
-          <GlassCard className="p-6">
-            <h3 className="text-sm font-medium mb-2">Import Configuration</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Upload a JSON config file to replace the current fields and settings. Legacy groups are mapped into the fixed sections automatically.
-            </p>
-            <input
-              ref={importFileRef}
-              type="file"
-              accept=".json"
-              onChange={handleImportFile}
-              className="hidden"
-            />
-            <Button onClick={() => importFileRef.current?.click()} variant="outline" size="sm">
-              <Upload className="h-4 w-4 mr-2" />
-              Import Config
-            </Button>
-          </GlassCard>
         </div>
-      </div>
       </TabsContent>
 
       {/* Field Editor Dialog */}
@@ -3237,12 +3291,16 @@ Example: A project code in format PROJ-XXXX where XXXX is a 4-digit number. Shou
             <Button variant="outline" onClick={() => {
               setImportDialogOpen(false);
               setPendingImport(null);
-            }}>
+            }} disabled={importSaving}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmImport}>
-              <Upload className="h-4 w-4 mr-2" />
-              Import
+            <Button onClick={handleConfirmImport} disabled={importSaving}>
+              {importSaving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4 mr-2" />
+              )}
+              {importSaving ? "Importing..." : "Import"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -162,6 +162,11 @@ if [[ -f "${ROOT_DIR}/scripts/run-prisma.mjs" ]]; then
   cp "${ROOT_DIR}/scripts/run-prisma.mjs" "${RELEASE_DIR}/scripts/"
 fi
 
+if [[ -f "${ROOT_DIR}/scripts/apply-form-configs.mjs" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/apply-form-configs.mjs" "${RELEASE_DIR}/scripts/"
+fi
+
 if [[ -f "${ROOT_DIR}/scripts/install-private-metaxpath.sh" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp "${ROOT_DIR}/scripts/install-private-metaxpath.sh" "${RELEASE_DIR}/scripts/"

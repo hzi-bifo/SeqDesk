@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
@@ -52,7 +53,6 @@ import {
 import { useModule } from "@/lib/modules";
 import {
   STUDY_INFORMATION_SECTION_ID,
-  STUDY_METADATA_SECTION_ID,
   getFixedStudySections,
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
@@ -95,7 +95,79 @@ type ImportedStudyConfig = {
   groups?: ImportedStudyGroup[];
 };
 
+function createSampleAssociationField(order: number = 0): FormFieldDefinition {
+  return {
+    id: `field_sample_association_${Date.now()}`,
+    type: "text",
+    label: "Sample Association",
+    name: "_sample_association",
+    required: false,
+    visible: true,
+    helpText: "Interface to associate samples from orders to this study",
+    order,
+  };
+}
+
+function ensureSampleAssociationField(fields: FormFieldDefinition[]): FormFieldDefinition[] {
+  if (fields.some((field) => field.name === "_sample_association")) {
+    return fields;
+  }
+
+  return [
+    createSampleAssociationField(0),
+    ...fields.map((field) =>
+      field.perSample ? field : { ...field, order: (field.order || 0) + 1 }
+    ),
+  ];
+}
+
+function getDefaultStudyFields(): FormFieldDefinition[] {
+  return [
+    createSampleAssociationField(),
+    {
+      id: "principal_investigator",
+      type: "text",
+      label: "Principal Investigator",
+      name: "principal_investigator",
+      required: false,
+      visible: true,
+      placeholder: "e.g., Dr. Jane Smith",
+      helpText: "Lead researcher responsible for this study",
+      order: 1,
+      groupId: STUDY_INFORMATION_SECTION_ID,
+      perSample: false,
+    },
+    {
+      id: "study_abstract",
+      type: "textarea",
+      label: "Study Abstract",
+      name: "study_abstract",
+      required: false,
+      visible: true,
+      placeholder: "Describe the scientific objectives and methodology of your study...",
+      helpText: "Brief description of the study",
+      order: 2,
+      groupId: STUDY_INFORMATION_SECTION_ID,
+      perSample: false,
+    },
+    {
+      id: "field_mixs_default",
+      type: "mixs",
+      label: "MIxS Metadata",
+      name: "_mixs",
+      required: false,
+      visible: true,
+      helpText: "Environment-specific metadata fields following MIxS standards",
+      order: 3,
+      groupId: "group_metadata",
+      perSample: false,
+      moduleSource: "mixs-metadata",
+    },
+  ];
+}
+
 export default function StudyFormBuilderPage() {
+  const searchParams = useSearchParams();
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
 
@@ -123,6 +195,15 @@ export default function StudyFormBuilderPage() {
     groups: FormFieldGroup[];
   } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const requestedTab = searchParams.get("tab");
+  const initialTab =
+    requestedTab === "settings"
+      ? "import-export"
+      : requestedTab === "per-sample" ||
+          requestedTab === "facility" ||
+          requestedTab === "import-export"
+        ? requestedTab
+        : "fields";
 
   // Field dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -163,26 +244,7 @@ export default function StudyFormBuilderPage() {
           const data = await res.json();
           let loadedFields = data.fields || [];
 
-          // Sample Association is enabled by default - add if not present
-          if (!loadedFields.some((f: FormFieldDefinition) => f.name === "_sample_association")) {
-            const updatedFields = loadedFields.map((f: FormFieldDefinition) => {
-              if (f.perSample) return f;
-              return { ...f, order: (f.order || 0) + 1 };
-            });
-            loadedFields = [
-              {
-                id: `field_sample_association_${Date.now()}`,
-                type: "text",
-                label: "Sample Association",
-                name: "_sample_association",
-                required: false,
-                visible: true,
-                helpText: "Interface to associate samples from orders to this study",
-                order: 0,
-              },
-              ...updatedFields,
-            ];
-          }
+          loadedFields = ensureSampleAssociationField(loadedFields);
 
           const normalized = normalizeStudyFormSchema({
             fields: loadedFields,
@@ -192,16 +254,7 @@ export default function StudyFormBuilderPage() {
           setGroups(normalized.groups);
         } else {
           // No config yet - start with Sample Association enabled
-          setFields([{
-            id: `field_sample_association_${Date.now()}`,
-            type: "text",
-            label: "Sample Association",
-            name: "_sample_association",
-            required: false,
-            visible: true,
-            helpText: "Interface to associate samples from orders to this study",
-            order: 0,
-          }]);
+          setFields([createSampleAssociationField()]);
           setGroups(DEFAULT_STUDY_GROUPS);
         }
       } catch {
@@ -523,6 +576,21 @@ export default function StudyFormBuilderPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleResetToDefaults = () => {
+    const confirmed = window.confirm(
+      "Reset the study form fields to SeqDesk defaults? Export the current configuration first if you want a backup."
+    );
+    if (!confirmed) return;
+
+    const normalized = normalizeStudyFormSchema({
+      fields: getDefaultStudyFields(),
+      groups: DEFAULT_STUDY_GROUPS,
+    });
+    setFields(normalized.fields);
+    setGroups(normalized.groups);
+    setAutoSaveStatus("dirty");
+  };
+
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -534,25 +602,22 @@ export default function StudyFormBuilderPage() {
           setError("Invalid config: missing fields array");
           return;
         }
-        if (!config.groups || !Array.isArray(config.groups)) {
-          setError("Invalid config: missing groups array");
-          return;
-        }
-
         const importTimestamp = Date.now();
         const seenGroupIds = new Set<string>();
-        const normalizedGroups: FormFieldGroup[] = config.groups.map((group, index) => {
-          const incomingId = typeof group.id === "string" && group.id.trim() !== "" ? group.id : undefined;
-          const groupId = incomingId && !seenGroupIds.has(incomingId)
-            ? incomingId
-            : `imported-group-${importTimestamp}-${index}`;
-          seenGroupIds.add(groupId);
-          return {
-            ...group,
-            id: groupId,
-            order: typeof group.order === "number" ? group.order : index,
-          };
-        });
+        const normalizedGroups: FormFieldGroup[] = Array.isArray(config.groups)
+          ? config.groups.map((group, index) => {
+              const incomingId = typeof group.id === "string" && group.id.trim() !== "" ? group.id : undefined;
+              const groupId = incomingId && !seenGroupIds.has(incomingId)
+                ? incomingId
+                : `imported-group-${importTimestamp}-${index}`;
+              seenGroupIds.add(groupId);
+              return {
+                ...group,
+                id: groupId,
+                order: typeof group.order === "number" ? group.order : index,
+              };
+            })
+          : DEFAULT_STUDY_GROUPS;
 
         const validGroupIds = new Set(normalizedGroups.map((group) => group.id));
         const seenFieldIds = new Set<string>();
@@ -576,7 +641,7 @@ export default function StudyFormBuilderPage() {
         });
 
         const normalized = normalizeStudyFormSchema({
-          fields: normalizedFields,
+          fields: ensureSampleAssociationField(normalizedFields),
           groups: normalizedGroups,
         });
 
@@ -666,16 +731,6 @@ export default function StudyFormBuilderPage() {
   const duplicateLegacyPerSampleFields = orderedPerSampleFields.filter((field) =>
     isLegacySubmgPerSampleFieldName(field.name)
   );
-  const sectionPreviewFields: Record<string, FormFieldDefinition[]> = {
-    [STUDY_INFORMATION_SECTION_ID]: orderedStudyFields.filter(
-      (field) => field.groupId === STUDY_INFORMATION_SECTION_ID
-    ),
-    [STUDY_METADATA_SECTION_ID]: orderedStudyFields.filter(
-      (field) => field.groupId === STUDY_METADATA_SECTION_ID
-    ),
-    "per-sample": orderedPerSampleFields,
-    facility: [...facilityStudyFields, ...facilityPerSampleFields],
-  };
   const isSampleAssociationField =
     fieldName.trim() === "_sample_association" || editingField?.name === "_sample_association";
   const automaticFieldSectionLabel = fieldPerSample
@@ -725,7 +780,7 @@ export default function StudyFormBuilderPage() {
   }
 
   return (
-    <Tabs defaultValue="fields">
+    <Tabs defaultValue={initialTab}>
       {/* Sticky header bar -- outside PageContainer, matching order form builder */}
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
@@ -760,10 +815,10 @@ export default function StudyFormBuilderPage() {
               Facility Fields
             </TabsTrigger>
             <TabsTrigger
-              value="settings"
+              value="import-export"
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
             >
-              Settings
+              Import / Export
             </TabsTrigger>
           </TabsList>
           <div className="absolute right-6 lg:right-8 flex items-center gap-2">
@@ -793,7 +848,7 @@ export default function StudyFormBuilderPage() {
       <div className="mb-4 mt-6">
         <h1 className="text-xl font-semibold">Study Configuration</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Define what information users provide when creating studies for ENA submission
+          Define what information users provide when creating studies and preparing submissions
         </p>
       </div>
 
@@ -812,144 +867,6 @@ export default function StudyFormBuilderPage() {
           .
         </div>
       )}
-
-      <GlassCard className="mb-6 p-6">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">Current Study Overview Sections</h2>
-          <span className="text-xs text-muted-foreground">
-            Shared by study details, study editing, and the study sidebar
-          </span>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          These sections are fixed. Study-level user fields belong to either Study Information or Metadata,
-          while per-sample fields and facility-only fields are managed separately below.
-        </p>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {[
-            {
-              id: STUDY_INFORMATION_SECTION_ID,
-              label: "Study Information",
-              description: "Core study fields shown in the main overview.",
-              fields: sectionPreviewFields[STUDY_INFORMATION_SECTION_ID] || [],
-              onAdd: () => handleAddField(false, false, STUDY_INFORMATION_SECTION_ID),
-              actionLabel: "Add study field",
-            },
-            {
-              id: STUDY_METADATA_SECTION_ID,
-              label: "Metadata",
-              description: "Environment and metadata fields shown in the main overview.",
-              fields: sectionPreviewFields[STUDY_METADATA_SECTION_ID] || [],
-              onAdd: () => handleAddField(false, false, STUDY_METADATA_SECTION_ID),
-              actionLabel: "Add metadata field",
-            },
-            {
-              id: "per-sample",
-              label: "Per-Sample",
-              description: "Shown in the study metadata table for each sample.",
-              fields: sectionPreviewFields["per-sample"] || [],
-              onAdd: () => handleAddField(true, false),
-              actionLabel: "Add sample field",
-            },
-            {
-              id: "facility",
-              label: "Facility Fields",
-              description: "Hidden from researchers and shown only to facility admins.",
-              fields: sectionPreviewFields.facility || [],
-              onAdd: () => undefined,
-              actionLabel: "",
-            },
-          ].map((section) => (
-            <div key={section.id} className="rounded-xl border border-border bg-background p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">{section.label}</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">{section.description}</p>
-                </div>
-                <span className="rounded-full bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">
-                  {section.fields.length} field{section.fields.length === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="mt-3 min-h-14 rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2">
-                {section.fields.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {section.fields.slice(0, 4).map((field) => (
-                      <span
-                        key={field.id}
-                        className={`rounded px-2 py-1 text-[10px] font-medium ${
-                          field.adminOnly
-                            ? "bg-slate-200 text-slate-700"
-                            : field.perSample
-                              ? "bg-amber-100 text-amber-700"
-                              : field.type === "mixs"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-background text-foreground"
-                        }`}
-                      >
-                        {field.label}
-                      </span>
-                    ))}
-                    {section.fields.length > 4 && (
-                      <span className="rounded bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">
-                        +{section.fields.length - 4} more
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    {section.id === "facility"
-                      ? "No facility-only fields yet."
-                      : section.id === "per-sample"
-                        ? "No per-sample fields yet."
-                        : "No fields assigned yet."}
-                  </p>
-                )}
-              </div>
-              {section.id !== "facility" ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="bg-white"
-                    onClick={section.onAdd}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {section.actionLabel}
-                  </Button>
-                </div>
-              ) : (
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                    Hidden from users
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="bg-white"
-                      onClick={() => handleAddField(false, true)}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add study field
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="bg-white"
-                      onClick={() => handleAddField(true, true)}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add sample field
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </GlassCard>
 
       {/* Study Fields - filled once per study */}
       <TabsContent value="fields">
@@ -1065,7 +982,7 @@ export default function StudyFormBuilderPage() {
                     title="Move this field to Facility Fields"
                   >
                     <Shield className="h-3 w-3" />
-                    Facility only
+                    Move to facility
                   </button>
                 )}
                 <div className="flex items-center gap-1">
@@ -1295,7 +1212,7 @@ export default function StudyFormBuilderPage() {
                     title="Move this field to Facility Fields"
                   >
                     <Shield className="h-3 w-3" />
-                    Facility only
+                    Move to facility
                   </button>
                 )}
                 <div className="flex items-center gap-1">
@@ -1660,8 +1577,8 @@ export default function StudyFormBuilderPage() {
         </div>
       </TabsContent>
 
-      {/* Settings Tab */}
-      <TabsContent value="settings">
+      {/* Import / Export Tab */}
+      <TabsContent value="import-export">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <GlassCard className="p-6">
             <h3 className="text-base font-semibold mb-2">Export Configuration</h3>
@@ -1676,7 +1593,7 @@ export default function StudyFormBuilderPage() {
           <GlassCard className="p-6">
             <h3 className="text-base font-semibold mb-2">Import Configuration</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Upload a previously exported study form configuration to restore fields and groups.
+              Upload a previously exported study form configuration to restore fields and fixed sections.
             </p>
             <Button onClick={() => importFileRef.current?.click()} variant="outline" className="bg-white">
               <Upload className="h-4 w-4 mr-2" />
@@ -1684,10 +1601,22 @@ export default function StudyFormBuilderPage() {
             </Button>
           </GlassCard>
         </div>
+        <GlassCard className="mt-4 p-6">
+          <h3 className="text-base font-semibold mb-2">Reset to Defaults</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Restore SeqDesk&apos;s built-in study fields and fixed sections.
+          </p>
+          <Button onClick={handleResetToDefaults} variant="outline" className="bg-white">
+            Reset to Defaults
+          </Button>
+        </GlassCard>
       </TabsContent>
 
       {/* Import Confirmation Dialog */}
-      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+      <Dialog open={importDialogOpen} onOpenChange={(open) => {
+        setImportDialogOpen(open);
+        if (!open) setPendingImport(null);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Import Configuration</DialogTitle>
@@ -1697,14 +1626,17 @@ export default function StudyFormBuilderPage() {
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              The import contains <strong>{pendingImport?.fields?.length || 0} fields</strong> and <strong>{pendingImport?.groups?.length || 0} groups</strong>.
+              The import contains <strong>{pendingImport?.fields?.length || 0} fields</strong> and <strong>{pendingImport?.groups?.length || 0} fixed sections</strong>.
             </p>
             <p className="text-sm text-amber-600 mt-2">
               This action will replace all existing fields and groups. Auto-save will persist the changes.
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setImportDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => {
+              setImportDialogOpen(false);
+              setPendingImport(null);
+            }}>Cancel</Button>
             <Button onClick={handleConfirmImport}>Import</Button>
           </DialogFooter>
         </DialogContent>

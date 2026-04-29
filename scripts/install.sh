@@ -22,6 +22,8 @@
 #   SEQDESK_ANTHROPIC_API_KEY=...  - Optional Anthropic API key
 #   SEQDESK_ADMIN_SECRET=...       - Optional admin secret
 #   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
+#   SEQDESK_ORDER_FORM_SETTINGS=/path/order.json - Optional exported order form preset
+#   SEQDESK_STUDY_FORM_SETTINGS=/path/study.json - Optional exported study form preset
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
@@ -72,6 +74,8 @@ SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
+SEQDESK_ORDER_FORM_SETTINGS="${SEQDESK_ORDER_FORM_SETTINGS:-}"
+SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
@@ -222,6 +226,8 @@ Options:
   --anthropic-api-key <key>    ANTHROPIC_API_KEY override
   --admin-secret <secret>      ADMIN_SECRET override
   --blob-read-write-token <token>  BLOB_READ_WRITE_TOKEN override
+  --order-form-settings <path> Exported order form JSON to apply after seeding
+  --study-form-settings <path> Exported study form JSON to apply after seeding
   -h, --help                   Show this help
 
 Examples:
@@ -499,6 +505,22 @@ parse_args() {
                 SEQDESK_BLOB_READ_WRITE_TOKEN="$2"
                 shift
                 ;;
+            --order-form-settings|--order_form_settings)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --order-form-settings"
+                    exit 1
+                fi
+                SEQDESK_ORDER_FORM_SETTINGS="$2"
+                shift
+                ;;
+            --study-form-settings|--study_form_settings)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --study-form-settings"
+                    exit 1
+                fi
+                SEQDESK_STUDY_FORM_SETTINGS="$2"
+                shift
+                ;;
             -h|--help)
                 print_usage
                 exit 0
@@ -624,6 +646,7 @@ const execution = toRecord(pipelines?.execution);
 const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
+const forms = toRecord(root.forms);
 const privatePipelines = toRecord(root.privatePipelines);
 const metaxpath = toRecord(privatePipelines?.metaxpath);
 
@@ -686,6 +709,28 @@ const values = {
   ),
   blobReadWriteToken: toOptionalString(
     firstDefined(root.blobReadWriteToken, runtime?.blobReadWriteToken)
+  ),
+  orderFormSettings: toOptionalString(
+    firstDefined(
+      root.orderFormSettings,
+      root.order_form_settings,
+      root.orderFormConfig,
+      forms?.orderFormSettings,
+      forms?.order_form_settings,
+      forms?.order,
+      forms?.orderConfig
+    )
+  ),
+  studyFormSettings: toOptionalString(
+    firstDefined(
+      root.studyFormSettings,
+      root.study_form_settings,
+      root.studyFormConfig,
+      forms?.studyFormSettings,
+      forms?.study_form_settings,
+      forms?.study,
+      forms?.studyConfig
+    )
   ),
   useSlurm,
   slurmQueue: toOptionalString(
@@ -790,6 +835,12 @@ if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
 if (values.blobReadWriteToken) {
   out.SEQDESK_CFG_BLOB_READ_WRITE_TOKEN = values.blobReadWriteToken;
 }
+if (values.orderFormSettings) {
+  out.SEQDESK_CFG_ORDER_FORM_SETTINGS = values.orderFormSettings;
+}
+if (values.studyFormSettings) {
+  out.SEQDESK_CFG_STUDY_FORM_SETTINGS = values.studyFormSettings;
+}
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
   out.SEQDESK_CFG_EXEC_USE_SLURM = values.useSlurm ? "true" : "false";
@@ -846,6 +897,8 @@ NODE
     apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
     apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    apply_config_value SEQDESK_ORDER_FORM_SETTINGS SEQDESK_CFG_ORDER_FORM_SETTINGS
+    apply_config_value SEQDESK_STUDY_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -868,6 +921,7 @@ NODE
     unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
@@ -1826,6 +1880,23 @@ if [ "$SEED_OK" = "true" ]; then
     print_success "Database initialized"
 else
     print_info "Seed did not complete during install -- the app will auto-seed on first launch"
+fi
+
+if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ] || [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
+    print_info "Applying form preset settings..."
+    form_args=()
+    if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ]; then
+        form_args+=(--order-form-settings "$SEQDESK_ORDER_FORM_SETTINGS")
+    fi
+    if [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
+        form_args+=(--study-form-settings "$SEQDESK_STUDY_FORM_SETTINGS")
+    fi
+    if node scripts/apply-form-configs.mjs "${form_args[@]}"; then
+        print_success "Form preset settings applied"
+    else
+        print_error "Failed to apply form preset settings"
+        exit 1
+    fi
 fi
 
 if has_infrastructure_overrides; then
