@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { PageNotice } from "@/components/ui/page-notice";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -22,7 +23,6 @@ import {
   ArrowLeft,
   Loader2,
   AlertCircle,
-  ClipboardPen,
   Clock,
   CheckCircle2,
   FileText,
@@ -41,18 +41,12 @@ import {
   getOrderProgressAnchorId,
 } from "@/lib/orders/progress-steps";
 import {
-  getOrderProgressIndicatorClassName,
-  getOrderProgressIndicatorLabel,
-  type OrderProgressCompletionStatus,
-} from "@/lib/orders/progress-status";
-import {
   buildFacilityFieldSections,
   getFacilityFieldSubsectionAnchorId,
   isFacilityFieldSubsectionId,
 } from "@/lib/orders/facility-sections";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
-import { cn } from "@/lib/utils";
 
 const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
 
@@ -151,32 +145,6 @@ function renderOrderDeleteError(message: string): React.ReactNode {
       .
     </>
   );
-}
-
-function getFacilityStatusTone(status: OrderProgressCompletionStatus) {
-  switch (status) {
-    case "complete":
-      return {
-        cardBorder: "border-emerald-200",
-        headerBackground: "bg-emerald-50/60",
-        iconBadge: "bg-emerald-100 text-emerald-700",
-        statusBadge: "border-emerald-200 bg-emerald-50 text-emerald-700",
-      };
-    case "partial":
-      return {
-        cardBorder: "border-amber-200",
-        headerBackground: "bg-amber-50/60",
-        iconBadge: "bg-amber-100 text-amber-700",
-        statusBadge: "border-amber-200 bg-amber-50 text-amber-700",
-      };
-    default:
-      return {
-        cardBorder: "border-slate-200",
-        headerBackground: "bg-slate-50/50",
-        iconBadge: "bg-slate-200 text-slate-700",
-        statusBadge: "border-slate-200 bg-slate-50 text-slate-700",
-      };
-  }
 }
 
 function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): string {
@@ -856,12 +824,6 @@ export default function OrderDetailPage({
     order,
     includeFacilityFields: isFacilityAdmin,
   });
-  const orderFacilitySection =
-    facilitySections.find((section) => section.id === "order-fields") ?? null;
-  const sampleFacilitySection =
-    facilitySections.find((section) => section.id === "sample-fields") ?? null;
-  const orderFacilityTone = getFacilityStatusTone(orderFacilitySection?.status ?? "empty");
-  const sampleFacilityTone = getFacilityStatusTone(sampleFacilitySection?.status ?? "empty");
   const isAdminOverview = isFacilityAdmin && activeSection === "overview";
   const visibleGroupedOverviewSections = isAdminOverview
     ? groupedOverviewSections.filter((section) => section.rows.length > 0)
@@ -883,18 +845,20 @@ export default function OrderDetailPage({
     title: string,
     stepId: string,
     options?: {
+      href?: string;
       wrapperClassName?: string;
       titleClassName?: string;
     }
   ) => {
     const wrapperClassName = options?.wrapperClassName || "px-5 py-4";
     const titleClassName = options?.titleClassName || "text-sm font-semibold";
+    const editHref = options?.href || `/orders/${orderId}/edit?step=${stepId}`;
 
     return (
       <div className={wrapperClassName}>
         {canEditOrder ? (
           <Link
-            href={`/orders/${orderId}/edit?step=${stepId}`}
+            href={editHref}
             className="group -mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1 transition-colors hover:bg-secondary/40"
           >
             <h2 className={titleClassName}>{title}</h2>
@@ -928,13 +892,12 @@ export default function OrderDetailPage({
 
   return (
     <>
-    <PageContainer>
-      {error && (
-        <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
-          <AlertCircle className="h-5 w-5" />
-          <span>{renderOrderDeleteError(error)}</span>
-        </div>
-      )}
+      <PageContainer>
+        {error && (
+          <PageNotice variant="error" title="Order action failed" className="mb-6 rounded-xl border">
+            {renderOrderDeleteError(error)}
+          </PageNotice>
+        )}
           {/* Order Process - only when there are samples */}
           {activeSection === "overview" && !isFacilityAdmin && order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
@@ -1290,57 +1253,13 @@ export default function OrderDetailPage({
               {facilitySections.some((section) => section.id === "order-fields") && (
                 <div
                   id={getFacilityFieldSubsectionAnchorId("order-fields")}
-                  className={cn(
-                    "bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20",
-                    orderFacilityTone.cardBorder
-                  )}
+                  className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
                 >
-                  <div
-                    className={cn(
-                      "flex items-start justify-between gap-3 border-b px-5 py-4",
-                      orderFacilityTone.headerBackground
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={cn("mt-0.5 rounded-md p-2", orderFacilityTone.iconBadge)}>
-                        <ClipboardPen className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-sm font-semibold text-slate-700">Order Fields</h3>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "gap-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                              orderFacilityTone.statusBadge
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                getOrderProgressIndicatorClassName(orderFacilitySection?.status ?? "empty")
-                              )}
-                              aria-hidden="true"
-                            />
-                            {getOrderProgressIndicatorLabel(orderFacilitySection?.status ?? "empty")}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Internal order-level data maintained by the facility team.
-                        </p>
-                      </div>
-                    </div>
-                    {canEditOrder && (
-                      <Button size="sm" variant="outline" asChild>
-                        <Link href={`/orders/${order.id}/edit?step=_facility&scope=facility`}>
-                          <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                          Edit Order Fields
-                        </Link>
-                      </Button>
-                    )}
-                  </div>
+                  {renderStepHeader("Order Fields", "_facility", {
+                    href: `/orders/${order.id}/edit?step=_facility&scope=facility`,
+                  })}
                   {facilityOverviewRows.length > 0 || fallbackAdminRows.length > 0 ? (
-                    <div className="divide-y divide-border">
+                    <div className="divide-y divide-border border-t">
                       {facilityOverviewRows.map(({ field, value }) => (
                         <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
                           <span className="text-muted-foreground">{field.label}</span>
@@ -1361,7 +1280,7 @@ export default function OrderDetailPage({
                       ))}
                     </div>
                   ) : (
-                    <div className="px-5 py-6 text-sm text-muted-foreground">
+                    <div className="border-t px-5 py-6 text-sm text-muted-foreground">
                       No internal order-level fields are configured yet.
                     </div>
                   )}
@@ -1371,100 +1290,57 @@ export default function OrderDetailPage({
               {facilitySections.some((section) => section.id === "sample-fields") && (
                 <div
                   id={getFacilityFieldSubsectionAnchorId("sample-fields")}
-                  className={cn(
-                    "bg-card rounded-lg border overflow-hidden scroll-mt-20",
-                    sampleFacilityTone.cardBorder
-                  )}
+                  className="bg-card rounded-lg border overflow-hidden scroll-mt-20"
                 >
-                  <div
-                    className={cn(
-                      "flex items-start justify-between gap-3 border-b px-5 py-4",
-                      sampleFacilityTone.headerBackground
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={cn("mt-0.5 rounded-md p-2", sampleFacilityTone.iconBadge)}>
-                        <FlaskConical className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-sm font-semibold text-slate-700">Sample Fields</h3>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "gap-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                              sampleFacilityTone.statusBadge
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                getOrderProgressIndicatorClassName(sampleFacilitySection?.status ?? "empty")
-                              )}
-                              aria-hidden="true"
-                            />
-                            {getOrderProgressIndicatorLabel(sampleFacilitySection?.status ?? "empty")}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Internal sample-level fields tracked by the facility team.
-                        </p>
-                      </div>
-                    </div>
-                    {canEditOrder && (
-                      <Button size="sm" variant="outline" asChild>
-                        <Link href={`/orders/${order.id}/edit?step=samples&scope=facility`}>
-                          <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                          Edit Sample Fields
-                        </Link>
-                      </Button>
-                    )}
-                  </div>
+                  {renderStepHeader("Sample Fields", "samples", {
+                    href: `/orders/${order.id}/edit?step=samples&scope=facility`,
+                  })}
                   {order.samples.length === 0 ? (
-                    <div className="px-5 py-6 text-sm text-muted-foreground">
+                    <div className="border-t px-5 py-6 text-sm text-muted-foreground">
                       No samples have been added to this order yet.
                     </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted/40 border-b">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
-                            <th className="px-3 py-2 text-left font-medium">Sample ID</th>
-                            {visibleAdminSampleFields.map((field) => (
-                              <th key={field.id} className="px-3 py-2 text-left font-medium">
-                                {field.label}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {order.samples.map((sample, index) => (
-                            <tr key={sample.id}>
-                              <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                              <td className="px-3 py-2">
-                                <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                                  {sample.sampleId}
-                                </code>
-                              </td>
-                              {visibleAdminSampleFields.map((field) => {
-                                const rawValue = getSampleFieldRawValue(sample, field);
-                                const displayValue = formatSchemaFieldValue(field, rawValue);
-                                return (
-                                  <td key={field.id} className="px-3 py-2 align-top">
-                                    {displayValue === "Not specified" ? "-" : displayValue}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {visibleAdminSampleFields.length === 0 && order.samples.length > 0 && (
-                    <div className="border-t px-5 py-3 text-sm text-muted-foreground">
+                  ) : visibleAdminSampleFields.length === 0 ? (
+                    <div className="border-t px-5 py-6 text-sm text-muted-foreground">
                       No internal per-sample fields are configured yet. Add admin-only sample fields in the form builder to track facility annotations here.
+                    </div>
+                  ) : (
+                    <div className="border-t">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 border-b">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
+                              <th className="px-3 py-2 text-left font-medium">Sample ID</th>
+                              {visibleAdminSampleFields.map((field) => (
+                                <th key={field.id} className="px-3 py-2 text-left font-medium">
+                                  {field.label}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {order.samples.map((sample, index) => (
+                              <tr key={sample.id}>
+                                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
+                                <td className="px-3 py-2">
+                                  <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                                    {sample.sampleId}
+                                  </code>
+                                </td>
+                                {visibleAdminSampleFields.map((field) => {
+                                  const rawValue = getSampleFieldRawValue(sample, field);
+                                  const displayValue = formatSchemaFieldValue(field, rawValue);
+                                  return (
+                                    <td key={field.id} className="px-3 py-2 align-top">
+                                      {displayValue === "Not specified" ? "-" : displayValue}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>

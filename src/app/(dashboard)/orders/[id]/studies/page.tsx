@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
+import { PageNotice } from "@/components/ui/page-notice";
 import {
   Dialog,
   DialogContent,
@@ -330,13 +331,14 @@ export default function OrderStudiesPage({
       </HelpBox>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
-          <AlertCircle className="h-4 w-4" />
+        <PageNotice
+          variant="error"
+          title="Study assignment failed"
+          onDismiss={() => setError("")}
+          className="mb-4 rounded-xl border"
+        >
           {error}
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setError("")}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        </PageNotice>
       )}
 
       {/* Assignment Panel */}

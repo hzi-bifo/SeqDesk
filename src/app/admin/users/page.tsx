@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   ChevronRight,
   Search,
@@ -49,6 +50,7 @@ export default function UsersPage() {
   const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState<string>("");
   const [positionFilter, setPositionFilter] = useState<string>("");
@@ -67,9 +69,12 @@ export default function UsersPage() {
         const res = await fetch("/api/admin/users");
         if (!res.ok) throw new Error("Failed to fetch users");
         const data = await res.json();
-        setUsers(data);
-      } catch {
-        console.error("Failed to load users");
+        setUsers(Array.isArray(data) ? data : []);
+        setError("");
+      } catch (error) {
+        console.error("Failed to load users:", error);
+        setUsers([]);
+        setError("Failed to load researchers");
       } finally {
         setLoading(false);
       }
@@ -114,7 +119,7 @@ export default function UsersPage() {
 
   // Filter and sort users
   const filteredUsers = useMemo(() => {
-    let result = users.filter((user) => {
+    const result = users.filter((user) => {
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -204,10 +209,22 @@ export default function UsersPage() {
         <div>
           <h1 className="text-xl font-semibold">Researchers</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {users.length} registered researcher{users.length !== 1 ? "s" : ""}
+            {filteredUsers.length} of {users.length} registered researcher{users.length !== 1 ? "s" : ""}
           </p>
         </div>
       </div>
+
+      <HelpBox title="What are researchers?">
+        Researchers are user accounts that submit sequencing orders, create
+        studies, and provide metadata. Use this page to find a researcher, review
+        their department and role, and open their order and study history.
+      </HelpBox>
+
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
 
       {users.length === 0 ? (
         <div className="bg-white rounded-xl p-12 text-center">
@@ -221,7 +238,7 @@ export default function UsersPage() {
         <div className="bg-white rounded-xl overflow-hidden">
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-stone-100">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               {/* Search */}
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

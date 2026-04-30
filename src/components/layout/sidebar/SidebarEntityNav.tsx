@@ -85,8 +85,6 @@ export function SidebarEntityNav({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [entityType, entityId, showAdminControls, pathname]);
-  const isEntityRoute = pathname.startsWith("/orders") || pathname.startsWith("/studies") || (entityType !== null && entityId !== null);
-
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
   const activeTab = pathname.startsWith("/studies")
     ? "studies"
@@ -168,7 +166,7 @@ export function SidebarEntityNav({
     ? entityType === "study" && !!entityId
     : entityType === "order" && !!entityId;
 
-  if (!isEntityRoute && !hasEntity) {
+  if (!hasEntity) {
     return null;
   }
 
@@ -221,7 +219,6 @@ export function SidebarEntityNav({
         .filter((item) => item.show)
         .map((item) => {
           const isActive = getIsActive(item);
-          const isDisabled = !hasEntity;
 
           const shouldShowOrderSubitems =
             !collapsed &&
@@ -281,34 +278,6 @@ export function SidebarEntityNav({
             item.key === "publishing" &&
             !!entityId &&
             !isDemoUser;
-
-          if (isDisabled) {
-            const disabledItem = (
-              <span
-                key={item.key}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm text-muted-foreground/40 cursor-default",
-                  collapsed && "justify-center px-0 py-2"
-                )}
-              >
-                <item.icon className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
-                {!collapsed && <span className="flex-1">{item.label}</span>}
-              </span>
-            );
-
-            if (collapsed) {
-              return (
-                <Tooltip key={item.key}>
-                  <TooltipTrigger asChild>{disabledItem}</TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8}>
-                    {item.label}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            }
-
-            return disabledItem;
-          }
 
           const link = (
             <Link
@@ -631,6 +600,14 @@ export function SidebarEntityNav({
                         sub.id === "discover"
                           ? currentOrderSubview === "sequencing" && searchParams.get("view") === "discover"
                           : currentOrderSubview === "sequencing" && !searchParams.get("view") && !searchParams.get("pipeline");
+                      const indicatorStatus =
+                        sub.id === "discover"
+                          ? seqAssocStatus === "complete"
+                            ? "complete"
+                            : seqAssocStatus === "partial"
+                              ? "partial"
+                              : "empty"
+                          : "empty";
                       return (
                         <Link
                           key={sub.id}
@@ -639,16 +616,18 @@ export function SidebarEntityNav({
                             "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                             isSubActive
                               ? "bg-secondary text-foreground font-medium"
-                              : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                           )}
                         >
                           <span className={cn(
                             "h-2 w-2 rounded-full shadow-sm",
-                            sub.id === "discover"
-                              ? seqAssocStatus === "complete" ? "bg-emerald-500" : seqAssocStatus === "partial" ? "bg-amber-500" : "bg-slate-300"
-                              : "bg-slate-300"
+                            getOrderProgressIndicatorClassName(indicatorStatus),
+                            isSubActive && "ring-2 ring-background"
                           )} aria-hidden="true" />
                           <span className="truncate">{sub.label}</span>
+                          <span className="sr-only">
+                            {getOrderProgressIndicatorLabel(indicatorStatus)}
+                          </span>
                         </Link>
                       );
                     })}

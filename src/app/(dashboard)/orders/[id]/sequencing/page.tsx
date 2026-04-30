@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -11,6 +11,7 @@ import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
 import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Card,
   CardContent,
@@ -99,10 +100,8 @@ import {
   FlaskConical,
   FolderOpen,
   FolderSearch,
-  Hash,
   Loader2,
   MoreHorizontal,
-  Play,
   RefreshCw,
   Search,
   Upload,
@@ -145,6 +144,64 @@ interface OrderPipelineShortcut {
   input?: {
     supportedScopes?: string[];
   };
+}
+
+interface RunPlanField {
+  id: string;
+  label: string;
+  name: string;
+  type: string;
+  options?: Array<{ value: string; label: string }>;
+  adminOnly?: boolean;
+}
+
+interface RunPlanSample {
+  id: string;
+  sampleId: string;
+  sampleCode: string;
+  sampleTitle: string | null;
+  material: string | null;
+  barcode: string | null;
+  customFields: Record<string, unknown>;
+  readCount: number;
+  artifactCount: number;
+  latestMetaXpathStatus: string | null;
+}
+
+interface RunPlan {
+  id: string;
+  runId: string;
+  runName: string | null;
+  platform: string | null;
+  instrument: string | null;
+  runDate: string | null;
+  folderPath: string | null;
+  runParameters: Record<string, unknown>;
+  samples: RunPlanSample[];
+}
+
+interface AssignmentDraft {
+  barcode: string;
+  customFields: Record<string, string>;
+}
+
+interface RunPlanImportPreviewRow {
+  rowNumber: number;
+  runId: string;
+  sampleCode: string;
+  barcode: string | null;
+  customFields: Record<string, unknown>;
+  unmapped: Record<string, unknown>;
+}
+
+interface RunPlanImportPreview {
+  sheet: string;
+  rows: RunPlanImportPreviewRow[];
+  rowCount: number;
+  unmappedColumns: string[];
+  missingSamples: string[];
+  rowErrors?: Array<{ rowNumber: number | null; message: string }>;
+  applyReady: boolean;
 }
 
 function formatFileSize(bytes?: number | null): string {
@@ -222,7 +279,6 @@ export default function OrderSequencingPage({
   const [detailOpen, setDetailOpen] = useState(false);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [computingChecksums, setComputingChecksums] = useState(false);
   const [scanDialogOpen, setScanDialogOpen] = useState(false);
   const [scanResults, setScanResults] = useState<SequencingDiscoveryResult[]>([]);
   const [discovering, setDiscovering] = useState(false);
@@ -270,6 +326,25 @@ export default function OrderSequencingPage({
     inputSampleIds?: string | null;
   }>>([]);
   const [analysisRunsLoading, setAnalysisRunsLoading] = useState(false);
+  const [runPlanFields, setRunPlanFields] = useState<RunPlanField[]>([]);
+  const [runPlans, setRunPlans] = useState<RunPlan[]>([]);
+  const [runPlansLoading, setRunPlansLoading] = useState(false);
+  const [creatingRun, setCreatingRun] = useState(false);
+  const [newRunId, setNewRunId] = useState("");
+  const [newRunDate, setNewRunDate] = useState("");
+  const [assignmentRunId, setAssignmentRunId] = useState("");
+  const [assignmentSampleId, setAssignmentSampleId] = useState("");
+  const [assignmentBarcode, setAssignmentBarcode] = useState("");
+  const [savingAssignment, setSavingAssignment] = useState(false);
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
+  const [savingRunAssignmentsId, setSavingRunAssignmentsId] = useState<string | null>(null);
+  const [importingRunPlan, setImportingRunPlan] = useState(false);
+  const [applyingRunPlanImport, setApplyingRunPlanImport] = useState(false);
+  const [runPlanImportFile, setRunPlanImportFile] = useState<File | null>(null);
+  const [runPlanImportPreview, setRunPlanImportPreview] =
+    useState<RunPlanImportPreview | null>(null);
+  const [runPlanImportDialogOpen, setRunPlanImportDialogOpen] = useState(false);
+  const runPlanImportRef = useRef<HTMLInputElement | null>(null);
 
   const orderId = resolvedParams.id;
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
@@ -278,6 +353,14 @@ export default function OrderSequencingPage({
   const visibleOrderPipelines = useMemo(
     () => orderPipelines.filter((pipeline) => pipeline.enabled),
     [orderPipelines]
+  );
+  const editableRunPlanFields = useMemo(
+    () => runPlanFields.filter((field) => field.name !== "barcode"),
+    [runPlanFields]
+  );
+  const visibleRunPlanFields = useMemo(
+    () => editableRunPlanFields.slice(0, 6),
+    [editableRunPlanFields]
   );
 
   // Fetch pipeline runs for analysis overview
@@ -387,6 +470,35 @@ export default function OrderSequencingPage({
     }
   }, [isFacilityAdmin]);
 
+  const refreshRunPlans = useCallback(async () => {
+    if (!isFacilityAdmin) {
+      setRunPlans([]);
+      setRunPlanFields([]);
+      return;
+    }
+    setRunPlansLoading(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/runs`);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load run plans");
+      }
+      setRunPlanFields((payload?.fields ?? []) as RunPlanField[]);
+      const runs = (payload?.runs ?? []) as RunPlan[];
+      setRunPlans(runs);
+      if (!assignmentRunId && runs[0]?.id) {
+        setAssignmentRunId(runs[0].id);
+      }
+    } catch (runPlanError) {
+      toast.error(
+        runPlanError instanceof Error ? runPlanError.message : "Failed to load run plans"
+      );
+      setRunPlans([]);
+    } finally {
+      setRunPlansLoading(false);
+    }
+  }, [assignmentRunId, isFacilityAdmin, orderId]);
+
   useEffect(() => {
     if (sessionStatus === "loading") {
       return;
@@ -406,7 +518,8 @@ export default function OrderSequencingPage({
     }
 
     void refreshOrderPipelines();
-  }, [refreshOrderPipelines, sessionStatus]);
+    void refreshRunPlans();
+  }, [refreshOrderPipelines, refreshRunPlans, sessionStatus]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -469,6 +582,31 @@ export default function OrderSequencingPage({
     }
   }, [sampleOptions, uploadMode, uploadTargetSampleId]);
 
+  useEffect(() => {
+    if (!assignmentSampleId && sampleOptions[0]?.id) {
+      setAssignmentSampleId(sampleOptions[0].id);
+    }
+  }, [assignmentSampleId, sampleOptions]);
+
+  useEffect(() => {
+    const nextDrafts: Record<string, AssignmentDraft> = {};
+    for (const run of runPlans) {
+      for (const sample of run.samples) {
+        const customFields: Record<string, string> = {};
+        for (const field of editableRunPlanFields) {
+          const value = sample.customFields[field.name];
+          customFields[field.name] =
+            value === undefined || value === null ? "" : String(value);
+        }
+        nextDrafts[sample.id] = {
+          barcode: sample.barcode ?? "",
+          customFields,
+        };
+      }
+    }
+    setAssignmentDrafts(nextDrafts);
+  }, [editableRunPlanFields, runPlans]);
+
   const canManage = Boolean(data?.canManage);
   const selectedSample = useMemo(
     () => data?.samples.find((sample) => sample.id === detailSampleId) ?? null,
@@ -507,12 +645,23 @@ export default function OrderSequencingPage({
 
     return sampleOptions.filter((sample) => {
       if (query) {
+        const runPlanMatches = runPlans.flatMap((run) =>
+          run.samples
+            .filter((assignment) => assignment.sampleId === sample.id)
+            .flatMap((assignment) => [
+              run.runId,
+              run.runName,
+              assignment.barcode,
+              ...Object.values(assignment.customFields).map((value) => String(value)),
+            ])
+        );
         const searchText = [
           sample.sampleId,
           sample.sampleAlias,
           sample.sampleTitle,
           sample.sequencingRun?.runId,
           sample.sequencingRun?.runName,
+          ...runPlanMatches,
         ]
           .filter(Boolean)
           .join(" ")
@@ -545,7 +694,7 @@ export default function OrderSequencingPage({
 
       return true;
     });
-  }, [dataFilter, sampleOptions, searchQuery, statusFilter]);
+  }, [dataFilter, runPlans, sampleOptions, searchQuery, statusFilter]);
 
   const hasActiveFilters = Boolean(searchQuery || statusFilter || dataFilter);
 
@@ -631,6 +780,213 @@ export default function OrderSequencingPage({
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.error || "Failed to assign reads");
+    }
+  };
+
+  const handleCreateRunPlan = async () => {
+    const trimmedRunId = newRunId.trim();
+    if (!trimmedRunId) {
+      toast.error("Run ID is required");
+      return;
+    }
+    setCreatingRun(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: trimmedRunId,
+          runName: trimmedRunId,
+          runDate: newRunDate || null,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to create run");
+      }
+      setNewRunId("");
+      setNewRunDate("");
+      toast.success("Created sequencing run");
+      await refreshRunPlans();
+    } catch (createError) {
+      toast.error(createError instanceof Error ? createError.message : "Failed to create run");
+    } finally {
+      setCreatingRun(false);
+    }
+  };
+
+  const handleSaveRunAssignment = async () => {
+    if (!assignmentRunId || !assignmentSampleId) {
+      toast.error("Choose a run and sample");
+      return;
+    }
+    setSavingAssignment(true);
+    try {
+      const response = await fetch(
+        `/api/orders/${orderId}/sequencing/runs/${assignmentRunId}/samples`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assignments: [
+              {
+                sampleId: assignmentSampleId,
+                barcode: assignmentBarcode || null,
+              },
+            ],
+          }),
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to save assignment");
+      }
+      setAssignmentBarcode("");
+      toast.success("Saved run assignment");
+      await refreshRunPlans();
+    } catch (saveError) {
+      toast.error(saveError instanceof Error ? saveError.message : "Failed to save assignment");
+    } finally {
+      setSavingAssignment(false);
+    }
+  };
+
+  const updateRunAssignmentBarcode = (assignmentId: string, barcode: string) => {
+    setAssignmentDrafts((current) => ({
+      ...current,
+      [assignmentId]: {
+        barcode,
+        customFields: current[assignmentId]?.customFields ?? {},
+      },
+    }));
+  };
+
+  const updateRunAssignmentField = (
+    assignmentId: string,
+    fieldName: string,
+    value: string
+  ) => {
+    setAssignmentDrafts((current) => ({
+      ...current,
+      [assignmentId]: {
+        barcode: current[assignmentId]?.barcode ?? "",
+        customFields: {
+          ...(current[assignmentId]?.customFields ?? {}),
+          [fieldName]: value,
+        },
+      },
+    }));
+  };
+
+  const formatDraftValueForSave = (field: RunPlanField, value: string): unknown => {
+    if (value === "") return null;
+    if (field.type === "number") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : value;
+    }
+    if (field.type === "checkbox") {
+      return value === "true";
+    }
+    return value;
+  };
+
+  const handleSaveRunAssignments = async (run: RunPlan) => {
+    if (run.samples.length === 0) {
+      toast.message("No samples assigned to this run");
+      return;
+    }
+    setSavingRunAssignmentsId(run.id);
+    try {
+      const assignments = run.samples.map((sample) => {
+        const draft = assignmentDrafts[sample.id] ?? {
+          barcode: sample.barcode ?? "",
+          customFields: {},
+        };
+        const customFields = Object.fromEntries(
+          editableRunPlanFields.map((field) => [
+            field.name,
+            formatDraftValueForSave(field, draft.customFields[field.name] ?? ""),
+          ])
+        );
+        return {
+          sampleId: sample.sampleId,
+          barcode: draft.barcode || null,
+          customFields,
+        };
+      });
+      const response = await fetch(
+        `/api/orders/${orderId}/sequencing/runs/${run.id}/samples`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assignments }),
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to save run assignments");
+      }
+      toast.success("Saved run assignments");
+      await refreshRunPlans();
+    } catch (saveError) {
+      toast.error(
+        saveError instanceof Error ? saveError.message : "Failed to save run assignments"
+      );
+    } finally {
+      setSavingRunAssignmentsId(null);
+    }
+  };
+
+  const handleRunPlanImport = async (file: File | null | undefined) => {
+    if (!file) return;
+    setImportingRunPlan(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const previewResponse = await fetch(`/api/orders/${orderId}/sequencing/runs/import`, {
+        method: "POST",
+        body: formData,
+      });
+      const preview = await previewResponse.json().catch(() => null);
+      if (!previewResponse.ok) {
+        throw new Error(preview?.error || "Failed to preview import");
+      }
+      setRunPlanImportFile(file);
+      setRunPlanImportPreview(preview as RunPlanImportPreview);
+      setRunPlanImportDialogOpen(true);
+    } catch (importError) {
+      toast.error(importError instanceof Error ? importError.message : "Failed to preview run plan");
+    } finally {
+      setImportingRunPlan(false);
+      if (runPlanImportRef.current) {
+        runPlanImportRef.current.value = "";
+      }
+    }
+  };
+
+  const handleApplyRunPlanImport = async () => {
+    if (!runPlanImportFile) return;
+    setApplyingRunPlanImport(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", runPlanImportFile);
+      const applyResponse = await fetch(`/api/orders/${orderId}/sequencing/runs/import?apply=true`, {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await applyResponse.json().catch(() => null);
+      if (!applyResponse.ok) {
+        throw new Error(payload?.error || "Failed to import run plan");
+      }
+      toast.success(`Imported ${payload.rowCount} run assignment${payload.rowCount === 1 ? "" : "s"}`);
+      setRunPlanImportDialogOpen(false);
+      setRunPlanImportFile(null);
+      setRunPlanImportPreview(null);
+      await refreshRunPlans();
+    } catch (importError) {
+      toast.error(importError instanceof Error ? importError.message : "Failed to import run plan");
+    } finally {
+      setApplyingRunPlanImport(false);
     }
   };
 
@@ -763,37 +1119,6 @@ export default function OrderSequencingPage({
     }
   };
 
-  const handleComputeChecksums = async () => {
-    setComputingChecksums(true);
-    try {
-      const response = await fetch(`/api/orders/${orderId}/sequencing/checksums`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to compute checksums");
-      }
-      const summary = payload.summary as {
-        updatedReads: number;
-        updatedArtifacts: number;
-      };
-      toast.success(
-        `Updated ${summary.updatedReads} read record${summary.updatedReads === 1 ? "" : "s"} and ${summary.updatedArtifacts} artifact${summary.updatedArtifacts === 1 ? "" : "s"}`
-      );
-      await refreshSummary({ silent: true });
-    } catch (checksumError) {
-      toast.error(
-        checksumError instanceof Error
-          ? checksumError.message
-          : "Failed to compute checksums"
-      );
-    } finally {
-      setComputingChecksums(false);
-    }
-  };
-
   const handleUpload = async () => {
     if (!uploadFile) {
       toast.error("Choose a file first");
@@ -882,6 +1207,78 @@ export default function OrderSequencingPage({
   };
 
   const isDemo = !!session?.user?.isDemo;
+
+  const renderRunAssignmentFieldInput = (
+    assignmentId: string,
+    field: RunPlanField
+  ) => {
+    const value = assignmentDrafts[assignmentId]?.customFields[field.name] ?? "";
+
+    if (field.type === "select" && field.options?.length) {
+      return (
+        <Select
+          value={value || "__empty"}
+          onValueChange={(nextValue) =>
+            updateRunAssignmentField(
+              assignmentId,
+              field.name,
+              nextValue === "__empty" ? "" : nextValue
+            )
+          }
+          disabled={isDemo || savingRunAssignmentsId !== null}
+        >
+          <SelectTrigger className="h-8 min-w-[9rem]">
+            <SelectValue placeholder={field.label} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__empty">-</SelectItem>
+            {field.options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    if (field.type === "checkbox") {
+      return (
+        <Select
+          value={value === "" ? "__empty" : value}
+          onValueChange={(nextValue) =>
+            updateRunAssignmentField(
+              assignmentId,
+              field.name,
+              nextValue === "__empty" ? "" : nextValue
+            )
+          }
+          disabled={isDemo || savingRunAssignmentsId !== null}
+        >
+          <SelectTrigger className="h-8 min-w-[7rem]">
+            <SelectValue placeholder={field.label} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__empty">-</SelectItem>
+            <SelectItem value="true">Yes</SelectItem>
+            <SelectItem value="false">No</SelectItem>
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    return (
+      <Input
+        type={field.type === "number" || field.type === "date" ? field.type : "text"}
+        value={value}
+        onChange={(event) =>
+          updateRunAssignmentField(assignmentId, field.name, event.target.value)
+        }
+        className="h-8 min-w-[9rem]"
+        disabled={isDemo || savingRunAssignmentsId !== null}
+      />
+    );
+  };
 
   if (sessionStatus === "loading" || loading) {
     return (
@@ -1098,6 +1495,7 @@ export default function OrderSequencingPage({
                   onClick={() => {
                     void refreshSummary({ silent: true });
                     void refreshOrderPipelines();
+                    void refreshRunPlans();
                   }}
                   disabled={refreshing}
                 >
@@ -1108,23 +1506,15 @@ export default function OrderSequencingPage({
                   )}
                   Refresh
                 </Button>
-                <Button size="sm" variant="outline" onClick={handleComputeChecksums} disabled={!canManage || computingChecksums}>
-                  {computingChecksums ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Hash className="mr-2 h-4 w-4" />
-                  )}
-                  Compute Hashes
-                </Button>
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={`/orders/${orderId}/pipelines`}>
-                    <Play className="mr-2 h-4 w-4" />
-                    Order Pipelines
-                  </Link>
-                </Button>
               </div>
             )}
           </div>
+
+          <HelpBox title="What is the sequencing overview?">
+            The overview shows each sample&apos;s sequencing status, linked read files, checksums,
+            and generated QC or report artifacts. Use it to quickly see which samples are ready,
+            missing data, or need facility review.
+          </HelpBox>
 
           {!isDemo && !data.dataBasePathConfigured && (
             <Card className="border-amber-200 bg-amber-50/70">
@@ -1153,6 +1543,238 @@ export default function OrderSequencingPage({
               {error}
             </div>
           ) : null}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <FlaskConical className="h-4 w-4 text-muted-foreground" />
+                    Run Plan
+                  </CardTitle>
+                  <CardDescription>
+                    Map internal sample IDs to sequencing run barcodes before reads or reports arrive.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={runPlanImportRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={(event) => void handleRunPlanImport(event.target.files?.[0])}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => runPlanImportRef.current?.click()}
+                    disabled={importingRunPlan || isDemo}
+                  >
+                    {importingRunPlan ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Import Excel
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  value={newRunId}
+                  onChange={(event) => setNewRunId(event.target.value)}
+                  placeholder="Run ID, e.g. 20260223"
+                  disabled={creatingRun || isDemo}
+                />
+                <Input
+                  type="date"
+                  value={newRunDate}
+                  onChange={(event) => setNewRunDate(event.target.value)}
+                  disabled={creatingRun || isDemo}
+                />
+                <Button
+                  type="button"
+                  onClick={() => void handleCreateRunPlan()}
+                  disabled={creatingRun || isDemo}
+                >
+                  {creatingRun ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Create Run
+                </Button>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-[1fr_1fr_10rem_auto]">
+                <Select value={assignmentRunId} onValueChange={setAssignmentRunId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose run" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {runPlans.map((run) => (
+                      <SelectItem key={run.id} value={run.id}>
+                        {run.runId}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={assignmentSampleId} onValueChange={setAssignmentSampleId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose sample" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sampleOptions.map((sample) => (
+                      <SelectItem key={sample.id} value={sample.id}>
+                        {sample.sampleId}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={assignmentBarcode}
+                  onChange={(event) => setAssignmentBarcode(event.target.value)}
+                  placeholder="barcode01"
+                  disabled={savingAssignment || isDemo}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleSaveRunAssignment()}
+                  disabled={savingAssignment || runPlans.length === 0 || isDemo}
+                >
+                  {savingAssignment ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Save Mapping
+                </Button>
+              </div>
+
+              {runPlansLoading ? (
+                <div className="flex items-center justify-center rounded-lg border border-dashed py-6 text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading run plans...
+                </div>
+              ) : runPlans.length === 0 ? (
+                <div className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                  No sequencing runs planned yet.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {runPlans.map((run) => (
+                    <div key={run.id} className="overflow-hidden rounded-lg border">
+                      <div className="flex flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="font-medium">{run.runId}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {run.runDate ? formatDateTime(run.runDate) : "No run date"}
+                            {run.platform ? ` · ${run.platform}` : ""}
+                            {run.instrument ? ` · ${run.instrument}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void handleSaveRunAssignments(run)}
+                            disabled={
+                              isDemo ||
+                              run.samples.length === 0 ||
+                              savingRunAssignmentsId === run.id
+                            }
+                          >
+                            {savingRunAssignmentsId === run.id ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                            )}
+                            Save Changes
+                          </Button>
+                          <Button size="sm" variant="outline" asChild>
+                            <a href={`/api/orders/${orderId}/sequencing/runs/${run.id}/export`}>
+                              <Download className="mr-1.5 h-3.5 w-3.5" />
+                              Export
+                            </a>
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[760px] text-sm">
+                          <thead className="border-b bg-background">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">Barcode</th>
+                              <th className="px-3 py-2 text-left font-medium">Sample ID</th>
+                              <th className="px-3 py-2 text-left font-medium">Material</th>
+                              <th className="px-3 py-2 text-left font-medium">Reads</th>
+                              <th className="px-3 py-2 text-left font-medium">Reports</th>
+                              <th className="px-3 py-2 text-left font-medium">MetaXpath</th>
+                              {visibleRunPlanFields.map((field) => (
+                                <th key={field.id} className="px-3 py-2 text-left font-medium">
+                                  {field.label}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {run.samples.length === 0 ? (
+                              <tr>
+                                <td colSpan={6 + visibleRunPlanFields.length} className="px-3 py-5 text-center text-muted-foreground">
+                                  No samples assigned to this run.
+                                </td>
+                              </tr>
+                            ) : (
+                              run.samples.map((sample) => (
+                                <tr key={sample.id} className="border-b last:border-b-0">
+                                  <td className="px-3 py-2">
+                                    <Input
+                                      value={assignmentDrafts[sample.id]?.barcode ?? ""}
+                                      onChange={(event) =>
+                                        updateRunAssignmentBarcode(sample.id, event.target.value)
+                                      }
+                                      className="h-8 min-w-[8rem] font-mono text-xs"
+                                      placeholder="barcode01"
+                                      disabled={isDemo || savingRunAssignmentsId !== null}
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="font-medium">{sample.sampleCode}</div>
+                                    {sample.sampleTitle && (
+                                      <div className="text-xs text-muted-foreground">{sample.sampleTitle}</div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">{sample.material || "-"}</td>
+                                  <td className="px-3 py-2">{sample.readCount}</td>
+                                  <td className="px-3 py-2">{sample.artifactCount}</td>
+                                  <td className="px-3 py-2">
+                                    {sample.latestMetaXpathStatus ? (
+                                      <Badge variant="outline">
+                                        {sample.latestMetaXpathStatus}
+                                      </Badge>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </td>
+                                  {visibleRunPlanFields.map((field) => (
+                                    <td key={field.id} className="px-3 py-2">
+                                      {renderRunAssignmentFieldInput(sample.id, field)}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Pipeline shortcuts removed — pipelines are now accessible via sidebar sub-items */}
 
@@ -1649,6 +2271,140 @@ export default function OrderSequencingPage({
           </Card>
         </div>
       </PageContainer>
+
+      <Dialog open={runPlanImportDialogOpen} onOpenChange={setRunPlanImportDialogOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Preview Run Plan Import</DialogTitle>
+            <DialogDescription>
+              Review mapped rows and unresolved columns before saving assignments.
+            </DialogDescription>
+          </DialogHeader>
+
+          {runPlanImportPreview ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 text-sm sm:grid-cols-4">
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Sheet</div>
+                  <div className="mt-1 font-medium">{runPlanImportPreview.sheet}</div>
+                </div>
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Rows</div>
+                  <div className="mt-1 font-medium">{runPlanImportPreview.rowCount}</div>
+                </div>
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Unmapped columns</div>
+                  <div className="mt-1 font-medium">
+                    {runPlanImportPreview.unmappedColumns.length}
+                  </div>
+                </div>
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Missing samples</div>
+                  <div className="mt-1 font-medium">
+                    {runPlanImportPreview.missingSamples.length}
+                  </div>
+                </div>
+              </div>
+
+              {runPlanImportPreview.missingSamples.length > 0 && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  Missing samples: {runPlanImportPreview.missingSamples.join(", ")}
+                </div>
+              )}
+
+              {runPlanImportPreview.rowErrors?.length ? (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  <div className="font-medium">Rows needing review</div>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    {runPlanImportPreview.rowErrors.slice(0, 8).map((rowError, index) => (
+                      <li key={`${rowError.rowNumber ?? "global"}-${index}`}>
+                        {rowError.rowNumber ? `Row ${rowError.rowNumber}: ` : ""}
+                        {rowError.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {runPlanImportPreview.unmappedColumns.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Unmapped columns will not be saved:{" "}
+                  {runPlanImportPreview.unmappedColumns.join(", ")}
+                </div>
+              )}
+
+              <ScrollArea className="max-h-[360px] rounded-lg border">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead className="border-b bg-muted/40">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Row</th>
+                      <th className="px-3 py-2 text-left font-medium">Run</th>
+                      <th className="px-3 py-2 text-left font-medium">Sample</th>
+                      <th className="px-3 py-2 text-left font-medium">Barcode</th>
+                      <th className="px-3 py-2 text-left font-medium">Mapped fields</th>
+                      <th className="px-3 py-2 text-left font-medium">Unmapped</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runPlanImportPreview.rows.slice(0, 100).map((row) => (
+                      <tr key={`${row.rowNumber}-${row.sampleCode}`} className="border-b last:border-b-0">
+                        <td className="px-3 py-2">{row.rowNumber}</td>
+                        <td className="px-3 py-2 font-mono text-xs">{row.runId}</td>
+                        <td className="px-3 py-2 font-medium">{row.sampleCode}</td>
+                        <td className="px-3 py-2 font-mono text-xs">{row.barcode || "-"}</td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                          {Object.keys(row.customFields).length
+                            ? Object.entries(row.customFields)
+                                .map(([key, value]) => `${key}: ${String(value)}`)
+                                .join(", ")
+                            : "-"}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                          {Object.keys(row.unmapped).length
+                            ? Object.keys(row.unmapped).join(", ")
+                            : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ScrollArea>
+              {runPlanImportPreview.rows.length > 100 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing first 100 rows only.
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRunPlanImportDialogOpen(false)}
+              disabled={applyingRunPlanImport}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleApplyRunPlanImport()}
+              disabled={
+                applyingRunPlanImport ||
+                !runPlanImportPreview?.applyReady ||
+                isDemo
+              }
+            >
+              {applyingRunPlanImport ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+              )}
+              Apply Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-4xl">

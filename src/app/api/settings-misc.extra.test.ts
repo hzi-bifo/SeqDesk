@@ -532,6 +532,8 @@ describe("settings and misc route quick wins", () => {
       enaUsername: "Webin-12345",
       hasPassword: true,
       enaTestMode: false,
+      enaBrokerAccount: false,
+      enaCenterName: "",
       configured: true,
     });
 
@@ -581,6 +583,12 @@ describe("settings and misc route quick wins", () => {
         enaUsername: "Webin-54321",
         enaPassword: "secret",
         enaTestMode: true,
+        extraSettings: JSON.stringify({
+          ena: {
+            brokerAccount: false,
+            centerName: "",
+          },
+        }),
       },
     });
     expect(await successEnaPut.json()).toEqual({ success: true });

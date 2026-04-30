@@ -30,6 +30,16 @@ describe("generateStudyXml", () => {
     expect(xml).toContain("Study &lt;with&gt; special");
     expect(xml).toContain("It&apos;s a &quot;test&quot;");
   });
+
+  it("adds center_name for broker submissions", () => {
+    const xml = generateStudyXml({
+      alias: "test-study",
+      title: "Test Study",
+      description: "A test study description",
+      centerName: "HZI & BIFO",
+    });
+    expect(xml).toContain('center_name="HZI &amp; BIFO"');
+  });
 });
 
 describe("generateSampleXml", () => {
@@ -57,6 +67,18 @@ describe("generateSampleXml", () => {
     ]);
     expect(xml).toContain('alias="s1"');
     expect(xml).toContain('alias="s2"');
+  });
+
+  it("adds center_name to samples for broker submissions", () => {
+    const xml = generateSampleXml([
+      {
+        alias: "s1",
+        title: "S1",
+        taxId: "9606",
+        centerName: "HZI-BIFO",
+      },
+    ]);
+    expect(xml).toContain('<SAMPLE alias="s1" center_name="HZI-BIFO">');
   });
 
   it("includes checklist type as sample attribute", () => {

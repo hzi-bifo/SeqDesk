@@ -76,6 +76,9 @@ SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
 SEQDESK_ORDER_FORM_SETTINGS="${SEQDESK_ORDER_FORM_SETTINGS:-}"
 SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
+SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
+SEQDESK_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}"
+SEQDESK_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
@@ -646,6 +649,7 @@ const execution = toRecord(pipelines?.execution);
 const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
+const telemetry = toRecord(root.telemetry);
 const forms = toRecord(root.forms);
 const privatePipelines = toRecord(root.privatePipelines);
 const metaxpath = toRecord(privatePipelines?.metaxpath);
@@ -794,6 +798,9 @@ const values = {
   metaxpathSha256: toOptionalString(
     firstDefined(root.metaxpathSha256, root.metaxpathPackageSha256, metaxpath?.sha256)
   ),
+  telemetryEnabled: toOptionalBoolean(telemetry?.enabled),
+  telemetryEndpoint: toOptionalString(telemetry?.endpoint),
+  telemetryIntervalHours: toOptionalInt(telemetry?.intervalHours),
 };
 
 if (values.runDir === "/") {
@@ -840,6 +847,15 @@ if (values.orderFormSettings) {
 }
 if (values.studyFormSettings) {
   out.SEQDESK_CFG_STUDY_FORM_SETTINGS = values.studyFormSettings;
+}
+if (values.telemetryEnabled !== undefined) {
+  out.SEQDESK_CFG_TELEMETRY_ENABLED = values.telemetryEnabled ? "true" : "false";
+}
+if (values.telemetryEndpoint) {
+  out.SEQDESK_CFG_TELEMETRY_ENDPOINT = values.telemetryEndpoint;
+}
+if (values.telemetryIntervalHours !== undefined && values.telemetryIntervalHours > 0) {
+  out.SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS = String(values.telemetryIntervalHours);
 }
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
@@ -899,6 +915,9 @@ NODE
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     apply_config_value SEQDESK_ORDER_FORM_SETTINGS SEQDESK_CFG_ORDER_FORM_SETTINGS
     apply_config_value SEQDESK_STUDY_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
+    apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
+    apply_config_value SEQDESK_TELEMETRY_ENDPOINT SEQDESK_CFG_TELEMETRY_ENDPOINT
+    apply_config_value SEQDESK_TELEMETRY_INTERVAL_HOURS SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -922,6 +941,8 @@ NODE
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
+    unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
+    unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
@@ -1199,6 +1220,9 @@ write_config() {
     SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
     SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
     SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
+    SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
+    SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
+    SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
     SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
 const fs = require('fs');
@@ -1213,6 +1237,9 @@ const directUrl = process.env.SEQDESK_INSTALL_DATABASE_DIRECT_URL || '';
 const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
 const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
 const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
+const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
+const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
+const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
 
 function readJson(filePath) {
@@ -1239,6 +1266,24 @@ function toOptionalPort(value) {
   const intValue = Math.trunc(parsed);
   if (intValue <= 0 || intValue > 65535) return undefined;
   return intValue;
+}
+
+function toOptionalBoolean(value) {
+  const text = toOptionalString(value);
+  if (!text) return undefined;
+  const normalized = text.toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function toOptionalPositiveInt(value) {
+  const text = toOptionalString(value);
+  if (!text) return undefined;
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) return undefined;
+  const intValue = Math.trunc(parsed);
+  return intValue > 0 ? intValue : undefined;
 }
 
 const config = readJson('seqdesk.config.json') || {};
@@ -1271,6 +1316,15 @@ if (adminSecret) runtime.adminSecret = adminSecret;
 if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
 if (Object.keys(runtime).length > 0) {
   config.runtime = runtime;
+}
+
+const telemetryEnabled = toOptionalBoolean(telemetryEnabledRaw);
+const telemetryIntervalHours = toOptionalPositiveInt(telemetryIntervalHoursRaw);
+if (telemetryEnabled !== undefined || telemetryEndpoint || telemetryIntervalHours !== undefined) {
+  config.telemetry = config.telemetry && typeof config.telemetry === 'object' ? config.telemetry : {};
+  if (telemetryEnabled !== undefined) config.telemetry.enabled = telemetryEnabled;
+  if (telemetryEndpoint) config.telemetry.endpoint = telemetryEndpoint;
+  if (telemetryIntervalHours !== undefined) config.telemetry.intervalHours = telemetryIntervalHours;
 }
 
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));

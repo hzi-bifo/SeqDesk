@@ -12,7 +12,7 @@ const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
       <div
         ref={ref}
         className={cn(
-          "rounded-2xl",
+          "rounded-lg",
           "bg-card dark:bg-card",
           "border border-border",
           "p-6",

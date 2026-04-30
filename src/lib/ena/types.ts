@@ -10,6 +10,7 @@ export interface StudyData {
   alias: string;
   title: string;
   description: string;
+  centerName?: string;
 }
 
 export interface SampleData {
@@ -17,6 +18,7 @@ export interface SampleData {
   title: string;
   taxId: string;
   scientificName?: string;
+  centerName?: string;
   checklistType?: string;
   attributes?: Record<string, string>;
 }

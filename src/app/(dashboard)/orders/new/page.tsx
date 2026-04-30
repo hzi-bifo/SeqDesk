@@ -14,6 +14,7 @@ import {
   RowData,
 } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
+import { StepProgressNav } from "@/components/ui/step-progress-nav";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -86,6 +87,7 @@ import type {
 import { OrganismCell } from "@/lib/field-types/organism";
 import { BarcodeCell } from "@/lib/field-types/barcode/BarcodeCell";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
+import { PageNotice } from "@/components/ui/page-notice";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 
 // Extend TanStack Table meta types for the wizard
@@ -138,9 +140,15 @@ const RESERVED_SAMPLE_ROW_KEYS = new Set([
   "checklistUnits",
 ]);
 
-// Helper to navigate to adjacent cell
+const CELL_EDITOR_SELECTOR = "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])";
+
+function getCellEditor(cell: Element | null) {
+  return cell?.querySelector<HTMLElement>(CELL_EDITOR_SELECTOR) ?? null;
+}
+
+// Helper to navigate to adjacent editable cell
 function navigateToCell(
-  currentInput: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement,
+  currentInput: HTMLElement,
   direction: 'up' | 'down' | 'left' | 'right'
 ) {
   const currentCell = currentInput.closest('td');
@@ -149,44 +157,43 @@ function navigateToCell(
   const currentRow = currentCell.closest('tr');
   if (!currentRow) return;
 
+  const tbody = currentRow.closest('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const rowIndex = rows.indexOf(currentRow);
   const cells = Array.from(currentRow.querySelectorAll('td'));
   const cellIndex = cells.indexOf(currentCell);
 
-  let targetCell: Element | null = null;
+  let targetInput: HTMLElement | null = null;
 
-  if (direction === 'left' && cellIndex > 0) {
-    targetCell = cells[cellIndex - 1];
-  } else if (direction === 'right' && cellIndex < cells.length - 1) {
-    targetCell = cells[cellIndex + 1];
-  } else if (direction === 'up') {
-    const prevRow = currentRow.previousElementSibling;
-    if (prevRow) {
-      const prevCells = prevRow.querySelectorAll('td');
-      targetCell = prevCells[cellIndex] || null;
+  if (direction === 'left' || direction === 'right') {
+    const allCells = rows.flatMap((row) => Array.from(row.querySelectorAll('td')));
+    const currentIndex = allCells.indexOf(currentCell);
+    const step = direction === 'right' ? 1 : -1;
+    for (let index = currentIndex + step; index >= 0 && index < allCells.length; index += step) {
+      targetInput = getCellEditor(allCells[index]);
+      if (targetInput) break;
     }
-  } else if (direction === 'down') {
-    const nextRow = currentRow.nextElementSibling;
-    if (nextRow) {
-      const nextCells = nextRow.querySelectorAll('td');
-      targetCell = nextCells[cellIndex] || null;
+  } else {
+    const step = direction === 'down' ? 1 : -1;
+    for (let index = rowIndex + step; index >= 0 && index < rows.length; index += step) {
+      const rowCells = Array.from(rows[index].querySelectorAll('td'));
+      targetInput = getCellEditor(rowCells[cellIndex]) || rowCells.map(getCellEditor).find(Boolean) || null;
+      if (targetInput) break;
     }
   }
 
-  if (targetCell) {
-    const input = targetCell.querySelector('input, select, textarea, button') as HTMLElement;
-    if (input) {
-      input.focus();
-      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-        input.select();
-      }
+  if (targetInput) {
+    targetInput.focus();
+    if (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLTextAreaElement) {
+      targetInput.select();
     }
   }
 }
 
 function focusFirstCellEditor(cell: HTMLElement) {
-  const editor = cell.querySelector<HTMLElement>(
-    "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])"
-  );
+  const editor = getCellEditor(cell);
   if (editor) {
     editor.focus();
   }
@@ -255,7 +262,9 @@ function EditableCell({
       onBlur();
       navigateToCell(e.currentTarget, 'right');
     } else if (e.key === "Tab") {
+      e.preventDefault();
       onBlur();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
     } else if (e.key === "Escape") {
       setValue(initialValue ?? "");
       e.currentTarget.blur();
@@ -277,9 +286,9 @@ function EditableCell({
           placeholder={field?.placeholder}
           disabled={!isEditable}
           className={cn(
-            "w-full h-full px-2 py-1.5 border-0 outline-none bg-transparent text-sm resize-none",
-            "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
-            error && "bg-red-50"
+            "w-full h-full px-2 py-1.5 border-0 outline-none bg-white text-sm resize-none",
+            "focus:bg-white focus:ring-1 focus:ring-foreground/20 disabled:bg-white disabled:text-foreground disabled:opacity-100 disabled:cursor-not-allowed",
+            error && "bg-red-50 focus:bg-red-50"
           )}
         />
       ) : (
@@ -295,9 +304,9 @@ function EditableCell({
           placeholder={field?.placeholder}
           disabled={!isEditable}
           className={cn(
-            "w-full h-full px-2 py-1.5 border-0 outline-none bg-transparent text-sm",
-            "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
-            error && "bg-red-50"
+            "w-full h-full px-2 py-1.5 border-0 outline-none bg-white text-sm",
+            "focus:bg-white focus:ring-1 focus:ring-foreground/20 disabled:bg-white disabled:text-foreground disabled:opacity-100 disabled:cursor-not-allowed",
+            error && "bg-red-50 focus:bg-red-50"
           )}
         />
       )}
@@ -340,6 +349,26 @@ function SelectCell({
     }
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === "Enter" || e.key === " ") return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   // Show warning if no options available
   if (options.length === 0) {
     return (
@@ -359,10 +388,11 @@ function SelectCell({
           type="button"
           data-testid={`sample-cell-${row.index}-${column.id}`}
           onClick={onFocus}
+          onKeyDown={onKeyDown}
           disabled={!isEditable}
           className={cn(
             "w-full h-full px-2 py-1 text-sm text-left bg-white flex items-center justify-between",
-            isEditable ? "hover:bg-secondary cursor-pointer" : "cursor-not-allowed opacity-70"
+            isEditable ? "hover:bg-stone-50 cursor-pointer" : "cursor-not-allowed opacity-100"
           )}
         >
           <span className={value ? "" : "text-muted-foreground"}>
@@ -424,6 +454,25 @@ function CheckboxCell({
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   return (
     <div className="flex items-center justify-center h-full">
       <input
@@ -431,6 +480,7 @@ function CheckboxCell({
         checked={checked}
         onChange={onChange}
         onFocus={onFocus}
+        onKeyDown={onKeyDown}
         disabled={!isEditable}
         className={cn(
           "h-4 w-4 rounded border-input",
@@ -476,6 +526,25 @@ function MultiSelectCell({
     table.options.meta?.updateData(row.index, column.id, selected);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   if (options.length === 0) {
     return (
       <div className="w-full h-full px-2 py-1.5 text-sm text-amber-600 bg-amber-50">
@@ -490,11 +559,12 @@ function MultiSelectCell({
       value={value}
       onChange={handleChange}
       onFocus={onFocus}
+      onKeyDown={onKeyDown}
       disabled={!isEditable}
       className={cn(
         "w-full h-full px-2 py-1 text-sm bg-white border-0 outline-none",
-        "focus:bg-secondary focus:ring-1 focus:ring-foreground/20",
-        !isEditable && "cursor-not-allowed opacity-70"
+        "focus:bg-white focus:ring-1 focus:ring-foreground/20 disabled:bg-white disabled:text-foreground disabled:opacity-100",
+        !isEditable && "cursor-not-allowed"
       )}
     >
       {options.map((opt) => (
@@ -1413,6 +1483,7 @@ export function OrderWizardPage({
       ...prev,
       [fieldName]: value,
     }));
+    setError("");
     // Clear error when user types
     if (fieldErrors[fieldName]) {
       setFieldErrors((prev) => {
@@ -1555,6 +1626,13 @@ export function OrderWizardPage({
     if (field.type === "multiselect") {
       return !Array.isArray(value) || value.length === 0;
     }
+    if (field.type === "sequencing-tech") {
+      if (typeof value === "string") return value.trim() === "";
+      if (value && typeof value === "object") {
+        const selection = value as SequencingTechSelection;
+        return !selection.technologyId && !selection.technologyName;
+      }
+    }
     return (
       value === undefined ||
       value === null ||
@@ -1563,12 +1641,19 @@ export function OrderWizardPage({
     );
   };
 
+  const getRequiredFieldMessage = (field: FormFieldDefinition) => {
+    if (field.type === "select" || field.type === "sequencing-tech") {
+      return `Select ${field.label}`;
+    }
+    return `${field.label} is required`;
+  };
+
   const validateBeforeSubmit = () => {
     if (isFacilityScopedEdit) {
       for (const field of adminOnlyFields) {
         const value = fieldValues[field.name];
         if (field.required && isMissingRequiredValue(field, value)) {
-          setError(`${field.label} is required`);
+          setError(getRequiredFieldMessage(field));
           return false;
         }
         const validationError = validateField(field, value);
@@ -1586,7 +1671,7 @@ export function OrderWizardPage({
               ? sample.taxId || sample.tax_id
               : sample[field.name];
           if (field.required && isMissingRequiredValue(field, value)) {
-            setError(`Sample ${i + 1}: ${field.label} is required`);
+            setError(`Sample ${i + 1}: ${getRequiredFieldMessage(field)}`);
             return false;
           }
           const validationError = validateSampleField(field, value);
@@ -1619,7 +1704,7 @@ export function OrderWizardPage({
     for (const field of visibleFields.filter((f) => f.type !== "mixs")) {
       const value = fieldValues[field.name];
       if (field.required && isMissingRequiredValue(field, value)) {
-        setError(`${field.label} is required`);
+        setError(getRequiredFieldMessage(field));
         return false;
       }
       const validationError = validateField(field, value);
@@ -1677,7 +1762,7 @@ export function OrderWizardPage({
           value = sample[field.name];
         }
         if (field.required && isMissingRequiredValue(field, value)) {
-          setError(`Sample ${i + 1}: ${field.label} is required`);
+          setError(`Sample ${i + 1}: ${getRequiredFieldMessage(field)}`);
           return false;
         }
         const validationError = validateSampleField(field, value);
@@ -1985,11 +2070,16 @@ export function OrderWizardPage({
     setError("");
 
     // Helper to set field error and focus
-    const setFieldError = (fieldName: string, message: string) => {
+    const setFieldError = (fieldName: string, message: string, summary = message) => {
       setFieldErrors(prev => ({ ...prev, [fieldName]: message }));
+      setError(summary);
       // Try to focus the field
       setTimeout(() => {
-        const input = document.querySelector(`[name="${fieldName}"], #${fieldName}`) as HTMLElement;
+        const escapedName = CSS.escape(fieldName);
+        const escapedTestId = CSS.escape(`order-field-${fieldName}`);
+        const input = document.querySelector(
+          `[name="${escapedName}"], #${escapedName}, [data-testid="${escapedTestId}"]`
+        ) as HTMLElement;
         input?.focus();
       }, 100);
     };
@@ -2047,7 +2137,7 @@ export function OrderWizardPage({
               value = sample[field.name];
             }
             if (isMissingRequiredValue(field, value)) {
-              setError(`Sample ${i + 1}: ${field.label} is required`);
+              setError(`Sample ${i + 1}: ${getRequiredFieldMessage(field)}`);
               return false;
             }
           }
@@ -2082,9 +2172,15 @@ export function OrderWizardPage({
         if (field.required) {
           const value = fieldValues[field.name];
           if (isMissingRequiredValue(field, value)) {
-            setFieldError(field.name, "Required");
+            const message = getRequiredFieldMessage(field);
+            setFieldError(field.name, message);
             return false;
           }
+        }
+        const validationError = validateField(field, fieldValues[field.name]);
+        if (validationError) {
+          setFieldError(field.name, validationError, `${field.label}: ${validationError}`);
+          return false;
         }
       }
       return true;
@@ -2094,13 +2190,14 @@ export function OrderWizardPage({
       for (const field of adminOnlyFields) {
         const value = fieldValues[field.name];
         if (field.required && isMissingRequiredValue(field, value)) {
-          setFieldError(field.name, "Required");
+          const message = getRequiredFieldMessage(field);
+          setFieldError(field.name, message);
           return false;
         }
 
         const validationError = validateField(field, value);
         if (validationError) {
-          setFieldError(field.name, validationError);
+          setFieldError(field.name, validationError, `${field.label}: ${validationError}`);
           return false;
         }
       }
@@ -2114,9 +2211,15 @@ export function OrderWizardPage({
       if (field.required) {
         const value = fieldValues[field.name];
         if (isMissingRequiredValue(field, value)) {
-          setFieldError(field.name, "Required");
+          const message = getRequiredFieldMessage(field);
+          setFieldError(field.name, message);
           return false;
         }
+      }
+      const validationError = validateField(field, fieldValues[field.name]);
+      if (validationError) {
+        setFieldError(field.name, validationError, `${field.label}: ${validationError}`);
+        return false;
       }
     }
 
@@ -2320,7 +2423,7 @@ export function OrderWizardPage({
                 placeholder={field.placeholder}
                 required={field.required}
                 disabled={saving}
-                className={`${baseInputClass} ${getBorderClass(field)} ${hasAI ? "pr-10" : ""} transition-colors`}
+                className={`${baseInputClass} bg-white ${getBorderClass(field)} ${hasAI ? "pr-10" : ""} transition-colors`}
               />
               <AIIndicator field={field} />
             </div>
@@ -2358,7 +2461,7 @@ export function OrderWizardPage({
                 placeholder={field.placeholder}
                 required={field.required}
                 disabled={saving}
-                className={`w-full min-h-[120px] px-3 py-2 rounded-md border bg-background text-sm resize-none focus:outline-none focus:ring-2 transition-colors ${
+                className={`w-full min-h-[120px] px-3 py-2 rounded-md border bg-white text-sm resize-none focus:outline-none focus:ring-2 transition-colors ${
                   hasAI ? "pr-10" : ""
                 } ${getBorderClass(field)}`}
               />
@@ -2414,7 +2517,7 @@ export function OrderWizardPage({
               placeholder={field.placeholder}
               required={field.required}
               disabled={saving}
-              className={`max-w-xs ${fieldErrors[field.name] ? "input-error" : ""}`}
+              className={`max-w-xs bg-white ${fieldErrors[field.name] ? "input-error" : ""}`}
             />
             {fieldErrors[field.name] && (
               <InlineFieldError message={fieldErrors[field.name]} />
@@ -2438,7 +2541,7 @@ export function OrderWizardPage({
               onFocus={() => setFocusedField(field)}
               required={field.required}
               disabled={saving}
-              className="max-w-xs"
+              className="max-w-xs bg-white"
             />
           </div>
         );
@@ -2476,8 +2579,13 @@ export function OrderWizardPage({
               onOpenChange={(open) => { if (open) setFocusedField(field); }}
             >
               <SelectTrigger
+                id={field.id}
+                aria-invalid={Boolean(fieldErrors[field.name])}
                 data-testid={`order-field-${field.name}`}
-                className={largeStyle ? "max-w-md h-12" : "max-w-md"}
+                className={cn(
+                  largeStyle ? "max-w-md h-12 bg-white" : "max-w-md bg-white",
+                  fieldErrors[field.name] ? "input-error" : ""
+                )}
               >
                 <SelectValue placeholder={field.placeholder || `Select ${field.label.toLowerCase()}`} />
               </SelectTrigger>
@@ -2489,6 +2597,9 @@ export function OrderWizardPage({
                 ))}
               </SelectContent>
             </Select>
+            {fieldErrors[field.name] && (
+              <InlineFieldError message={fieldErrors[field.name]} />
+            )}
           </div>
         );
 
@@ -2499,7 +2610,7 @@ export function OrderWizardPage({
               {field.label}
               {field.required && <span className="text-destructive ml-1">*</span>}
             </Label>
-            <div className="space-y-2 p-4 rounded-lg border border-input bg-background/50 max-w-md">
+            <div className="space-y-2 p-4 rounded-lg border border-input bg-white max-w-md">
               {field.options?.map((opt) => {
                 const selected = Array.isArray(value) ? value.includes(opt.value) : false;
                 return (
@@ -2563,6 +2674,7 @@ export function OrderWizardPage({
             value={value as SequencingTechSelection | string | undefined}
             disabled={saving}
             onChange={(newValue) => setFieldValue(field.name, newValue)}
+            error={fieldErrors[field.name]}
           />
         );
 
@@ -2714,7 +2826,7 @@ export function OrderWizardPage({
         ),
         size: 160,
         cell: ({ getValue }) => (
-          <div className="px-2 py-1 h-full bg-muted/50 text-muted-foreground font-mono text-xs">
+          <div className="px-2 py-1 h-full bg-stone-50/80 text-muted-foreground font-mono text-xs">
             {getValue() as string}
           </div>
         ),
@@ -2863,15 +2975,8 @@ export function OrderWizardPage({
   const renderSamplesTableStep = () => {
     return (
       <div className="space-y-4">
-        {!canEditSamples && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            {isFacilityScopedEdit
-              ? `This order is already ${editOrderStatus === "COMPLETED" ? "completed" : "submitted"}. Core sample metadata is read-only, but facility sample fields remain editable here.`
-              : "This order is already submitted. Sample rows are read-only, but order fields can still be updated."}
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <p className="text-sm text-muted-foreground">
               {isFacilityScopedEdit
                 ? "Update the internal per-sample facility fields below."
@@ -2883,7 +2988,7 @@ export function OrderWizardPage({
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {!isFacilityScopedEdit && (
               <ExcelToolbar
                 perSampleFields={displayedSampleFields}
@@ -2941,17 +3046,17 @@ export function OrderWizardPage({
           </div>
         </div>
 
-        <div className="border rounded-lg">
-          <div ref={tableScrollRef} className="overflow-x-auto overflow-y-visible">
-            <table className="w-full text-sm border-collapse">
-              <thead className="bg-muted/50">
+        <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <div ref={tableScrollRef} className="overflow-x-auto overflow-y-visible bg-white">
+            <table className="w-full border-collapse bg-white text-sm">
+              <thead className="bg-white">
                 {sampleTable.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
                     {headerGroup.headers.map((header) => (
                       <th
                         key={header.id}
                         style={{ width: header.getSize() }}
-                        className="px-2 py-2 text-left font-medium border-b border-r last:border-r-0"
+                        className="border-b border-r bg-white px-2 py-2 text-left font-medium last:border-r-0"
                       >
                         {header.isPlaceholder
                           ? null
@@ -2980,7 +3085,7 @@ export function OrderWizardPage({
                   </tr>
                 ) : (
                   sampleTable.getRowModel().rows.map((row) => (
-                    <tr key={row.id} className="hover:bg-muted/30">
+                    <tr key={row.id} className="hover:bg-stone-50/60">
                       {row.getVisibleCells().map((cell) => {
                         const meta = cell.column.columnDef.meta as { field?: FormFieldDefinition; editable?: boolean } | undefined;
                         const shouldFocusEditorOnCellMouseDown = Boolean(meta?.field) && meta?.editable !== false;
@@ -3008,8 +3113,8 @@ export function OrderWizardPage({
                 )}
               </tbody>
             </table>
-        </div>
-          <div className="bg-muted/30 px-3 py-2 border-t flex items-center justify-between">
+          </div>
+          <div className="flex items-center justify-between border-t bg-white px-3 py-2">
             {!isFacilityScopedEdit ? (
               <Button
                 variant="ghost"
@@ -3422,9 +3527,26 @@ export function OrderWizardPage({
   const cancelHref = isFacilityScopedEdit && editOrderId
     ? `/orders/${editOrderId}?section=facility`
     : "/orders";
+  const showSubmittedOrderNotice =
+    isEditMode && editOrderStatus !== null && editOrderStatus !== "DRAFT";
+  const submittedOrderNoticeTitle =
+    editOrderStatus === "COMPLETED" ? "Completed order" : "Submitted order";
+  const submittedOrderNoticeText = isFacilityScopedEdit
+    ? "Core sample metadata is read-only. Facility fields can still be updated here."
+    : "Sample rows are read-only. Order fields can still be updated.";
 
   return (
     <div className="p-8">
+      {showSubmittedOrderNotice && (
+        <PageNotice
+          variant="warning"
+          title={submittedOrderNoticeTitle}
+          className="-mx-8 -mt-8 mb-8 px-8 !border-0"
+        >
+          {submittedOrderNoticeText}
+        </PageNotice>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -3452,74 +3574,39 @@ export function OrderWizardPage({
 
       {/* Content */}
       <div>
-          {/* Progress bar with integrated steps */}
-          {hasVisibleProgressBar && (
+        {/* Progress steps */}
+        {hasVisibleProgressBar && (
           <div className="mb-6">
-            <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
-              {/* Progress fill */}
-              <div
-                className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
-                style={{ width: `${((currentVisibleStepIndex + 1) / activeSteps.length) * 100}%` }}
-              />
-              {/* Step labels */}
-              <div className="relative h-full flex items-center">
-                {activeSteps.map((step, index) => {
-                  const isCompleted = index < currentVisibleStepIndex;
-                  const isCurrent = index === currentVisibleStepIndex;
-                  const isClickable = isCompleted;
-                  const isInFilledArea = index <= currentVisibleStepIndex;
-
-                  return (
-                    <button
-                      key={step.id}
-                      type="button"
-                      onClick={() => {
-                        if (isClickable) {
-                          setError("");
-                          navigateToStepId(step.id);
-                        }
-                      }}
-                      disabled={!isClickable}
-                      style={{ width: `${100 / activeSteps.length}%` }}
-                      className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
-                        isInFilledArea
-                          ? "text-background"
-                          : "text-muted-foreground"
-                      } ${
-                        isClickable ? "hover:bg-white/10 cursor-pointer" : ""
-                      } ${
-                        isCurrent ? "font-semibold" : ""
-                      }`}
-                      title={isClickable ? `Go back to ${step.title}` : step.title}
-                    >
-                      {isCompleted && <Check className="h-3 w-3 flex-shrink-0" />}
-                      <span className="truncate">{step.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <StepProgressNav
+              steps={activeSteps}
+              currentIndex={currentVisibleStepIndex}
+              onNavigate={(step) => {
+                setError("");
+                navigateToStepId(step.id);
+              }}
+              ariaLabel="Order form progress"
+            />
           </div>
-          )}
+        )}
 
-          {/* Main form content - full width, help is in sidebar */}
-          <div>
-            {/* Step header */}
-            <div className="mb-6">
-              <h2 className="text-xl font-semibold">{currentVisibleStep.title}</h2>
-              <p className="text-sm text-muted-foreground">{currentVisibleStep.description}</p>
-              {error && (
-                <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
-            </div>
-
-            {renderStepContent()}
+        {/* Main form content - full width, help is in sidebar */}
+        <div>
+          {/* Step header */}
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold">{currentVisibleStep.title}</h2>
+            <p className="text-sm text-muted-foreground">{currentVisibleStep.description}</p>
+            {error && (
+              <PageNotice variant="error" title="Check this step" className="mt-4 rounded-lg border">
+                {error}
+              </PageNotice>
+            )}
           </div>
 
-          {/* Navigation buttons */}
-          <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
+          {renderStepContent()}
+        </div>
+
+        {/* Navigation buttons */}
+        <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
           {isFacilityScopedEdit && !previousVisibleStep ? (
             <Button variant="outline" asChild>
               <Link href={cancelHref}>
@@ -3620,7 +3707,7 @@ export function OrderWizardPage({
               <ChevronRight className="h-4 w-4 ml-2" />
             </Button>
           )}
-          </div>
+        </div>
       </div>
 
       {/* Submission Success Dialog */}

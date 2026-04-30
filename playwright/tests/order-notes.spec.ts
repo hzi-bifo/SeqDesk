@@ -64,6 +64,29 @@ async function createSeededResearcherOrder(orderName: string) {
   });
 }
 
+async function addSampleWithReadToOrder(orderId: string, sampleId: string) {
+  const sample = await prisma.sample.create({
+    data: {
+      orderId,
+      sampleId,
+      sampleTitle: `${sampleId} title`,
+    },
+    select: {
+      id: true,
+      sampleId: true,
+    },
+  });
+
+  await prisma.read.create({
+    data: {
+      sampleId: sample.id,
+      file1: `reads/${sampleId}_R1.fastq.gz`,
+    },
+  });
+
+  return sample;
+}
+
 async function deleteSeededOrder(orderId: string) {
   await prisma.order.delete({ where: { id: orderId } }).catch(() => undefined);
 }
@@ -102,7 +125,7 @@ test("researcher can autosave order notes from the right sidebar", async ({ page
 
     const saveResponse = await saveResponsePromise;
     expect(saveResponse.ok()).toBeTruthy();
-    await expect(panel.locator('span[title="Saved"]')).toBeVisible();
+    await expect(panel.getByLabel("Saved status: Saved")).toBeVisible();
 
     await expect.poll(async () => {
       const result = await page.evaluate(async (currentOrderId) => {
@@ -134,18 +157,59 @@ test("researcher can collapse and reopen the right notes sidebar", async ({ page
   try {
     await openOrderNotesSidebar(page, order.id);
 
-    await page.getByRole("button", { name: "Hide order notes" }).click();
-    await expect(page.getByRole("button", { name: "Show order notes" })).toBeVisible();
+    await page.getByRole("button", { name: "Hide order notepad" }).click();
+    await expect(page.getByRole("button", { name: "Show order notepad" })).toBeVisible();
     await expect(page.locator("[data-order-notes-panel]")).toHaveCount(0);
 
     await page.reload();
 
-    const showButton = page.getByRole("button", { name: "Show order notes" });
+    const showButton = page.getByRole("button", { name: "Show order notepad" });
     await expect(showButton).toBeVisible();
     await showButton.click();
 
     await expect(page.locator("[data-order-notes-panel]")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Hide order notes" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Hide order notepad" })).toBeVisible();
+  } finally {
+    await deleteSeededOrder(order.id);
+  }
+});
+
+test("researcher can mention an order sample in notes and keep it after reload", async ({ page }) => {
+  const order = await createSeededResearcherOrder(`Notes Mentions ${Date.now()}`);
+  const sample = await addSampleWithReadToOrder(order.id, `PW-SAMPLE-${Date.now()}`);
+
+  try {
+    const { panel, editor } = await openOrderNotesSidebar(page, order.id);
+
+    await editor.click();
+    await page.keyboard.type(`@${sample.sampleId.slice(0, 9)}`);
+
+    const mentionOption = page.getByRole("button", { name: new RegExp(`^@${sample.sampleId}\\s`) });
+    await expect(mentionOption).toBeVisible({ timeout: 10000 });
+
+    const saveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/orders/${order.id}/notes`) &&
+        response.request().method() === "PUT",
+      { timeout: 10000 },
+    );
+
+    await mentionOption.click();
+
+    const saveResponse = await saveResponsePromise;
+    expect(saveResponse.ok()).toBeTruthy();
+    await expect(panel.getByLabel("Saved status: Saved")).toBeVisible();
+    await expect(editor.locator("a[data-note-mention='sample']")).toContainText(`@${sample.sampleId}`);
+
+    await expect.poll(async () => {
+      return prisma.order
+        .findUnique({ where: { id: order.id }, select: { notes: true } })
+        .then((result) => result?.notes ?? null);
+    }).toContain(`seqdesk-mention://sample/${sample.id}`);
+
+    await page.reload();
+    const reloadedEditor = page.locator("[data-order-notes-panel] .rsw-ce").first();
+    await expect(reloadedEditor.locator("a[data-note-mention='sample']")).toContainText(`@${sample.sampleId}`);
   } finally {
     await deleteSeededOrder(order.id);
   }

@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Switch } from "@/components/ui/switch";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Select,
   SelectContent,
@@ -62,6 +63,23 @@ interface Invite {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function fallbackCopyText(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 export default function AdminAccountsPage() {
   const { data: session, status } = useSession();
@@ -252,12 +270,16 @@ export default function AdminAccountsPage() {
   };
 
   const copyInviteLink = async (code: string) => {
+    const link = `${window.location.origin}/register/admin?code=${code}`;
     try {
-      const link = `${window.location.origin}/register/admin?code=${code}`;
       await navigator.clipboard.writeText(link);
       toast.success("Invite link copied");
     } catch {
-      toast.error("Failed to copy invite link");
+      if (fallbackCopyText(link)) {
+        toast.success("Invite link copied");
+      } else {
+        toast.error("Failed to copy invite link");
+      }
     }
   };
 
@@ -266,7 +288,11 @@ export default function AdminAccountsPage() {
       await navigator.clipboard.writeText(code);
       toast.success("Invite code copied");
     } catch {
-      toast.error("Failed to copy invite code");
+      if (fallbackCopyText(code)) {
+        toast.success("Invite code copied");
+      } else {
+        toast.error("Failed to copy invite code");
+      }
     }
   };
 
@@ -342,6 +368,13 @@ export default function AdminAccountsPage() {
           Manage facility administrators and invitation access
         </p>
       </div>
+
+      <HelpBox title="What are admin accounts?">
+        Admin accounts can manage users, forms, infrastructure, pipelines, ENA
+        settings, and other facility-wide configuration. Use email-restricted
+        invites whenever possible, and revoke unused invite codes once setup is
+        complete.
+      </HelpBox>
 
       <div className="sticky top-16 z-30 mb-6">
         <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -10,14 +10,18 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowRight,
+  ChevronDown,
   CheckCircle2,
   Clock3,
+  Copy,
   Download,
+  FileText,
   HardDrive,
   Loader2,
   RefreshCw,
   Send,
   Server,
+  Settings2,
 } from "lucide-react";
 
 interface ToolVersions {
@@ -75,6 +79,17 @@ interface AccessSettingsResponse {
   orderNotesEnabled?: boolean;
 }
 
+interface TelemetrySettingsResponse {
+  enabled: boolean;
+  endpoint: string;
+  intervalHours: number;
+  instanceId: string | null;
+  clientTokenConfigured: boolean;
+  lastSentAt: string | null;
+  lastError: string | null;
+  lastStatus: number | null;
+}
+
 function formatDate(value?: string | Date | null): string {
   if (!value) return "-";
   const parsed = value instanceof Date ? value : new Date(value);
@@ -82,29 +97,61 @@ function formatDate(value?: string | Date | null): string {
   return parsed.toLocaleString();
 }
 
+function fallbackCopyText(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 export default function SettingsPage() {
   const [detectedVersions, setDetectedVersions] = useState<ToolVersions>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
   const [versionsLoaded, setVersionsLoaded] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
 
   const [configStatus, setConfigStatus] = useState<ConfigStatusResponse | null>(
     null
   );
   const [loadingConfig, setLoadingConfig] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateProgress | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateLoaded, setUpdateLoaded] = useState(false);
   const [orderNotesEnabled, setOrderNotesEnabled] = useState(true);
+  const [telemetrySettings, setTelemetrySettings] =
+    useState<TelemetrySettingsResponse | null>(null);
   const [loadingAccessSettings, setLoadingAccessSettings] = useState(false);
   const [savingOrderNotesSetting, setSavingOrderNotesSetting] = useState(false);
+  const [savingTelemetrySetting, setSavingTelemetrySetting] = useState(false);
+  const [testingTelemetry, setTestingTelemetry] = useState(false);
+  const [applyingOntRunPreset, setApplyingOntRunPreset] = useState(false);
+  const [accessLoaded, setAccessLoaded] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
 
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [showConfigDetails, setShowConfigDetails] = useState(false);
+  const [diagnosticsText, setDiagnosticsText] = useState<string | null>(null);
 
   const updatePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restartPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restartTargetRef = useRef<string | null>(null);
+  const diagnosticsTextRef = useRef<HTMLTextAreaElement | null>(null);
 
   const updateInProgress =
     !!updateStatus && !["idle", "complete", "error"].includes(updateStatus.status);
@@ -129,6 +176,112 @@ export default function SettingsPage() {
     ];
     return requiredTools.filter((tool) => !detectedVersions[tool]).length;
   }, [detectedVersions, versionsLoaded]);
+
+  const healthItems = useMemo(() => {
+    const updateState = updateInProgress
+      ? "warning"
+      : updateInfo?.error
+        ? "error"
+        : !updateLoaded || checkingUpdate
+          ? "pending"
+          : updateInfo?.updateAvailable || restartPending
+            ? "warning"
+            : "ok";
+    const runtimeState = versionsError
+      ? "error"
+      : !versionsLoaded || detectingVersions
+        ? "pending"
+        : toolsMissingCount && toolsMissingCount > 0
+          ? "warning"
+          : "ok";
+    const configState = configError
+      ? "error"
+      : !configLoaded || loadingConfig
+        ? "pending"
+        : "ok";
+    const workspaceState = accessError
+      ? "error"
+      : !accessLoaded || loadingAccessSettings
+        ? "pending"
+        : "ok";
+
+    return [
+      {
+        id: "updates",
+        label: "Updates",
+        state: updateState,
+        detail: updateInProgress
+          ? updateStatus?.message || "Update is running"
+          : updateInfo?.error
+            ? "Update check failed"
+            : updateInfo?.updateAvailable
+              ? `v${latestVersion} available`
+              : restartPending
+                ? "Restart pending"
+                : updateLoaded
+                  ? "Up to date"
+                  : "Checking",
+      },
+      {
+        id: "runtime",
+        label: "Runtime",
+        state: runtimeState,
+        detail: versionsError
+          ? "Tool scan failed"
+          : toolsMissingCount && toolsMissingCount > 0
+            ? `${toolsMissingCount} missing`
+            : versionsLoaded
+              ? "Tools detected"
+              : "Scanning",
+      },
+      {
+        id: "config",
+        label: "Config",
+        state: configState,
+        detail: configError
+          ? "Config status failed"
+          : configLoaded
+            ? "Sources loaded"
+            : "Loading",
+      },
+      {
+        id: "workspace",
+        label: "Workspace",
+        state: workspaceState,
+        detail: accessError
+          ? "Feature settings failed"
+          : accessLoaded
+            ? "Feature flags loaded"
+            : "Loading",
+      },
+    ] as const;
+  }, [
+    accessError,
+    accessLoaded,
+    checkingUpdate,
+    configError,
+    configLoaded,
+    detectingVersions,
+    latestVersion,
+    loadingAccessSettings,
+    loadingConfig,
+    restartPending,
+    toolsMissingCount,
+    updateInfo?.error,
+    updateInfo?.updateAvailable,
+    updateInProgress,
+    updateLoaded,
+    updateStatus?.message,
+    versionsError,
+    versionsLoaded,
+  ]);
+
+  const healthIssueCount = healthItems.filter(
+    (item) => item.state === "warning" || item.state === "error"
+  ).length;
+  const healthPendingCount = healthItems.filter(
+    (item) => item.state === "pending"
+  ).length;
 
   const stopUpdatePolling = useCallback(() => {
     if (!updatePollRef.current) return;
@@ -157,16 +310,17 @@ export default function SettingsPage() {
 
       const data = (await res.json()) as ConfigStatusResponse;
       setConfigStatus(data);
+      setConfigError(null);
     } catch (error) {
       console.error("Failed to load config status:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to load configuration status";
+      setConfigError(message);
       if (showToast) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to load configuration status"
-        );
+        toast.error(message);
       }
     } finally {
+      setConfigLoaded(true);
       setLoadingConfig(false);
     }
   }, []);
@@ -184,15 +338,42 @@ export default function SettingsPage() {
 
       const data = (await res.json()) as AccessSettingsResponse;
       setOrderNotesEnabled(data.orderNotesEnabled !== false);
+      setAccessError(null);
     } catch (error) {
       console.error("Failed to load workspace settings:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to load workspace settings";
+      setAccessError(message);
       if (showToast) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to load workspace settings"
-        );
+        toast.error(message);
       }
     } finally {
+      setAccessLoaded(true);
       setLoadingAccessSettings(false);
+    }
+  }, []);
+
+  const fetchTelemetrySettings = useCallback(async (showToast = false) => {
+    try {
+      const res = await fetch("/api/admin/settings/telemetry");
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Failed to load telemetry settings");
+      }
+
+      const data = (await res.json()) as TelemetrySettingsResponse;
+      setTelemetrySettings(data);
+      setTelemetryError(null);
+    } catch (error) {
+      console.error("Failed to load telemetry settings:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to load telemetry settings";
+      setTelemetryError(message);
+      if (showToast) {
+        toast.error(message);
+      }
     }
   }, []);
 
@@ -220,6 +401,7 @@ export default function SettingsPage() {
         }
         const data = (await res.json()) as UpdateInfo;
         setUpdateInfo(data);
+        setUpdateLoaded(true);
       } catch (error) {
         console.error("Failed to check for updates:", error);
         const message =
@@ -236,6 +418,7 @@ export default function SettingsPage() {
         if (showToast) {
           toast.error(message);
         }
+        setUpdateLoaded(true);
       } finally {
         setCheckingUpdate(false);
       }
@@ -255,13 +438,15 @@ export default function SettingsPage() {
       }
       const data = (await res.json()) as { versions?: ToolVersions };
       setDetectedVersions(data.versions || {});
+      setVersionsError(null);
       setVersionsLoaded(true);
     } catch (error) {
       console.error("Failed to detect tool versions:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to detect tool versions";
+      setVersionsError(message);
       if (showToast) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to detect tool versions"
-        );
+        toast.error(message);
       }
     } finally {
       setVersionsLoaded(true);
@@ -306,6 +491,96 @@ export default function SettingsPage() {
     },
     [orderNotesEnabled]
   );
+
+  const updateTelemetrySetting = useCallback(
+    async (enabled: boolean) => {
+      const previousValue = telemetrySettings;
+      setTelemetrySettings((current) =>
+        current ? { ...current, enabled } : current
+      );
+      setSavingTelemetrySetting(true);
+
+      try {
+        const res = await fetch("/api/admin/settings/telemetry", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ enabled }),
+        });
+
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(payload?.error || "Failed to save telemetry settings");
+        }
+
+        const data = (await res.json()) as TelemetrySettingsResponse;
+        setTelemetrySettings(data);
+        setTelemetryError(null);
+        toast.success(`Telemetry ${enabled ? "enabled" : "disabled"}`);
+      } catch (error) {
+        console.error("Failed to save telemetry settings:", error);
+        setTelemetrySettings(previousValue);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to save telemetry settings"
+        );
+      } finally {
+        setSavingTelemetrySetting(false);
+      }
+    },
+    [telemetrySettings]
+  );
+
+  const sendTestTelemetry = useCallback(async () => {
+    setTestingTelemetry(true);
+    try {
+      const res = await fetch("/api/admin/settings/telemetry/test", {
+        method: "POST",
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { success?: boolean; error?: string; reason?: string }
+        | null;
+      if (!res.ok || payload?.success === false) {
+        throw new Error(payload?.error || payload?.reason || "Failed to send telemetry");
+      }
+      toast.success("Telemetry heartbeat sent");
+      await fetchTelemetrySettings();
+    } catch (error) {
+      console.error("Failed to send telemetry:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to send telemetry");
+      await fetchTelemetrySettings();
+    } finally {
+      setTestingTelemetry(false);
+    }
+  }, [fetchTelemetrySettings]);
+
+  const applyOntRunPlanPreset = useCallback(async () => {
+    setApplyingOntRunPreset(true);
+    try {
+      const res = await fetch("/api/admin/sequencing-run-form-config/preset", {
+        method: "POST",
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | {
+            orderFieldsAdded?: number;
+            runAssignmentFieldsAdded?: number;
+            error?: string;
+          }
+        | null;
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to apply preset");
+      }
+      toast.success(
+        `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to apply preset");
+    } finally {
+      setApplyingOntRunPreset(false);
+    }
+  }, []);
 
   const startUpdatePolling = useCallback(() => {
     if (updatePollRef.current) return;
@@ -352,6 +627,7 @@ export default function SettingsPage() {
       detectInstalledVersions(true),
       fetchConfigStatus(true),
       fetchAccessSettings(true),
+      fetchTelemetrySettings(true),
       checkForUpdates(true, true),
       fetchUpdateStatus(),
     ]);
@@ -362,7 +638,101 @@ export default function SettingsPage() {
     detectInstalledVersions,
     fetchAccessSettings,
     fetchConfigStatus,
+    fetchTelemetrySettings,
     fetchUpdateStatus,
+  ]);
+
+  const copyDiagnostics = useCallback(async () => {
+    const sourceSummary = Object.values(configStatus?.sources || {}).reduce<
+      Record<string, number>
+    >((summary, source) => {
+      summary[source] = (summary[source] || 0) + 1;
+      return summary;
+    }, {});
+
+    const diagnostics = {
+      generatedAt: new Date().toISOString(),
+      seqdesk: {
+        runningVersion,
+        latestVersion,
+        updateLoaded,
+        updateAvailable: updateInfo?.updateAvailable ?? null,
+        restartPending,
+      },
+      health: healthItems.map((item) => ({
+        area: item.label,
+        state: item.state,
+        detail: item.detail,
+      })),
+      runtime: {
+        loaded: versionsLoaded,
+        missingRequiredTools: toolsMissingCount,
+        detectedVersions,
+        error: versionsError,
+      },
+      configuration: {
+        loaded: configLoaded,
+        filePath: configStatus?.filePath || null,
+        loadedAt: configStatus?.loadedAt || null,
+        sections: Object.keys(configStatus?.config || {}),
+        sourceSummary,
+        error: configError,
+      },
+      featureFlags: {
+        loaded: accessLoaded,
+        orderNotesEnabled,
+        error: accessError,
+      },
+      telemetry: telemetrySettings
+        ? {
+            enabled: telemetrySettings.enabled,
+            endpoint: telemetrySettings.endpoint,
+            intervalHours: telemetrySettings.intervalHours,
+            instanceId: telemetrySettings.instanceId,
+            lastSentAt: telemetrySettings.lastSentAt,
+            lastError: telemetrySettings.lastError,
+          }
+        : null,
+      updateProgress: updateStatus,
+    };
+
+    const text = JSON.stringify(diagnostics, null, 2);
+
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(text);
+      setDiagnosticsText(null);
+      toast.success("Diagnostics copied");
+    } catch {
+      if (fallbackCopyText(text)) {
+        setDiagnosticsText(null);
+        toast.success("Diagnostics copied");
+        return;
+      }
+      setDiagnosticsText(text);
+      toast.info("Clipboard blocked. Diagnostics are shown below.");
+    }
+  }, [
+    accessError,
+    accessLoaded,
+    configError,
+    configLoaded,
+    configStatus,
+    detectedVersions,
+    healthItems,
+    latestVersion,
+    orderNotesEnabled,
+    restartPending,
+    runningVersion,
+    telemetrySettings,
+    toolsMissingCount,
+    updateInfo?.updateAvailable,
+    updateLoaded,
+    updateStatus,
+    versionsError,
+    versionsLoaded,
   ]);
 
   useEffect(() => {
@@ -371,6 +741,7 @@ export default function SettingsPage() {
         detectInstalledVersions(),
         fetchConfigStatus(),
         fetchAccessSettings(),
+        fetchTelemetrySettings(),
         checkForUpdates(true),
         fetchUpdateStatus(),
       ]);
@@ -381,6 +752,7 @@ export default function SettingsPage() {
     detectInstalledVersions,
     fetchAccessSettings,
     fetchConfigStatus,
+    fetchTelemetrySettings,
     fetchUpdateStatus,
   ]);
 
@@ -481,14 +853,14 @@ export default function SettingsPage() {
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <span className="text-sm font-medium">Settings</span>
+          <span className="text-sm font-medium">Platform Info</span>
         </div>
       </div>
     <PageContainer>
       <div className="mb-6 mt-6">
-        <h1 className="text-xl font-semibold">Settings</h1>
+        <h1 className="text-xl font-semibold">Platform Info</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Platform updates, runtime diagnostics, and configuration sources
+          Creator diagnostics for updates, runtime checks, feature flags, and configuration sources
         </p>
       </div>
 
@@ -503,10 +875,12 @@ export default function SettingsPage() {
             ) : (
               <>
                 {updateInProgress ? "Update in progress" : "No active update"} •
-                Running v{runningVersion} •{" "}
-                {updateInfo?.updateAvailable
-                  ? `v${latestVersion} available`
-                  : "Up to date"}{" "}
+                Running {runningVersion === "unknown" ? "unknown version" : `v${runningVersion}`} •{" "}
+                {!updateLoaded
+                  ? "Update check pending"
+                  : updateInfo?.updateAvailable
+                    ? `v${latestVersion} available`
+                    : "Up to date"}{" "}
                 •{" "}
                 {versionsLoaded && toolsMissingCount !== null
                   ? `${toolsMissingCount} tool${toolsMissingCount === 1 ? "" : "s"} missing`
@@ -514,13 +888,22 @@ export default function SettingsPage() {
               </>
             )}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {lastRefreshedAt && (
               <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
                 <Clock3 className="h-3 w-3" />
                 {formatDate(lastRefreshedAt)}
               </span>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-white"
+              onClick={() => void copyDiagnostics()}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Copy diagnostics
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -539,15 +922,110 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {diagnosticsText && (
+        <section className="bg-card rounded-xl border border-border mb-6 overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold">Diagnostics Snapshot</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Clipboard access was blocked; select this text for sharing with maintainers
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => diagnosticsTextRef.current?.select()}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Select text
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => setDiagnosticsText(null)}
+              >
+                <ChevronDown className="h-4 w-4 mr-2" />
+                Hide
+              </Button>
+            </div>
+          </div>
+          <div className="p-4">
+            <textarea
+              ref={diagnosticsTextRef}
+              readOnly
+              value={diagnosticsText}
+              className="h-56 w-full resize-y rounded-lg border bg-muted/20 p-3 font-mono text-xs text-foreground outline-none"
+              aria-label="Diagnostics snapshot"
+            />
+          </div>
+        </section>
+      )}
+
       <div className="space-y-6">
         <section className="bg-card rounded-xl border border-border overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold">Health Overview</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Fast signal for maintainers before testing forms, pipelines, or upload flows
+              </p>
+            </div>
+            <Badge
+              variant={healthIssueCount > 0 ? "secondary" : "outline"}
+              className="w-fit"
+            >
+              {healthPendingCount > 0
+                ? "Checking diagnostics"
+                : healthIssueCount > 0
+                ? `${healthIssueCount} item${healthIssueCount === 1 ? "" : "s"} to review`
+                : "No issues detected"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            {healthItems.map((item) => (
+              <div
+                key={item.id}
+                className={`rounded-lg border px-3 py-3 ${
+                  item.state === "ok"
+                    ? "border-emerald-200 bg-emerald-50"
+                    : item.state === "warning"
+                      ? "border-amber-200 bg-amber-50"
+                      : item.state === "error"
+                        ? "border-red-200 bg-red-50"
+                        : "border-border bg-muted/20"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{item.label}</p>
+                  {item.state === "pending" ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : item.state === "ok" ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                  ) : (
+                    <AlertTriangle
+                      className={`h-4 w-4 ${
+                        item.state === "error" ? "text-red-700" : "text-amber-700"
+                      }`}
+                    />
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-card rounded-xl border border-border overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="text-base font-semibold">Quick Actions</h2>
+            <h2 className="text-base font-semibold">Diagnostics Shortcuts</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Open related admin pages to make configuration changes
+              Open the admin areas most likely to explain broken installs, pipeline runs, or user-facing workflows
             </p>
           </div>
-          <div className="p-4 grid gap-2 sm:grid-cols-3">
+          <div className="p-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
             <Button asChild variant="outline" className="justify-between bg-white">
               <Link href="/admin/data-compute">
                 <span className="inline-flex items-center gap-2">
@@ -567,6 +1045,33 @@ export default function SettingsPage() {
               </Link>
             </Button>
             <Button asChild variant="outline" className="justify-between bg-white">
+              <Link href="/admin/form-builder?tab=import-export">
+                <span className="inline-flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Order Form
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="justify-between bg-white">
+              <Link href="/admin/study-form-builder?tab=import-export">
+                <span className="inline-flex items-center gap-2">
+                  <Settings2 className="h-4 w-4" />
+                  Study Forms
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="justify-between bg-white">
+              <Link href="/admin/sequencing-run-form-builder">
+                <span className="inline-flex items-center gap-2">
+                  <Settings2 className="h-4 w-4" />
+                  Run Fields
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="justify-between bg-white">
               <Link href="/admin/ena">
                 <span className="inline-flex items-center gap-2">
                   <Send className="h-4 w-4" />
@@ -580,13 +1085,25 @@ export default function SettingsPage() {
 
         <section className="bg-card rounded-xl border border-border overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="text-base font-semibold">Workspace Features</h2>
+            <h2 className="text-base font-semibold">Feature Flags</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Toggle order workspace tools that appear throughout the app
+              Small switches that change platform behavior and are useful for reproducing user reports
             </p>
           </div>
 
-          <div className="p-4">
+          <div className="p-4 space-y-3">
+            {accessError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <p className="font-medium">Feature settings failed</p>
+                <p className="mt-1">{accessError}</p>
+              </div>
+            )}
+            {telemetryError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <p className="font-medium">Telemetry settings failed</p>
+                <p className="mt-1">{telemetryError}</p>
+              </div>
+            )}
             <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -611,6 +1128,95 @@ export default function SettingsPage() {
                   aria-label="Enable order notes"
                 />
               </div>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">SeqDesk telemetry</p>
+                  {(savingTelemetrySetting || testingTelemetry) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Sends anonymous version and runtime status to SeqDesk.com for install monitoring.
+                </p>
+                {telemetrySettings && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    <span>ID: {telemetrySettings.instanceId?.slice(0, 8) || "not generated"}</span>
+                    <span className="mx-2">•</span>
+                    <span>Last sent: {formatDate(telemetrySettings.lastSentAt)}</span>
+                    {telemetrySettings.lastError && (
+                      <>
+                        <span className="mx-2">•</span>
+                        <span className="text-red-700">{telemetrySettings.lastError}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
+                  onClick={() => void sendTestTelemetry()}
+                  disabled={
+                    !telemetrySettings?.enabled ||
+                    savingTelemetrySetting ||
+                    testingTelemetry
+                  }
+                >
+                  {testingTelemetry ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="mr-2 h-4 w-4" />
+                  )}
+                  Test
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {telemetrySettings?.enabled ? "Enabled" : "Disabled"}
+                </span>
+                <Switch
+                  checked={telemetrySettings?.enabled === true}
+                  onCheckedChange={(checked) => void updateTelemetrySetting(checked)}
+                  disabled={
+                    !telemetrySettings ||
+                    savingTelemetrySetting ||
+                    testingTelemetry
+                  }
+                  aria-label="Enable SeqDesk telemetry"
+                />
+              </div>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">ONT run plan preset</p>
+                  {applyingOntRunPreset && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Adds order, sample, and sequencing run-assignment fields for barcode mapping,
+                  flowcell details, and metagenomics/metatranscriptomics tracking.
+                </p>
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 bg-white"
+                onClick={() => void applyOntRunPlanPreset()}
+                disabled={applyingOntRunPreset}
+              >
+                {applyingOntRunPreset ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="mr-2 h-4 w-4" />
+                )}
+                Apply preset
+              </Button>
             </div>
           </div>
         </section>
@@ -683,7 +1289,8 @@ export default function SettingsPage() {
 
             {updateInfo?.error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {updateInfo.error}
+                <p className="font-medium">Update check failed</p>
+                <p className="mt-1">{updateInfo.error}</p>
               </div>
             )}
 
@@ -797,7 +1404,9 @@ export default function SettingsPage() {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Failed to load update state. Use Check now to retry.
+                {updateLoaded
+                  ? "Failed to load update state. Use Check now to retry."
+                  : "Update state has not loaded yet."}
               </p>
             )}
           </div>
@@ -828,6 +1437,12 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-4 space-y-4">
+            {versionsError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <p className="font-medium">Tool scan failed</p>
+                <p className="mt-1">{versionsError}</p>
+              </div>
+            )}
             {!versionsLoaded ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -901,20 +1516,38 @@ export default function SettingsPage() {
                 Effective values and their value source
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="bg-white"
-              onClick={() => void fetchConfigStatus(true)}
-              disabled={loadingConfig}
-            >
-              {loadingConfig ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {configStatus && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
+                  onClick={() => setShowConfigDetails((visible) => !visible)}
+                  aria-expanded={showConfigDetails}
+                >
+                  <ChevronDown
+                    className={`h-4 w-4 mr-2 transition-transform ${
+                      showConfigDetails ? "rotate-180" : ""
+                    }`}
+                  />
+                  {showConfigDetails ? "Hide details" : "Show details"}
+                </Button>
               )}
-              Refresh
-            </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => void fetchConfigStatus(true)}
+                disabled={loadingConfig}
+              >
+                {loadingConfig ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                )}
+                Refresh
+              </Button>
+            </div>
           </div>
 
           <div className="p-4">
@@ -937,64 +1570,68 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge
-                    variant="outline"
-                    className="bg-blue-50 text-blue-700 border-blue-200"
-                  >
-                    ENV
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="bg-green-50 text-green-700 border-green-200"
-                  >
-                    FILE
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="bg-violet-50 text-violet-700 border-violet-200"
-                  >
-                    DATABASE
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="bg-muted text-muted-foreground border-border"
-                  >
-                    DEFAULT
-                  </Badge>
-                </div>
-
-                <div className="space-y-3">
-                  <ConfigSection
-                    title="Site"
-                    config={configStatus.config.site as Record<string, unknown>}
-                    sources={configStatus.sources}
-                    prefix="site"
-                  />
-                  <ConfigSection
-                    title="Pipelines"
-                    config={configStatus.config.pipelines as Record<string, unknown>}
-                    sources={configStatus.sources}
-                    prefix="pipelines"
-                  />
-                  <ConfigSection
-                    title="ENA"
-                    config={configStatus.config.ena as Record<string, unknown>}
-                    sources={configStatus.sources}
-                    prefix="ena"
-                  />
-                  <ConfigSection
-                    title="Sequencing Files"
-                    config={
-                      configStatus.config.sequencingFiles as Record<
-                        string,
-                        unknown
+                {showConfigDetails && (
+                  <>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge
+                        variant="outline"
+                        className="bg-blue-50 text-blue-700 border-blue-200"
                       >
-                    }
-                    sources={configStatus.sources}
-                    prefix="sequencingFiles"
-                  />
-                </div>
+                        ENV
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="bg-green-50 text-green-700 border-green-200"
+                      >
+                        FILE
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="bg-violet-50 text-violet-700 border-violet-200"
+                      >
+                        DATABASE
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="bg-muted text-muted-foreground border-border"
+                      >
+                        DEFAULT
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-3">
+                      <ConfigSection
+                        title="Site"
+                        config={configStatus.config.site as Record<string, unknown>}
+                        sources={configStatus.sources}
+                        prefix="site"
+                      />
+                      <ConfigSection
+                        title="Pipelines"
+                        config={configStatus.config.pipelines as Record<string, unknown>}
+                        sources={configStatus.sources}
+                        prefix="pipelines"
+                      />
+                      <ConfigSection
+                        title="ENA"
+                        config={configStatus.config.ena as Record<string, unknown>}
+                        sources={configStatus.sources}
+                        prefix="ena"
+                      />
+                      <ConfigSection
+                        title="Sequencing Files"
+                        config={
+                          configStatus.config.sequencingFiles as Record<
+                            string,
+                            unknown
+                          >
+                        }
+                        sources={configStatus.sources}
+                        prefix="sequencingFiles"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <p className="text-xs text-muted-foreground">
                   See{" "}
@@ -1014,9 +1651,12 @@ export default function SettingsPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                Failed to load configuration status.
-              </p>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <p className="font-medium">Configuration status failed</p>
+                <p className="mt-1">
+                  {configError || "Use Refresh to retry loading effective configuration sources."}
+                </p>
+              </div>
             )}
           </div>
         </section>

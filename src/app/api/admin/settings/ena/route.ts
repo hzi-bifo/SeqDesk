@@ -3,6 +3,18 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
+function parseExtraSettings(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 // GET /api/admin/settings/ena - Get ENA settings (password masked)
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -18,13 +30,21 @@ export async function GET() {
         enaUsername: true,
         enaPassword: true,
         enaTestMode: true,
+        extraSettings: true,
       },
     });
+    const extraSettings = parseExtraSettings(settings?.extraSettings);
+    const enaExtra =
+      extraSettings.ena && typeof extraSettings.ena === "object" && !Array.isArray(extraSettings.ena)
+        ? (extraSettings.ena as Record<string, unknown>)
+        : {};
 
     return NextResponse.json({
       enaUsername: settings?.enaUsername || "",
       hasPassword: Boolean(settings?.enaPassword),
       enaTestMode: settings?.enaTestMode ?? true,
+      enaBrokerAccount: enaExtra.brokerAccount === true,
+      enaCenterName: typeof enaExtra.centerName === "string" ? enaExtra.centerName : "",
       configured: Boolean(settings?.enaUsername && settings?.enaPassword),
     });
   } catch (error) {
@@ -50,6 +70,10 @@ export async function PUT(request: Request) {
     const enaUsername = body.enaUsername?.trim();
     const enaPassword = body.enaPassword?.trim();
     const enaTestMode = body.enaTestMode;
+    const enaBrokerAccount =
+      typeof body.enaBrokerAccount === "boolean" ? body.enaBrokerAccount : undefined;
+    const enaCenterName =
+      typeof body.enaCenterName === "string" ? body.enaCenterName.trim() : undefined;
 
     // Validate username format if provided
     if (enaUsername && !enaUsername.match(/^Webin-\d+$/)) {
@@ -76,6 +100,25 @@ export async function PUT(request: Request) {
       updateData.enaTestMode = enaTestMode;
     }
 
+    const existingSettings = await db.siteSettings.findUnique({
+      where: { id: "singleton" },
+      select: { extraSettings: true },
+    });
+    const extraSettings = parseExtraSettings(existingSettings?.extraSettings);
+
+    if (enaBrokerAccount !== undefined || enaCenterName !== undefined) {
+      const currentEnaExtra =
+        extraSettings.ena && typeof extraSettings.ena === "object" && !Array.isArray(extraSettings.ena)
+          ? (extraSettings.ena as Record<string, unknown>)
+          : {};
+      extraSettings.ena = {
+        ...currentEnaExtra,
+        ...(enaBrokerAccount !== undefined ? { brokerAccount: enaBrokerAccount } : {}),
+        ...(enaCenterName !== undefined ? { centerName: enaCenterName } : {}),
+      };
+      updateData.extraSettings = JSON.stringify(extraSettings);
+    }
+
     await db.siteSettings.upsert({
       where: { id: "singleton" },
       update: updateData,
@@ -84,6 +127,18 @@ export async function PUT(request: Request) {
         enaUsername: enaUsername || null,
         enaPassword: enaPassword || null,
         enaTestMode: enaTestMode ?? true,
+        extraSettings: JSON.stringify({
+          ...extraSettings,
+          ena: {
+            ...(
+              extraSettings.ena && typeof extraSettings.ena === "object" && !Array.isArray(extraSettings.ena)
+                ? (extraSettings.ena as Record<string, unknown>)
+                : {}
+            ),
+            brokerAccount: enaBrokerAccount ?? false,
+            centerName: enaCenterName || "",
+          },
+        }),
       },
     });
 

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Card,
   CardContent,
@@ -23,7 +24,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -70,19 +70,6 @@ function formatFileSize(bytes?: number | null): string {
   if (bytes < 1024 * 1024 * 1024)
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function formatRelativeTime(value: string): string {
-  const date = new Date(value);
-  const now = Date.now();
-  const diff = now - date.getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 // ── File tree helpers ──
@@ -752,6 +739,12 @@ export function SequencingDiscoverView({
           </Button>
         </div>
       </div>
+
+      <HelpBox title="What is file association?">
+        Association links FASTQ files from sequencing storage to the correct samples in this order.
+        Auto-discover suggests matches from file names, and manual association lets the facility
+        assign read files when names are incomplete or ambiguous.
+      </HelpBox>
 
       {!dataBasePathConfigured && (
         <Card className="border-amber-200 bg-amber-50/70">

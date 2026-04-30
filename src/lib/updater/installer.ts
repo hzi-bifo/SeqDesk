@@ -41,6 +41,7 @@ const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
 const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
 const BACKUP_DIRS = ['.next', 'data', 'node_modules', 'pipelines', 'prisma', 'public', 'scripts'];
 const BACKUP_FILES = ['package.json', 'seqdesk.config.json', 'server.js', 'start.sh'];
+const SAFE_RELEASE_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 
 /**
  * Check available disk space
@@ -77,6 +78,8 @@ export async function installUpdate(
   };
 
   try {
+    validateReleaseForInstall(release);
+
     const installedDatabase = await loadInstalledDatabaseConfig(INSTALL_DIR);
     requirePostgresDatabaseUrl(installedDatabase.databaseUrl);
     const databaseCompatibilityError = getDatabaseCompatibilityError(
@@ -149,6 +152,47 @@ export async function installUpdate(
   }
 }
 
+function validateReleaseForInstall(release: ReleaseInfo): void {
+  if (!SAFE_RELEASE_VERSION_PATTERN.test(release.version)) {
+    throw new Error(`Invalid release version: ${release.version}`);
+  }
+
+  const downloadUrl = parseDownloadUrl(release.downloadUrl);
+  if (downloadUrl.protocol !== 'https:' && downloadUrl.protocol !== 'http:') {
+    throw new Error(`Unsupported download URL protocol: ${downloadUrl.protocol}`);
+  }
+
+  validateChecksumFormat(release.checksum);
+}
+
+function parseDownloadUrl(downloadUrl: string): URL {
+  try {
+    return new URL(downloadUrl);
+  } catch {
+    throw new Error('Invalid release download URL');
+  }
+}
+
+function validateChecksumFormat(checksum: string): void {
+  if (!checksum || checksum === 'sha256:placeholder') {
+    return;
+  }
+
+  const parts = checksum.split(':');
+  if (parts.length !== 2) {
+    throw new Error('Invalid checksum format');
+  }
+
+  const [algorithm, hash] = parts;
+  if (algorithm !== 'sha256') {
+    throw new Error(`Unsupported checksum algorithm: ${algorithm}`);
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(hash)) {
+    throw new Error('Invalid sha256 checksum');
+  }
+}
+
 /**
  * Download the release tarball
  */
@@ -159,7 +203,7 @@ async function downloadRelease(release: ReleaseInfo): Promise<string> {
   await fs.mkdir(TEMP_DIR, { recursive: true });
 
   // Download using curl (more reliable than fetch for large files)
-  await execAsync(`curl -fsSL "${release.downloadUrl}" -o "${tarballPath}"`);
+  await execAsync(`curl -fsSL "${parseDownloadUrl(release.downloadUrl).href}" -o "${tarballPath}"`);
 
   return tarballPath;
 }
@@ -173,11 +217,8 @@ async function verifyChecksum(filePath: string, expectedChecksum: string): Promi
     return;
   }
 
-  const [algorithm, hash] = expectedChecksum.split(':');
-  if (algorithm !== 'sha256') {
-    throw new Error(`Unsupported checksum algorithm: ${algorithm}`);
-  }
-
+  validateChecksumFormat(expectedChecksum);
+  const [, hash] = expectedChecksum.split(':');
   const actualHash = await hashFile(filePath, 'sha256');
 
   if (actualHash !== hash) {

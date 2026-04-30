@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -53,6 +52,7 @@ import {
   Upload,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { RichMarkdownEditor } from "@/components/notes/RichMarkdownEditor";
 import {
   DEFAULT_FORM_SCHEMA,
   FormFieldDefinition,
@@ -73,7 +73,11 @@ import { BillingAdminEditor } from "@/lib/field-types/billing/BillingAdminEditor
 import { SequencingTechAdminEditor } from "@/lib/field-types/sequencing-tech/SequencingTechAdminEditor";
 import { useModule, useModules, ModuleGate } from "@/lib/modules";
 import { isFieldAvailableForModules as isFieldAvailableForModuleState } from "@/lib/modules/form-integration";
-import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
+import {
+  ORDER_ONLY_FIELD_TYPES,
+  PER_SAMPLE_ONLY_FIELD_TYPES,
+  normalizeOrderFormSchema,
+} from "@/lib/orders/fixed-sections";
 
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 
@@ -267,6 +271,8 @@ export default function FormBuilderPage() {
     isSystem: editingField?.isSystem,
     moduleSource: editingField?.moduleSource,
   });
+  const isCurrentTypeOrderOnly = ORDER_ONLY_FIELD_TYPES.has(fieldType);
+  const isCurrentTypePerSampleOnly = PER_SAMPLE_ONLY_FIELD_TYPES.has(fieldType);
 
   // Fetch form configuration
   useEffect(() => {
@@ -580,6 +586,16 @@ export default function FormBuilderPage() {
 
     if (fieldAdminOnly && !canCurrentFieldBeFacilityOnly) {
       setError("This field type must remain visible in the main order flow");
+      return;
+    }
+
+    if (isCurrentTypeOrderOnly && fieldPerSample) {
+      setError(`${FIELD_TYPE_LABELS[fieldType]} fields can only be used as order-level fields`);
+      return;
+    }
+
+    if (isCurrentTypePerSampleOnly && !fieldPerSample) {
+      setError(`${FIELD_TYPE_LABELS[fieldType]} fields can only be used as per-sample fields`);
       return;
     }
 
@@ -935,6 +951,8 @@ export default function FormBuilderPage() {
   const facilityOrderFields = orderFields.filter((field) => field.adminOnly);
   const userPerSampleFields = perSampleFieldsList.filter((field) => !field.adminOnly);
   const facilityPerSampleFields = perSampleFieldsList.filter((field) => field.adminOnly);
+  const researcherVisibleFieldCount = userOrderFields.length + userPerSampleFields.length;
+  const facilityOnlyFieldCount = facilityOrderFields.length + facilityPerSampleFields.length;
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
   const automaticFieldSectionLabel = fieldPerSample
     ? fieldAdminOnly
@@ -1132,19 +1150,8 @@ export default function FormBuilderPage() {
     <Tabs defaultValue={initialTab}>
       {/* Sticky header bar — outside PageContainer, matching orders detail page */}
       <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <div
-            className={`absolute left-6 lg:left-8 text-xs ${
-              autoSaveStatus === "error"
-                ? "text-destructive"
-                : autoSaveStatus === "dirty"
-                  ? "text-amber-600"
-                  : "text-muted-foreground"
-            }`}
-          >
-            {autoSaveMessage}
-          </div>
-          <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+        <div className="flex h-[52px] items-center justify-start overflow-x-auto px-4 lg:justify-center lg:px-8">
+          <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
             <TabsTrigger
               value="fields"
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
@@ -1176,7 +1183,26 @@ export default function FormBuilderPage() {
               Import / Export
             </TabsTrigger>
           </TabsList>
-          <div className="absolute right-6 lg:right-8 flex items-center gap-2">
+        </div>
+        <div className="flex min-h-12 flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <div
+            className={`text-xs ${
+              autoSaveStatus === "error"
+                ? "text-destructive"
+                : autoSaveStatus === "dirty"
+                  ? "text-amber-600"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {autoSaveMessage}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <Button asChild variant="outline" size="sm" className="bg-white">
+              <Link href="/orders/new" target="_blank">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Preview User Form
+              </Link>
+            </Button>
             <Button
               onClick={handleSave}
               disabled={saving || justSaved}
@@ -1231,6 +1257,25 @@ export default function FormBuilderPage() {
           .
         </div>
       )}
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Visible to researchers</p>
+          <p className="text-lg font-semibold">{researcherVisibleFieldCount}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Facility-only</p>
+          <p className="text-lg font-semibold">{facilityOnlyFieldCount}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">User per-sample</p>
+          <p className="text-lg font-semibold">{userPerSampleFields.length}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Hidden by modules</p>
+          <p className="text-lg font-semibold">{hiddenByDisabledModulesCount}</p>
+        </div>
+      </div>
 
       {/* Integration Service Banner */}
       {showIntegrationServiceBanner && !bannerDismissed && (
@@ -2499,22 +2544,22 @@ export default function FormBuilderPage() {
               <div>
                 <h3 className="text-sm font-medium">Post-Submission Instructions</h3>
                 <p className="text-sm text-muted-foreground">
-                  Instructions shown to users after they submit an order (supports Markdown)
+                  Instructions shown to users after they submit an order
                 </p>
               </div>
             </div>
 
             <div className="border-t pt-4 space-y-4">
               <div>
-                <Textarea
+                <RichMarkdownEditor
                   value={postSubmissionInstructions}
-                  onChange={(e) => setPostSubmissionInstructions(e.target.value)}
+                  onChange={setPostSubmissionInstructions}
                   placeholder="Enter instructions shown to users after order submission..."
-                  className="min-h-[200px] font-mono text-sm"
                   disabled={instructionsSaving}
+                  minHeightClassName="min-h-[240px]"
                 />
                 <p className="text-xs text-muted-foreground mt-2">
-                  Use Markdown formatting: **bold**, *italic*, ## headings, - lists, etc.
+                  Formatting is saved as Markdown and shown after order submission.
                 </p>
               </div>
 
@@ -2745,6 +2790,12 @@ export default function FormBuilderPage() {
                       onValueChange={(v) => {
                         const nextType = v as FieldType;
                         setFieldType(nextType);
+                        if (ORDER_ONLY_FIELD_TYPES.has(nextType)) {
+                          setFieldPerSample(false);
+                        }
+                        if (PER_SAMPLE_ONLY_FIELD_TYPES.has(nextType)) {
+                          setFieldPerSample(true);
+                        }
                         if (
                           fieldAdminOnly &&
                           !canFieldBeFacilityOnly({
@@ -2857,10 +2908,13 @@ export default function FormBuilderPage() {
                       <button
                         type="button"
                         onClick={() => setFieldPerSample(false)}
+                        disabled={isCurrentTypePerSampleOnly}
                         className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                           !fieldPerSample
                             ? "bg-background shadow-sm text-foreground"
-                            : "text-muted-foreground hover:text-foreground"
+                            : isCurrentTypePerSampleOnly
+                              ? "text-muted-foreground/50 cursor-not-allowed"
+                              : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
                         Order-level
@@ -2868,10 +2922,13 @@ export default function FormBuilderPage() {
                       <button
                         type="button"
                         onClick={() => setFieldPerSample(true)}
+                        disabled={isCurrentTypeOrderOnly}
                         className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                           fieldPerSample
                             ? "bg-amber-100 text-amber-700 shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
+                            : isCurrentTypeOrderOnly
+                              ? "text-muted-foreground/50 cursor-not-allowed"
+                              : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
                         Per-sample
@@ -2886,9 +2943,19 @@ export default function FormBuilderPage() {
                     Examples: volume (ml), concentration, storage temperature, quality metrics.
                   </div>
                 )}
+                {isCurrentTypePerSampleOnly && (
+                  <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
+                    <strong>Scope locked:</strong> {FIELD_TYPE_LABELS[fieldType]} fields are rendered in the user sample table, so they are always per-sample.
+                  </div>
+                )}
                 {!fieldPerSample && (
                   <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
                     <strong>Order Field:</strong> This field will be filled once when creating the order and shown in its selected fixed section.
+                  </div>
+                )}
+                {isCurrentTypeOrderOnly && (
+                  <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
+                    <strong>Scope locked:</strong> {FIELD_TYPE_LABELS[fieldType]} fields are rendered in the main order flow, so they are always order-level.
                   </div>
                 )}
 

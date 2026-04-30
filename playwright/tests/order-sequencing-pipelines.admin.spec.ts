@@ -288,7 +288,7 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       // Keep defaults, just change read count for verification
       await page.getByLabel("Read Count").fill("42");
 
-      const runButton = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton).toBeEnabled({ timeout: 90000 });
       await runButton.click();
 
@@ -391,7 +391,7 @@ test("simulate reads settings: switch, mode, readCount, readLength all persist",
       await page.getByLabel("Seed").fill("77");
 
       // Start the pipeline
-      const runButton = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton).toBeEnabled({ timeout: 90000 });
       await runButton.click();
 
@@ -431,7 +431,7 @@ test("simulate reads settings: switch, mode, readCount, readLength all persist",
       // replaceExisting stays ON (default)
       await expect(replaceSwitch).toBeChecked();
 
-      const runButton2 = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton2 = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton2).toBeEnabled({ timeout: 90000 });
       await runButton2.click();
 
@@ -510,7 +510,7 @@ test("simulate reads template mode replays facility templates and writes back re
       await page.getByLabel("Simulation Source").click();
       await page.getByRole("option", { name: "Template replay" }).click();
 
-      const runButton = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton).toBeEnabled({ timeout: 90000 });
       await runButton.click();
 
@@ -672,7 +672,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       const readCountInput = page.getByLabel("Read Count");
       await readCountInput.fill("100");
 
-      const runButton1 = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton1 = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton1).toBeEnabled({ timeout: 90000 });
       await runButton1.click();
 
@@ -699,7 +699,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
 
       await readCountInput.fill("200");
 
-      const runButton2 = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton2 = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton2).toBeEnabled({ timeout: 90000 });
       await runButton2.click();
 
@@ -725,7 +725,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       await expect(replaceSwitch).toBeChecked();
       await readCountInput.fill("300");
 
-      const runButton3 = page.getByRole("button", { name: /Run All Ready/ });
+      const runButton3 = page.getByRole("button", { name: /Run all ready samples/i });
       await expect(runButton3).toBeEnabled({ timeout: 90000 });
       await runButton3.click();
 

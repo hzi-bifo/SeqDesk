@@ -3,8 +3,8 @@
 # SeqDesk Installation Script (Distribution)
 # https://seqdesk.com
 #
-# Usage: curl -fsSL https://seqdesk.com/install.sh | bash
-# CLI usage: curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
+# Usage: curl -fsSL https://www.seqdesk.com/install.sh | bash
+# CLI usage: curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -29,6 +29,9 @@
 #   SEQDESK_LOG=/path/install.log  - Optional install log path
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
+#   SEQDESK_PROFILE=twincore       - Hosted install profile id
+#   SEQDESK_PROFILE_CODE=...       - Access code for hosted install profile
+#   SEQDESK_PROFILE_REGISTRY_URL=https://www.seqdesk.com/api/install-profiles
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
@@ -80,9 +83,16 @@ SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
 SEQDESK_ORDER_FORM_SETTINGS="${SEQDESK_ORDER_FORM_SETTINGS:-}"
 SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
+SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
+SEQDESK_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}"
+SEQDESK_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
+SEQDESK_PROFILE="${SEQDESK_PROFILE:-${SEQDESK_SETTING:-}}"
+SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
+SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://www.seqdesk.com/api/install-profiles}"
+SEQDESK_PROFILE_CONFIG_FILE=""
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
@@ -429,11 +439,15 @@ prompt_yes_no() {
 print_usage() {
     cat <<'EOF'
 Usage:
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
+  --profile <id>               Hosted install profile id (for example: twincore)
+  --profile-code <code>        Access code for --profile
+  --setting <id>               Alias for --profile
+  --key <code>                 Alias for --profile-code
   --dir <path>                 Install directory
   --version <version>          Release version (default: latest)
   --with-pipelines             Enable pipeline dependencies
@@ -458,10 +472,11 @@ Options:
   -h, --help                   Show this help
 
 Examples:
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
 EOF
 }
 
@@ -477,6 +492,22 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_CONFIG="$2"
+                shift
+                ;;
+            --profile|--setting)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                SEQDESK_PROFILE="$2"
+                shift
+                ;;
+            --profile-code|--profile_code|--key)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                SEQDESK_PROFILE_CODE="$2"
                 shift
                 ;;
             --dir)
@@ -638,6 +669,43 @@ apply_config_value() {
     fi
 }
 
+resolve_install_profile() {
+    if [ -z "$SEQDESK_PROFILE" ]; then
+        return 0
+    fi
+
+    if [ -n "$SEQDESK_CONFIG" ]; then
+        print_error "Use either --profile or --config, not both."
+        exit 1
+    fi
+
+    if [ -z "$SEQDESK_PROFILE_CODE" ]; then
+        print_error "--profile-code is required when --profile is used."
+        exit 1
+    fi
+
+    if ! command_exists curl; then
+        print_error "curl is required to resolve hosted install profiles."
+        exit 1
+    fi
+
+    local profile_url
+    local profile_config
+    profile_url="${SEQDESK_PROFILE_REGISTRY_URL%/}/${SEQDESK_PROFILE}/resolve"
+    profile_config="$(mktemp)"
+
+    print_info "Resolving hosted install profile: $SEQDESK_PROFILE"
+    if ! curl -fsSL -H "Authorization: Bearer ${SEQDESK_PROFILE_CODE}" "$profile_url" -o "$profile_config"; then
+        rm -f "$profile_config"
+        print_error "Failed to resolve hosted install profile '$SEQDESK_PROFILE'. Check the profile id and access code."
+        exit 1
+    fi
+
+    SEQDESK_CONFIG="$profile_config"
+    SEQDESK_PROFILE_CONFIG_FILE="$profile_config"
+    print_success "Resolved hosted install profile"
+}
+
 load_install_config() {
     local config_ref="$1"
     local config_path="$config_ref"
@@ -738,6 +806,7 @@ const execution = toRecord(pipelines?.execution);
 const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
+const telemetry = toRecord(root.telemetry);
 const forms = toRecord(root.forms);
 const privatePipelines = toRecord(root.privatePipelines);
 const metaxpath = toRecord(privatePipelines?.metaxpath);
@@ -886,6 +955,9 @@ const values = {
   metaxpathSha256: toOptionalString(
     firstDefined(root.metaxpathSha256, root.metaxpathPackageSha256, metaxpath?.sha256)
   ),
+  telemetryEnabled: toOptionalBoolean(telemetry?.enabled),
+  telemetryEndpoint: toOptionalString(telemetry?.endpoint),
+  telemetryIntervalHours: toOptionalInt(telemetry?.intervalHours),
 };
 
 if (values.runDir === "/") {
@@ -932,6 +1004,15 @@ if (values.orderFormSettings) {
 }
 if (values.studyFormSettings) {
   out.SEQDESK_CFG_STUDY_FORM_SETTINGS = values.studyFormSettings;
+}
+if (values.telemetryEnabled !== undefined) {
+  out.SEQDESK_CFG_TELEMETRY_ENABLED = values.telemetryEnabled ? "true" : "false";
+}
+if (values.telemetryEndpoint) {
+  out.SEQDESK_CFG_TELEMETRY_ENDPOINT = values.telemetryEndpoint;
+}
+if (values.telemetryIntervalHours !== undefined && values.telemetryIntervalHours > 0) {
+  out.SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS = String(values.telemetryIntervalHours);
 }
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
@@ -991,6 +1072,9 @@ NODE
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     apply_config_value SEQDESK_ORDER_FORM_SETTINGS SEQDESK_CFG_ORDER_FORM_SETTINGS
     apply_config_value SEQDESK_STUDY_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
+    apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
+    apply_config_value SEQDESK_TELEMETRY_ENDPOINT SEQDESK_CFG_TELEMETRY_ENDPOINT
+    apply_config_value SEQDESK_TELEMETRY_INTERVAL_HOURS SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -1014,6 +1098,8 @@ NODE
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
+    unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
+    unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
@@ -1483,6 +1569,9 @@ write_config() {
     SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
     SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
     SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
+    SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
+    SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
+    SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
     SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
 const fs = require('fs');
@@ -1497,6 +1586,9 @@ const directUrl = process.env.SEQDESK_INSTALL_DATABASE_DIRECT_URL || '';
 const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
 const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
 const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
+const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
+const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
+const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
 
 function readJson(filePath) {
@@ -1523,6 +1615,24 @@ function toOptionalPort(value) {
   const intValue = Math.trunc(parsed);
   if (intValue <= 0 || intValue > 65535) return undefined;
   return intValue;
+}
+
+function toOptionalBoolean(value) {
+  const text = toOptionalString(value);
+  if (!text) return undefined;
+  const normalized = text.toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function toOptionalPositiveInt(value) {
+  const text = toOptionalString(value);
+  if (!text) return undefined;
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) return undefined;
+  const intValue = Math.trunc(parsed);
+  return intValue > 0 ? intValue : undefined;
 }
 
 const config = readJson('seqdesk.config.json') || {};
@@ -1555,6 +1665,15 @@ if (adminSecret) runtime.adminSecret = adminSecret;
 if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
 if (Object.keys(runtime).length > 0) {
   config.runtime = runtime;
+}
+
+const telemetryEnabled = toOptionalBoolean(telemetryEnabledRaw);
+const telemetryIntervalHours = toOptionalPositiveInt(telemetryIntervalHoursRaw);
+if (telemetryEnabled !== undefined || telemetryEndpoint || telemetryIntervalHours !== undefined) {
+  config.telemetry = config.telemetry && typeof config.telemetry === 'object' ? config.telemetry : {};
+  if (telemetryEnabled !== undefined) config.telemetry.enabled = telemetryEnabled;
+  if (telemetryEndpoint) config.telemetry.endpoint = telemetryEndpoint;
+  if (telemetryIntervalHours !== undefined) config.telemetry.intervalHours = telemetryIntervalHours;
 }
 
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
@@ -1892,8 +2011,14 @@ fi
 NPM_VERSION=$(npm -v)
 print_success "npm $NPM_VERSION"
 
+resolve_install_profile
+
 if [ -n "$SEQDESK_CONFIG" ]; then
-    print_info "Loading installer config: $SEQDESK_CONFIG"
+    if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
+        print_info "Loading installer config from hosted profile"
+    else
+        print_info "Loading installer config: $SEQDESK_CONFIG"
+    fi
     load_install_config "$SEQDESK_CONFIG"
     print_success "Loaded installer config"
 fi
@@ -2253,6 +2378,21 @@ else
     fi
 fi
 
+if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
+    if [ ! -f "scripts/apply-install-profile.mjs" ]; then
+        print_error "Missing scripts/apply-install-profile.mjs; cannot apply hosted install profile."
+        exit 1
+    fi
+
+    print_info "Applying hosted install profile settings..."
+    if node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
+        print_success "Hosted install profile settings applied"
+    else
+        print_error "Failed to apply hosted install profile settings"
+        exit 1
+    fi
+fi
+
 if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ] || [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
     print_info "Applying form preset settings..."
     form_args=()
@@ -2378,6 +2518,9 @@ print_header "Installation Complete!"
 echo -e "${GREEN}SeqDesk v$INSTALLED_VERSION installed successfully!${NC}"
 echo ""
 echo "Installed version: v$INSTALLED_VERSION"
+if [ -n "$SEQDESK_PROFILE" ]; then
+    echo "Install profile: $SEQDESK_PROFILE"
+fi
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     echo "Mode: reconfigure existing install"
 fi
@@ -2449,6 +2592,7 @@ else
     echo "Default login:"
     echo "  Admin:      admin@example.com / admin"
     echo "  Researcher: user@example.com / user"
+    echo "  Change the default admin password immediately after first login."
 fi
 echo ""
 echo "Next steps:"

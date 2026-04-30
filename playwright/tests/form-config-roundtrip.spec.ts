@@ -182,7 +182,7 @@ test("admin form-builder changes appear for researchers and enforce required val
       await researcherPage.getByTestId("order-field-numberOfSamples").fill("1");
       await researcherPage.getByTestId("next-step-button").click();
 
-      await expect(researcherPage.getByText("Required", { exact: true })).toBeVisible();
+      await expect(researcherPage.getByText(`${fieldLabel} is required`).first()).toBeVisible();
       await expect(researcherPage.getByRole("heading", { name: "Order Details" })).toBeVisible();
 
       await researcherPage.getByTestId(`order-field-${fieldName}`).fill("REQ-001");
@@ -321,7 +321,9 @@ test("facility fields added in admin form-builder appear on existing order facil
 
     // Navigate to the order's facility section and click Edit Order Fields
     await page.goto(`/orders/${orderId}?section=facility`);
-    await page.getByRole("link", { name: "Edit Order Fields" }).click();
+    await page
+      .locator(`a[href="/orders/${orderId}/edit?step=_facility&scope=facility"]`)
+      .click();
     await page.waitForURL(new RegExp(`/orders/${orderId}/edit\\?step=_facility(?:&scope=facility)?`));
     await expect(page.getByRole("heading", { name: "Edit Facility Fields" })).toBeVisible();
 

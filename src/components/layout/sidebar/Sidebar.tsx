@@ -36,7 +36,6 @@ export function Sidebar({ user, version }: SidebarProps) {
 
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const isDemoUser = user.isDemo === true;
-  const isFacilityDemoUser = user.demoExperience === "facility";
   const showAdminControls = isFacilityAdmin;
 
   const isAdminPage = pathname.startsWith("/admin") || pathname.startsWith("/messages");
@@ -118,11 +117,6 @@ export function Sidebar({ user, version }: SidebarProps) {
             />
           </nav>
 
-          {/* Support section - Researchers only */}
-          {!isFacilityAdmin && !isDemoUser && (
-            <SidebarSupportNav collapsed={collapsed} unreadMessages={unreadMessages} />
-          )}
-
           {/* Field Help Panel */}
           {focusedField && !collapsed && (
             <div className="px-3 pb-2">
@@ -130,10 +124,15 @@ export function Sidebar({ user, version }: SidebarProps) {
             </div>
           )}
 
+          {/* Support section - Researchers only */}
+          {!isFacilityAdmin && !isDemoUser && (
+            <SidebarSupportNav collapsed={collapsed} unreadMessages={unreadMessages} />
+          )}
+
         </>
       )}
 
-      {/* SeqDesk Settings - admin shortcut */}
+      {/* Application Settings - admin shortcut */}
       {showAdminControls && !isAdminPage && (
         <div className={cn("px-3 pb-1", collapsed && "px-2")}>
           <Link
@@ -143,10 +142,10 @@ export function Sidebar({ user, version }: SidebarProps) {
               "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
               collapsed ? "justify-center p-2" : "px-3 py-2"
             )}
-            title={collapsed ? "SeqDesk Settings" : undefined}
+            title={collapsed ? "Application Settings" : undefined}
           >
             <Settings className={cn("shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
-            {!collapsed && <span>SeqDesk Settings</span>}
+            {!collapsed && <span>Application Settings</span>}
           </Link>
         </div>
       )}

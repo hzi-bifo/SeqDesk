@@ -93,8 +93,8 @@ export function BarcodeCell<T extends SampleRow>({
           className={cn(
             "w-full h-full px-2 py-1 text-sm text-left bg-white flex items-center justify-between",
             isEditable
-              ? "hover:bg-secondary cursor-pointer"
-              : "cursor-not-allowed opacity-70"
+              ? "hover:bg-stone-50 cursor-pointer"
+              : "cursor-not-allowed opacity-100"
           )}
         >
           <span className={value ? "font-mono text-xs" : "text-muted-foreground"}>

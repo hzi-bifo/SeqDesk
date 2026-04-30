@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { HelpBox } from "@/components/ui/help-box";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { toast } from "sonner";
 import {
@@ -24,6 +25,7 @@ import {
   ChevronUp,
   RefreshCw,
   ShieldCheck,
+  Server,
 } from "lucide-react";
 
 interface Submission {
@@ -73,6 +75,10 @@ export default function ENASettingsPage() {
   const [enaTestResult, setEnaTestResult] = useState<EnaTestResult | null>(null);
   const [loadedEnaUsername, setLoadedEnaUsername] = useState("");
   const [loadedEnaTestMode, setLoadedEnaTestMode] = useState(true);
+  const [enaBrokerAccount, setEnaBrokerAccount] = useState(false);
+  const [loadedEnaBrokerAccount, setLoadedEnaBrokerAccount] = useState(false);
+  const [enaCenterName, setEnaCenterName] = useState("");
+  const [loadedEnaCenterName, setLoadedEnaCenterName] = useState("");
 
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
@@ -83,10 +89,15 @@ export default function ENASettingsPage() {
   );
   const credentialsDirty =
     enaUsername.trim() !== loadedEnaUsername || Boolean(enaPassword.trim());
+  const brokerSettingsDirty =
+    enaBrokerAccount !== loadedEnaBrokerAccount ||
+    enaCenterName.trim() !== loadedEnaCenterName;
   const settingsDirty = credentialsDirty || enaTestMode !== loadedEnaTestMode;
+  const brokerConfigured = !enaBrokerAccount || Boolean(enaCenterName.trim());
   const canSave =
-    settingsDirty &&
+    (settingsDirty || brokerSettingsDirty) &&
     credentialsReady &&
+    brokerConfigured &&
     (!credentialsDirty || Boolean(enaTestResult?.success));
 
   const pendingOrPartialSubmissions = useMemo(
@@ -96,6 +107,64 @@ export default function ENASettingsPage() {
           submission.status === "PENDING" || submission.status === "PARTIAL"
       ).length,
     [submissions]
+  );
+  const failedSubmissions = useMemo(
+    () =>
+      submissions.filter(
+        (submission) =>
+          submission.status === "ERROR" || submission.status === "FAILED"
+      ).length,
+    [submissions]
+  );
+  const acceptedSubmissions = useMemo(
+    () => submissions.filter((submission) => submission.status === "ACCEPTED").length,
+    [submissions]
+  );
+  const enaReadinessItems = useMemo(
+    () => [
+      {
+        label: "Credentials",
+        state: credentialsReady ? "ok" : "warning",
+        detail: credentialsReady ? "Ready for connection test" : "Username and password required",
+      },
+      {
+        label: "Server",
+        state: enaTestMode ? "ok" : "warning",
+        detail: enaTestMode ? "Test server selected" : "Production is permanent",
+      },
+      {
+        label: "Account",
+        state: brokerConfigured ? "ok" : "warning",
+        detail: enaBrokerAccount
+          ? enaCenterName.trim()
+            ? `Broker center ${enaCenterName.trim()}`
+            : "Broker center missing"
+          : "Regular Webin account",
+      },
+      {
+        label: "Submissions",
+        state: failedSubmissions > 0 || pendingOrPartialSubmissions > 0 ? "warning" : "ok",
+        detail:
+          failedSubmissions > 0
+            ? `${failedSubmissions} failed`
+            : pendingOrPartialSubmissions > 0
+            ? `${pendingOrPartialSubmissions} pending or partial`
+            : submissions.length > 0
+            ? `${acceptedSubmissions} accepted`
+            : "No submissions yet",
+      },
+    ],
+    [
+      acceptedSubmissions,
+      brokerConfigured,
+      credentialsReady,
+      enaBrokerAccount,
+      enaCenterName,
+      enaTestMode,
+      failedSubmissions,
+      pendingOrPartialSubmissions,
+      submissions.length,
+    ]
   );
 
   const updateSubmissionServer = (useTestMode: boolean) => {
@@ -142,17 +211,25 @@ export default function ENASettingsPage() {
         enaUsername?: string;
         hasPassword?: boolean;
         enaTestMode?: boolean;
+        enaBrokerAccount?: boolean;
+        enaCenterName?: string;
         configured?: boolean;
       };
 
       const nextUsername = data.enaUsername || "";
       const nextTestMode = data.enaTestMode ?? true;
+      const nextBrokerAccount = data.enaBrokerAccount === true;
+      const nextCenterName = data.enaCenterName || "";
 
       setEnaUsername(nextUsername);
       setLoadedEnaUsername(nextUsername);
       setEnaHasPassword(Boolean(data.hasPassword));
       setEnaTestMode(nextTestMode);
       setLoadedEnaTestMode(nextTestMode);
+      setEnaBrokerAccount(nextBrokerAccount);
+      setLoadedEnaBrokerAccount(nextBrokerAccount);
+      setEnaCenterName(nextCenterName);
+      setLoadedEnaCenterName(nextCenterName);
       setEnaConfigured(Boolean(data.configured));
       setEnaPassword("");
       setEnaTestResult(null);
@@ -185,6 +262,8 @@ export default function ENASettingsPage() {
     if (!canSave) {
       if (credentialsDirty && !enaTestResult?.success) {
         toast.error("Test credentials before saving changes");
+      } else if (!brokerConfigured) {
+        toast.error("Enter a center name or disable broker account mode");
       } else {
         toast.error("No changes to save");
       }
@@ -198,6 +277,8 @@ export default function ENASettingsPage() {
       const updateData: Record<string, unknown> = {
         enaUsername: enaUsername.trim(),
         enaTestMode,
+        enaBrokerAccount,
+        enaCenterName: enaCenterName.trim(),
       };
 
       if (enaPassword.trim()) {
@@ -220,6 +301,8 @@ export default function ENASettingsPage() {
 
       setLoadedEnaUsername(enaUsername.trim());
       setLoadedEnaTestMode(enaTestMode);
+      setLoadedEnaBrokerAccount(enaBrokerAccount);
+      setLoadedEnaCenterName(enaCenterName.trim());
       setEnaHasPassword(Boolean(enaPassword.trim() || enaHasPassword));
       setEnaConfigured(Boolean(enaUsername.trim() && (enaPassword.trim() || enaHasPassword)));
       setEnaPassword("");
@@ -276,6 +359,11 @@ export default function ENASettingsPage() {
   };
 
   const handleClearEnaCredentials = async () => {
+    const confirmed = window.confirm(
+      "Clear the saved ENA Webin username and password?\n\nThis removes the stored credentials from this SeqDesk installation. Existing submissions are not deleted."
+    );
+    if (!confirmed) return;
+
     setSaving(true);
     try {
       const res = await fetch("/api/admin/settings/ena", {
@@ -285,6 +373,8 @@ export default function ENASettingsPage() {
           enaUsername: "",
           enaPassword: "",
           enaTestMode,
+          enaBrokerAccount,
+          enaCenterName: enaCenterName.trim(),
         }),
       });
 
@@ -328,6 +418,25 @@ export default function ENASettingsPage() {
         </p>
       </div>
 
+      <HelpBox title="What is an ENA account?">
+        <>
+          SeqDesk uses an ENA Webin account to register studies and samples with
+          the European Nucleotide Archive. A regular account submits data under
+          the affiliation stored in that Webin account.
+          <br />
+          <br />
+          A broker account is for submitting on behalf of other people or
+          institutes, for example a sequencing facility handling customer studies.
+          Broker accounts can set a per-submission center name, which SeqDesk
+          writes as <code className="font-mono">center_name</code> in the ENA XML.
+          <br />
+          <br />
+          Use broker mode only if ENA has granted broker permissions to the Webin
+          account. Otherwise keep regular mode and manage the affiliation in the
+          Webin portal.
+        </>
+      </HelpBox>
+
       <div className="sticky top-16 z-30 mb-6">
         <div className="rounded-lg border border-border bg-background/95 backdrop-blur px-3 py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
@@ -341,7 +450,12 @@ export default function ENASettingsPage() {
                 {enaConfigured ? "Credentials configured" : "Credentials missing"} •{" "}
                 {enaTestMode ? "Test server" : "Production server"} •{" "}
                 {pendingOrPartialSubmissions} pending/partial submission
-                {pendingOrPartialSubmissions === 1 ? "" : "s"}
+                {pendingOrPartialSubmissions === 1 ? "" : "s"} •{" "}
+                {enaBrokerAccount
+                  ? enaCenterName.trim()
+                    ? `Broker center: ${enaCenterName.trim()}`
+                    : "Broker center missing"
+                  : "Regular Webin account"}
               </>
             )}
           </p>
@@ -365,6 +479,51 @@ export default function ENASettingsPage() {
       </div>
 
       <div className="space-y-6">
+        <section className="bg-card rounded-xl border border-border overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold">Upload Readiness</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Checks that affect ENA registration before users submit studies
+              </p>
+            </div>
+            <Badge
+              variant={
+                enaReadinessItems.some((item) => item.state === "warning")
+                  ? "secondary"
+                  : "outline"
+              }
+              className="w-fit"
+            >
+              {enaReadinessItems.some((item) => item.state === "warning")
+                ? "Review before upload"
+                : "Ready"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            {enaReadinessItems.map((item) => (
+              <div
+                key={item.label}
+                className={`rounded-lg border px-3 py-3 ${
+                  item.state === "ok"
+                    ? "border-emerald-200 bg-emerald-50"
+                    : "border-amber-200 bg-amber-50"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{item.label}</p>
+                  {item.state === "ok" ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 text-amber-700" />
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <GlassCard className="p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
@@ -383,8 +542,16 @@ export default function ENASettingsPage() {
 
           <div className="border-t pt-4 space-y-6">
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              ENA (European Nucleotide Archive) provides permanent accession
-              identifiers for studies and samples.
+              <div className="flex items-start gap-2">
+                <Server className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium">ENA registrations create archive records.</p>
+                  <p className="mt-1">
+                    Use the test server for dry runs. Production registrations are permanent
+                    and should only be used after metadata has been checked.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -506,6 +673,61 @@ export default function ENASettingsPage() {
               </div>
             </div>
 
+            <div className="space-y-3 rounded-lg border bg-white px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <Label className="text-sm font-medium">Broker account</Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Enable this only for Webin accounts with ENA broker permissions.
+                    Broker submissions can set <code className="font-mono">center_name</code>{" "}
+                    per study and sample.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {enaBrokerAccount ? "Broker" : "Regular"}
+                  </span>
+                  <Switch
+                    checked={enaBrokerAccount}
+                    onCheckedChange={(checked) => {
+                      setEnaBrokerAccount(checked);
+                      setEnaSaved(false);
+                    }}
+                    disabled={saving}
+                    aria-label="Enable ENA broker account mode"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ena-center-name">Center name</Label>
+                <Input
+                  id="ena-center-name"
+                  value={enaCenterName}
+                  onChange={(event) => {
+                    setEnaCenterName(event.target.value);
+                    setEnaSaved(false);
+                  }}
+                  placeholder="e.g. HZI-BIFO"
+                  disabled={saving || !enaBrokerAccount}
+                  className="bg-white"
+                />
+                <p className="text-xs text-muted-foreground">
+                  For regular accounts, ENA uses the affiliation on the Webin account.
+                  For broker accounts, this value is written as{" "}
+                  <code className="font-mono">center_name</code> in submitted XML.
+                  Center names are free text on the ENA side.
+                </p>
+              </div>
+
+              {enaBrokerAccount && !enaCenterName.trim() && (
+                <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Enter the broker center name before saving.
+                </div>
+              )}
+            </div>
+
             {enaTestResult && (
               <div
                 className={`rounded-lg border px-3 py-2 text-sm flex items-start gap-2 ${
@@ -579,6 +801,11 @@ export default function ENASettingsPage() {
                 Test the connection after changing username/password.
               </p>
             )}
+            {brokerSettingsDirty && !credentialsDirty && (
+              <p className="text-xs text-muted-foreground">
+                Broker settings can be saved without re-testing credentials.
+              </p>
+            )}
           </div>
         </GlassCard>
 
@@ -593,7 +820,20 @@ export default function ENASettingsPage() {
                 Latest ENA submissions and responses
               </p>
             </div>
-            <Badge variant="outline">{submissions.length}</Badge>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {failedSubmissions > 0 && (
+                <Badge variant="destructive">{failedSubmissions} failed</Badge>
+              )}
+              {pendingOrPartialSubmissions > 0 && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-50 text-amber-800"
+                >
+                  {pendingOrPartialSubmissions} pending/partial
+                </Badge>
+              )}
+              <Badge variant="outline">{submissions.length} total</Badge>
+            </div>
           </div>
 
           {loadingSubmissions ? (
@@ -606,6 +846,27 @@ export default function ENASettingsPage() {
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="grid gap-2 text-sm sm:grid-cols-3">
+                <div className="rounded-lg border bg-white px-3 py-2">
+                  <p className="text-xs text-muted-foreground">Accepted</p>
+                  <p className="font-medium">{acceptedSubmissions}</p>
+                </div>
+                <div className="rounded-lg border bg-white px-3 py-2">
+                  <p className="text-xs text-muted-foreground">Pending or partial</p>
+                  <p className="font-medium">{pendingOrPartialSubmissions}</p>
+                </div>
+                <div className="rounded-lg border bg-white px-3 py-2">
+                  <p className="text-xs text-muted-foreground">Failed</p>
+                  <p className="font-medium">{failedSubmissions}</p>
+                </div>
+              </div>
+
+              {submissions.length > 10 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing the latest 10 submissions.
+                </p>
+              )}
+
               {submissions.slice(0, 10).map((submission) => {
                 const response = parseJsonSafe<Record<string, unknown>>(
                   submission.response
@@ -626,6 +887,8 @@ export default function ENASettingsPage() {
                   typeof response?.samplesError === "string"
                     ? response.samplesError
                     : null;
+                const responseError =
+                  typeof response?.error === "string" ? response.error : null;
 
                 return (
                   <div key={submission.id} className="border rounded-lg overflow-hidden">
@@ -703,6 +966,17 @@ export default function ENASettingsPage() {
                               Message
                             </p>
                             <p className="text-sm">{responseMessage}</p>
+                          </div>
+                        )}
+
+                        {responseError && (
+                          <div>
+                            <p className="text-xs font-medium text-red-700 mb-1">
+                              Error
+                            </p>
+                            <div className="text-xs text-red-800 bg-red-50 border border-red-200 rounded p-2">
+                              {responseError}
+                            </div>
                           </div>
                         )}
 

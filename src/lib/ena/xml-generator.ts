@@ -62,9 +62,13 @@ function toEnaFieldName(fieldName: string): string {
  * Generate Study/Project XML for ENA submission
  */
 export function generateStudyXml(study: StudyData): string {
+  const centerNameAttribute = study.centerName?.trim()
+    ? ` center_name="${escapeXml(study.centerName.trim())}"`
+    : "";
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <PROJECT_SET>
-  <PROJECT alias="${escapeXml(study.alias)}">
+  <PROJECT alias="${escapeXml(study.alias)}"${centerNameAttribute}>
     <TITLE>${escapeXml(study.title)}</TITLE>
     <DESCRIPTION>${escapeXml(study.description)}</DESCRIPTION>
     <SUBMISSION_PROJECT>
@@ -79,6 +83,10 @@ export function generateStudyXml(study: StudyData): string {
  */
 export function generateSampleXml(samples: SampleData[]): string {
   const sampleElements = samples.map((sample) => {
+    const centerNameAttribute = sample.centerName?.trim()
+      ? ` center_name="${escapeXml(sample.centerName.trim())}"`
+      : "";
+
     // Generate sample attributes
     const attributeElements: string[] = [];
 
@@ -111,7 +119,7 @@ ${attributeElements.join("\n")}
     </SAMPLE_ATTRIBUTES>`
         : "";
 
-    return `  <SAMPLE alias="${escapeXml(sample.alias)}">
+    return `  <SAMPLE alias="${escapeXml(sample.alias)}"${centerNameAttribute}>
     <TITLE>${escapeXml(sample.title)}</TITLE>
     <SAMPLE_NAME>
       <TAXON_ID>${escapeXml(sample.taxId)}</TAXON_ID>${

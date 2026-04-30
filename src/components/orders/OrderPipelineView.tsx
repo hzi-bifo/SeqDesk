@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HelpBox } from "@/components/ui/help-box";
+import { PageNotice } from "@/components/ui/page-notice";
 import {
   Collapsible,
   CollapsibleContent,
@@ -26,6 +28,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   getSampleResultPreview,
@@ -46,7 +53,7 @@ import {
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
-import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
+import { getOrderPipelineSampleReadiness } from "@/lib/pipelines/order-pipeline-readiness";
 import {
   normalizeSimulateReadsConfig,
   SIMULATE_READS_ADVANCED_FIELDS,
@@ -211,6 +218,136 @@ function getUserDisplay(run: PipelineRun): string {
   if (!run.user) return "-";
   const name = [run.user.firstName, run.user.lastName].filter(Boolean).join(" ");
   return name || run.user.email;
+}
+
+function getReadinessProblemText(reason?: string): string {
+  switch (reason) {
+    case "Files missing":
+      return "Files missing from disk. Re-associate existing files or regenerate the reads before running this pipeline.";
+    case "Missing reads":
+      return "No read files are linked to this sample. Associate FASTQ files before running this pipeline.";
+    case "Missing R2 file":
+      return "This pipeline requires paired reads, but the R2 file is missing.";
+    case "Pipeline not loaded":
+      return "Pipeline metadata is still loading.";
+    default:
+      return reason || "This sample is not ready for this pipeline.";
+  }
+}
+
+function getOrderPipelineHelpText(pipeline: AdminPipeline): string {
+  if (pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID) {
+    return "Simulate Reads generates test FASTQ files and links them back to the order samples. Use it to verify the SeqDesk to pipeline to sequencing-data flow without real sequencer output; real production reads should normally be linked from Associate.";
+  }
+
+  if (pipeline.pipelineId === "fastq-checksum") {
+    return "FASTQ Checksum computes hashes for the linked read files and writes them back to each sample. Samples are ready when their required FASTQ files are linked and still present on disk.";
+  }
+
+  if (pipeline.pipelineId === "fastqc") {
+    return "FastQC runs quality control on linked FASTQ files and writes report links and quality summaries back to each sample. Samples are ready when their required FASTQ files are linked and still present on disk.";
+  }
+
+  if (pipeline.input.perSample.reads) {
+    return "This order pipeline runs on linked sequencing reads. Samples become ready when the required input files are associated with the sample and available on disk.";
+  }
+
+  return "This order pipeline runs against the samples in this order and writes results back into SeqDesk when the run completes.";
+}
+
+function getSampleRunActionCopy({
+  pipeline,
+  sampleLabel,
+  isDemo,
+  systemBlocked,
+  systemSummary,
+}: {
+  pipeline: AdminPipeline;
+  sampleLabel: string;
+  isDemo?: boolean;
+  systemBlocked?: boolean;
+  systemSummary?: string | null;
+}): { title: string; description: string } {
+  if (isDemo) {
+    return {
+      title: "Execution disabled in demo mode",
+      description: "This would start a real local pipeline run. Demo workspaces keep pipeline execution view-only.",
+    };
+  }
+
+  if (systemBlocked) {
+    return {
+      title: "Pipeline cannot start yet",
+      description: systemSummary || "One or more required runtime settings are missing. Check the environment status before starting this pipeline.",
+    };
+  }
+
+  if (pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID) {
+    return {
+      title: "Generate simulated reads",
+      description: `Starts ${pipeline.name} for ${sampleLabel}. It creates test FASTQ files using the settings above and links the generated files back to this sample as sequencing data.`,
+    };
+  }
+
+  if (pipeline.pipelineId === "fastq-checksum") {
+    return {
+      title: "Compute FASTQ checksums",
+      description: `Starts ${pipeline.name} for ${sampleLabel}. It reads the linked FASTQ files, computes MD5 checksums, and writes checksum values back to this sample.`,
+    };
+  }
+
+  if (pipeline.pipelineId === "fastqc") {
+    return {
+      title: "Run FASTQ quality control",
+      description: `Starts ${pipeline.name} for ${sampleLabel}. It runs FastQC on the linked FASTQ files, stores the reports, and writes report links and QC summaries back to this sample.`,
+    };
+  }
+
+  if (pipeline.input.perSample.reads) {
+    return {
+      title: `Run ${pipeline.name}`,
+      description: `Starts this pipeline for ${sampleLabel}. It uses the sample's active linked FASTQ files and writes configured outputs back into SeqDesk when the run completes.`,
+    };
+  }
+
+  return {
+    title: `Run ${pipeline.name}`,
+    description: `Starts this pipeline for ${sampleLabel} and writes configured outputs back into SeqDesk when the run completes.`,
+  };
+}
+
+function getRunAllActionCopy({
+  pipeline,
+  readyCount,
+  isDemo,
+  systemBlocked,
+  systemSummary,
+}: {
+  pipeline: AdminPipeline;
+  readyCount: number;
+  isDemo?: boolean;
+  systemBlocked?: boolean;
+  systemSummary?: string | null;
+}): { title: string; description: string } {
+  if (readyCount === 0 && !systemBlocked && !isDemo) {
+    return {
+      title: "No ready samples",
+      description: "No samples currently meet this pipeline's input requirements.",
+    };
+  }
+
+  const base = getSampleRunActionCopy({
+    pipeline,
+    sampleLabel: `${readyCount} ready sample${readyCount === 1 ? "" : "s"}`,
+    isDemo,
+    systemBlocked,
+    systemSummary,
+  });
+
+  return {
+    title: `Run all ready samples`,
+    description: base.description,
+  };
 }
 
 interface OrderPipelineViewProps {
@@ -383,14 +520,7 @@ export function OrderPipelineView({
 
   const getSampleReadiness = useCallback(
     (sample: (typeof samples)[0]): { ready: boolean; reason?: string } => {
-      if (!pipeline) return { ready: false, reason: "Pipeline not loaded" };
-      if (pipeline.input.perSample.reads && !sample.read?.file1) {
-        return { ready: false, reason: "Missing reads" };
-      }
-      if (pipelineRequiresPairedReads(pipeline.input.perSample) && !sample.read?.file2) {
-        return { ready: false, reason: "Missing R2 file" };
-      }
-      return { ready: true };
+      return getOrderPipelineSampleReadiness({ pipeline, sample });
     },
     [pipeline]
   );
@@ -399,6 +529,11 @@ export function OrderPipelineView({
     () => samples.filter((s) => getSampleReadiness(s).ready),
     [samples, getSampleReadiness]
   );
+  const blockedSampleCount = Math.max(samples.length - readySamples.length, 0);
+  const activeRunCount =
+    (statusCounts.running ?? 0) + (statusCounts.queued ?? 0) + (statusCounts.pending ?? 0);
+  const completedRunCount = statusCounts.completed ?? 0;
+  const failedRunCount = statusCounts.failed ?? 0;
 
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
@@ -653,12 +788,19 @@ export function OrderPipelineView({
       ? sampleResultConfig.values.length
       : 1
     : 0;
-  const columnCount = 5 + sampleResultColumnCount; // #, Sample, Reads, Source, Action + sample-result columns
+  const columnCount = 3 + sampleResultColumnCount; // Action, Sample, Reads + sample-result columns
   const tableMinWidthClass = sampleResultConfig
     ? sampleResultLayout === "columns"
-      ? "min-w-[960px]"
-      : "min-w-[960px]"
-    : "min-w-[720px]";
+      ? "min-w-[1020px]"
+      : "min-w-[860px]"
+    : "min-w-[640px]";
+  const runAllActionCopy = getRunAllActionCopy({
+    pipeline,
+    readyCount: readySamples.length,
+    isDemo,
+    systemBlocked,
+    systemSummary: systemReady?.summary,
+  });
 
   const renderGenericSettings = () => {
     if (!pipeline?.configSchema?.properties) return null;
@@ -961,25 +1103,41 @@ export function OrderPipelineView({
               Demo mode — pipeline execution is view-only
             </Badge>
           ) : initialCheckPending ? (
-            <Button size="sm" disabled>
+            <Button size="sm" disabled className="h-9 w-40">
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               Checking env...
             </Button>
           ) : (
             <>
-              <Button
-                size="sm"
-                disabled={readySamples.length === 0 || runningAll || systemBlocked}
-                onClick={handleRunAllReady}
-                title={systemBlocked ? systemReady?.summary : undefined}
-              >
-                {runningAll ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Run All Ready ({readySamples.length})
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      size="sm"
+                      className="h-9 w-40"
+                      disabled={readySamples.length === 0 || runningAll || systemBlocked}
+                      onClick={handleRunAllReady}
+                      aria-label="Run all ready samples"
+                    >
+                      {runningAll ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="mr-1.5 h-3.5 w-3.5" />
+                      )}
+                      <span>Run All Ready</span>
+                      <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-white/25 bg-white/15 px-1.5 text-[11px] font-semibold tabular-nums text-current">
+                        {readySamples.length}
+                      </span>
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" sideOffset={8} className="max-w-xs text-left">
+                  <div className="space-y-1">
+                    <p className="font-medium">{runAllActionCopy.title}</p>
+                    <p>{runAllActionCopy.description}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
               {systemBlocked ? (
                 <Badge
                   variant="outline"
@@ -992,6 +1150,7 @@ export function OrderPipelineView({
               <Button
                 size="sm"
                 variant="outline"
+                className="h-9 w-40"
                 disabled={checkingSystem}
                 onClick={() => void refreshSystemReady()}
               >
@@ -1008,10 +1167,14 @@ export function OrderPipelineView({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <PageNotice variant="error" title="Pipeline action failed" className="rounded-xl border">
           {error}
-        </div>
+        </PageNotice>
       )}
+
+      <HelpBox title="What is this order pipeline?">
+        {getOrderPipelineHelpText(pipeline)}
+      </HelpBox>
 
       {/* Pipeline settings — hidden in demo mode */}
       {!isDemo && pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
@@ -1026,15 +1189,71 @@ export function OrderPipelineView({
       )}
 
       {/* Sample table */}
-      <div className="overflow-x-auto overflow-y-hidden rounded-xl border border-border bg-card">
-        <table className={cn("w-full text-sm", tableMinWidthClass)}>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-medium">Samples</h2>
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {samples.length}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Readiness is based on this pipeline&apos;s required inputs.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+              {readySamples.length} ready
+            </Badge>
+            {blockedSampleCount > 0 ? (
+              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                {blockedSampleCount} blocked
+              </Badge>
+            ) : null}
+            {activeRunCount > 0 ? (
+              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                {activeRunCount} active
+              </Badge>
+            ) : null}
+            {completedRunCount > 0 ? (
+              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                {completedRunCount} completed
+              </Badge>
+            ) : null}
+            {failedRunCount > 0 ? (
+              <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+                {failedRunCount} failed
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+        <div className="overflow-x-auto overflow-y-hidden">
+          <table className={cn("w-full table-fixed text-sm", tableMinWidthClass)}>
+          <colgroup>
+            <col className="w-[6.5rem]" />
+            <col className={sampleResultLayout === "columns" ? "w-[15rem]" : "w-[18rem]"} />
+            <col className="w-[12rem]" />
+            {sampleResultConfig
+              ? sampleResultLayout === "columns"
+                ? sampleResultConfig.values.map((descriptor, index) => (
+                    <col
+                      key={`${descriptor.path}-${index}`}
+                      className="w-[7.5rem]"
+                    />
+                  ))
+                : <col className="w-[17rem]" />
+              : null}
+          </colgroup>
           <thead>
             <tr className="border-b bg-secondary/30">
-              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">#</th>
-              <th className="min-w-[10rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                Action
+              </th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Sample
               </th>
-              <th className="min-w-[8rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Reads
               </th>
               {sampleResultConfig
@@ -1042,27 +1261,21 @@ export function OrderPipelineView({
                   ? sampleResultConfig.values.map((descriptor, index) => (
                       <th
                         key={`${descriptor.path}-${index}`}
-                        className="min-w-[6rem] px-4 py-2.5 text-left font-medium text-muted-foreground"
+                        className="px-4 py-2.5 text-left font-medium text-muted-foreground"
                       >
                         {descriptor.label ?? sampleResultConfig.columnLabel}
                       </th>
                     ))
                   : (
-                      <th className="min-w-[22rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                         {sampleResultConfig.columnLabel}
                       </th>
                     )
                 : null}
-              <th className="min-w-[8rem] px-4 py-2.5 text-left font-medium text-muted-foreground">
-                Source
-              </th>
-              <th className="min-w-[8rem] px-4 py-2.5 text-right font-medium text-muted-foreground">
-                Action
-              </th>
             </tr>
           </thead>
           <tbody>
-            {samples.map((sample, idx) => {
+            {samples.map((sample) => {
               const { ready, reason } = getSampleReadiness(sample);
               const isRunning = runningSampleIds.has(sample.id);
               const sampleResultPreview = getSampleResultPreview(
@@ -1070,26 +1283,178 @@ export function OrderPipelineView({
                 sampleResultConfig,
               );
               const hasSampleResultItems = !!sampleResultPreview && sampleResultPreview.items.length > 0;
+              const sourceRunId =
+                sample.read?.pipelineSources?.[pipelineId] ??
+                sample.read?.pipelineRunId ??
+                null;
+              const sourceRun = sourceRunId
+                ? allRuns.find((r) => r.id === sourceRunId)
+                : null;
+              const sourceLabel =
+                sourceRun?.runNumber ??
+                (sourceRunId ? sample.read?.pipelineRunNumber : null);
+              const sampleLabel = sample.sampleAlias
+                ? `${sample.sampleId} (${sample.sampleAlias})`
+                : sample.sampleId;
+              const sampleActionCopy = getSampleRunActionCopy({
+                pipeline,
+                sampleLabel,
+                isDemo,
+                systemBlocked,
+                systemSummary: systemReady?.summary,
+              });
 
               return (
                 <tr
                   key={sample.id}
                   className="border-b last:border-0 transition-colors hover:bg-secondary/20"
                 >
-                  <td className="px-4 py-3 text-muted-foreground tabular-nums">
-                    {idx + 1}
+                  <td className="px-4 py-3 align-middle">
+                    <div className="flex items-center gap-1.5">
+                      {sampleResultLayout === "columns" && hasSampleResultItems ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded p-0.5 text-muted-foreground/50 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                              aria-label={`Clear ${sampleResultConfig?.columnLabel ?? "result"} for ${sample.sampleId}`}
+                              onClick={() => void handleClearSampleResult(sample.id)}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
+                            <div className="space-y-1">
+                              <p className="font-medium">Clear displayed result</p>
+                              <p>
+                                Removes the values shown in the {sampleResultConfig?.columnLabel ?? "result"} columns for this sample.
+                                It does not delete FASTQ files or the completed pipeline run.
+                              </p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                      {initialCheckPending ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button size="sm" variant="outline" disabled className="h-9 px-2">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span className="sr-only">Checking pipeline environment</span>
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
+                            <div className="space-y-1">
+                              <p className="font-medium">Checking environment</p>
+                              <p>SeqDesk is checking whether the local pipeline runtime is configured before enabling sample runs.</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : isRunning ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button size="sm" variant="outline" disabled className="h-9 px-2">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span className="sr-only">Pipeline running</span>
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
+                            <div className="space-y-1">
+                              <p className="font-medium">Pipeline already running</p>
+                              <p>A run for {sampleLabel} is queued or running. Wait for it to complete before starting another run for this sample.</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : ready ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-9 px-3"
+                                disabled={systemBlocked || !!isDemo}
+                                onClick={() => void handleRunSingle(sample.id)}
+                                aria-label={`${sampleActionCopy.title} for ${sample.sampleId}`}
+                              >
+                                {systemBlocked ? (
+                                  <AlertCircle className="h-4 w-4" />
+                                ) : (
+                                  <Play className="h-4 w-4" />
+                                )}
+                                <span className="sr-only">
+                                  {systemBlocked ? "Blocked" : "Run"}
+                                </span>
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
+                            <div className="space-y-1">
+                              <p className="font-medium">{sampleActionCopy.title}</p>
+                              <p>{sampleActionCopy.description}</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-amber-100 px-2 text-xs font-semibold text-amber-700"
+                              aria-label={`Cannot run sample: ${reason ?? "not ready"}`}
+                            >
+                              !
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
+                            <div className="space-y-1">
+                              <p className="font-medium">Cannot run sample</p>
+                              <p>{getReadinessProblemText(reason)}</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{sample.sampleId}</div>
+                  <td className="px-4 py-3 align-middle">
+                    <div className="break-words font-medium">{sample.sampleId}</div>
                     {sample.sampleAlias && (
                       <div className="text-xs text-muted-foreground">
                         {sample.sampleAlias}
                       </div>
                     )}
+                    <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+                      <span className="shrink-0">Source</span>
+                      <button
+                        type="button"
+                        className={cn(
+                          "min-w-0 truncate text-left transition-colors hover:text-foreground hover:underline",
+                          sourceLabel && "font-mono"
+                        )}
+                        title={sourceLabel ?? undefined}
+                        onClick={() =>
+                          setChangeSourceSample({
+                            id: sample.id,
+                            sampleId: sample.sampleId,
+                            currentRunId: sourceRunId,
+                          })
+                        }
+                      >
+                        {sourceLabel
+                          ? sourceLabel
+                          : sample.read
+                            ? "Manual"
+                            : "Not linked"}
+                      </button>
+                    </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle">
                     {sample.read?.file1 ? (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50">
                           {sample.read.file2 ? "Paired-end" : "Single-end"}
                         </Badge>
@@ -1120,7 +1485,7 @@ export function OrderPipelineView({
                           return (
                             <td
                               key={`${sample.id}-${descriptor.path}-${index}`}
-                              className="min-w-[6rem] px-4 py-3 align-top"
+                              className="px-4 py-3 align-top"
                             >
                               {item ? (
                                 item.previewPath ? (
@@ -1162,14 +1527,14 @@ export function OrderPipelineView({
                           );
                         })
                       : (
-                          <td className="min-w-[22rem] px-4 py-3 align-top">
+                          <td className="px-4 py-3 align-top">
                             {hasSampleResultItems ? (
                               <div className="flex items-start gap-1.5">
-                                <div className="min-w-[20rem] space-y-1">
+                                <div className="min-w-0 space-y-1">
                                   {sampleResultPreview.items.map((item) => (
                                     <div
                                       key={`${item.label ?? "value"}-${item.value}`}
-                                      className="flex items-center gap-1 whitespace-nowrap text-xs"
+                                      className="flex min-w-0 items-center gap-1 text-xs"
                                     >
                                       {item.label ? (
                                         <span className="mr-1 shrink-0 text-muted-foreground">
@@ -1224,96 +1589,6 @@ export function OrderPipelineView({
                           </td>
                         )
                     : null}
-                  {(() => {
-                    // Per-pipeline source: check pipelineSources map first, fall back to pipelineRunId
-                    const sourceRunId =
-                      sample.read?.pipelineSources?.[pipelineId] ??
-                      sample.read?.pipelineRunId ??
-                      null;
-                    const sourceRun = sourceRunId
-                      ? allRuns.find((r) => r.id === sourceRunId)
-                      : null;
-                    const sourceLabel = sourceRun?.runNumber
-                      ?? (sourceRunId ? sample.read?.pipelineRunNumber : null);
-
-                    return (
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className={cn(
-                            "text-xs transition-colors hover:text-foreground hover:underline",
-                            sourceLabel
-                              ? "font-mono text-muted-foreground"
-                              : "text-muted-foreground"
-                          )}
-                          onClick={() =>
-                            setChangeSourceSample({
-                              id: sample.id,
-                              sampleId: sample.sampleId,
-                              currentRunId: sourceRunId,
-                            })
-                          }
-                        >
-                          {sourceLabel
-                            ? sourceLabel
-                            : sample.read
-                              ? "Manual"
-                              : "Not linked"}
-                        </button>
-                      </td>
-                    );
-                  })()}
-
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {sampleResultLayout === "columns" && hasSampleResultItems ? (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                          title="Clear result"
-                          onClick={() => void handleClearSampleResult(sample.id)}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      ) : null}
-                      {initialCheckPending ? (
-                        <Button size="sm" variant="outline" disabled>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Checking...
-                        </Button>
-                      ) : isRunning ? (
-                        <Button size="sm" variant="outline" disabled>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Running...
-                        </Button>
-                      ) : ready ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={systemBlocked || !!isDemo}
-                          onClick={() => void handleRunSingle(sample.id)}
-                          title={isDemo ? "Disabled in demo" : systemBlocked ? systemReady?.summary : undefined}
-                        >
-                          {systemBlocked ? (
-                            <>
-                              <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
-                              Blocked
-                            </>
-                          ) : (
-                            <>
-                              <Play className="mr-1.5 h-3.5 w-3.5" />
-                              Run
-                            </>
-                          )}
-                        </Button>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-amber-700">
-                          <AlertCircle className="h-3.5 w-3.5" />
-                          {reason}
-                        </span>
-                      )}
-                    </div>
-                  </td>
                 </tr>
               );
             })}
@@ -1329,6 +1604,7 @@ export function OrderPipelineView({
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Pipeline Runs table */}

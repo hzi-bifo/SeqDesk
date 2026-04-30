@@ -110,6 +110,8 @@ async function loadInstallerModule() {
 
 async function seedInstallDir(): Promise<void> {
   await fs.mkdir(path.join(tempDir, "public"), { recursive: true });
+  await fs.mkdir(path.join(tempDir, "pipelines", "metaxpath"), { recursive: true });
+  await fs.mkdir(path.join(tempDir, "scripts"), { recursive: true });
   await fs.writeFile(
     path.join(tempDir, "package.json"),
     JSON.stringify({ version: "1.1.80" }, null, 2),
@@ -130,6 +132,16 @@ async function seedInstallDir(): Promise<void> {
   );
   await fs.writeFile(path.join(tempDir, "server.js"), "console.log('old');\n", "utf8");
   await fs.writeFile(path.join(tempDir, "public", "old.txt"), "old\n", "utf8");
+  await fs.writeFile(
+    path.join(tempDir, "pipelines", "metaxpath", "manifest.json"),
+    JSON.stringify({ id: "metaxpath", source: "private-installed" }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(tempDir, "scripts", "apply-install-profile.mjs"),
+    "console.log('old profile applicator');\n",
+    "utf8"
+  );
 }
 
 async function copyDirectoryContents(sourceDir: string, targetDir: string): Promise<void> {
@@ -168,6 +180,8 @@ function configureInstallerShell(options: {
     if (extractMatch) {
       const extractDir = extractMatch[2];
       await fs.mkdir(path.join(extractDir, "public"), { recursive: true });
+      await fs.mkdir(path.join(extractDir, "pipelines", "fastqc"), { recursive: true });
+      await fs.mkdir(path.join(extractDir, "scripts"), { recursive: true });
       await fs.writeFile(
         path.join(extractDir, "package.json"),
         JSON.stringify({ version: extractedVersion }, null, 2),
@@ -188,6 +202,16 @@ function configureInstallerShell(options: {
       );
       await fs.writeFile(path.join(extractDir, "server.js"), "console.log('new');\n", "utf8");
       await fs.writeFile(path.join(extractDir, "public", "new.txt"), "new\n", "utf8");
+      await fs.writeFile(
+        path.join(extractDir, "pipelines", "fastqc", "manifest.json"),
+        JSON.stringify({ id: "fastqc", source: "public-release" }, null, 2),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(extractDir, "scripts", "apply-install-profile.mjs"),
+        "console.log('new profile applicator');\n",
+        "utf8"
+      );
       return { stdout: "" };
     }
 
@@ -309,6 +333,15 @@ describe("installer", () => {
     await expect(fs.readFile(path.join(tempDir, "public", "new.txt"), "utf8")).resolves.toBe(
       "new\n"
     );
+    await expect(
+      fs.readFile(path.join(tempDir, "pipelines", "metaxpath", "manifest.json"), "utf8")
+    ).resolves.toContain("private-installed");
+    await expect(
+      fs.readFile(path.join(tempDir, "pipelines", "fastqc", "manifest.json"), "utf8")
+    ).resolves.toContain("public-release");
+    await expect(
+      fs.readFile(path.join(tempDir, "scripts", "apply-install-profile.mjs"), "utf8")
+    ).resolves.toContain("new profile applicator");
     await expect(fs.access(path.join(tempDir, ".update-temp"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -399,6 +432,24 @@ describe("installer", () => {
         })
       )
     ).rejects.toThrow("Unsupported checksum algorithm: md5");
+  });
+
+  it("rejects unsafe release metadata before shell-backed install steps", async () => {
+    const mod = await loadInstallerModule();
+
+    await expect(
+      mod.installUpdate(createRelease({ version: "../1.2.0" }))
+    ).rejects.toThrow("Invalid release version");
+
+    await expect(
+      mod.installUpdate(createRelease({ downloadUrl: "file:///tmp/update.tar.gz" }))
+    ).rejects.toThrow("Unsupported download URL protocol: file:");
+
+    await expect(
+      mod.installUpdate(createRelease({ checksum: "sha256:not-a-real-sha" }))
+    ).rejects.toThrow("Invalid sha256 checksum");
+
+    expect(execMock).not.toHaveBeenCalled();
   });
 
   it("skips disk space check on non-unix platforms", async () => {

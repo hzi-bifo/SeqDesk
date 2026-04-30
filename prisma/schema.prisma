@@ -79,6 +79,7 @@ model Order {
   samples          Sample[]
   sequencingArtifacts SequencingArtifact[]
   sequencingUploads   SequencingUpload[]
+  sequencingRuns      SequencingRun[]
   pipelineRuns      PipelineRun[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
@@ -146,6 +147,7 @@ model Sample {
   preferredAssembly     Assembly?  @relation("PreferredAssembly", fields: [preferredAssemblyId], references: [id], onDelete: SetNull)
   bins                  Bin[]
   reads                 Read[]
+  sequencingRunSamples SequencingRunSample[]
   sequencingArtifacts   SequencingArtifact[]
   sequencingUploads     SequencingUpload[]
   study                 Study?     @relation(fields: [studyId], references: [id])
@@ -191,10 +193,33 @@ model SequencingRun {
   multiQcReport  String?
   demuxStats     String?
   runParameters  String?
+  orderId        String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  order          Order?    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   reads          Read[]
+  samples        SequencingRunSample[]
   sequencingArtifacts SequencingArtifact[]
+
+  @@index([orderId])
+  @@index([runDate])
+}
+
+model SequencingRunSample {
+  id               String        @id @default(cuid())
+  sequencingRunId  String
+  sampleId         String
+  barcode          String?
+  customFields     String?
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  sequencingRun    SequencingRun @relation(fields: [sequencingRunId], references: [id], onDelete: Cascade)
+  sample           Sample        @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  @@unique([sequencingRunId, sampleId])
+  @@unique([sequencingRunId, barcode])
+  @@index([sampleId])
 }
 
 model SequencingArtifact {

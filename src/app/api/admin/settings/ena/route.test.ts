@@ -51,6 +51,12 @@ describe("GET /api/admin/settings/ena", () => {
       enaUsername: "Webin-12345",
       enaPassword: "secret",
       enaTestMode: false,
+      extraSettings: JSON.stringify({
+        ena: {
+          brokerAccount: true,
+          centerName: "HZI-BIFO",
+        },
+      }),
     });
 
     const res = await GET();
@@ -60,6 +66,8 @@ describe("GET /api/admin/settings/ena", () => {
       enaUsername: "Webin-12345",
       hasPassword: true,
       enaTestMode: false,
+      enaBrokerAccount: true,
+      enaCenterName: "HZI-BIFO",
       configured: true,
     });
   });
@@ -74,6 +82,8 @@ describe("GET /api/admin/settings/ena", () => {
       enaUsername: "",
       hasPassword: false,
       enaTestMode: true,
+      enaBrokerAccount: false,
+      enaCenterName: "",
       configured: false,
     });
   });
@@ -129,6 +139,37 @@ describe("PUT /api/admin/settings/ena", () => {
           enaPassword: "newpass",
           enaTestMode: true,
         },
+      })
+    );
+  });
+
+  it("stores broker account metadata in extraSettings", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({ ena: { centerName: "OLD" } }),
+    });
+    const req = new NextRequest("http://localhost/api/admin/settings/ena", {
+      method: "PUT",
+      body: JSON.stringify({
+        enaUsername: "Webin-12345",
+        enaPassword: "newpass",
+        enaTestMode: true,
+        enaBrokerAccount: true,
+        enaCenterName: "HZI-BIFO",
+      }),
+    });
+    const res = await PUT(req);
+    expect(res.status).toBe(200);
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          extraSettings: JSON.stringify({
+            ena: {
+              centerName: "HZI-BIFO",
+              brokerAccount: true,
+            },
+          }),
+        }),
       })
     );
   });

@@ -189,7 +189,7 @@ export function OrganismCell<T extends SampleRow>({
 
   if (!isEditable) {
     return (
-      <div className="px-2 py-1 h-full flex items-center gap-2 bg-gray-50">
+      <div className="px-2 py-1 h-full flex items-center gap-2 bg-white">
         <span className="text-sm truncate">{scientificName || taxId || "-"}</span>
         {taxId && (
           <span className="text-[10px] font-mono text-muted-foreground">{taxId}</span>
@@ -296,7 +296,7 @@ export function OrganismCell<T extends SampleRow>({
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
           placeholder="e.g., human gut metagenome"
-          className="w-full h-full pl-7 pr-14 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-primary/50"
+          className="w-full h-full pl-7 pr-14 text-sm border-0 bg-white focus:outline-none focus:ring-1 focus:ring-primary/50"
         />
         {taxId && (
           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-muted-foreground bg-stone-100 px-1 rounded">

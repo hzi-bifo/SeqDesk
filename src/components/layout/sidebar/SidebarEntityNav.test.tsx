@@ -152,7 +152,8 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("Sequencing Data")).toBeTruthy();
     expect(screen.getByText("Analysis")).toBeTruthy();
     expect(screen.getByText("Samples")).toBeTruthy();
-    expect(screen.getByText("Details")).toBeTruthy();
+    const detailsLink = screen.getByRole("link", { name: /Details/i });
+    expect(detailsLink.getAttribute("href")).toBe("/orders/order-1/edit?step=details");
     expect(screen.getByText("Order Fields")).toBeTruthy();
     expect(screen.getByText("Sample Fields")).toBeTruthy();
     expect(screen.getByText("Associate")).toBeTruthy();
@@ -180,7 +181,8 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("Facility Fields")).toBeTruthy();
     expect(screen.getByText("Sequencing Data")).toBeTruthy();
     expect(screen.getByText("Samples")).toBeTruthy();
-    expect(screen.getByText("Overview A")).toBeTruthy();
+    const overviewSectionLink = screen.getByRole("link", { name: /Overview A/i });
+    expect(overviewSectionLink.getAttribute("href")).toBe("/studies/study-1/edit?section=overview-a");
     expect(screen.getByText("Facility B")).toBeTruthy();
     expect(screen.queryByText("Read Files")).toBeNull();
     expect(screen.queryByText("Analysis")).toBeNull();
@@ -256,10 +258,10 @@ describe("SidebarEntityNav", () => {
     );
   });
 
-  it("renders disabled order items when on an entity route without a selected entity", () => {
+  it("hides entity navigation on collection routes without a selected entity", () => {
     mocks.usePathname.mockReturnValue("/orders");
 
-    render(
+    const { container } = render(
       <SidebarEntityNav
         entityContext={{ entityType: null, entityId: null, entityData: null }}
         collapsed={false}
@@ -267,9 +269,6 @@ describe("SidebarEntityNav", () => {
       />
     );
 
-    expect(screen.getByText("Overview")).toBeTruthy();
-    expect(screen.getByText("Facility Fields")).toBeTruthy();
-    expect(screen.getByText("Sequencing Data")).toBeTruthy();
-    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    expect(container.firstChild).toBeNull();
   });
 });

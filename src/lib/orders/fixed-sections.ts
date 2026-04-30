@@ -1,6 +1,7 @@
 import {
   DEFAULT_GROUPS,
   type FormFieldDefinition,
+  type FieldType,
   type FormFieldGroup,
 } from "@/types/form-config";
 
@@ -32,6 +33,18 @@ const SEQUENCING_SYSTEM_KEYS = new Set([
   "libraryStrategy",
   "librarySource",
   "librarySelection",
+]);
+
+export const ORDER_ONLY_FIELD_TYPES = new Set<FieldType>([
+  "mixs",
+  "funding",
+  "billing",
+  "sequencing-tech",
+]);
+
+export const PER_SAMPLE_ONLY_FIELD_TYPES = new Set<FieldType>([
+  "organism",
+  "barcode",
 ]);
 
 export function getFixedOrderSections(): FormFieldGroup[] {
@@ -87,13 +100,21 @@ export function normalizeOrderFormFields(
   groups: FormFieldGroup[] = DEFAULT_GROUPS
 ): FormFieldDefinition[] {
   return fields.map((field) => {
-    const normalizedGroupId = normalizeOrderFieldSectionId(field, groups);
-    if (normalizedGroupId === field.groupId) {
-      return field;
+    const scopedField = {
+      ...field,
+      perSample: PER_SAMPLE_ONLY_FIELD_TYPES.has(field.type)
+        ? true
+        : ORDER_ONLY_FIELD_TYPES.has(field.type)
+          ? false
+          : field.perSample,
+    };
+    const normalizedGroupId = normalizeOrderFieldSectionId(scopedField, groups);
+    if (normalizedGroupId === scopedField.groupId) {
+      return scopedField;
     }
 
     return {
-      ...field,
+      ...scopedField,
       groupId: normalizedGroupId,
     };
   });

@@ -333,11 +333,11 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
               Data Upload
             </Link>
-            <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
-              Info
-            </Link>
             <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
               Pipelines
+            </Link>
+            <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
+              Info
             </Link>
           </div>
         </>

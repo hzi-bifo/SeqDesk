@@ -17,7 +17,7 @@ export function HelpBox({ title, children }: HelpBoxProps) {
   }
 
   return (
-    <div className="mb-6 p-4 rounded-xl bg-secondary border border-border relative">
+    <div className="mb-6 p-4 rounded-lg bg-secondary border border-border relative">
       <button
         onClick={hideHelpText}
         className="absolute top-2 right-2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"

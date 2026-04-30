@@ -22,6 +22,34 @@ class SubmissionInProgressError extends Error {
   }
 }
 
+function parseExtraSettings(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getEnaBrokerSettings(extraSettingsValue: string | null | undefined): {
+  brokerAccount: boolean;
+  centerName: string;
+} {
+  const extraSettings = parseExtraSettings(extraSettingsValue);
+  const ena =
+    extraSettings.ena && typeof extraSettings.ena === "object" && !Array.isArray(extraSettings.ena)
+      ? (extraSettings.ena as Record<string, unknown>)
+      : {};
+
+  return {
+    brokerAccount: ena.brokerAccount === true,
+    centerName: typeof ena.centerName === "string" ? ena.centerName.trim() : "",
+  };
+}
+
 // GET /api/admin/submissions - List all submissions
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -130,6 +158,7 @@ export async function POST(request: Request) {
         enaUsername: true,
         enaPassword: true,
         enaTestMode: true,
+        extraSettings: true,
       },
     });
 
@@ -145,6 +174,11 @@ export async function POST(request: Request) {
 
     // Respect the caller's explicit target selection when provided.
     const isTestServer = requestedIsTest ?? (settings?.enaTestMode !== false);
+    const brokerSettings = getEnaBrokerSettings(settings?.extraSettings);
+    const brokerCenterName =
+      brokerSettings.brokerAccount && brokerSettings.centerName
+        ? brokerSettings.centerName
+        : undefined;
 
     // Validate entity exists
     if (entityType === "study") {
@@ -267,6 +301,7 @@ export async function POST(request: Request) {
         alias: study.alias || study.id,
         title: study.title,
         description: study.description || "",
+        centerName: brokerCenterName,
       };
 
       // Parse study-level metadata (applies to all samples)
@@ -348,6 +383,7 @@ export async function POST(request: Request) {
           title: s.sampleTitle || s.sampleId,
           taxId: s.taxId || "",
           scientificName: s.scientificName || undefined,
+          centerName: brokerCenterName,
           checklistType: study.checklistType || undefined,
           attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
         };

@@ -14,6 +14,7 @@ import {
   getDatabaseCompatibilityError,
   loadInstalledDatabaseConfig,
 } from './database-config';
+import { sendTelemetryHeartbeat } from '@/lib/telemetry';
 
 // Read current version from package.json
 function readVersionFromPackageJson(): string {
@@ -41,6 +42,13 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
  * Check for updates
  */
 export async function checkForUpdates(force = false): Promise<UpdateCheckResult> {
+  return checkForUpdatesInternal(force);
+}
+
+export async function checkForUpdatesInternal(
+  force = false,
+  options: { telemetry?: boolean } = {}
+): Promise<UpdateCheckResult> {
   const currentVersion = getCurrentVersion();
   const installedDatabase = await loadInstalledDatabaseConfig();
 
@@ -85,6 +93,17 @@ export async function checkForUpdates(force = false): Promise<UpdateCheckResult>
       databaseCompatible: !databaseCompatibilityError,
       databaseCompatibilityError,
     };
+
+    if (options.telemetry !== false) {
+      const installedVersion = await getInstalledVersion();
+      await sendTelemetryHeartbeat({
+        runningVersion: currentVersion,
+        installedVersion,
+        updateAvailable: data.updateAvailable,
+        latestVersion: data.latest?.version ?? null,
+        databaseProvider: installedDatabase.provider,
+      }).catch(() => undefined);
+    }
 
     // Cache the result
     cachedResult = result;

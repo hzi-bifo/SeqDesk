@@ -38,6 +38,7 @@ export async function mergeWithDatabase(): Promise<ResolvedConfig> {
         testMode: siteSettings.enaTestMode ?? undefined,
         username: siteSettings.enaUsername || undefined,
         password: siteSettings.enaPassword || undefined,
+        brokerAccount: extraSettings.ena?.brokerAccount ?? undefined,
         centerName: extraSettings.ena?.centerName || undefined,
       },
       sequencingFiles: extraSettings.sequencingFiles || undefined,
@@ -215,7 +216,13 @@ export async function saveConfigToDatabase(
     };
   }
 
-  // ENA center name goes into extraSettings
+  // ENA broker settings go into extraSettings
+  if (updates.ena?.brokerAccount !== undefined) {
+    extraSettings.ena = {
+      ...extraSettings.ena,
+      brokerAccount: updates.ena.brokerAccount,
+    };
+  }
   if (updates.ena?.centerName !== undefined) {
     extraSettings.ena = {
       ...extraSettings.ena,

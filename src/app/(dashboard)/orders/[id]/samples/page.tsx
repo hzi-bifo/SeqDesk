@@ -51,7 +51,6 @@ import {
   Maximize2,
   Minimize2,
   PlusCircle,
-  X,
   Settings2,
   ChevronDown,
 } from "lucide-react";
@@ -60,6 +59,7 @@ import { FIELD_TO_COLUMN_MAP } from "@/lib/sample-fields";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { OrganismCell } from "@/lib/field-types/organism";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { PageNotice } from "@/components/ui/page-notice";
 import { toast } from "sonner";
 
 // Generate unique sample ID like v1: S-{timestamp}-{random}
@@ -141,8 +141,14 @@ const CORE_FIELD_METADATA: Record<string, FieldInfo> = {
 
 
 // Helper to navigate to adjacent cell
+const CELL_EDITOR_SELECTOR = "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])";
+
+function getCellEditor(cell: Element | null) {
+  return cell?.querySelector<HTMLElement>(CELL_EDITOR_SELECTOR) ?? null;
+}
+
 function navigateToCell(
-  currentInput: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement,
+  currentInput: HTMLElement,
   direction: 'up' | 'down' | 'left' | 'right'
 ) {
   const currentCell = currentInput.closest('td');
@@ -151,36 +157,37 @@ function navigateToCell(
   const currentRow = currentCell.closest('tr');
   if (!currentRow) return;
 
+  const tbody = currentRow.closest('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const rowIndex = rows.indexOf(currentRow);
   const cells = Array.from(currentRow.querySelectorAll('td'));
   const cellIndex = cells.indexOf(currentCell);
 
-  let targetCell: Element | null = null;
+  let targetInput: HTMLElement | null = null;
 
-  if (direction === 'left' && cellIndex > 0) {
-    targetCell = cells[cellIndex - 1];
-  } else if (direction === 'right' && cellIndex < cells.length - 1) {
-    targetCell = cells[cellIndex + 1];
-  } else if (direction === 'up') {
-    const prevRow = currentRow.previousElementSibling;
-    if (prevRow) {
-      const prevCells = prevRow.querySelectorAll('td');
-      targetCell = prevCells[cellIndex] || null;
+  if (direction === 'left' || direction === 'right') {
+    const allCells = rows.flatMap((row) => Array.from(row.querySelectorAll('td')));
+    const currentIndex = allCells.indexOf(currentCell);
+    const step = direction === 'right' ? 1 : -1;
+    for (let index = currentIndex + step; index >= 0 && index < allCells.length; index += step) {
+      targetInput = getCellEditor(allCells[index]);
+      if (targetInput) break;
     }
-  } else if (direction === 'down') {
-    const nextRow = currentRow.nextElementSibling;
-    if (nextRow) {
-      const nextCells = nextRow.querySelectorAll('td');
-      targetCell = nextCells[cellIndex] || null;
+  } else {
+    const step = direction === 'down' ? 1 : -1;
+    for (let index = rowIndex + step; index >= 0 && index < rows.length; index += step) {
+      const rowCells = Array.from(rows[index].querySelectorAll('td'));
+      targetInput = getCellEditor(rowCells[cellIndex]) || rowCells.map(getCellEditor).find(Boolean) || null;
+      if (targetInput) break;
     }
   }
 
-  if (targetCell) {
-    const input = targetCell.querySelector('input, select, textarea, button') as HTMLElement;
-    if (input) {
-      input.focus();
-      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-        input.select();
-      }
+  if (targetInput) {
+    targetInput.focus();
+    if (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLTextAreaElement) {
+      targetInput.select();
     }
   }
 }
@@ -244,8 +251,9 @@ function EditableCell({
       onBlur();
       navigateToCell(e.currentTarget, 'right');
     } else if (e.key === "Tab") {
+      e.preventDefault();
       onBlur();
-      // Let default Tab behavior work
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
     } else if (e.key === "Escape") {
       setValue(initialValue ?? "");
       e.currentTarget.blur();
@@ -350,13 +358,24 @@ function SelectCell({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
       e.preventDefault();
       navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
     } else if (e.key === "Escape") {
       e.currentTarget.blur();
     }
-    // Note: Arrow up/down are used by select to change value, so we don't override them
   };
 
   return (
@@ -428,12 +447,32 @@ function CheckboxCell({
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   return (
     <div className="relative flex items-center justify-center h-full">
       <input
         type="checkbox"
         checked={checked}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         disabled={isReadOnly}
         className={`h-4 w-4 rounded border-input ${isReadOnly ? "cursor-not-allowed opacity-70" : ""}`}
       />
@@ -489,12 +528,32 @@ function MultiSelectCell({
     table.options.meta?.updateData(row.index, column.id, selected);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   return (
     <div className="relative flex items-center h-full">
       <select
         multiple
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         disabled={isReadOnly}
         className={`w-full h-full px-2 py-1 pr-6 border-0 outline-none bg-transparent focus:bg-blue-50 ${
           isRequired && !hasValue ? "bg-amber-50/50" : ""
@@ -1475,29 +1534,31 @@ export default function SamplesPage({
 
       {/* Alerts */}
       {(error || success || !isEditable) && (
-        <div className={`${isFullscreen ? "px-4" : "px-8"} pt-4 space-y-2`}>
+        <div className="shrink-0">
           {error && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2 text-sm">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <PageNotice
+              variant="error"
+              title="Sample update failed"
+              onDismiss={() => setError("")}
+              className={isFullscreen ? "px-4" : "px-8"}
+            >
               {error}
-              <button onClick={() => setError("")} className="ml-auto">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            </PageNotice>
           )}
           {success && (
-            <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 flex items-center gap-2 text-sm">
-              <Check className="h-4 w-4 flex-shrink-0" />
+            <PageNotice
+              variant="success"
+              title="Samples saved"
+              onDismiss={() => setSuccess("")}
+              className={isFullscreen ? "px-4" : "px-8"}
+            >
               {success}
-              <button onClick={() => setSuccess("")} className="ml-auto">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            </PageNotice>
           )}
           {!isEditable && (
-            <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-700 text-sm">
-              This order has been submitted and samples cannot be edited.
-            </div>
+            <PageNotice variant="warning" title="Read-only samples" className={isFullscreen ? "px-4" : "px-8"}>
+              This order has been submitted. Sample rows cannot be edited from this view.
+            </PageNotice>
           )}
         </div>
       )}

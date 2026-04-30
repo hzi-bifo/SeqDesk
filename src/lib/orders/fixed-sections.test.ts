@@ -112,4 +112,64 @@ describe("fixed order sections", () => {
       ORDER_DETAILS_SECTION_ID,
     ]);
   });
+
+  it("normalizes special field types to the scope rendered by the order wizard", () => {
+    const fields: FormFieldDefinition[] = [
+      {
+        id: "field_organism",
+        type: "organism",
+        label: "Organism",
+        name: "_organism",
+        required: true,
+        visible: true,
+        order: 0,
+        perSample: false,
+      },
+      {
+        id: "field_barcode",
+        type: "barcode",
+        label: "Barcode",
+        name: "_barcode",
+        required: false,
+        visible: true,
+        order: 1,
+        perSample: false,
+      },
+      {
+        id: "field_funding",
+        type: "funding",
+        label: "Funding",
+        name: "_funding",
+        required: false,
+        visible: true,
+        order: 2,
+        perSample: true,
+      },
+      {
+        id: "field_seqtech",
+        type: "sequencing-tech",
+        label: "Sequencing Technology",
+        name: "_sequencing_tech",
+        required: false,
+        visible: true,
+        order: 3,
+        perSample: true,
+      },
+    ];
+
+    const normalized = normalizeOrderFormSchema({ fields });
+
+    expect(
+      normalized.fields.find((field) => field.id === "field_organism")?.perSample
+    ).toBe(true);
+    expect(
+      normalized.fields.find((field) => field.id === "field_barcode")?.perSample
+    ).toBe(true);
+    expect(
+      normalized.fields.find((field) => field.id === "field_funding")?.perSample
+    ).toBe(false);
+    expect(
+      normalized.fields.find((field) => field.id === "field_seqtech")?.perSample
+    ).toBe(false);
+  });
 });

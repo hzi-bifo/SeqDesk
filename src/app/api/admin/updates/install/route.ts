@@ -42,6 +42,14 @@ export async function POST() {
     // Check for updates first
     const result = await checkForUpdates(true);
 
+    if (result.error) {
+      await releaseUpdateLock();
+      return NextResponse.json(
+        { error: result.error },
+        { status: 502 }
+      );
+    }
+
     if (!result.updateAvailable || !result.latest) {
       await releaseUpdateLock();
       return NextResponse.json({

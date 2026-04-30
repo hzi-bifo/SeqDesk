@@ -234,6 +234,12 @@ describe("POST /api/admin/submissions", () => {
       enaUsername: "user",
       enaPassword: "pass",
       enaTestMode: true,
+      extraSettings: JSON.stringify({
+        ena: {
+          brokerAccount: true,
+          centerName: "HZI-BIFO",
+        },
+      }),
     });
     mocks.db.study.findUnique.mockResolvedValue(null);
 
@@ -255,6 +261,12 @@ describe("POST /api/admin/submissions", () => {
       enaUsername: "user",
       enaPassword: "pass",
       enaTestMode: true,
+      extraSettings: JSON.stringify({
+        ena: {
+          brokerAccount: true,
+          centerName: "HZI-BIFO",
+        },
+      }),
     });
     mocks.db.study.findUnique.mockResolvedValue({
       id: "s1",
@@ -283,6 +295,12 @@ describe("POST /api/admin/submissions", () => {
       enaUsername: "user",
       enaPassword: "pass",
       enaTestMode: true,
+      extraSettings: JSON.stringify({
+        ena: {
+          brokerAccount: true,
+          centerName: "HZI-BIFO",
+        },
+      }),
     });
     mocks.db.study.findUnique.mockResolvedValue({
       id: "s1",
@@ -341,11 +359,11 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(200);
     expect(mocks.submitStudyToENA).toHaveBeenCalledWith(
       expect.objectContaining({ testMode: false }),
-      expect.any(Object)
+      expect.objectContaining({ centerName: "HZI-BIFO" })
     );
     expect(mocks.submitSamplesToENA).toHaveBeenCalledWith(
       expect.objectContaining({ testMode: false }),
-      expect.any(Array)
+      [expect.objectContaining({ centerName: "HZI-BIFO" })]
     );
   });
 

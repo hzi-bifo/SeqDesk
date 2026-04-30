@@ -13,6 +13,7 @@ import {
   RowData,
 } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
+import { StepProgressNav } from "@/components/ui/step-progress-nav";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -77,34 +78,48 @@ type StudyColumnMeta = {
   isMixsField?: boolean;
 };
 
-// Helper to navigate cells
-function navigateToCell(currentInput: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, direction: 'up' | 'down' | 'left' | 'right') {
+const CELL_EDITOR_SELECTOR = "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])";
+
+function getCellEditor(cell: Element | null) {
+  return cell?.querySelector<HTMLElement>(CELL_EDITOR_SELECTOR) ?? null;
+}
+
+// Helper to navigate editable cells
+function navigateToCell(currentInput: HTMLElement, direction: 'up' | 'down' | 'left' | 'right') {
   const currentCell = currentInput.closest('td');
   if (!currentCell) return;
   const currentRow = currentCell.closest('tr');
   if (!currentRow) return;
+  const tbody = currentRow.closest('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const rowIndex = rows.indexOf(currentRow);
   const cells = Array.from(currentRow.querySelectorAll('td'));
   const cellIndex = cells.indexOf(currentCell);
-  let targetCell: Element | null = null;
 
-  if (direction === 'left' && cellIndex > 0) {
-    targetCell = cells[cellIndex - 1];
-  } else if (direction === 'right' && cellIndex < cells.length - 1) {
-    targetCell = cells[cellIndex + 1];
-  } else if (direction === 'up') {
-    const prevRow = currentRow.previousElementSibling;
-    if (prevRow) targetCell = prevRow.querySelectorAll('td')[cellIndex] || null;
-  } else if (direction === 'down') {
-    const nextRow = currentRow.nextElementSibling;
-    if (nextRow) targetCell = nextRow.querySelectorAll('td')[cellIndex] || null;
+  let targetInput: HTMLElement | null = null;
+
+  if (direction === 'left' || direction === 'right') {
+    const allCells = rows.flatMap((row) => Array.from(row.querySelectorAll('td')));
+    const currentIndex = allCells.indexOf(currentCell);
+    const step = direction === 'right' ? 1 : -1;
+    for (let index = currentIndex + step; index >= 0 && index < allCells.length; index += step) {
+      targetInput = getCellEditor(allCells[index]);
+      if (targetInput) break;
+    }
+  } else {
+    const step = direction === 'down' ? 1 : -1;
+    for (let index = rowIndex + step; index >= 0 && index < rows.length; index += step) {
+      const rowCells = Array.from(rows[index].querySelectorAll('td'));
+      targetInput = getCellEditor(rowCells[cellIndex]) || rowCells.map(getCellEditor).find(Boolean) || null;
+      if (targetInput) break;
+    }
   }
 
-  if (targetCell) {
-    const input = targetCell.querySelector('input, select, textarea, button') as HTMLElement;
-    if (input) {
-      input.focus();
-      if (input instanceof HTMLInputElement) input.select();
-    }
+  if (targetInput) {
+    targetInput.focus();
+    if (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLTextAreaElement) targetInput.select();
   }
 }
 
@@ -290,7 +305,9 @@ const EditableCell = React.memo(function EditableCell({
       onBlur();
       navigateToCell(e.currentTarget, 'up');
     } else if (e.key === "Tab") {
+      e.preventDefault();
       onBlur();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
     } else if (e.key === "Escape") {
       setValue(initialValue ?? "");
       e.currentTarget.blur();
@@ -491,6 +508,25 @@ const CheckboxCell = React.memo(function CheckboxCell({
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   return (
     <div className="flex items-center justify-center h-full">
       <input
@@ -498,6 +534,7 @@ const CheckboxCell = React.memo(function CheckboxCell({
         checked={checked}
         onChange={onChange}
         onFocus={onFocus}
+        onKeyDown={onKeyDown}
         disabled={!isEditable}
         className={cn(
           "h-4 w-4 rounded border-input",
@@ -551,6 +588,25 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
     table.options.meta?.updateData(row.index, column.id, selected);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key === "Enter" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'down');
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'up');
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'left');
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, 'right');
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      navigateToCell(e.currentTarget, e.shiftKey ? 'left' : 'right');
+    }
+  };
+
   if (options.length === 0) {
     return (
       <div className="w-full h-full px-2 py-1.5 text-sm text-amber-600 bg-amber-50">
@@ -565,6 +621,7 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
       value={value}
       onChange={handleChange}
       onFocus={onFocus}
+      onKeyDown={onKeyDown}
       disabled={!isEditable}
       className={cn(
         "w-full h-full px-2 py-1 text-sm bg-white border-0 outline-none",
@@ -692,7 +749,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   const searchParams = useSearchParams();
   const requestedSection = searchParams.get("section");
   const [currentStep, setCurrentStep] = useState(0);
-  const [initialSectionApplied, setInitialSectionApplied] = useState(false);
+  const lastAppliedSectionRef = useRef<string | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [checklistType, setChecklistType] = useState("");
@@ -1107,13 +1164,20 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   // Navigate to the requested section from sidebar (e.g. ?section=details)
   useEffect(() => {
-    if (initialSectionApplied || !requestedSection || STEPS.length === 0) return;
+    if (
+      !requestedSection ||
+      STEPS.length === 0 ||
+      lastAppliedSectionRef.current === requestedSection
+    ) {
+      return;
+    }
+
     const idx = STEPS.findIndex((s) => s.id === requestedSection);
     if (idx >= 0) {
       setCurrentStep(idx);
+      lastAppliedSectionRef.current = requestedSection;
     }
-    setInitialSectionApplied(true);
-  }, [requestedSection, STEPS, initialSectionApplied]);
+  }, [requestedSection, STEPS]);
 
   const isMetadataStepActive = STEPS[currentStep]?.id === "metadata";
 
@@ -1364,7 +1428,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         header: () => <span className="text-muted-foreground">Sample ID</span>,
         size: 160,
         cell: ({ getValue }) => (
-          <div className="px-2 py-1 h-full bg-muted/50 text-muted-foreground font-mono text-xs">
+          <div className="h-full bg-stone-50/80 px-2 py-1 font-mono text-xs text-muted-foreground">
             {getValue() as string}
           </div>
         ),
@@ -1633,7 +1697,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             onFocus={() => setFocusedField(field)}
             disabled={isLoading}
             className={cn(
-              "h-10 w-full rounded-md border border-input bg-background px-3 text-sm",
+              "h-10 w-full rounded-md border border-input bg-white px-3 text-sm",
               error && "input-error"
             )}
           >
@@ -1670,7 +1734,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             onFocus={() => setFocusedField(field)}
             disabled={isLoading}
             className={cn(
-              "min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+              "min-h-[88px] w-full rounded-md border border-input bg-white px-3 py-2 text-sm",
               error && "input-error"
             )}
           >
@@ -1733,12 +1797,12 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <p className="min-w-0 flex-1 text-sm text-muted-foreground">
             Add your sample metadata below. Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
             <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd>, or arrow keys to navigate.
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <ExcelToolbar
               perSampleFields={allPerSampleFields as FormFieldDefinition[]}
               samples={sampleMetadata}
@@ -1759,9 +1823,9 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             <p className="text-muted-foreground">No per-sample fields configured.</p>
           </div>
         ) : (
-          <div className="border rounded-lg overflow-hidden">
-            <div ref={tableScrollRef} className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
+          <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
+            <div ref={tableScrollRef} className="overflow-x-auto bg-white">
+              <table className="w-full border-collapse bg-white text-sm">
                 <thead>
                   {metadataTable.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id}>
@@ -1780,12 +1844,12 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                               }
                             }}
                             className={cn(
-                              "px-2 py-1.5 text-left text-xs font-medium border-b border-r last:border-r-0 cursor-pointer",
+                              "cursor-pointer border-b border-r px-2 py-1.5 text-left text-xs font-medium last:border-r-0",
                               isFacilityField
-                                ? "bg-slate-100 hover:bg-slate-200"
+                                ? "bg-slate-50 hover:bg-slate-100"
                                 : isMixs
-                                  ? "bg-emerald-50 hover:bg-emerald-100"
-                                  : "bg-muted/50 hover:bg-muted"
+                                  ? "bg-emerald-50/80 hover:bg-emerald-100"
+                                  : "bg-white hover:bg-stone-50"
                             )}
                           >
                             {header.isPlaceholder ? null : (
@@ -1816,7 +1880,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                     </tr>
                   ) : (
                     metadataTable.getRowModel().rows.map((row) => (
-                      <tr key={row.id} className="hover:bg-muted/30">
+                      <tr key={row.id} className="hover:bg-stone-50/60">
                         {row.getVisibleCells().map((cell) => {
                           const colMeta = cell.column.columnDef.meta as StudyColumnMeta | undefined;
                           const isMixs = colMeta?.isMixsField;
@@ -1826,7 +1890,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                               key={cell.id}
                               style={{ width: cell.column.getSize() }}
                               className={cn(
-                                "border-b border-r last:border-r-0 h-8",
+                                "h-8 border-b border-r bg-white last:border-r-0",
                                 isFacilityField
                                   ? "bg-slate-50/80"
                                   : isMixs && "bg-emerald-50/50"
@@ -1842,7 +1906,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                 </tbody>
               </table>
             </div>
-            <div className="bg-muted/30 px-3 py-2 border-t flex items-center justify-end">
+            <div className="flex items-center justify-end border-t bg-white px-3 py-2">
               <span className="text-xs text-muted-foreground">
                 {sampleMetadata.length} sample{sampleMetadata.length !== 1 ? "s" : ""}
                 {allPerSampleFields.length > 0 && ` | ${allPerSampleFields.length} field${allPerSampleFields.length !== 1 ? "s" : ""}`}
@@ -1961,8 +2025,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                       onClick={() => { setChecklistType(checklist.id); markTouched("checklistType"); }}
                       disabled={isLoading}
                       className={cn(
-                        "relative p-4 rounded-lg border-2 text-left transition-all hover:border-primary/50 hover:bg-primary/5",
-                        isSelected ? "border-green-500 bg-green-500/10" : "border-border bg-background"
+                        "relative rounded-lg border-2 bg-white p-4 text-left transition-all hover:border-primary/50 hover:bg-stone-50",
+                        isSelected ? "border-green-500" : "border-border"
                       )}
                     >
                       {isSelected && <div className="absolute top-2 right-2"><CheckCircle2 className="h-5 w-5 text-green-500" /></div>}
@@ -1992,17 +2056,17 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                       return (
                         <div>
                           <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded">Required ({requiredFields.length})</span>
+                            <span className="rounded border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-700">Required ({requiredFields.length})</span>
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {requiredFields.map((field) => (
-                              <div key={field.name} className="flex items-center gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50/50 text-left">
-                                <div className="h-4 w-4 rounded border border-amber-500 bg-amber-500 flex items-center justify-center flex-shrink-0">
-                                  <Check className="h-3 w-3 text-white" />
+                              <div key={field.name} className="flex items-center gap-3 rounded-lg border border-amber-300 bg-white p-3 text-left">
+                                <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-amber-500 bg-white">
+                                  <Check className="h-3 w-3 text-amber-600" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-amber-900 truncate">{field.label}</p>
-                                  {field.helpText && <p className="text-xs text-amber-700/70 truncate">{field.helpText}</p>}
+                                  <p className="truncate text-sm font-medium text-foreground">{field.label}</p>
+                                  {field.helpText && <p className="truncate text-xs text-muted-foreground">{field.helpText}</p>}
                                 </div>
                               </div>
                             ))}
@@ -2027,7 +2091,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                       return (
                         <div>
                           <div className="flex items-center justify-between mb-3">
-                            <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">Optional ({optionalFields.length})</span>
+                            <span className="rounded border border-border bg-white px-2 py-0.5 text-xs font-medium text-muted-foreground">Optional ({optionalFields.length})</span>
                             <div className="flex items-center gap-2">
                               <Button
                                 type="button" variant="ghost" size="sm"
@@ -2054,7 +2118,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                             <Input
                               type="text" placeholder="Search fields..." value={mixsFieldSearch}
                               onChange={(e) => setMixsFieldSearch(e.target.value)}
-                              className="pl-9 h-9 text-sm"
+                              className="h-9 bg-white pl-9 text-sm"
                             />
                             {mixsFieldSearch && (
                               <button type="button" onClick={() => setMixsFieldSearch("")}
@@ -2084,8 +2148,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                                       });
                                     }}
                                     className={cn(
-                                      "flex items-center gap-3 p-3 rounded-lg border text-left transition-all hover:bg-muted/50",
-                                      isFieldSelected ? "border-emerald-300 bg-emerald-50" : "border-border bg-background"
+                                      "flex items-center gap-3 rounded-lg border bg-white p-3 text-left transition-all hover:bg-stone-50",
+                                      isFieldSelected ? "border-emerald-300" : "border-border"
                                     )}
                                   >
                                     <div className={cn(
@@ -2343,48 +2407,15 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
       <div>
         <div className="mb-6">
-          <div className="relative h-10 bg-secondary rounded-xl overflow-hidden border border-border">
-            <div
-              className="absolute inset-y-0 left-0 bg-foreground transition-all duration-300 ease-out"
-              style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
-            />
-            <div className="relative h-full flex items-center">
-              {STEPS.map((step, index) => {
-                const isCompleted = index < currentStep;
-                const isCurrent = index === currentStep;
-                const isClickable = isCompleted;
-                const isInFilledArea = index <= currentStep;
-
-                return (
-                  <button
-                    key={step.id}
-                    type="button"
-                    onClick={() => {
-                      if (isClickable) {
-                        setError("");
-                        setCurrentStep(index);
-                      }
-                    }}
-                    disabled={!isClickable}
-                    style={{ width: `${100 / STEPS.length}%` }}
-                    className={`h-full px-2 text-xs transition-all flex items-center justify-center gap-1.5 ${
-                      isInFilledArea
-                        ? "text-background"
-                        : "text-muted-foreground"
-                    } ${
-                      isClickable ? "hover:bg-white/10 cursor-pointer" : ""
-                    } ${
-                      isCurrent ? "font-semibold" : ""
-                    }`}
-                    title={isClickable ? `Go back to ${step.title}` : step.title}
-                  >
-                    {isCompleted && <Check className="h-3 w-3 flex-shrink-0" />}
-                    <span className="truncate">{step.title}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <StepProgressNav
+            steps={STEPS}
+            currentIndex={currentStep}
+            onNavigate={(_, index) => {
+              setError("");
+              setCurrentStep(index);
+            }}
+            ariaLabel="Study form progress"
+          />
         </div>
 
         {error && (

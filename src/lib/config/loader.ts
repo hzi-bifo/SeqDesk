@@ -52,6 +52,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   },
   ena: {
     testMode: true,
+    brokerAccount: false,
     centerName: '',
   },
   sequencingFiles: {
@@ -64,6 +65,11 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
     allowRegistration: true,
     requireEmailVerification: false,
     sessionTimeout: 24,
+  },
+  telemetry: {
+    enabled: false,
+    endpoint: 'https://www.seqdesk.com/api/telemetry/heartbeat',
+    intervalHours: 24,
   },
   runtime: {},
 };
@@ -104,6 +110,7 @@ const ENV_MAPPINGS: Record<string, string> = {
   SEQDESK_ENA_TEST_MODE: 'ena.testMode',
   SEQDESK_ENA_USERNAME: 'ena.username',
   SEQDESK_ENA_PASSWORD: 'ena.password',
+  SEQDESK_ENA_BROKER_ACCOUNT: 'ena.brokerAccount',
   SEQDESK_ENA_CENTER: 'ena.centerName',
 
   // Sequencing Files
@@ -114,6 +121,11 @@ const ENV_MAPPINGS: Record<string, string> = {
   // Auth
   SEQDESK_AUTH_REGISTRATION: 'auth.allowRegistration',
   SEQDESK_SESSION_TIMEOUT: 'auth.sessionTimeout',
+
+  // Telemetry
+  SEQDESK_TELEMETRY_ENABLED: 'telemetry.enabled',
+  SEQDESK_TELEMETRY_ENDPOINT: 'telemetry.endpoint',
+  SEQDESK_TELEMETRY_INTERVAL_HOURS: 'telemetry.intervalHours',
 };
 
 /**
@@ -156,6 +168,7 @@ function parseEnvValue(value: string, path: string): unknown {
     'slurm.timeLimit',
     'scanDepth',
     'sessionTimeout',
+    'intervalHours',
   ];
   if (numberPaths.some((p) => path.includes(p))) {
     const num = parseInt(value, 10);
@@ -420,6 +433,29 @@ export function validateConfig(config: unknown): {
       cfg.sequencingFiles.scanDepth > 10
     ) {
       errors.push('sequencingFiles.scanDepth must be a number between 1 and 10');
+    }
+  }
+
+  if (cfg.telemetry?.enabled !== undefined && typeof cfg.telemetry.enabled !== 'boolean') {
+    errors.push('telemetry.enabled must be a boolean');
+  }
+  if (cfg.telemetry?.endpoint !== undefined) {
+    try {
+      const url = new URL(cfg.telemetry.endpoint);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+        errors.push('telemetry.endpoint must be an http or https URL');
+      }
+    } catch {
+      errors.push('telemetry.endpoint must be an http or https URL');
+    }
+  }
+  if (cfg.telemetry?.intervalHours !== undefined) {
+    if (
+      typeof cfg.telemetry.intervalHours !== 'number' ||
+      cfg.telemetry.intervalHours < 1 ||
+      cfg.telemetry.intervalHours > 168
+    ) {
+      errors.push('telemetry.intervalHours must be a number between 1 and 168');
     }
   }
 

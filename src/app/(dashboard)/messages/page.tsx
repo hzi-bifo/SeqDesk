@@ -85,8 +85,10 @@ export default function MessagesPage() {
         const res = await fetch("/api/tickets");
         if (!res.ok) throw new Error("Failed to fetch tickets");
         const data = await res.json();
-        setTickets(data);
-      } catch {
+        setTickets(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Failed to load messages:", error);
+        setTickets([]);
         setError("Failed to load messages");
       } finally {
         setLoading(false);
@@ -185,6 +187,12 @@ export default function MessagesPage() {
   const hasActiveFilters = searchQuery || statusFilter;
 
   const unreadCount = tickets.filter((t) => t.hasUnread).length;
+  const openCount = tickets.filter((ticket) =>
+    ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
+  ).length;
+  const highPriorityCount = tickets.filter((ticket) =>
+    ticket.priority === "HIGH" || ticket.priority === "URGENT"
+  ).length;
 
   if (loading) {
     return (
@@ -220,8 +228,9 @@ export default function MessagesPage() {
       </div>
 
       <HelpBox title="What are messages?">
-        Use messages to contact the sequencing center with questions or requests.
-        Your messages will be sent to the sequencing center, and their answers will appear here in the conversation.
+        {isAdmin
+          ? "Support tickets are conversations between researchers and the sequencing facility. Use this page to triage open requests, find unread messages, and follow up on order or study questions."
+          : "Use messages to contact the sequencing center with questions or requests. Your messages will be sent to the sequencing center, and their answers will appear here in the conversation."}
       </HelpBox>
 
       {error && <ErrorBanner message={error} />}
@@ -246,6 +255,20 @@ export default function MessagesPage() {
         </div>
       ) : (
         <div className="bg-card rounded-xl overflow-hidden border border-border">
+          <div className="grid gap-2 p-4 text-sm sm:grid-cols-3">
+            <div className="rounded-lg border bg-background px-3 py-2">
+              <p className="text-xs text-muted-foreground">Open</p>
+              <p className="font-medium">{openCount}</p>
+            </div>
+            <div className="rounded-lg border bg-background px-3 py-2">
+              <p className="text-xs text-muted-foreground">Unread</p>
+              <p className="font-medium">{unreadCount}</p>
+            </div>
+            <div className="rounded-lg border bg-background px-3 py-2">
+              <p className="text-xs text-muted-foreground">High priority</p>
+              <p className="font-medium">{highPriorityCount}</p>
+            </div>
+          </div>
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-border">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">

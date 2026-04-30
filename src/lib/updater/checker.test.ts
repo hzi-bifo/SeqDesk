@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   parseUpdateCheckResponse: vi.fn(),
   loadInstalledDatabaseConfig: vi.fn(),
   getDatabaseCompatibilityError: vi.fn(),
+  sendTelemetryHeartbeat: vi.fn(),
 }));
 
 vi.mock("@/lib/config/runtime-env", () => ({
@@ -21,6 +22,10 @@ vi.mock("@/lib/config/version-response", () => ({
 vi.mock("./database-config", () => ({
   loadInstalledDatabaseConfig: mocks.loadInstalledDatabaseConfig,
   getDatabaseCompatibilityError: mocks.getDatabaseCompatibilityError,
+}));
+
+vi.mock("@/lib/telemetry", () => ({
+  sendTelemetryHeartbeat: mocks.sendTelemetryHeartbeat,
 }));
 
 let cwd = "";
@@ -48,6 +53,7 @@ beforeEach(async () => {
   });
   mocks.getDatabaseCompatibilityError.mockReturnValue(undefined);
   mocks.parseUpdateCheckResponse.mockImplementation((value) => value);
+  mocks.sendTelemetryHeartbeat.mockResolvedValue({ sent: false, reason: "disabled" });
   vi.stubGlobal("fetch", vi.fn());
 });
 
@@ -106,6 +112,14 @@ describe("updater checker", () => {
     });
     expect(second).toEqual(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.sendTelemetryHeartbeat).toHaveBeenCalledTimes(1);
+    expect(mocks.sendTelemetryHeartbeat).toHaveBeenCalledWith({
+      runningVersion: "1.1.80",
+      installedVersion: "1.1.80",
+      updateAvailable: true,
+      latestVersion: "1.2.0",
+      databaseProvider: "postgresql",
+    });
   });
 
   it("reports database compatibility issues from the release metadata", async () => {

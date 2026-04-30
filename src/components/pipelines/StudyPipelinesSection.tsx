@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageNotice } from "@/components/ui/page-notice";
 import {
   Card,
   CardContent,
@@ -46,7 +47,6 @@ import {
   AlertCircle,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   ExternalLink,
   Trash2,
   MoreHorizontal,
@@ -1658,9 +1658,9 @@ export function StudyPipelinesSection({
 
       {/* Section 2: Error banner */}
       {error && (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <PageNotice variant="error" title="Pipeline action failed" className="rounded-xl border">
           {error}
-        </div>
+        </PageNotice>
       )}
 
       {/* Section 2b: Study-level metadata warnings */}
@@ -1670,26 +1670,23 @@ export function StudyPipelinesSection({
         );
         if (studyIssues.length === 0) return null;
         return (
-          <div className="rounded-lg border border-[#FFBA00]/30 bg-[#FFBA00]/10 px-4 py-3">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#FFBA00]" />
-              <div className="space-y-1.5">
-                {studyIssues.map((issue, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm text-foreground">
-                    <span>{issue.message}</span>
-                    {issue.fixUrl && (
-                      <Link
-                        href={issue.fixUrl}
-                        className="inline-flex items-center gap-0.5 text-primary hover:underline"
-                      >
-                        Fix <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    )}
-                  </div>
-                ))}
-              </div>
+          <PageNotice variant="warning" title="Metadata needs attention" className="rounded-xl border">
+            <div className="space-y-1.5">
+              {studyIssues.map((issue, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span>{issue.message}</span>
+                  {issue.fixUrl && (
+                    <Link
+                      href={issue.fixUrl}
+                      className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                    >
+                      Fix <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
+          </PageNotice>
         );
       })()}
 

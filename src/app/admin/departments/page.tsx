@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { PageContainer } from "@/components/layout/PageContainer";
+import { HelpBox } from "@/components/ui/help-box";
 import {
   Building2,
   Pencil,
@@ -27,8 +28,6 @@ import {
   Search,
   ArrowUpDown,
   ChevronDown,
-  ToggleLeft,
-  ToggleRight,
   RefreshCw,
 } from "lucide-react";
 
@@ -89,10 +88,19 @@ export default function DepartmentsPage() {
   const fetchDepartments = async () => {
     try {
       const res = await fetch("/api/admin/departments");
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Failed to load departments");
+      }
       const data = await res.json();
-      setDepartments(data);
-    } catch {
-      setError("Failed to load departments");
+      setDepartments(Array.isArray(data) ? data : []);
+      setError("");
+    } catch (error) {
+      console.error("Failed to load departments:", error);
+      setDepartments([]);
+      setError(error instanceof Error ? error.message : "Failed to load departments");
     } finally {
       setLoading(false);
     }
@@ -132,7 +140,7 @@ export default function DepartmentsPage() {
 
   // Filter and sort departments
   const filteredDepartments = useMemo(() => {
-    let result = departments.filter((dept) => {
+    const result = departments.filter((dept) => {
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -430,7 +438,7 @@ export default function DepartmentsPage() {
         <div>
           <h1 className="text-xl font-semibold">Departments</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {departments.length} department{departments.length !== 1 ? "s" : ""}
+            {filteredDepartments.length} of {departments.length} department{departments.length !== 1 ? "s" : ""}
           </p>
         </div>
         <div className="flex gap-2">
@@ -443,6 +451,13 @@ export default function DepartmentsPage() {
           </Button>
         </div>
       </div>
+
+      <HelpBox title="What are departments?">
+        Departments group researchers for administration and optional shared
+        visibility. When department sharing is enabled, users in the same
+        department can access each other&apos;s orders, so inactive or incorrect
+        assignments should be cleaned up before enabling that workflow.
+      </HelpBox>
 
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
@@ -475,7 +490,7 @@ export default function DepartmentsPage() {
         <div className="bg-white rounded-xl overflow-hidden">
           {/* Search & Filters */}
           <div className="px-4 py-3 border-b border-stone-100">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               {/* Search */}
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

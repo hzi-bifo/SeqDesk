@@ -88,4 +88,20 @@ describe("POST /api/admin/updates/install", () => {
 
     expect(response.status).toBe(409);
   });
+
+  it("returns update check errors instead of reporting no update", async () => {
+    mocks.checkForUpdates.mockResolvedValue({
+      updateAvailable: false,
+      latest: null,
+      error: "Failed to check for updates: network down",
+    });
+
+    const response = await POST();
+    const data = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(data).toEqual({ error: "Failed to check for updates: network down" });
+    expect(mocks.releaseUpdateLock).toHaveBeenCalledTimes(1);
+    expect(mocks.installUpdate).not.toHaveBeenCalled();
+  });
 });

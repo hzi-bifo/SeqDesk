@@ -139,4 +139,51 @@ describe("fixed study sections", () => {
       STUDY_INFORMATION_SECTION_ID,
     ]);
   });
+
+  it("normalizes module-managed study field types to study-level scope", () => {
+    const fields: FormFieldDefinition[] = [
+      {
+        id: "field_mixs",
+        type: "mixs",
+        label: "MIxS Checklist",
+        name: "_mixs",
+        required: true,
+        visible: true,
+        order: 0,
+        perSample: true,
+      },
+      {
+        id: "field_funding",
+        type: "funding",
+        label: "Funding",
+        name: "study_funding",
+        required: false,
+        visible: true,
+        order: 1,
+        perSample: true,
+      },
+      {
+        id: "field_collection_date",
+        type: "date",
+        label: "Collection Date",
+        name: "collection_date",
+        required: false,
+        visible: true,
+        order: 2,
+        perSample: true,
+      },
+    ];
+
+    const normalized = normalizeStudyFormSchema({ fields });
+
+    expect(
+      normalized.fields.find((field) => field.id === "field_mixs")?.perSample
+    ).toBe(false);
+    expect(
+      normalized.fields.find((field) => field.id === "field_funding")?.perSample
+    ).toBe(false);
+    expect(
+      normalized.fields.find((field) => field.id === "field_collection_date")?.perSample
+    ).toBe(true);
+  });
 });

@@ -17,7 +17,7 @@ test("wizard blocks progress when order name is missing", async ({ page }) => {
 
   await page.getByTestId("next-step-button").click();
 
-  await expect(page.getByText("Required")).toBeVisible();
+  await expect(page.getByText("Order Name is required").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByText(/Step 1 of/i)).toBeVisible();
 });

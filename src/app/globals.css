@@ -70,17 +70,17 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
 }
 
 :root {
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   /* Modern Warm Neutral Design - Cursor-like aesthetic */
   --background: #F7F7F4;
   --foreground: #171717;
@@ -177,7 +177,7 @@
   }
 
   .glass-card {
-    @apply bg-white/90 backdrop-blur-xl border border-border/50 rounded-2xl shadow-sm;
+    @apply bg-white/90 backdrop-blur-xl border border-border/50 rounded-lg shadow-sm;
   }
 
   .glass-dark {
@@ -419,7 +419,7 @@
 .toast-modern {
   background: linear-gradient(135deg, #ffffff 0%, #fafafa 100%) !important;
   border: 1px solid #e5e5e0 !important;
-  border-radius: 14px !important;
+  border-radius: 8px !important;
   padding: 14px 16px !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.02) !important;
   animation: toast-slide-in 0.3s ease-out, toast-pulse 2s ease-in-out infinite !important;
@@ -434,7 +434,7 @@
   right: 0;
   height: 3px;
   background: linear-gradient(90deg, #171717, #525252);
-  border-radius: 14px 14px 0 0;
+  border-radius: 8px 8px 0 0;
   opacity: 0.8;
 }
 

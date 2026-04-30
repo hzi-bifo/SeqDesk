@@ -1,4 +1,8 @@
-import type { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
+import type {
+  FieldType,
+  FormFieldDefinition,
+  FormFieldGroup,
+} from "@/types/form-config";
 
 export const STUDY_INFORMATION_SECTION_ID = "group_study_info";
 export const STUDY_METADATA_SECTION_ID = "group_metadata";
@@ -35,6 +39,23 @@ const FIXED_STUDY_GROUPS: FormFieldGroup[] = [
     order: 1,
   },
 ];
+
+export const STUDY_SUPPORTED_FIELD_TYPES = new Set<FieldType>([
+  "text",
+  "textarea",
+  "select",
+  "multiselect",
+  "checkbox",
+  "number",
+  "date",
+  "mixs",
+  "funding",
+]);
+
+export const STUDY_LEVEL_ONLY_FIELD_TYPES = new Set<FieldType>([
+  "mixs",
+  "funding",
+]);
 
 function isUserEditableStudyField(field: FormFieldDefinition): boolean {
   return !field.perSample && !field.adminOnly && field.name !== "_sample_association";
@@ -95,13 +116,19 @@ export function normalizeStudyFormFields(
   groups: FormFieldGroup[] = getFixedStudySections()
 ): FormFieldDefinition[] {
   return fields.map((field) => {
-    const normalizedGroupId = normalizeStudyFieldSectionId(field, groups);
-    if (normalizedGroupId === field.groupId) {
-      return field;
+    const scopedField = {
+      ...field,
+      perSample: STUDY_LEVEL_ONLY_FIELD_TYPES.has(field.type)
+        ? false
+        : field.perSample,
+    };
+    const normalizedGroupId = normalizeStudyFieldSectionId(scopedField, groups);
+    if (normalizedGroupId === scopedField.groupId) {
+      return scopedField;
     }
 
     return {
-      ...field,
+      ...scopedField,
       groupId: normalizedGroupId,
     };
   });

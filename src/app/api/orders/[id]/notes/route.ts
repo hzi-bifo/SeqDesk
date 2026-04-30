@@ -46,6 +46,8 @@ async function fetchOrderWithNotes(orderId: string) {
     where: { id: orderId },
     select: {
       id: true,
+      orderNumber: true,
+      name: true,
       userId: true,
       notes: true,
       notesEditedAt: true,
@@ -62,6 +64,8 @@ async function fetchOrderWithoutNotes(orderId: string) {
     where: { id: orderId },
     select: {
       id: true,
+      orderNumber: true,
+      name: true,
       userId: true,
     },
   });
@@ -135,6 +139,9 @@ export async function GET(
     const orderRecord = order as Partial<OrderWithNotes>;
 
     return NextResponse.json({
+      id: order.id,
+      orderNumber: "orderNumber" in order ? order.orderNumber ?? null : null,
+      name: "name" in order ? order.name ?? null : null,
       notes: notesSupported && notesEnabled ? orderRecord.notes ?? null : null,
       notesEditedAt:
         notesSupported && notesEnabled ? orderRecord.notesEditedAt ?? null : null,

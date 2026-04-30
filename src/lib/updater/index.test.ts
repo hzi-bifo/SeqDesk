@@ -30,6 +30,10 @@ vi.mock("./database-config", () => ({
   getDatabaseCompatibilityError: vi.fn(),
 }));
 
+vi.mock("@/lib/telemetry", () => ({
+  sendTelemetryHeartbeat: vi.fn().mockResolvedValue({ sent: false, reason: "disabled" }),
+}));
+
 import fs from "fs";
 import fsPromises from "fs/promises";
 import { parseUpdateCheckResponse } from "@/lib/config/version-response";
@@ -37,6 +41,7 @@ import {
   loadInstalledDatabaseConfig,
   getDatabaseCompatibilityError,
 } from "./database-config";
+import { sendTelemetryHeartbeat } from "@/lib/telemetry";
 import {
   checkForUpdates,
   getCurrentVersion,
@@ -49,6 +54,7 @@ const mockReadFile = vi.mocked(fsPromises.readFile);
 const mockParseResponse = vi.mocked(parseUpdateCheckResponse);
 const mockLoadDbConfig = vi.mocked(loadInstalledDatabaseConfig);
 const mockGetDbCompatError = vi.mocked(getDatabaseCompatibilityError);
+const mockSendTelemetryHeartbeat = vi.mocked(sendTelemetryHeartbeat);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -63,6 +69,7 @@ beforeEach(() => {
     provider: "sqlite",
   });
   mockGetDbCompatError.mockReturnValue(undefined);
+  mockSendTelemetryHeartbeat.mockResolvedValue({ sent: false, reason: "disabled" });
 });
 
 // Mock global fetch

@@ -236,6 +236,9 @@ describe("/api/orders/[id]/notes", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      id: "order-1",
+      orderNumber: null,
+      name: null,
       notes: null,
       notesEditedAt: null,
       notesEditedById: null,

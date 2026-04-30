@@ -39,6 +39,7 @@ import {
   Shield,
   Download,
   Upload,
+  ExternalLink,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { HelpBox } from "@/components/ui/help-box";
@@ -54,6 +55,7 @@ import { useModule } from "@/lib/modules";
 import { isFieldAvailableForModules as isFieldAvailableForModuleState } from "@/lib/modules/form-integration";
 import {
   STUDY_INFORMATION_SECTION_ID,
+  STUDY_LEVEL_ONLY_FIELD_TYPES,
   getFixedStudySections,
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
@@ -235,6 +237,7 @@ export default function StudyFormBuilderPage() {
     moduleSource: editingField?.moduleSource,
     name: fieldName.trim() || editingField?.name || "",
   });
+  const isCurrentTypeStudyLevelOnly = STUDY_LEVEL_ONLY_FIELD_TYPES.has(fieldType);
 
   // Fetch configuration
   useEffect(() => {
@@ -367,6 +370,11 @@ export default function StudyFormBuilderPage() {
 
     if (fieldAdminOnly && !canCurrentFieldBeFacilityOnly) {
       setError("This field type must remain visible in the main study flow");
+      return;
+    }
+
+    if (isCurrentTypeStudyLevelOnly && fieldPerSample) {
+      setError(`${FIELD_TYPE_LABELS[fieldType]} fields can only be used as study-level fields`);
       return;
     }
 
@@ -730,6 +738,8 @@ export default function StudyFormBuilderPage() {
   const facilityPerSampleFields = visibleFields
     .filter((f) => f.perSample && f.adminOnly)
     .sort((a, b) => a.order - b.order);
+  const researcherVisibleFieldCount = orderedStudyFields.length + orderedPerSampleFields.length;
+  const facilityOnlyFieldCount = facilityStudyFields.length + facilityPerSampleFields.length;
 
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
   const hasMixsField = visibleFields.some((f) => f.type === "mixs");
@@ -788,19 +798,8 @@ export default function StudyFormBuilderPage() {
     <Tabs defaultValue={initialTab}>
       {/* Sticky header bar -- outside PageContainer, matching order form builder */}
       <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <div
-            className={`absolute left-6 lg:left-8 text-xs ${
-              autoSaveStatus === "error"
-                ? "text-destructive"
-                : autoSaveStatus === "dirty"
-                  ? "text-amber-600"
-                  : "text-muted-foreground"
-            }`}
-          >
-            {autoSaveMessage}
-          </div>
-          <TabsList className="h-[52px] bg-transparent rounded-none p-0 gap-1">
+        <div className="flex h-[52px] items-center justify-start overflow-x-auto px-4 lg:justify-center lg:px-8">
+          <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
             <TabsTrigger
               value="fields"
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
@@ -826,7 +825,26 @@ export default function StudyFormBuilderPage() {
               Import / Export
             </TabsTrigger>
           </TabsList>
-          <div className="absolute right-6 lg:right-8 flex items-center gap-2">
+        </div>
+        <div className="flex min-h-12 flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <div
+            className={`text-xs ${
+              autoSaveStatus === "error"
+                ? "text-destructive"
+                : autoSaveStatus === "dirty"
+                  ? "text-amber-600"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {autoSaveMessage}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <Button asChild variant="outline" size="sm" className="bg-white">
+              <Link href="/studies/new" target="_blank">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Preview User Form
+              </Link>
+            </Button>
             <Button onClick={handleSave} disabled={saving || justSaved} variant="outline" size="sm" className="bg-white">
               {saving ? (
                 <>
@@ -872,6 +890,25 @@ export default function StudyFormBuilderPage() {
           .
         </div>
       )}
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Visible to researchers</p>
+          <p className="text-lg font-semibold">{researcherVisibleFieldCount}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Facility-only</p>
+          <p className="text-lg font-semibold">{facilityOnlyFieldCount}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">User per-sample</p>
+          <p className="text-lg font-semibold">{orderedPerSampleFields.length}</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">Hidden by modules</p>
+          <p className="text-lg font-semibold">{hiddenByDisabledModulesCount}</p>
+        </div>
+      </div>
 
       {/* Study Fields - filled once per study */}
       <TabsContent value="fields">
@@ -1689,6 +1726,9 @@ export default function StudyFormBuilderPage() {
                   onValueChange={(v) => {
                     const nextType = v as FieldType;
                     setFieldType(nextType);
+                    if (STUDY_LEVEL_ONLY_FIELD_TYPES.has(nextType)) {
+                      setFieldPerSample(false);
+                    }
                     if (
                       fieldAdminOnly &&
                       !canFieldBeFacilityOnly({
@@ -1809,10 +1849,13 @@ export default function StudyFormBuilderPage() {
                   <button
                     type="button"
                     onClick={() => setFieldPerSample(true)}
+                    disabled={isCurrentTypeStudyLevelOnly}
                     className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                       fieldPerSample
                         ? "bg-amber-100 text-amber-700 shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
+                        : isCurrentTypeStudyLevelOnly
+                          ? "text-muted-foreground/50 cursor-not-allowed"
+                          : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     Per-sample
@@ -1825,6 +1868,11 @@ export default function StudyFormBuilderPage() {
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
                 <strong>Per-Sample Field:</strong> This field will appear in the sample entry table where users fill values for each sample individually.
                 Examples: collection date, geographic location, host subject ID.
+              </div>
+            )}
+            {isCurrentTypeStudyLevelOnly && (
+              <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
+                <strong>Scope locked:</strong> {FIELD_TYPE_LABELS[fieldType]} fields are rendered in the main study flow, so they are always study-level.
               </div>
             )}
             {!fieldPerSample && (

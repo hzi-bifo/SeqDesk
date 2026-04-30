@@ -1,7 +1,16 @@
 import { db } from "@/lib/db";
+import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { Building2, Users, FileText, Activity } from "lucide-react";
+import {
+  Activity,
+  Building2,
+  Database,
+  FileText,
+  Settings2,
+  Users,
+  Workflow,
+} from "lucide-react";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,7 +50,40 @@ export default async function AdminDashboardPage() {
       label: "Orders",
       value: orderCount,
       icon: FileText,
-      href: "/admin/orders",
+      href: "/orders",
+    },
+  ];
+
+  const quickActions = [
+    {
+      href: "/admin/departments",
+      title: "Departments",
+      description: "Manage departments and their researcher lists",
+      icon: Building2,
+    },
+    {
+      href: "/admin/users",
+      title: "Researchers",
+      description: "Review registered researchers and admin accounts",
+      icon: Users,
+    },
+    {
+      href: "/admin/data-compute",
+      title: "Infrastructure",
+      description: "Check data storage, runtime, and setup JSON status",
+      icon: Database,
+    },
+    {
+      href: "/admin/settings/pipelines",
+      title: "Pipelines",
+      description: "Install, inspect, and test workflow packages",
+      icon: Workflow,
+    },
+    {
+      href: "/admin/settings",
+      title: "Platform Info",
+      description: "Open diagnostics and creator-facing checks",
+      icon: Settings2,
     },
   ];
 
@@ -56,7 +98,8 @@ export default async function AdminDashboardPage() {
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 mb-8">
         {stats.map((stat) => (
-          <GlassCard key={stat.label} className="p-6">
+          <Link key={stat.label} href={stat.href} className="block">
+            <GlassCard className="p-6 transition-colors hover:bg-muted/30">
             <div className="flex items-center gap-4">
               <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
                 <stat.icon className="h-6 w-6 text-primary" />
@@ -66,7 +109,8 @@ export default async function AdminDashboardPage() {
                 <p className="text-sm text-muted-foreground">{stat.label}</p>
               </div>
             </div>
-          </GlassCard>
+            </GlassCard>
+          </Link>
         ))}
       </div>
 
@@ -77,33 +121,21 @@ export default async function AdminDashboardPage() {
             Quick Actions
           </h2>
           <div className="space-y-2">
-            <a
-              href="/admin/departments"
-              className="block p-3 rounded-lg hover:bg-muted transition-colors"
-            >
-              <p className="font-medium">Manage Departments</p>
-              <p className="text-sm text-muted-foreground">
-                Add, edit, or remove research departments
-              </p>
-            </a>
-            <a
-              href="/admin/users"
-              className="block p-3 rounded-lg hover:bg-muted transition-colors"
-            >
-              <p className="font-medium">View Users</p>
-              <p className="text-sm text-muted-foreground">
-                See all registered researchers and admins
-              </p>
-            </a>
-            <a
-              href="/admin/settings"
-              className="block p-3 rounded-lg hover:bg-muted transition-colors"
-            >
-              <p className="font-medium">Site Settings</p>
-              <p className="text-sm text-muted-foreground">
-                Configure branding and ENA credentials
-              </p>
-            </a>
+            {quickActions.map((action) => (
+              <Link
+                key={action.href}
+                href={action.href}
+                className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted transition-colors"
+              >
+                <action.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <span>
+                  <span className="block font-medium">{action.title}</span>
+                  <span className="block text-sm text-muted-foreground">
+                    {action.description}
+                  </span>
+                </span>
+              </Link>
+            ))}
           </div>
         </GlassCard>
 

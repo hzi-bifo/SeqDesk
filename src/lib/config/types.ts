@@ -66,7 +66,9 @@ export interface EnaConfig {
   username?: string;
   /** Webin account password (prefer env var SEQDESK_ENA_PASSWORD) */
   password?: string;
-  /** Center name for submissions */
+  /** Whether this Webin account has ENA broker permissions */
+  brokerAccount?: boolean;
+  /** Center name for broker submissions */
   centerName?: string;
 }
 
@@ -92,6 +94,15 @@ export interface AuthConfig {
   requireEmailVerification?: boolean;
   /** Session timeout in hours */
   sessionTimeout?: number;
+}
+
+export interface TelemetryConfig {
+  /** Opt-in anonymous operational telemetry */
+  enabled?: boolean;
+  /** Telemetry heartbeat endpoint */
+  endpoint?: string;
+  /** Minimum hours between automatic heartbeats */
+  intervalHours?: number;
 }
 
 export interface AppConfig {
@@ -128,6 +139,7 @@ export interface SeqDeskConfig {
   ena?: EnaConfig;
   sequencingFiles?: SequencingFilesConfig;
   auth?: AuthConfig;
+  telemetry?: TelemetryConfig;
   runtime?: RuntimeConfig;
 }
 

@@ -25,17 +25,16 @@ import { Label } from "@/components/ui/label";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { PageNotice } from "@/components/ui/page-notice";
 import { toast } from "sonner";
 import {
   ArrowLeft,
   Loader2,
   Save,
   AlertCircle,
-  Check,
   FileSpreadsheet,
   BookOpen,
   HelpCircle,
-  X,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
@@ -526,16 +525,19 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
       {/* Header */}
       {/* Unsaved changes banner */}
       {hasChanges && (
-        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2 text-amber-800">
-            <AlertCircle className="h-4 w-4" />
-            <span className="text-sm font-medium">You have unsaved changes</span>
-          </div>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-            Save Now
-          </Button>
-        </div>
+        <PageNotice
+          variant="warning"
+          title="Unsaved changes"
+          className="mb-4 rounded-xl border"
+          actions={(
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+              Save Now
+            </Button>
+          )}
+        >
+          Metadata edits have not been saved yet.
+        </PageNotice>
       )}
 
       <div className="mb-6">
@@ -578,20 +580,20 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
       </HelpBox>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
-          <AlertCircle className="h-4 w-4" />
+        <PageNotice
+          variant="error"
+          title="Metadata update failed"
+          onDismiss={() => setError("")}
+          className="mb-4 rounded-xl border"
+        >
           {error}
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setError("")}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        </PageNotice>
       )}
 
       {success && (
-        <div className="mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 text-sm flex items-center gap-2">
-          <Check className="h-4 w-4" />
+        <PageNotice variant="success" title="Metadata saved" className="mb-4 rounded-xl border">
           {success}
-        </div>
+        </PageNotice>
       )}
 
       {/* Study-Level Metadata */}
