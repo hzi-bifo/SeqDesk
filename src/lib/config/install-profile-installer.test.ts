@@ -56,14 +56,14 @@ describe("install profile installer wiring", () => {
 
   it("defines bifo_dmz AlmaLinux canaries for plain and hosted-profile installs", () => {
     expect(profileWorkflow).toContain("push:");
-    expect(profileWorkflow).toContain('PROFILE_ID: ${{ github.event.inputs.profile_id || \'ci-twincore\' }}');
+    expect(profileWorkflow).toContain('PROFILE_ID: ${{ github.event.inputs.profile_id || \'ci-runner\' }}');
     expect(profileWorkflow).toContain("PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}");
     expect(profileWorkflow).toContain("group: bifo_dmz");
     expect(profileWorkflow).toContain("labels: [self-hosted, Linux, X64, db-local, twincore, alma]");
     expect(profileWorkflow).toContain("build-install-artifacts:");
     expect(profileWorkflow).toContain("install-without-profile:");
     expect(profileWorkflow).toContain("install-with-profile:");
-    expect(profileWorkflow).toContain("default: \"ci-twincore\"");
+    expect(profileWorkflow).toContain("default: \"ci-runner\"");
     expect(profileWorkflow).toContain("SEQDESK_CI_PROFILE_CODE");
     expect(profileWorkflow).toContain("npm run sync-version");
     expect(profileWorkflow).toContain("npm pack --pack-destination");

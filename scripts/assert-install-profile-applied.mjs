@@ -103,7 +103,7 @@ try {
     fail(`Expected only ${expectedDeviceId} to be available, got ${availableDeviceIds.join(", ")}`);
   }
 
-  if (settings.enaUsername !== "ci-webin-user" && expectedProfileId === "ci-twincore") {
+  if (settings.enaUsername !== "ci-webin-user" && expectedProfileId === "ci-runner") {
     fail(`Expected dummy ENA username to be applied, got '${settings.enaUsername}'`);
   }
 

@@ -9,7 +9,7 @@ on:
       profile_id:
         description: "Hosted install profile id"
         required: true
-        default: "ci-twincore"
+        default: "ci-runner"
       profile_registry_url:
         description: "Hosted profile registry URL"
         required: true
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: alma-install-e2e-${{ github.event.inputs.profile_id || 'ci-twincore' }}
+  group: alma-install-e2e-${{ github.event.inputs.profile_id || 'ci-runner' }}
   cancel-in-progress: false
 
 jobs:
@@ -390,7 +390,7 @@ jobs:
       DB_USER: seqdesk
       FALLBACK_DB_PORT: 55434
       NEXT_TELEMETRY_DISABLED: 1
-      PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-twincore' }}
+      PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-runner' }}
       PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
       SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
     steps:
@@ -687,7 +687,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: alma-install-with-profile-${{ github.event.inputs.profile_id || 'ci-twincore' }}
+          name: alma-install-with-profile-${{ github.event.inputs.profile_id || 'ci-runner' }}
           path: |
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
