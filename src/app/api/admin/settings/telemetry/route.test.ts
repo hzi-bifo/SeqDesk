@@ -38,6 +38,7 @@ describe("admin telemetry settings API", () => {
       lastSentAt: null,
       lastError: null,
       lastStatus: null,
+      promptDismissed: false,
     });
     mocks.saveTelemetrySettings.mockImplementation(async (input) => ({
       enabled: input.enabled === true,
@@ -48,6 +49,7 @@ describe("admin telemetry settings API", () => {
       lastSentAt: null,
       lastError: null,
       lastStatus: null,
+      promptDismissed: input.promptDismissed === true,
     }));
   });
 

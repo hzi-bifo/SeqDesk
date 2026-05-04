@@ -88,6 +88,7 @@ interface TelemetrySettingsResponse {
   lastSentAt: string | null;
   lastError: string | null;
   lastStatus: number | null;
+  promptDismissed: boolean;
 }
 
 function formatDate(value?: string | Date | null): string {
@@ -165,6 +166,10 @@ export default function SettingsPage() {
     updateInfo?.runningVersion || updateInfo?.currentVersion || "unknown";
   const latestVersion =
     updateInfo?.latest?.version || updateInfo?.currentVersion || "unknown";
+  const showTelemetryPrompt =
+    telemetrySettings !== null &&
+    telemetrySettings.enabled !== true &&
+    telemetrySettings.promptDismissed !== true;
 
   const toolsMissingCount = useMemo(() => {
     if (!versionsLoaded) return null;
@@ -493,10 +498,16 @@ export default function SettingsPage() {
   );
 
   const updateTelemetrySetting = useCallback(
-    async (enabled: boolean) => {
+    async (enabled: boolean, dismissPrompt = false) => {
       const previousValue = telemetrySettings;
       setTelemetrySettings((current) =>
-        current ? { ...current, enabled } : current
+        current
+          ? {
+              ...current,
+              enabled,
+              promptDismissed: dismissPrompt ? true : current.promptDismissed,
+            }
+          : current
       );
       setSavingTelemetrySetting(true);
 
@@ -506,7 +517,10 @@ export default function SettingsPage() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ enabled }),
+          body: JSON.stringify({
+            enabled,
+            ...(dismissPrompt ? { promptDismissed: true } : {}),
+          }),
         });
 
         if (!res.ok) {
@@ -532,6 +546,44 @@ export default function SettingsPage() {
     },
     [telemetrySettings]
   );
+
+  const keepTelemetryDisabled = useCallback(async () => {
+    const previousValue = telemetrySettings;
+    setTelemetrySettings((current) =>
+      current ? { ...current, enabled: false, promptDismissed: true } : current
+    );
+    setSavingTelemetrySetting(true);
+
+    try {
+      const res = await fetch("/api/admin/settings/telemetry", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ enabled: false, promptDismissed: true }),
+      });
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Failed to save telemetry settings");
+      }
+
+      const data = (await res.json()) as TelemetrySettingsResponse;
+      setTelemetrySettings(data);
+      setTelemetryError(null);
+      toast.success("Telemetry kept disabled");
+    } catch (error) {
+      console.error("Failed to save telemetry settings:", error);
+      setTelemetrySettings(previousValue);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save telemetry settings"
+      );
+    } finally {
+      setSavingTelemetrySetting(false);
+    }
+  }, [telemetrySettings]);
 
   const sendTestTelemetry = useCallback(async () => {
     setTestingTelemetry(true);
@@ -965,6 +1017,57 @@ export default function SettingsPage() {
       )}
 
       <div className="space-y-6">
+        {showTelemetryPrompt && (
+          <section className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-700" />
+                  <h2 className="text-base font-semibold text-emerald-950">
+                    Help SeqDesk track version adoption and update status
+                  </h2>
+                </div>
+                <p className="mt-2 max-w-3xl text-sm text-emerald-950/80">
+                  Optional telemetry sends a small operational heartbeat to SeqDesk.com so we can
+                  count active deployments and see which versions are installed. It includes a stable
+                  random instance UUID, SeqDesk version and update status, install profile id/version
+                  when present, database provider, operating system platform/architecture, Node.js
+                  major version, and heartbeat timestamps.
+                </p>
+                <p className="mt-2 max-w-3xl text-sm text-emerald-950/80">
+                  It does not send user accounts, researcher names, order or sample data, uploaded
+                  files, pipeline inputs or outputs, file paths, secrets, ENA credentials, or facility
+                  contact details. The public receiver stores the UUID and heartbeat fields only; IP
+                  addresses are not stored as telemetry application data.
+                </p>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  className="bg-emerald-700 text-white hover:bg-emerald-800"
+                  onClick={() => void updateTelemetrySetting(true, true)}
+                  disabled={savingTelemetrySetting || testingTelemetry}
+                >
+                  {savingTelemetrySetting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                  )}
+                  Enable telemetry
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-emerald-300 bg-white text-emerald-950"
+                  onClick={() => void keepTelemetryDisabled()}
+                  disabled={savingTelemetrySetting || testingTelemetry}
+                >
+                  Keep disabled
+                </Button>
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="bg-card rounded-xl border border-border overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>

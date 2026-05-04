@@ -66,6 +66,7 @@ describe("telemetry settings and heartbeat", () => {
     const settings = await saveTelemetrySettings({ enabled: true });
 
     expect(settings.enabled).toBe(true);
+    expect(settings.promptDismissed).toBe(false);
     expect(settings.instanceId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     );
@@ -74,6 +75,24 @@ describe("telemetry settings and heartbeat", () => {
 
     const reloaded = await getTelemetrySettings();
     expect(reloaded.instanceId).toBe(settings.instanceId);
+  });
+
+  it("persists the admin telemetry prompt dismissal separately from enablement", async () => {
+    const settings = await saveTelemetrySettings({
+      enabled: false,
+      promptDismissed: true,
+    });
+
+    expect(settings.enabled).toBe(false);
+    expect(settings.promptDismissed).toBe(true);
+    expect(settings.instanceId).toBeNull();
+
+    const stored = JSON.parse(String(extraSettings));
+    expect(stored.telemetry).toMatchObject({
+      enabled: false,
+      promptDismissed: true,
+    });
+    expect(stored.telemetry).not.toHaveProperty("clientToken");
   });
 
   it("sends only the allowlisted operational payload and throttles repeats", async () => {

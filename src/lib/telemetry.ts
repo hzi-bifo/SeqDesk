@@ -23,6 +23,7 @@ export interface TelemetrySettingsView {
   lastSentAt: string | null;
   lastError: string | null;
   lastStatus: number | null;
+  promptDismissed: boolean;
 }
 
 interface TelemetrySettingsInternal extends TelemetrySettingsView {
@@ -216,6 +217,7 @@ function buildSettings(extra: JsonRecord): TelemetrySettingsInternal {
       Number.isFinite(storedTelemetry.lastStatus)
         ? Math.trunc(storedTelemetry.lastStatus)
         : null,
+    promptDismissed: storedTelemetry.promptDismissed === true,
   };
 }
 
@@ -255,6 +257,7 @@ export async function getTelemetrySettings(): Promise<TelemetrySettingsView> {
     lastSentAt: settings.lastSentAt,
     lastError: settings.lastError,
     lastStatus: settings.lastStatus,
+    promptDismissed: settings.promptDismissed,
   };
 }
 
@@ -262,6 +265,7 @@ export async function saveTelemetrySettings(input: {
   enabled?: unknown;
   endpoint?: unknown;
   intervalHours?: unknown;
+  promptDismissed?: unknown;
 }): Promise<TelemetrySettingsView> {
   const extra = await loadSiteExtraSettings();
   const existing = isRecord(extra.telemetry) ? { ...extra.telemetry } : {};
@@ -269,6 +273,11 @@ export async function saveTelemetrySettings(input: {
   const enabled = toOptionalBoolean(input.enabled);
   if (enabled !== undefined) {
     existing.enabled = enabled;
+  }
+
+  const promptDismissed = toOptionalBoolean(input.promptDismissed);
+  if (promptDismissed !== undefined) {
+    existing.promptDismissed = promptDismissed;
   }
 
   if (input.endpoint !== undefined) {
