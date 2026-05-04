@@ -23,6 +23,10 @@ const fonts = [
     functionName: "Playfair_Display",
     options: { subsets: ["latin"], variable: "--font-playfair" },
   },
+  {
+    functionName: "Press_Start_2P",
+    options: { subsets: ["latin"], variable: "--font-ghost-pixel", weight: "400" },
+  },
 ];
 
 const outputPath =

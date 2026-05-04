@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION"
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
           mkdir -p "$RUNNER_TEMP/public-release-tarball"
           cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RUNNER_TEMP/public-release-tarball/"
 
