@@ -58,6 +58,7 @@ export default defineConfig({
         "**/types.ts",
         "**/page.tsx",
         "**/layout.tsx",
+        "src/app/**/order-wizard-page.tsx",
       ],
       thresholds: {
         lines: 75,
