@@ -105,6 +105,36 @@ export interface TelemetryConfig {
   intervalHours?: number;
 }
 
+export type NotificationProvider = "seqdesk-relay";
+
+export interface NotificationEventConfig {
+  order?: {
+    submitted?: boolean;
+    statusChanged?: boolean;
+    samplesSent?: boolean;
+  };
+  ticket?: {
+    created?: boolean;
+    reply?: boolean;
+  };
+}
+
+export interface NotificationUserDefaults {
+  orders?: boolean;
+  support?: boolean;
+}
+
+export interface NotificationConfig {
+  /** Master switch for hosted SeqDesk notification relay */
+  enabled?: boolean;
+  provider?: NotificationProvider;
+  relayUrl?: string;
+  /** Scoped hosted profile token. Never expose through client APIs. */
+  relayToken?: string;
+  events?: NotificationEventConfig;
+  userDefaults?: NotificationUserDefaults;
+}
+
 export interface AppConfig {
   /** App listen port for generated start scripts */
   port?: number;
@@ -140,6 +170,7 @@ export interface SeqDeskConfig {
   sequencingFiles?: SequencingFilesConfig;
   auth?: AuthConfig;
   telemetry?: TelemetryConfig;
+  notifications?: NotificationConfig;
   runtime?: RuntimeConfig;
 }
 

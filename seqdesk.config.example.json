@@ -65,6 +65,28 @@
     "intervalHours": 24
   },
 
+  "notifications": {
+    "enabled": false,
+    "provider": "seqdesk-relay",
+    "relayUrl": "https://www.seqdesk.com/api/notifications/relay",
+    "relayToken": "",
+    "events": {
+      "order": {
+        "submitted": true,
+        "statusChanged": true,
+        "samplesSent": true
+      },
+      "ticket": {
+        "created": true,
+        "reply": true
+      }
+    },
+    "userDefaults": {
+      "orders": true,
+      "support": true
+    }
+  },
+
   "runtime": {
     "databaseUrl": "postgresql://seqdesk:replace-with-local-db-password@127.0.0.1:5432/seqdesk?schema=public",
     "directUrl": "postgresql://seqdesk:replace-with-local-db-password@127.0.0.1:5432/seqdesk?schema=public",

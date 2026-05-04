@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  notifyOrderStatusChanged,
+  notifyOrderSubmitted,
+  notifySamplesMarkedSent,
+} from "@/lib/notifications/dispatcher";
 
 // Order status progression
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
@@ -297,6 +302,8 @@ export async function PUT(
 
     // Build update data
     const updateData: Record<string, unknown> = {};
+    let changedStatusTo: string | null = null;
+    let samplesSentCreated = false;
 
     if (name !== undefined) updateData.name = typeof name === "string" ? name.trim() : null;
     if (contactName !== undefined) updateData.contactName = contactName?.trim() || null;
@@ -342,6 +349,7 @@ export async function PUT(
 
       updateData.status = status;
       updateData.statusUpdatedAt = new Date();
+      changedStatusTo = status;
 
       // Create status change note
       await db.statusNote.create({
@@ -379,6 +387,7 @@ export async function PUT(
             content: "Samples marked as sent to institution",
           },
         });
+        samplesSentCreated = true;
       }
     }
 
@@ -388,6 +397,23 @@ export async function PUT(
           data: updateData,
         })
       : existing;
+
+    const actor = {
+      id: session.user.id,
+      role: session.user.role,
+      email: session.user.email,
+      name: session.user.name,
+    };
+    if (changedStatusTo) {
+      if (existing.status === "DRAFT" && changedStatusTo === "SUBMITTED") {
+        await notifyOrderSubmitted(id, actor);
+      } else {
+        await notifyOrderStatusChanged(id, existing.status, changedStatusTo, actor);
+      }
+    }
+    if (samplesSentCreated) {
+      await notifySamplesMarkedSent(id, actor);
+    }
 
     return NextResponse.json(order);
   } catch (error) {

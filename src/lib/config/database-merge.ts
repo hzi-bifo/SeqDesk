@@ -45,6 +45,7 @@ export async function mergeWithDatabase(): Promise<ResolvedConfig> {
       auth: {
         allowRegistration: extraSettings.auth?.allowRegistration ?? undefined,
       },
+      notifications: extraSettings.notifications || undefined,
     };
 
     // Merge: file config takes priority over database
@@ -213,6 +214,15 @@ export async function saveConfigToDatabase(
     extraSettings.sequencingFiles = {
       ...extraSettings.sequencingFiles,
       ...updates.sequencingFiles,
+    };
+  }
+
+  // Notification settings go into extraSettings. Relay tokens stay in config files/env.
+  if (updates.notifications) {
+    const { relayToken: _relayToken, ...safeNotifications } = updates.notifications;
+    extraSettings.notifications = {
+      ...extraSettings.notifications,
+      ...safeNotifications,
     };
   }
 

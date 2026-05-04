@@ -821,6 +821,7 @@ const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
 const telemetry = toRecord(root.telemetry);
+const notifications = toRecord(root.notifications);
 const bootstrap = toRecord(root.bootstrap);
 const bootstrapUsers = toRecord(bootstrap?.users);
 const bootstrapAdmin = toRecord(bootstrapUsers?.admin);
@@ -982,6 +983,10 @@ const values = {
   telemetryEnabled: toOptionalBoolean(telemetry?.enabled),
   telemetryEndpoint: toOptionalString(telemetry?.endpoint),
   telemetryIntervalHours: toOptionalInt(telemetry?.intervalHours),
+  notificationsEnabled: toOptionalBoolean(notifications?.enabled),
+  notificationProvider: toOptionalString(notifications?.provider),
+  notificationRelayUrl: toOptionalString(notifications?.relayUrl),
+  notificationRelayToken: toOptionalString(notifications?.relayToken),
   adminEmail: toOptionalString(bootstrapAdmin?.email),
   adminPassword: toOptionalString(bootstrapAdmin?.password),
   adminPasswordHash: toOptionalString(bootstrapAdmin?.passwordHash),
@@ -1052,6 +1057,18 @@ if (values.telemetryEndpoint) {
 }
 if (values.telemetryIntervalHours !== undefined && values.telemetryIntervalHours > 0) {
   out.SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS = String(values.telemetryIntervalHours);
+}
+if (values.notificationsEnabled !== undefined) {
+  out.SEQDESK_CFG_NOTIFICATIONS_ENABLED = values.notificationsEnabled ? "true" : "false";
+}
+if (values.notificationProvider) {
+  out.SEQDESK_CFG_NOTIFICATION_PROVIDER = values.notificationProvider;
+}
+if (values.notificationRelayUrl) {
+  out.SEQDESK_CFG_NOTIFICATION_RELAY_URL = values.notificationRelayUrl;
+}
+if (values.notificationRelayToken) {
+  out.SEQDESK_CFG_NOTIFICATION_RELAY_TOKEN = values.notificationRelayToken;
 }
 if (withPipelines !== undefined) out.SEQDESK_CFG_WITH_PIPELINES = withPipelines ? "1" : "0";
 if (values.useSlurm !== undefined) {
@@ -1129,6 +1146,10 @@ NODE
     apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
     apply_config_value SEQDESK_TELEMETRY_ENDPOINT SEQDESK_CFG_TELEMETRY_ENDPOINT
     apply_config_value SEQDESK_TELEMETRY_INTERVAL_HOURS SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
+    apply_config_value SEQDESK_NOTIFICATIONS_ENABLED SEQDESK_CFG_NOTIFICATIONS_ENABLED
+    apply_config_value SEQDESK_NOTIFICATION_PROVIDER SEQDESK_CFG_NOTIFICATION_PROVIDER
+    apply_config_value SEQDESK_NOTIFICATION_RELAY_URL SEQDESK_CFG_NOTIFICATION_RELAY_URL
+    apply_config_value SEQDESK_NOTIFICATION_RELAY_TOKEN SEQDESK_CFG_NOTIFICATION_RELAY_TOKEN
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_CFG_WITH_PIPELINES
 
     apply_config_value SEQDESK_EXEC_USE_SLURM SEQDESK_CFG_EXEC_USE_SLURM
@@ -1168,6 +1189,8 @@ NODE
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
     unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
+    unset SEQDESK_CFG_NOTIFICATIONS_ENABLED SEQDESK_CFG_NOTIFICATION_PROVIDER
+    unset SEQDESK_CFG_NOTIFICATION_RELAY_URL SEQDESK_CFG_NOTIFICATION_RELAY_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
     unset SEQDESK_CFG_EXEC_SLURM_CORES SEQDESK_CFG_EXEC_SLURM_MEMORY
     unset SEQDESK_CFG_EXEC_SLURM_TIME_LIMIT SEQDESK_CFG_EXEC_SLURM_OPTIONS
@@ -1671,6 +1694,10 @@ write_config() {
     SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
     SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
+    SEQDESK_INSTALL_NOTIFICATIONS_ENABLED="${SEQDESK_NOTIFICATIONS_ENABLED:-}" \
+    SEQDESK_INSTALL_NOTIFICATION_PROVIDER="${SEQDESK_NOTIFICATION_PROVIDER:-}" \
+    SEQDESK_INSTALL_NOTIFICATION_RELAY_URL="${SEQDESK_NOTIFICATION_RELAY_URL:-}" \
+    SEQDESK_INSTALL_NOTIFICATION_RELAY_TOKEN="${SEQDESK_NOTIFICATION_RELAY_TOKEN:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_ADMIN_EMAIL="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD_HASH="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" \
@@ -1701,6 +1728,10 @@ const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || 
 const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
 const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
 const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
+const notificationsEnabledRaw = process.env.SEQDESK_INSTALL_NOTIFICATIONS_ENABLED || '';
+const notificationProvider = process.env.SEQDESK_INSTALL_NOTIFICATION_PROVIDER || '';
+const notificationRelayUrl = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_URL || '';
+const notificationRelayToken = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_TOKEN || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
 const bootstrapEnv = {
   admin: {
@@ -1831,6 +1862,20 @@ if (telemetryEnabled !== undefined || telemetryEndpoint || telemetryIntervalHour
   if (telemetryEnabled !== undefined) config.telemetry.enabled = telemetryEnabled;
   if (telemetryEndpoint) config.telemetry.endpoint = telemetryEndpoint;
   if (telemetryIntervalHours !== undefined) config.telemetry.intervalHours = telemetryIntervalHours;
+}
+
+const notificationsEnabled = toOptionalBoolean(notificationsEnabledRaw);
+if (
+  notificationsEnabled !== undefined ||
+  notificationProvider ||
+  notificationRelayUrl ||
+  notificationRelayToken
+) {
+  config.notifications = config.notifications && typeof config.notifications === 'object' ? config.notifications : {};
+  if (notificationsEnabled !== undefined) config.notifications.enabled = notificationsEnabled;
+  if (notificationProvider) config.notifications.provider = notificationProvider;
+  if (notificationRelayUrl) config.notifications.relayUrl = notificationRelayUrl;
+  if (notificationRelayToken) config.notifications.relayToken = notificationRelayToken;
 }
 
 const adminBootstrap = buildBootstrapUserConfig(bootstrapEnv.admin);

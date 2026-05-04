@@ -18,6 +18,12 @@ export async function GET() {
     if (safeConfig.ena?.password) {
       safeConfig.ena = { ...safeConfig.ena, password: '********' };
     }
+    if (safeConfig.notifications?.relayToken) {
+      safeConfig.notifications = {
+        ...safeConfig.notifications,
+        relayToken: '********',
+      };
+    }
     if (safeConfig.runtime) {
       safeConfig.runtime = {
         ...safeConfig.runtime,

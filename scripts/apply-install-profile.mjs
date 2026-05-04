@@ -354,6 +354,31 @@ async function applySiteProfile(prisma, profile) {
     };
   }
 
+  const notifications = toRecord(profile.notifications);
+  const notificationsEnabled = toOptionalBoolean(notifications.enabled);
+  const notificationProvider = toOptionalString(notifications.provider);
+  const notificationRelayUrl = toOptionalString(notifications.relayUrl);
+  const notificationEvents = toRecord(notifications.events);
+  const notificationUserDefaults = toRecord(notifications.userDefaults);
+  if (
+    notificationsEnabled !== undefined ||
+    notificationProvider ||
+    notificationRelayUrl ||
+    Object.keys(notificationEvents).length > 0 ||
+    Object.keys(notificationUserDefaults).length > 0
+  ) {
+    extra.notifications = {
+      ...(isRecord(extra.notifications) ? extra.notifications : {}),
+      ...(notificationsEnabled !== undefined ? { enabled: notificationsEnabled } : {}),
+      ...(notificationProvider ? { provider: notificationProvider } : {}),
+      ...(notificationRelayUrl ? { relayUrl: notificationRelayUrl } : {}),
+      ...(Object.keys(notificationEvents).length > 0 ? { events: notificationEvents } : {}),
+      ...(Object.keys(notificationUserDefaults).length > 0
+        ? { userDefaults: notificationUserDefaults }
+        : {}),
+    };
+  }
+
   const ena = toRecord(profile.ena);
   const enaUsername = toOptionalString(ena.username);
   const enaPassword = toOptionalString(ena.password);

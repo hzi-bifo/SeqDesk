@@ -5,8 +5,9 @@ import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { Loader2, Check } from "lucide-react";
+import { Loader2, Check, Mail } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface UserProfile {
@@ -23,8 +24,14 @@ export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [notificationsAvailable, setNotificationsAvailable] = useState(false);
+  const [notificationPreferences, setNotificationPreferences] = useState({
+    orders: true,
+    support: true,
+  });
 
   // Form state
   const [firstName, setFirstName] = useState("");
@@ -54,6 +61,25 @@ export default function SettingsPage() {
     };
 
     fetchProfile();
+  }, []);
+
+  useEffect(() => {
+    const fetchNotificationPreferences = async () => {
+      try {
+        const res = await fetch("/api/user/notification-preferences");
+        if (!res.ok) return;
+        const data = await res.json();
+        setNotificationsAvailable(Boolean(data.available));
+        setNotificationPreferences({
+          orders: data.preferences?.orders !== false,
+          support: data.preferences?.support !== false,
+        });
+      } catch {
+        // Account settings should remain usable when notification preferences cannot load.
+      }
+    };
+
+    fetchNotificationPreferences();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -94,6 +120,33 @@ export default function SettingsPage() {
       setError("Failed to update profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const updateNotificationPreference = async (
+    key: "orders" | "support",
+    checked: boolean
+  ) => {
+    const next = { ...notificationPreferences, [key]: checked };
+    setNotificationPreferences(next);
+    setSavingNotifications(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/user/notification-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update email notifications");
+      }
+    } catch (err) {
+      setNotificationPreferences(notificationPreferences);
+      setError(err instanceof Error ? err.message : "Failed to update email notifications");
+    } finally {
+      setSavingNotifications(false);
     }
   };
 
@@ -208,6 +261,37 @@ export default function SettingsPage() {
         </div>
       </form>
 
+      <div
+        className="p-6 mt-6 rounded-xl"
+        style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Mail className="h-5 w-5 text-muted-foreground" />
+          <h2 className="text-lg font-semibold" style={{ color: '#171717' }}>
+            Email Notifications
+          </h2>
+          {savingNotifications && (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
+        <div className="space-y-4">
+          <NotificationPreferenceRow
+            label="Orders"
+            description="Order submissions and facility status updates"
+            checked={notificationPreferences.orders}
+            disabled={!notificationsAvailable || savingNotifications}
+            onCheckedChange={(checked) => updateNotificationPreference("orders", checked)}
+          />
+          <NotificationPreferenceRow
+            label="Support"
+            description="Support ticket replies"
+            checked={notificationPreferences.support}
+            disabled={!notificationsAvailable || savingNotifications}
+            onCheckedChange={(checked) => updateNotificationPreference("support", checked)}
+          />
+        </div>
+      </div>
+
       {/* Account Info */}
       <div
         className="p-6 mt-6 rounded-xl"
@@ -230,5 +314,34 @@ export default function SettingsPage() {
         </div>
       </div>
     </PageContainer>
+  );
+}
+
+function NotificationPreferenceRow({
+  label,
+  description,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <div className="font-medium">{label}</div>
+        <p className="text-sm text-muted-foreground mt-1">{description}</p>
+      </div>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+        aria-label={`${label} email notifications`}
+      />
+    </div>
   );
 }

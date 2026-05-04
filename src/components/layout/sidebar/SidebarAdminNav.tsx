@@ -336,6 +336,9 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
               Pipelines
             </Link>
+            <Link href="/admin/settings/notifications" className={adminSubItemClass("/admin/settings/notifications")}>
+              Notifications
+            </Link>
             <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
               Info
             </Link>

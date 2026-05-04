@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { notifyTicketReply } from "@/lib/notifications/dispatcher";
 
 // POST /api/tickets/[id]/messages - Add a message to a ticket
 export async function POST(
@@ -98,6 +99,13 @@ export async function POST(
       });
 
       return newMessage;
+    });
+
+    await notifyTicketReply(id, {
+      id: session.user.id,
+      role: session.user.role,
+      email: session.user.email,
+      name: session.user.name,
     });
 
     return NextResponse.json(message, { status: 201 });

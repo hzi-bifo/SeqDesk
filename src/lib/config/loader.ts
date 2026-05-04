@@ -71,6 +71,26 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
     endpoint: 'https://www.seqdesk.com/api/telemetry/heartbeat',
     intervalHours: 24,
   },
+  notifications: {
+    enabled: false,
+    provider: 'seqdesk-relay',
+    relayUrl: 'https://www.seqdesk.com/api/notifications/relay',
+    events: {
+      order: {
+        submitted: true,
+        statusChanged: true,
+        samplesSent: true,
+      },
+      ticket: {
+        created: true,
+        reply: true,
+      },
+    },
+    userDefaults: {
+      orders: true,
+      support: true,
+    },
+  },
   runtime: {},
 };
 
@@ -126,6 +146,12 @@ const ENV_MAPPINGS: Record<string, string> = {
   SEQDESK_TELEMETRY_ENABLED: 'telemetry.enabled',
   SEQDESK_TELEMETRY_ENDPOINT: 'telemetry.endpoint',
   SEQDESK_TELEMETRY_INTERVAL_HOURS: 'telemetry.intervalHours',
+
+  // Notifications
+  SEQDESK_NOTIFICATIONS_ENABLED: 'notifications.enabled',
+  SEQDESK_NOTIFICATION_PROVIDER: 'notifications.provider',
+  SEQDESK_NOTIFICATION_RELAY_URL: 'notifications.relayUrl',
+  SEQDESK_NOTIFICATION_RELAY_TOKEN: 'notifications.relayToken',
 };
 
 /**
@@ -456,6 +482,26 @@ export function validateConfig(config: unknown): {
       cfg.telemetry.intervalHours > 168
     ) {
       errors.push('telemetry.intervalHours must be a number between 1 and 168');
+    }
+  }
+
+  if (cfg.notifications?.enabled !== undefined && typeof cfg.notifications.enabled !== 'boolean') {
+    errors.push('notifications.enabled must be a boolean');
+  }
+  if (
+    cfg.notifications?.provider !== undefined &&
+    cfg.notifications.provider !== 'seqdesk-relay'
+  ) {
+    errors.push('notifications.provider must be "seqdesk-relay"');
+  }
+  if (cfg.notifications?.relayUrl !== undefined) {
+    try {
+      const url = new URL(cfg.notifications.relayUrl);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+        errors.push('notifications.relayUrl must be an http or https URL');
+      }
+    } catch {
+      errors.push('notifications.relayUrl must be an http or https URL');
     }
   }
 

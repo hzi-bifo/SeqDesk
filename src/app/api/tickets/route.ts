@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
+import { notifyTicketCreated } from "@/lib/notifications/dispatcher";
 
 type LegacyTicketRow = {
   id: string;
@@ -345,6 +346,13 @@ export async function POST(request: NextRequest) {
       });
 
       return newTicket;
+    });
+
+    await notifyTicketCreated(ticket.id, {
+      id: session.user.id,
+      role: session.user.role,
+      email: session.user.email,
+      name: session.user.name,
     });
 
     return NextResponse.json(ticket, { status: 201 });

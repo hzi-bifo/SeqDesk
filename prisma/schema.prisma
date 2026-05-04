@@ -20,6 +20,7 @@ model User {
   researcherRole String?
   institution    String?
   facilityName   String?
+  notificationPreferences String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   departmentId   String?
