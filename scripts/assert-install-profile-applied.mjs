@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { createRequire } from "node:module";
 
 function fail(message) {
   console.error(message);
@@ -64,6 +64,18 @@ if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
 
 process.env.DATABASE_URL = databaseUrl;
 process.env.DIRECT_URL = directUrl;
+
+const requireFromInstall = createRequire(path.join(installDir, "package.json"));
+let PrismaClient;
+try {
+  ({ PrismaClient } = requireFromInstall("@prisma/client"));
+} catch (error) {
+  fail(
+    `Failed to load @prisma/client from installed app at ${installDir}: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  );
+}
 
 const prisma = new PrismaClient();
 
