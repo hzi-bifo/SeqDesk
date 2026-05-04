@@ -1,4 +1,4 @@
-name: Install Profile E2E (Alma Linux)
+name: Alma Install E2E
 
 on:
   push:
@@ -19,13 +19,70 @@ permissions:
   contents: read
 
 concurrency:
-  group: install-profile-alma-${{ github.event.inputs.profile_id || 'ci-twincore' }}
+  group: alma-install-e2e-${{ github.event.inputs.profile_id || 'ci-twincore' }}
   cancel-in-progress: false
 
 jobs:
-  install-profile-alma:
-    name: Hosted profile canary install on AlmaLinux
-    runs-on: [self-hosted, Linux, X64, db-local, twincore, alma]
+  build-install-artifacts:
+    name: Build release and npm launcher artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build release tarball
+        env:
+          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts
+          mkdir -p "$RUNNER_TEMP/alma-release-artifact"
+          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RUNNER_TEMP/alma-release-artifact/"
+
+      - name: Pack npm launcher
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/npm/seqdesk"
+          npm run sync-version
+          mkdir -p "$RUNNER_TEMP/alma-npm-launcher"
+          npm pack --pack-destination "$RUNNER_TEMP/alma-npm-launcher" > "$RUNNER_TEMP/alma-npm-launcher/npm-pack-name.txt"
+          npm pack --dry-run > "$RUNNER_TEMP/alma-npm-launcher/npm-pack-dry-run.txt" 2>&1
+
+      - name: Upload release tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: alma-release-tarball
+          path: ${{ runner.temp }}/alma-release-artifact/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload npm launcher package
+        uses: actions/upload-artifact@v4
+        with:
+          name: alma-npm-launcher
+          path: ${{ runner.temp }}/alma-npm-launcher/*
+          if-no-files-found: error
+          retention-days: 14
+
+  install-without-profile:
+    name: Install without profile on AlmaLinux
+    needs: build-install-artifacts
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
     timeout-minutes: 75
     env:
       DB_HOST: 127.0.0.1
@@ -34,20 +91,9 @@ jobs:
       DB_USER: seqdesk
       FALLBACK_DB_PORT: 55433
       NEXT_TELEMETRY_DISABLED: 1
-      PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-twincore' }}
-      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
-      SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Validate profile secret
-        run: |
-          set -euo pipefail
-          if [ -z "${SEQDESK_CI_PROFILE_CODE:-}" ]; then
-            echo "Missing GitHub secret SEQDESK_CI_PROFILE_CODE for hosted dummy profile resolution."
-            exit 1
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -63,39 +109,40 @@ jobs:
       - name: Configure canary paths
         run: |
           set -euo pipefail
-          RUN_SUFFIX="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          RUN_SUFFIX="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-plain"
           PORT=$((19000 + (GITHUB_RUN_NUMBER % 1000)))
           MOCK_RELEASE_PORT=$((21000 + (GITHUB_RUN_NUMBER % 1000)))
-          DB_NAME="seqdesk_profile_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          DB_NAME="seqdesk_plain_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
           echo "PORT=$PORT" >> "$GITHUB_ENV"
           echo "MOCK_RELEASE_PORT=$MOCK_RELEASE_PORT" >> "$GITHUB_ENV"
           echo "DB_NAME=$DB_NAME" >> "$GITHUB_ENV"
-          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "INSTALL_LOG=$RUNNER_TEMP/install-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
-          echo "SERVER_LOG=$RUNNER_TEMP/server-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
-          echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
-          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
-          echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
-          echo "PGDATA_DIR=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "PG_LOG=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
-          echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/profile-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/install-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/server-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-plain-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-plain-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
+          echo "PGDATA_DIR=$RUNNER_TEMP/postgres-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "PG_LOG=$RUNNER_TEMP/postgres-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/plain-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/plain-npm-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$RUNNER_TEMP/plain-npm-cache-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/plain-npm-prefix-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/plain-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/plain-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "NPM_PACK_METADATA=$RUNNER_TEMP/plain-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Download release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: alma-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
 
-      - name: Build release tarball
-        env:
-          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
-          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
-        run: |
-          set -euo pipefail
-          VERSION="$(node -p "require('./package.json').version")"
-          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts
-          mkdir -p "$RELEASE_ARTIFACT_DIR"
-          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RELEASE_ARTIFACT_DIR/"
+      - name: Download npm launcher package
+        uses: actions/download-artifact@v4
+        with:
+          name: alma-npm-launcher
+          path: ${{ env.NPM_ARTIFACT_DIR }}
 
       - name: Setup PostgreSQL toolchain
         shell: bash -el {0}
@@ -185,12 +232,324 @@ jobs:
           echo "PostgreSQL provisioning requires existing local PostgreSQL or user-space PostgreSQL tools."
           exit 1
 
-      - name: Prepare mock release metadata
+      - name: Prepare mock installer and release metadata
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           RELEASE_DATE="$(date -u +%F)"
           mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_RELEASE_ROOT/install.sh"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI plain e2e test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Install side-by-side without profile through npm launcher
+        run: |
+          set -euo pipefail
+          NPM_TGZ="$(find "$NPM_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n 1)"
+          if [ -z "$NPM_TGZ" ]; then
+            echo "Npm launcher tarball not found in $NPM_ARTIFACT_DIR"
+            exit 1
+          fi
+          cp "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" "$NPM_PACK_METADATA"
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$NPM_CACHE"
+
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null && \
+               curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          PATH="$NPM_PREFIX/bin:$PATH" \
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
+          SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --without-pipelines \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
+              --database-direct-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public"
+
+      - name: Verify install artifacts and config
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
+
+      - name: Verify installed app startup and auth flows
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
+
+      - name: Upload install e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alma-install-without-profile
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.PG_LOG }}
+            ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.NPM_PACK_METADATA }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup canary resources
+        if: always()
+        run: |
+          set +e
+          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
+            "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
+            rm -rf "$PGDATA_DIR"
+          fi
+          if command -v psql >/dev/null 2>&1; then
+            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_plain_missing}" >/dev/null 2>&1 || true
+          fi
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX"
+
+  install-with-profile:
+    name: Install with hosted profile on AlmaLinux
+    needs: build-install-artifacts
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
+    timeout-minutes: 75
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PASSWORD: seqdesk
+      DB_PORT: 5432
+      DB_USER: seqdesk
+      FALLBACK_DB_PORT: 55434
+      NEXT_TELEMETRY_DISABLED: 1
+      PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-twincore' }}
+      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
+      SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate profile secret
+        run: |
+          set -euo pipefail
+          if [ -z "${SEQDESK_CI_PROFILE_CODE:-}" ]; then
+            echo "Missing GitHub secret SEQDESK_CI_PROFILE_CODE for hosted dummy profile resolution."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Miniconda for PostgreSQL tools
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: true
+          miniconda-version: latest
+
+      - name: Configure canary paths
+        run: |
+          set -euo pipefail
+          RUN_SUFFIX="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-profile"
+          PORT=$((20000 + (GITHUB_RUN_NUMBER % 1000)))
+          MOCK_RELEASE_PORT=$((22000 + (GITHUB_RUN_NUMBER % 1000)))
+          DB_NAME="seqdesk_profile_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          echo "PORT=$PORT" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=$MOCK_RELEASE_PORT" >> "$GITHUB_ENV"
+          echo "DB_NAME=$DB_NAME" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/install-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/server-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
+          echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "PGDATA_DIR=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "PG_LOG=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/profile-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/profile-npm-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$RUNNER_TEMP/profile-npm-cache-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/profile-npm-prefix-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "NPM_PACK_METADATA=$RUNNER_TEMP/profile-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
+
+      - name: Download release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: alma-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Download npm launcher package
+        uses: actions/download-artifact@v4
+        with:
+          name: alma-npm-launcher
+          path: ${{ env.NPM_ARTIFACT_DIR }}
+
+      - name: Setup PostgreSQL toolchain
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          rm -rf "$PG_TOOLCHAIN_DIR"
+          conda create -y -p "$PG_TOOLCHAIN_DIR" --override-channels -c conda-forge postgresql
+          echo "$PG_TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Ensure PostgreSQL database
+        run: |
+          set -euo pipefail
+
+          find_pg_bin_dir() {
+            local candidate=""
+            if command -v initdb >/dev/null 2>&1 && command -v pg_ctl >/dev/null 2>&1; then
+              dirname "$(command -v initdb)"
+              return 0
+            fi
+            if command -v pg_config >/dev/null 2>&1; then
+              candidate="$(pg_config --bindir 2>/dev/null || true)"
+              if [ -n "$candidate" ] && [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ]; then
+                echo "$candidate"
+                return 0
+              fi
+            fi
+            for candidate in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin; do
+              if [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ]; then
+                echo "$candidate"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          create_seqdesk_database() {
+            local port="$1"
+            local admin_user="$2"
+            local admin_password="${3:-}"
+            if [ -n "$admin_password" ]; then
+              export PGPASSWORD="$admin_password"
+            else
+              unset PGPASSWORD || true
+            fi
+            psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "DO \$\$ BEGIN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD'; END \$\$;"
+            if ! psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+              psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER"
+            fi
+          }
+
+          wait_for_postgres() {
+            local port="$1"
+            for _ in $(seq 1 30); do
+              if pg_isready -h "$DB_HOST" -p "$port" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+
+          if pg_isready -h "$DB_HOST" -p "$DB_PORT" >/dev/null 2>&1; then
+            if create_seqdesk_database "$DB_PORT" postgres; then
+              echo "Using existing local PostgreSQL on port $DB_PORT."
+              exit 0
+            fi
+          fi
+
+          PG_BIN_DIR="$(find_pg_bin_dir || true)"
+          if [ -n "$PG_BIN_DIR" ]; then
+            rm -rf "$PGDATA_DIR"
+            "$PG_BIN_DIR/initdb" -D "$PGDATA_DIR" -U postgres -A trust >/dev/null
+            {
+              echo "listen_addresses = '127.0.0.1'"
+              echo "port = $FALLBACK_DB_PORT"
+            } >> "$PGDATA_DIR/postgresql.conf"
+            "$PG_BIN_DIR/pg_ctl" -D "$PGDATA_DIR" -l "$PG_LOG" start
+            wait_for_postgres "$FALLBACK_DB_PORT"
+            create_seqdesk_database "$FALLBACK_DB_PORT" postgres
+            echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
+            echo "USE_EPHEMERAL_POSTGRES=1" >> "$GITHUB_ENV"
+            echo "PG_CTL_BIN=$PG_BIN_DIR/pg_ctl" >> "$GITHUB_ENV"
+            echo "Provisioned PostgreSQL via temporary user-space cluster."
+            exit 0
+          fi
+
+          echo "PostgreSQL provisioning requires existing local PostgreSQL or user-space PostgreSQL tools."
+          exit 1
+
+      - name: Prepare mock installer and release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_RELEASE_ROOT/install.sh"
           TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
           if [ -z "$TARBALL_PATH" ]; then
             echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
@@ -203,9 +562,17 @@ jobs:
           {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI profile e2e test release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
           EOF
 
-      - name: Install side-by-side from hosted dummy profile
+      - name: Install side-by-side with hosted dummy profile through npm launcher
         run: |
           set -euo pipefail
+          NPM_TGZ="$(find "$NPM_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n 1)"
+          if [ -z "$NPM_TGZ" ]; then
+            echo "Npm launcher tarball not found in $NPM_ARTIFACT_DIR"
+            exit 1
+          fi
+          cp "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" "$NPM_PACK_METADATA"
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$NPM_CACHE"
+
           cd "$MOCK_RELEASE_ROOT"
           python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
           MOCK_SERVER_PID=$!
@@ -215,16 +582,19 @@ jobs:
           }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
-            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null && \
+               curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" >/dev/null; then
               break
             fi
             sleep 1
           done
 
+          PATH="$NPM_PREFIX/bin:$PATH" \
           SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
           SEQDESK_PROFILE_REGISTRY_URL="$PROFILE_REGISTRY_URL" \
           SEQDESK_LOG="$INSTALL_LOG" \
-            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            seqdesk \
               -y \
               --without-pipelines \
               --no-pm2 \
@@ -293,6 +663,19 @@ jobs:
             tail -n 200 "$SERVER_LOG" || true
             exit 1
           fi
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
           node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
@@ -304,7 +687,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: install-profile-alma-${{ inputs.profile_id }}
+          name: alma-install-with-profile-${{ github.event.inputs.profile_id || 'ci-twincore' }}
           path: |
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
@@ -313,6 +696,7 @@ jobs:
             ${{ env.PROFILE_ASSERT_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.NPM_PACK_METADATA }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -327,4 +711,4 @@ jobs:
           if command -v psql >/dev/null 2>&1; then
             PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_profile_missing}" >/dev/null 2>&1 || true
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR"
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX"

@@ -13,7 +13,9 @@ concurrency:
 jobs:
   install-twincore-alma:
     name: Side-by-side canary install on Twincore AlmaLinux
-    runs-on: [self-hosted, linux, twincore, alma]
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
     timeout-minutes: 45
     env:
       DB_HOST: 127.0.0.1
