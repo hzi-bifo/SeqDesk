@@ -32,6 +32,13 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("--key <code>");
     expect(installDist).toContain("resolve_install_profile");
     expect(installDist).toContain('Authorization: Bearer ${SEQDESK_PROFILE_CODE}');
+    expect(installDist).toContain("install?.dir");
+    expect(installDist).toContain("install?.usePm2");
+    expect(installDist).toContain("bootstrapUsers");
+    expect(installDist).toContain("SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD");
+    expect(installDist).toContain("passwordHash = hashBootstrapPassword(rawPassword)");
+    expect(installDist).toContain("clear_bootstrap_plaintext_passwords");
+    expect(installDist).toContain("redact_database_url");
   });
 
   it("applies resolved profiles after database setup and includes the applicator in releases", () => {

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
+import { hashSync } from "bcryptjs";
 
 const CONFIG_FILE_NAMES = [
   "seqdesk.config.json",
@@ -17,6 +18,10 @@ function trimToString(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function isRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
 function findConfigPath(baseDir) {
   for (const name of CONFIG_FILE_NAMES) {
     const candidate = path.join(baseDir, name);
@@ -28,18 +33,23 @@ function findConfigPath(baseDir) {
   return null;
 }
 
-function bootstrapSeedRuntimeEnv(baseDir = process.cwd()) {
+function loadSeedConfig(baseDir = process.cwd()) {
   const configPath = findConfigPath(baseDir);
   if (!configPath) {
-    return;
+    return {};
   }
 
   try {
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const runtime =
-      parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed.runtime
-        : undefined;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function bootstrapSeedRuntimeEnv(config) {
+  try {
+    const runtime = isRecord(config.runtime) ? config.runtime : undefined;
 
     if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
       return;
@@ -60,7 +70,8 @@ function bootstrapSeedRuntimeEnv(baseDir = process.cwd()) {
   }
 }
 
-bootstrapSeedRuntimeEnv();
+const seedConfig = loadSeedConfig();
+bootstrapSeedRuntimeEnv(seedConfig);
 
 // Keep seeding independent from runtime dependency resolution.
 // These are bcrypt hashes for the default credentials:
@@ -71,45 +82,140 @@ const DEFAULT_ADMIN_PASSWORD_HASH =
 const DEFAULT_USER_PASSWORD_HASH =
   "$2b$12$kbd8ye8jMpaIwxH8nVP79u/witxktRivlfVQ59IlUzyzVKCVIox2m";
 
+const DEFAULT_ADMIN_USER = {
+  email: "admin@example.com",
+  passwordHash: DEFAULT_ADMIN_PASSWORD_HASH,
+  firstName: "Admin",
+  lastName: "User",
+  facilityName: "HZI Sequencing Center",
+};
+
+const DEFAULT_RESEARCHER_USER = {
+  email: "user@example.com",
+  passwordHash: DEFAULT_USER_PASSWORD_HASH,
+  firstName: "Test",
+  lastName: "Researcher",
+  institution: "Helmholtz Centre for Infection Research",
+  researcherRole: "PHD_STUDENT",
+};
+
+function bootstrapUserFromConfig(kind) {
+  const bootstrap = isRecord(seedConfig.bootstrap) ? seedConfig.bootstrap : {};
+  const users = isRecord(bootstrap.users) ? bootstrap.users : {};
+  return isRecord(users[kind]) ? users[kind] : {};
+}
+
+function envNameFor(kind, field) {
+  const prefix = kind === "admin" ? "SEQDESK_BOOTSTRAP_ADMIN" : "SEQDESK_BOOTSTRAP_RESEARCHER";
+  return `${prefix}_${field}`;
+}
+
+function firstSeedString(...values) {
+  for (const value of values) {
+    const trimmed = trimToString(value);
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function resolvePasswordHash(kind, configUser, defaultHash) {
+  const passwordHash = firstSeedString(
+    process.env[envNameFor(kind, "PASSWORD_HASH")],
+    configUser.passwordHash
+  );
+  if (passwordHash) return passwordHash;
+
+  const password = firstSeedString(
+    process.env[envNameFor(kind, "PASSWORD")],
+    configUser.password
+  );
+  if (password) return hashSync(password, 12);
+
+  return defaultHash;
+}
+
+function resolveBootstrapUser(kind, defaults) {
+  const configUser = bootstrapUserFromConfig(kind);
+  if (kind === "admin") {
+    return {
+      email: firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_EMAIL, configUser.email) ?? defaults.email,
+      passwordHash: resolvePasswordHash(kind, configUser, defaults.passwordHash),
+      firstName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME, configUser.firstName) ??
+        defaults.firstName,
+      lastName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME, configUser.lastName) ??
+        defaults.lastName,
+      facilityName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME, configUser.facilityName) ??
+        defaults.facilityName,
+    };
+  }
+
+  return {
+    email:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL, configUser.email) ??
+      defaults.email,
+    passwordHash: resolvePasswordHash(kind, configUser, defaults.passwordHash),
+    firstName:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME, configUser.firstName) ??
+      defaults.firstName,
+    lastName:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME, configUser.lastName) ??
+      defaults.lastName,
+    institution:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION, configUser.institution) ??
+      defaults.institution,
+    researcherRole:
+      firstSeedString(
+        process.env.SEQDESK_BOOTSTRAP_RESEARCHER_ROLE,
+        configUser.researcherRole,
+        configUser.role
+      ) ?? defaults.researcherRole,
+  };
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
   console.log("Seeding database...\n");
 
   // 1. Create admin user
-  const adminPassword = DEFAULT_ADMIN_PASSWORD_HASH;
+  const adminBootstrap = resolveBootstrapUser("admin", DEFAULT_ADMIN_USER);
+  const adminPassword = adminBootstrap.passwordHash;
 
   const admin = await prisma.user.upsert({
-    where: { email: "admin@example.com" },
+    where: { email: adminBootstrap.email },
     update: {},
     create: {
-      email: "admin@example.com",
+      email: adminBootstrap.email,
       password: adminPassword,
-      firstName: "Admin",
-      lastName: "User",
+      firstName: adminBootstrap.firstName,
+      lastName: adminBootstrap.lastName,
       role: "FACILITY_ADMIN",
-      facilityName: "HZI Sequencing Center",
+      facilityName: adminBootstrap.facilityName,
     },
   });
-  console.log("Created admin user: admin@example.com / admin");
+  console.log(`Created admin user: ${adminBootstrap.email}`);
 
   // 2. Create test researcher user
-  const userPassword = DEFAULT_USER_PASSWORD_HASH;
+  const researcherBootstrap = resolveBootstrapUser("researcher", DEFAULT_RESEARCHER_USER);
+  const userPassword = researcherBootstrap.passwordHash;
 
   const testUser = await prisma.user.upsert({
-    where: { email: "user@example.com" },
+    where: { email: researcherBootstrap.email },
     update: {},
     create: {
-      email: "user@example.com",
+      email: researcherBootstrap.email,
       password: userPassword,
-      firstName: "Test",
-      lastName: "Researcher",
+      firstName: researcherBootstrap.firstName,
+      lastName: researcherBootstrap.lastName,
       role: "RESEARCHER",
-      researcherRole: "PHD_STUDENT",
-      institution: "Helmholtz Centre for Infection Research",
+      researcherRole: researcherBootstrap.researcherRole,
+      institution: researcherBootstrap.institution,
     },
   });
-  console.log("Created test user: user@example.com / user");
+  console.log(`Created researcher user: ${researcherBootstrap.email}`);
 
   // 3. Create site settings
   const defaultPostSubmissionInstructions = `## Thank you for your submission!
@@ -498,9 +604,10 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
   console.log("\n========================================");
   console.log("Seeding completed!");
   console.log("========================================");
-  console.log("\nDefault login credentials:");
-  console.log("  Admin:      admin@example.com / admin");
-  console.log("  Researcher: user@example.com / user");
+  console.log("\nBootstrap login accounts:");
+  console.log(`  Admin:      ${adminBootstrap.email}`);
+  console.log(`  Researcher: ${researcherBootstrap.email}`);
+  console.log("  Passwords are configured by the installer profile or defaults.");
   console.log("");
 }
 

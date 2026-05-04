@@ -64,7 +64,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Config
-SEQDESK_DIR="${SEQDESK_DIR:-./seqdesk}"
+SEQDESK_DIR="${SEQDESK_DIR:-}"
 SEQDESK_VERSION="${SEQDESK_VERSION:-}"
 SEQDESK_API="${SEQDESK_API:-https://www.seqdesk.com/api}"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
@@ -86,6 +86,19 @@ SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
 SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
 SEQDESK_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}"
 SEQDESK_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}"
+SEQDESK_BOOTSTRAP_ADMIN_EMAIL="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}"
+SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME="${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-}"
+SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME="${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-}"
+SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME="${SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD="${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH="${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
@@ -800,6 +813,7 @@ if (!isRecord(input)) {
 
 const root = input;
 const app = toRecord(root.app);
+const install = toRecord(root.install);
 const site = toRecord(root.site);
 const pipelines = toRecord(root.pipelines);
 const execution = toRecord(pipelines?.execution);
@@ -807,6 +821,10 @@ const conda = toRecord(execution?.conda);
 const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
 const telemetry = toRecord(root.telemetry);
+const bootstrap = toRecord(root.bootstrap);
+const bootstrapUsers = toRecord(bootstrap?.users);
+const bootstrapAdmin = toRecord(bootstrapUsers?.admin);
+const bootstrapResearcher = toRecord(bootstrapUsers?.researcher);
 const forms = toRecord(root.forms);
 const privatePipelines = toRecord(root.privatePipelines);
 const metaxpath = toRecord(privatePipelines?.metaxpath);
@@ -825,6 +843,12 @@ if (useSlurm === undefined) {
 }
 
 const values = {
+  installDir: toOptionalString(
+    firstDefined(root.installDir, root.seqdeskDir, root.dir, install?.dir, install?.installDir)
+  ),
+  usePm2: toOptionalBoolean(
+    firstDefined(root.usePm2, root.pm2, install?.usePm2, install?.pm2)
+  ),
   port: toOptionalInt(firstDefined(root.port, root.appPort, app?.port)),
   dataPath: toOptionalString(
     firstDefined(
@@ -958,6 +982,19 @@ const values = {
   telemetryEnabled: toOptionalBoolean(telemetry?.enabled),
   telemetryEndpoint: toOptionalString(telemetry?.endpoint),
   telemetryIntervalHours: toOptionalInt(telemetry?.intervalHours),
+  adminEmail: toOptionalString(bootstrapAdmin?.email),
+  adminPassword: toOptionalString(bootstrapAdmin?.password),
+  adminPasswordHash: toOptionalString(bootstrapAdmin?.passwordHash),
+  adminFirstName: toOptionalString(bootstrapAdmin?.firstName),
+  adminLastName: toOptionalString(bootstrapAdmin?.lastName),
+  adminFacilityName: toOptionalString(bootstrapAdmin?.facilityName),
+  researcherEmail: toOptionalString(bootstrapResearcher?.email),
+  researcherPassword: toOptionalString(bootstrapResearcher?.password),
+  researcherPasswordHash: toOptionalString(bootstrapResearcher?.passwordHash),
+  researcherFirstName: toOptionalString(bootstrapResearcher?.firstName),
+  researcherLastName: toOptionalString(bootstrapResearcher?.lastName),
+  researcherInstitution: toOptionalString(bootstrapResearcher?.institution),
+  researcherRole: toOptionalString(bootstrapResearcher?.researcherRole || bootstrapResearcher?.role),
 };
 
 if (values.runDir === "/") {
@@ -987,6 +1024,8 @@ if (withPipelines === undefined) {
 }
 
 const out = {};
+if (values.installDir) out.SEQDESK_CFG_DIR = values.installDir;
+if (values.usePm2 !== undefined) out.SEQDESK_CFG_USE_PM2 = values.usePm2 ? "1" : "0";
 if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
 if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
@@ -1039,6 +1078,19 @@ if (values.metaxpathPackageUrl) {
 }
 if (values.metaxpathKey) out.SEQDESK_CFG_METAXPATH_KEY = values.metaxpathKey;
 if (values.metaxpathSha256) out.SEQDESK_CFG_METAXPATH_SHA256 = values.metaxpathSha256;
+if (values.adminEmail) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_EMAIL = values.adminEmail;
+if (values.adminPassword) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD = values.adminPassword;
+if (values.adminPasswordHash) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD_HASH = values.adminPasswordHash;
+if (values.adminFirstName) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_FIRST_NAME = values.adminFirstName;
+if (values.adminLastName) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_LAST_NAME = values.adminLastName;
+if (values.adminFacilityName) out.SEQDESK_CFG_BOOTSTRAP_ADMIN_FACILITY_NAME = values.adminFacilityName;
+if (values.researcherEmail) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_EMAIL = values.researcherEmail;
+if (values.researcherPassword) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD = values.researcherPassword;
+if (values.researcherPasswordHash) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD_HASH = values.researcherPasswordHash;
+if (values.researcherFirstName) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_FIRST_NAME = values.researcherFirstName;
+if (values.researcherLastName) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_LAST_NAME = values.researcherLastName;
+if (values.researcherInstitution) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_INSTITUTION = values.researcherInstitution;
+if (values.researcherRole) out.SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE = values.researcherRole;
 
 for (const [key, value] of Object.entries(out)) {
   console.log(`${key}="${escapeShell(value)}"`);
@@ -1060,6 +1112,8 @@ NODE
         rm -f "$temp_json"
     fi
 
+    apply_config_value SEQDESK_DIR SEQDESK_CFG_DIR
+    apply_config_value SEQDESK_USE_PM2 SEQDESK_CFG_USE_PM2
     apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
     apply_config_value SEQDESK_DATA_PATH SEQDESK_CFG_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
@@ -1091,7 +1145,21 @@ NODE
     apply_config_value SEQDESK_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_PACKAGE_URL
     apply_config_value SEQDESK_METAXPATH_KEY SEQDESK_CFG_METAXPATH_KEY
     apply_config_value SEQDESK_METAXPATH_SHA256 SEQDESK_CFG_METAXPATH_SHA256
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_EMAIL SEQDESK_CFG_BOOTSTRAP_ADMIN_EMAIL
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_PASSWORD SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD_HASH
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME SEQDESK_CFG_BOOTSTRAP_ADMIN_FIRST_NAME
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME SEQDESK_CFG_BOOTSTRAP_ADMIN_LAST_NAME
+    apply_config_value SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME SEQDESK_CFG_BOOTSTRAP_ADMIN_FACILITY_NAME
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL SEQDESK_CFG_BOOTSTRAP_RESEARCHER_EMAIL
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD_HASH
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME SEQDESK_CFG_BOOTSTRAP_RESEARCHER_FIRST_NAME
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME SEQDESK_CFG_BOOTSTRAP_RESEARCHER_LAST_NAME
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION SEQDESK_CFG_BOOTSTRAP_RESEARCHER_INSTITUTION
+    apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_ROLE SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 
+    unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_SECRET
     unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
@@ -1108,6 +1176,14 @@ NODE
     unset SEQDESK_CFG_EXEC_WEBLOG_SECRET
     unset SEQDESK_CFG_METAXPATH_PACKAGE_URL SEQDESK_CFG_METAXPATH_KEY
     unset SEQDESK_CFG_METAXPATH_SHA256
+    unset SEQDESK_CFG_BOOTSTRAP_ADMIN_EMAIL SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD
+    unset SEQDESK_CFG_BOOTSTRAP_ADMIN_PASSWORD_HASH
+    unset SEQDESK_CFG_BOOTSTRAP_ADMIN_FIRST_NAME SEQDESK_CFG_BOOTSTRAP_ADMIN_LAST_NAME
+    unset SEQDESK_CFG_BOOTSTRAP_ADMIN_FACILITY_NAME
+    unset SEQDESK_CFG_BOOTSTRAP_RESEARCHER_EMAIL SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD
+    unset SEQDESK_CFG_BOOTSTRAP_RESEARCHER_PASSWORD_HASH
+    unset SEQDESK_CFG_BOOTSTRAP_RESEARCHER_FIRST_NAME SEQDESK_CFG_BOOTSTRAP_RESEARCHER_LAST_NAME
+    unset SEQDESK_CFG_BOOTSTRAP_RESEARCHER_INSTITUTION SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 }
 
 load_existing_install_values() {
@@ -1240,6 +1316,25 @@ NODE
 
 print_kv() {
     printf "  %-24s %s\n" "$1" "$2"
+}
+
+redact_database_url() {
+    local value="$1"
+    if [ -z "$value" ]; then
+        echo ""
+        return
+    fi
+
+    node - "$value" <<'NODE'
+const raw = process.argv[2] || "";
+try {
+  const url = new URL(raw);
+  if (url.password) url.password = "********";
+  console.log(url.toString());
+} catch {
+  console.log(raw.replace(/(postgres(?:ql)?:\/\/[^:\s/@]+):([^@\s]+)@/i, "$1:********@"));
+}
+NODE
 }
 
 resolve_parent_dir() {
@@ -1375,9 +1470,13 @@ print_config_summary() {
     fi
     print_kv "Port" "${SEQDESK_PORT:-8000}"
     print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
-    print_kv "DATABASE_URL" "${SEQDESK_DATABASE_URL:-default local PostgreSQL URL}"
+    if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
+        print_kv "DATABASE_URL" "$(redact_database_url "$SEQDESK_DATABASE_URL")"
+    else
+        print_kv "DATABASE_URL" "default local PostgreSQL URL"
+    fi
     if [ -n "${SEQDESK_DATABASE_DIRECT_URL:-}" ] && [ "$SEQDESK_DATABASE_DIRECT_URL" != "$SEQDESK_DATABASE_URL" ]; then
-        print_kv "DIRECT_URL" "$SEQDESK_DATABASE_DIRECT_URL"
+        print_kv "DIRECT_URL" "$(redact_database_url "$SEQDESK_DATABASE_DIRECT_URL")"
     fi
     print_kv "seqdesk.config.json" "$config_status"
 }
@@ -1572,6 +1671,19 @@ write_config() {
     SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
     SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_EMAIL="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD_HASH="${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_FIRST_NAME="${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_LAST_NAME="${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_ADMIN_FACILITY_NAME="${SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_EMAIL="${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_PASSWORD="${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_PASSWORD_HASH="${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_FIRST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}" \
     SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
 const fs = require('fs');
@@ -1590,6 +1702,25 @@ const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
 const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
 const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
+const bootstrapEnv = {
+  admin: {
+    email: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_EMAIL || '',
+    password: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD || '',
+    passwordHash: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_PASSWORD_HASH || '',
+    firstName: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_FIRST_NAME || '',
+    lastName: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_LAST_NAME || '',
+    facilityName: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_FACILITY_NAME || '',
+  },
+  researcher: {
+    email: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_EMAIL || '',
+    password: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_PASSWORD || '',
+    passwordHash: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_PASSWORD_HASH || '',
+    firstName: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_FIRST_NAME || '',
+    lastName: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_LAST_NAME || '',
+    institution: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_INSTITUTION || '',
+    researcherRole: process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ROLE || '',
+  },
+};
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -1635,6 +1766,32 @@ function toOptionalPositiveInt(value) {
   return intValue > 0 ? intValue : undefined;
 }
 
+function hasAnyValue(record) {
+  return Object.values(record).some((value) => toOptionalString(value) !== undefined);
+}
+
+function hashBootstrapPassword(password) {
+  const { hashSync } = require('bcryptjs');
+  return hashSync(password, 12);
+}
+
+function buildBootstrapUserConfig(input) {
+  if (!hasAnyValue(input)) return undefined;
+  const user = {};
+  for (const key of ['email', 'firstName', 'lastName', 'facilityName', 'institution', 'researcherRole']) {
+    const value = toOptionalString(input[key]);
+    if (value) user[key] = value;
+  }
+  const configuredHash = toOptionalString(input.passwordHash);
+  const rawPassword = toOptionalString(input.password);
+  if (configuredHash) {
+    user.passwordHash = configuredHash;
+  } else if (rawPassword) {
+    user.passwordHash = hashBootstrapPassword(rawPassword);
+  }
+  return Object.keys(user).length > 0 ? user : undefined;
+}
+
 const config = readJson('seqdesk.config.json') || {};
 
 config.site = config.site || {};
@@ -1676,9 +1833,26 @@ if (telemetryEnabled !== undefined || telemetryEndpoint || telemetryIntervalHour
   if (telemetryIntervalHours !== undefined) config.telemetry.intervalHours = telemetryIntervalHours;
 }
 
+const adminBootstrap = buildBootstrapUserConfig(bootstrapEnv.admin);
+const researcherBootstrap = buildBootstrapUserConfig(bootstrapEnv.researcher);
+if (adminBootstrap || researcherBootstrap) {
+  config.bootstrap = config.bootstrap && typeof config.bootstrap === 'object' ? config.bootstrap : {};
+  const users = config.bootstrap.users && typeof config.bootstrap.users === 'object'
+    ? config.bootstrap.users
+    : {};
+  if (adminBootstrap) users.admin = adminBootstrap;
+  if (researcherBootstrap) users.researcher = researcherBootstrap;
+  config.bootstrap.users = users;
+}
+
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
 console.log('Wrote seqdesk.config.json');
 NODE
+}
+
+clear_bootstrap_plaintext_passwords() {
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
+    SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD=""
 }
 
 has_infrastructure_overrides() {
@@ -1893,6 +2067,9 @@ NODE
 on_error() {
     local exit_code=$?
     set +e
+    if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
+        rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
+    fi
     echo ""
     print_error "Installer failed."
     print_info "Command: ${BASH_COMMAND}"
@@ -1907,13 +2084,6 @@ on_error() {
 }
 
 parse_args "$@"
-SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
-SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
-
-if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
-    print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
-    exit 1
-fi
 
 trap on_error ERR
 
@@ -2021,6 +2191,17 @@ if [ -n "$SEQDESK_CONFIG" ]; then
     fi
     load_install_config "$SEQDESK_CONFIG"
     print_success "Loaded installer config"
+fi
+
+if [ -z "$SEQDESK_DIR" ]; then
+    SEQDESK_DIR="./seqdesk"
+fi
+SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
+SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
+
+if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
+    print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
+    exit 1
 fi
 
 if is_truthy "$SEQDESK_RECONFIGURE"; then
@@ -2326,6 +2507,7 @@ if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
 fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
+clear_bootstrap_plaintext_passwords
 export DATABASE_URL="$SEQDESK_DATABASE_URL"
 export DIRECT_URL="$SEQDESK_DATABASE_DIRECT_URL"
 
@@ -2368,6 +2550,8 @@ elif [ "$SEED_OK" = "true" ]; then
     print_success "Database initialized"
     if is_truthy "$SEQDESK_RECONFIGURE"; then
         print_info "Reconfigure mode: existing user accounts were kept."
+    elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ]; then
+        print_info "Bootstrap users available with configured profile credentials."
     else
         print_info "Default users available: admin@example.com/admin and user@example.com/user"
     fi
@@ -2387,6 +2571,8 @@ if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
     print_info "Applying hosted install profile settings..."
     if node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
         print_success "Hosted install profile settings applied"
+        rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
+        SEQDESK_PROFILE_CONFIG_FILE=""
     else
         print_error "Failed to apply hosted install profile settings"
         exit 1
@@ -2588,6 +2774,10 @@ echo ""
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     echo "Login:"
     echo "  Existing user accounts are unchanged (reconfigure mode)."
+elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ]; then
+    echo "Login:"
+    echo "  Admin:      ${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+    echo "  Researcher: ${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / configured profile password"
 else
     echo "Default login:"
     echo "  Admin:      admin@example.com / admin"

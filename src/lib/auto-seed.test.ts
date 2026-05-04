@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const BOOTSTRAP_ENV_KEYS = [
+  "SEQDESK_BOOTSTRAP_ADMIN_EMAIL",
+  "SEQDESK_BOOTSTRAP_ADMIN_PASSWORD",
+  "SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH",
+  "SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME",
+  "SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME",
+  "SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_ROLE",
+];
+
 // Mock the db module before importing
 const mockDb = {
   siteSettings: {
@@ -22,6 +38,9 @@ let autoSeedIfNeeded: typeof import("./auto-seed").autoSeedIfNeeded;
 
 beforeEach(async () => {
   vi.resetAllMocks();
+  for (const key of BOOTSTRAP_ENV_KEYS) {
+    delete process.env[key];
+  }
   // Reset the module to clear the seedingInProgress flag
   vi.resetModules();
   vi.mock("./db", () => ({ db: mockDb }));
@@ -37,6 +56,62 @@ describe("autoSeedIfNeeded", () => {
 
     expect(result).toEqual({ seeded: false });
     expect(mockDb.user.upsert).not.toHaveBeenCalled();
+  });
+
+  it("uses configured bootstrap account metadata and password hashes", async () => {
+    process.env.SEQDESK_BOOTSTRAP_ADMIN_EMAIL = "facility@example.org";
+    process.env.SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH = "$2b$12$admin-profile-hash";
+    process.env.SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME = "Facility";
+    process.env.SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME = "Owner";
+    process.env.SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME = "SeqDesk Dev";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL = "researcher@example.org";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH = "$2b$12$researcher-profile-hash";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME = "Internal";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME = "User";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION = "HZI";
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_ROLE = "POSTDOC";
+
+    vi.resetModules();
+    vi.mock("./db", () => ({ db: mockDb }));
+    const mod = await import("./auto-seed");
+    autoSeedIfNeeded = mod.autoSeedIfNeeded;
+
+    mockDb.siteSettings.findUnique.mockResolvedValue(null);
+    mockDb.user.upsert.mockResolvedValue({});
+    mockDb.siteSettings.upsert.mockResolvedValue({});
+    mockDb.orderFormConfig.upsert.mockResolvedValue({});
+    mockDb.siteSettings.update.mockResolvedValue({});
+
+    const result = await autoSeedIfNeeded();
+
+    expect(result).toEqual({ seeded: true });
+    expect(mockDb.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: "facility@example.org" },
+        create: expect.objectContaining({
+          email: "facility@example.org",
+          password: "$2b$12$admin-profile-hash",
+          firstName: "Facility",
+          lastName: "Owner",
+          facilityName: "SeqDesk Dev",
+          role: "FACILITY_ADMIN",
+        }),
+      })
+    );
+    expect(mockDb.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: "researcher@example.org" },
+        create: expect.objectContaining({
+          email: "researcher@example.org",
+          password: "$2b$12$researcher-profile-hash",
+          firstName: "Internal",
+          lastName: "User",
+          institution: "HZI",
+          researcherRole: "POSTDOC",
+          role: "RESEARCHER",
+        }),
+      })
+    );
   });
 
   it("seeds database when no site settings exist", async () => {

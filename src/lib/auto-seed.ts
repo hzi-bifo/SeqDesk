@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import { hashSync } from "bcryptjs";
 import { db } from "./db";
 
 // Keep auto-seeding independent from external module resolution.
@@ -9,7 +12,146 @@ const DEFAULT_ADMIN_PASSWORD_HASH =
 const DEFAULT_USER_PASSWORD_HASH =
   "$2b$12$kbd8ye8jMpaIwxH8nVP79u/witxktRivlfVQ59IlUzyzVKCVIox2m";
 
+type BootstrapUserConfig = Record<string, unknown>;
+
+const CONFIG_FILE_NAMES = [
+  "seqdesk.config.json",
+  ".seqdeskrc",
+  ".seqdeskrc.json",
+];
+
+const DEFAULT_ADMIN_USER = {
+  email: "admin@example.com",
+  passwordHash: DEFAULT_ADMIN_PASSWORD_HASH,
+  firstName: "Admin",
+  lastName: "User",
+  facilityName: "HZI Sequencing Center",
+};
+
+const DEFAULT_RESEARCHER_USER = {
+  email: "user@example.com",
+  passwordHash: DEFAULT_USER_PASSWORD_HASH,
+  firstName: "Test",
+  lastName: "Researcher",
+  institution: "Helmholtz Centre for Infection Research",
+  researcherRole: "PHD_STUDENT",
+};
+
 let seedingInProgress = false;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function trimToString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function loadSeedConfig(baseDir = process.cwd()): Record<string, unknown> {
+  for (const name of CONFIG_FILE_NAMES) {
+    const candidate = path.join(baseDir, name);
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, "utf8")) as unknown;
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function bootstrapUserFromConfig(config: Record<string, unknown>, kind: "admin" | "researcher"): BootstrapUserConfig {
+  const bootstrap = isRecord(config.bootstrap) ? config.bootstrap : {};
+  const users = isRecord(bootstrap.users) ? bootstrap.users : {};
+  return isRecord(users[kind]) ? users[kind] : {};
+}
+
+function firstSeedString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const trimmed = trimToString(value);
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function resolvePasswordHash(
+  kind: "admin" | "researcher",
+  configUser: BootstrapUserConfig,
+  defaultHash: string
+): string {
+  const envPrefix =
+    kind === "admin" ? "SEQDESK_BOOTSTRAP_ADMIN" : "SEQDESK_BOOTSTRAP_RESEARCHER";
+  const passwordHash = firstSeedString(
+    process.env[`${envPrefix}_PASSWORD_HASH`],
+    configUser.passwordHash
+  );
+  if (passwordHash) return passwordHash;
+
+  const password = firstSeedString(process.env[`${envPrefix}_PASSWORD`], configUser.password);
+  if (password) return hashSync(password, 12);
+
+  return defaultHash;
+}
+
+function resolveBootstrapUser(
+  kind: "admin",
+  config: Record<string, unknown>
+): typeof DEFAULT_ADMIN_USER;
+function resolveBootstrapUser(
+  kind: "researcher",
+  config: Record<string, unknown>
+): typeof DEFAULT_RESEARCHER_USER;
+function resolveBootstrapUser(kind: "admin" | "researcher", config: Record<string, unknown>) {
+  const configUser = bootstrapUserFromConfig(config, kind);
+  if (kind === "admin") {
+    return {
+      email:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_EMAIL, configUser.email) ??
+        DEFAULT_ADMIN_USER.email,
+      passwordHash: resolvePasswordHash("admin", configUser, DEFAULT_ADMIN_USER.passwordHash),
+      firstName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME, configUser.firstName) ??
+        DEFAULT_ADMIN_USER.firstName,
+      lastName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME, configUser.lastName) ??
+        DEFAULT_ADMIN_USER.lastName,
+      facilityName:
+        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_FACILITY_NAME, configUser.facilityName) ??
+        DEFAULT_ADMIN_USER.facilityName,
+    };
+  }
+
+  return {
+    email:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL, configUser.email) ??
+      DEFAULT_RESEARCHER_USER.email,
+    passwordHash: resolvePasswordHash(
+      "researcher",
+      configUser,
+      DEFAULT_RESEARCHER_USER.passwordHash
+    ),
+    firstName:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME, configUser.firstName) ??
+      DEFAULT_RESEARCHER_USER.firstName,
+    lastName:
+      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME, configUser.lastName) ??
+      DEFAULT_RESEARCHER_USER.lastName,
+    institution:
+      firstSeedString(
+        process.env.SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION,
+        configUser.institution
+      ) ?? DEFAULT_RESEARCHER_USER.institution,
+    researcherRole:
+      firstSeedString(
+        process.env.SEQDESK_BOOTSTRAP_RESEARCHER_ROLE,
+        configUser.researcherRole,
+        configUser.role
+      ) ?? DEFAULT_RESEARCHER_USER.researcherRole,
+  };
+}
 
 /**
  * Automatically seed the database with initial data if it hasn't been seeded yet.
@@ -35,36 +177,39 @@ export async function autoSeedIfNeeded(): Promise<{
 
     seedingInProgress = true;
     console.log("[auto-seed] Database not seeded, seeding now...");
+    const seedConfig = loadSeedConfig();
 
     // 1. Create admin user
-    const adminPassword = DEFAULT_ADMIN_PASSWORD_HASH;
+    const adminBootstrap = resolveBootstrapUser("admin", seedConfig);
+    const adminPassword = adminBootstrap.passwordHash;
     await db.user.upsert({
-      where: { email: "admin@example.com" },
+      where: { email: adminBootstrap.email },
       update: {},
       create: {
-        email: "admin@example.com",
+        email: adminBootstrap.email,
         password: adminPassword,
-        firstName: "Admin",
-        lastName: "User",
+        firstName: adminBootstrap.firstName,
+        lastName: adminBootstrap.lastName,
         role: "FACILITY_ADMIN",
-        facilityName: "HZI Sequencing Center",
+        facilityName: adminBootstrap.facilityName,
       },
     });
     console.log("[auto-seed] Created admin user");
 
     // 2. Create test researcher user
-    const userPassword = DEFAULT_USER_PASSWORD_HASH;
+    const researcherBootstrap = resolveBootstrapUser("researcher", seedConfig);
+    const userPassword = researcherBootstrap.passwordHash;
     await db.user.upsert({
-      where: { email: "user@example.com" },
+      where: { email: researcherBootstrap.email },
       update: {},
       create: {
-        email: "user@example.com",
+        email: researcherBootstrap.email,
         password: userPassword,
-        firstName: "Test",
-        lastName: "Researcher",
+        firstName: researcherBootstrap.firstName,
+        lastName: researcherBootstrap.lastName,
         role: "RESEARCHER",
-        researcherRole: "PHD_STUDENT",
-        institution: "Helmholtz Centre for Infection Research",
+        researcherRole: researcherBootstrap.researcherRole,
+        institution: researcherBootstrap.institution,
       },
     });
     console.log("[auto-seed] Created test user");
