@@ -119,6 +119,19 @@ try {
     fail(`Expected dummy ENA username to be applied, got '${settings.enaUsername}'`);
   }
 
+  const telemetry = parseJsonObject(extra.telemetry, "extraSettings.telemetry");
+  if (expectedProfileId === "ci-runner") {
+    if (telemetry.enabled !== true) {
+      fail(`Expected telemetry.enabled to be true, got '${telemetry.enabled}'`);
+    }
+    if (telemetry.endpoint !== "https://www.seqdesk.com/api/telemetry/heartbeat") {
+      fail(`Expected telemetry endpoint to point at SeqDesk.com, got '${telemetry.endpoint}'`);
+    }
+    if (telemetry.intervalHours !== 1) {
+      fail(`Expected telemetry.intervalHours to be 1, got '${telemetry.intervalHours}'`);
+    }
+  }
+
   const enabledPipelines = pipelineConfigs
     .filter((pipeline) => pipeline.enabled)
     .map((pipeline) => pipeline.pipelineId)
@@ -135,6 +148,11 @@ try {
         installProfile: extra.installProfile,
         availableDeviceIds,
         enabledPipelines,
+        telemetry: {
+          enabled: telemetry.enabled,
+          endpoint: telemetry.endpoint,
+          intervalHours: telemetry.intervalHours,
+        },
       },
       null,
       2

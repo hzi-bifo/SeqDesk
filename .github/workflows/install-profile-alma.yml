@@ -432,6 +432,7 @@ jobs:
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
           echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "TELEMETRY_JSON=$RUNNER_TEMP/telemetry-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
@@ -682,6 +683,11 @@ jobs:
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
+          node "$GITHUB_WORKSPACE/scripts/run-telemetry-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --output "$TELEMETRY_JSON"
 
       - name: Upload install-profile e2e artifacts
         if: always()
@@ -694,6 +700,7 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PROFILE_ASSERT_JSON }}
+            ${{ env.TELEMETRY_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}

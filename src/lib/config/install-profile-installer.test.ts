@@ -52,6 +52,7 @@ describe("install profile installer wiring", () => {
     expect(profileAssert).toContain("sequencingRunSampleFormFields");
     expect(profileAssert).toContain("ont-minion-mk1d");
     expect(profileAssert).toContain("metaxpath");
+    expect(profileAssert).toContain("telemetry.intervalHours");
   });
 
   it("defines bifo_dmz AlmaLinux canaries for plain and hosted-profile installs", () => {
@@ -70,6 +71,8 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("SEQDESK_INSTALL_URL");
     expect(profileWorkflow).toContain("seqdesk \\");
     expect(profileWorkflow).toContain("scripts/assert-install-profile-applied.mjs");
+    expect(profileWorkflow).toContain("scripts/run-telemetry-e2e.mjs");
+    expect(profileWorkflow).toContain("TELEMETRY_JSON");
     expect(profileWorkflow).toContain("install-private-metaxpath.sh");
     expect(profileWorkflow).toContain("0.0.0-ci");
   });
