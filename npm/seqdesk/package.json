@@ -14,6 +14,7 @@
   "files": [
     "bin/seqdesk.js",
     "README.md",
+    "MANUAL_INSTALL.md",
     "scripts/sync-version.js"
   ],
   "engines": {
