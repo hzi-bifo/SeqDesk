@@ -35,6 +35,7 @@
 #   SEQDESK_PROFILE_REGISTRY_URL=https://www.seqdesk.com/api/install-profiles
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
+#   SEQDESK_PREPARE_POSTGRES=1     - Prepare local PostgreSQL role/database, then exit
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_CORES=4     - Optional pipeline execution override
@@ -119,6 +120,7 @@ SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://www.seqdes
 SEQDESK_PROFILE_CONFIG_FILE=""
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
+SEQDESK_PREPARE_POSTGRES="${SEQDESK_PREPARE_POSTGRES:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
 SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
@@ -350,6 +352,36 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+is_root_user() {
+    [ "$(id -u 2>/dev/null || echo 1)" = "0" ]
+}
+
+can_run_privileged() {
+    is_root_user || {
+        command_exists sudo && sudo -n true >/dev/null 2>&1
+    }
+}
+
+run_privileged() {
+    if is_root_user; then
+        "$@"
+    else
+        sudo -n "$@"
+    fi
+}
+
+run_as_postgres() {
+    if is_root_user; then
+        if command_exists runuser; then
+            runuser -u postgres -- "$@"
+        else
+            sudo -n -u postgres "$@"
+        fi
+    else
+        sudo -n -u postgres "$@"
+    fi
+}
+
 is_truthy() {
     case "${1:-}" in
         1|true|TRUE|yes|YES|y|Y) return 0 ;;
@@ -416,6 +448,14 @@ configure_postgres_urls() {
 
 print_postgres_setup_instructions() {
     print_warning "PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
+    if load_postgres_url_parts; then
+        echo "  Run this once from a sudo-capable account:"
+        echo "  sudo env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+        echo "  Then rerun:"
+        echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+        echo ""
+        echo "  Manual fallback:"
+    fi
     case "$OS:$DISTRO" in
         linux:debian)
             echo "  sudo apt-get update"
@@ -442,8 +482,10 @@ print_postgres_setup_instructions() {
     echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
     echo "  SQL"
     echo "  Current DATABASE_URL: ${SEQDESK_DATABASE_URL}"
-    echo "  After creating the role/database, rerun:"
-    echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+    if ! load_postgres_url_parts; then
+        echo "  After creating the role/database, rerun:"
+        echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+    fi
 }
 
 load_postgres_url_parts() {
@@ -500,43 +542,42 @@ postgres_connection_ready() {
 }
 
 sudo_postgres_ready() {
-    command_exists sudo &&
-        sudo -n -u postgres psql -d postgres -qAt -c "select 1" >/dev/null 2>&1
+    run_as_postgres psql -d postgres -qAt -c "select 1" >/dev/null 2>&1
 }
 
 install_postgres_packages_if_possible() {
-    if ! command_exists sudo || ! sudo -n true >/dev/null 2>&1; then
+    if ! can_run_privileged; then
         return 1
     fi
 
     case "$OS:$DISTRO" in
         linux:redhat)
             if command_exists dnf; then
-                run_with_spinner_warn "Install PostgreSQL packages" sudo -n dnf install -y postgresql-server postgresql-contrib || true
+                run_with_spinner_warn "Install PostgreSQL packages" run_privileged dnf install -y postgresql-server postgresql-contrib || true
             elif command_exists yum; then
-                run_with_spinner_warn "Install PostgreSQL packages" sudo -n yum install -y postgresql-server postgresql-contrib || true
+                run_with_spinner_warn "Install PostgreSQL packages" run_privileged yum install -y postgresql-server postgresql-contrib || true
             fi
             ;;
         linux:debian)
             if command_exists apt-get; then
-                run_with_spinner_warn "Refresh package index" sudo -n apt-get update || true
-                run_with_spinner_warn "Install PostgreSQL packages" sudo -n apt-get install -y postgresql postgresql-contrib || true
+                run_with_spinner_warn "Refresh package index" run_privileged apt-get update || true
+                run_with_spinner_warn "Install PostgreSQL packages" run_privileged apt-get install -y postgresql postgresql-contrib || true
             fi
             ;;
     esac
 }
 
 start_postgres_if_possible() {
-    if ! command_exists sudo || ! sudo -n true >/dev/null 2>&1; then
+    if ! can_run_privileged; then
         return 1
     fi
 
     if command_exists postgresql-setup; then
-        sudo -n postgresql-setup --initdb >/dev/null 2>&1 || true
+        run_privileged postgresql-setup --initdb >/dev/null 2>&1 || true
     fi
 
     if command_exists systemctl; then
-        sudo -n systemctl enable --now postgresql >/dev/null 2>&1 || true
+        run_privileged systemctl enable --now postgresql >/dev/null 2>&1 || true
     fi
 }
 
@@ -591,7 +632,7 @@ ensure_local_postgres_database() {
     fi
 
     if ! sudo_postgres_ready; then
-        print_warning "Could not access local PostgreSQL as the postgres system user without an interactive sudo prompt."
+        print_warning "Could not access local PostgreSQL as root or through passwordless sudo."
         return 1
     fi
 
@@ -599,7 +640,7 @@ ensure_local_postgres_database() {
     sql_file="$(mktemp)"
     write_postgres_bootstrap_sql "$sql_file"
 
-    if ! run_with_spinner "Local PostgreSQL database" sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+    if ! run_with_spinner "Local PostgreSQL database" run_as_postgres psql -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
         rm -f "$sql_file"
         return 1
     fi
@@ -612,6 +653,25 @@ ensure_local_postgres_database() {
 
     print_warning "Local PostgreSQL setup ran, but the SeqDesk database is still not reachable."
     return 1
+}
+
+prepare_postgres_and_exit() {
+    print_header "PostgreSQL setup"
+
+    if [ -z "$SEQDESK_DATABASE_URL" ]; then
+        print_error "No DATABASE_URL found. Pass --database-url or --dir for an existing SeqDesk install."
+        exit 1
+    fi
+
+    configure_postgres_urls
+
+    if ensure_local_postgres_database; then
+        print_success "PostgreSQL is ready"
+        exit 0
+    fi
+
+    print_postgres_setup_instructions
+    exit 1
 }
 
 parse_release_version_info() {
@@ -837,6 +897,7 @@ Options:
   --run-doctor                 Run seqdesk doctor after install when available
   --reconfigure                Reconfigure an existing install in place
   --reseed-db                  Force DB push + seed (default off for --reconfigure)
+  --prepare-postgres           Prepare local PostgreSQL role/database, then exit
   -h, --help                   Show this help
 
 Examples:
@@ -845,6 +906,7 @@ Examples:
   seqdesk -y --config https://example.org/infrastructure-setup.json
   seqdesk -y --reconfigure --config ./infrastructure-setup.json
   seqdesk -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+  sudo env SEQDESK_DATABASE_URL="postgresql://..." npx -y seqdesk@latest -y --prepare-postgres
 EOF
 }
 
@@ -1014,6 +1076,9 @@ parse_args() {
                 ;;
             --reseed-db|--reseed_db)
                 SEQDESK_RESEED_DB="1"
+                ;;
+            --prepare-postgres|--bootstrap-postgres)
+                SEQDESK_PREPARE_POSTGRES="1"
                 ;;
             -h|--help)
                 print_usage
@@ -2499,6 +2564,9 @@ fi
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure"
 fi
+if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
+    print_kv "Mode" "prepare-postgres"
+fi
 print_kv "Started" "$INSTALL_STARTED_AT"
 print_kv "Log" "$SEQDESK_LOG"
 
@@ -2593,9 +2661,17 @@ if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
     exit 1
 fi
 
-if is_truthy "$SEQDESK_RECONFIGURE"; then
-    print_info "Reconfigure mode: loading defaults from existing installation"
+if { is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_PREPARE_POSTGRES"; } && [ -d "$SEQDESK_DIR" ]; then
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        print_info "Reconfigure mode: loading defaults from existing installation"
+    elif is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
+        print_info "PostgreSQL setup mode: loading defaults from existing installation"
+    fi
     load_existing_install_values "$SEQDESK_DIR"
+fi
+
+if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
+    prepare_postgres_and_exit
 fi
 
 if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
