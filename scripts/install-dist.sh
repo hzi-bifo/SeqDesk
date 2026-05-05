@@ -446,6 +446,174 @@ print_postgres_setup_instructions() {
     echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
 }
 
+load_postgres_url_parts() {
+    local temp_env
+    temp_env="$(mktemp)"
+    if ! DATABASE_URL="$SEQDESK_DATABASE_URL" node >"$temp_env" <<'NODE'
+const raw = process.env.DATABASE_URL || "";
+function shell(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+try {
+  const url = new URL(raw);
+  const protocol = url.protocol.replace(/:$/, "");
+  if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
+  const host = url.hostname || "127.0.0.1";
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) process.exit(2);
+  const database = decodeURIComponent(url.pathname.replace(/^\/+/, "")) || "seqdesk";
+  const user = decodeURIComponent(url.username || "seqdesk");
+  const password = decodeURIComponent(url.password || "");
+  const port = url.port || "5432";
+  process.stdout.write([
+    "PG_HOST=" + shell(host),
+    "PG_PORT=" + shell(port),
+    "PG_USER_NAME=" + shell(user),
+    "PG_PASSWORD_VALUE=" + shell(password),
+    "PG_DATABASE_NAME=" + shell(database),
+  ].join("\n"));
+} catch {
+  process.exit(2);
+}
+NODE
+    then
+        rm -f "$temp_env"
+        return 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$temp_env"
+    rm -f "$temp_env"
+    return 0
+}
+
+postgres_connection_ready() {
+    if ! command_exists psql; then
+        return 1
+    fi
+
+    PGPASSWORD="${PG_PASSWORD_VALUE:-}" psql \
+        -h "${PG_HOST:-127.0.0.1}" \
+        -p "${PG_PORT:-5432}" \
+        -U "${PG_USER_NAME:-seqdesk}" \
+        -d "${PG_DATABASE_NAME:-seqdesk}" \
+        -qAt -c "select 1" >/dev/null 2>&1
+}
+
+sudo_postgres_ready() {
+    command_exists sudo &&
+        sudo -n -u postgres psql -d postgres -qAt -c "select 1" >/dev/null 2>&1
+}
+
+install_postgres_packages_if_possible() {
+    if ! command_exists sudo || ! sudo -n true >/dev/null 2>&1; then
+        return 1
+    fi
+
+    case "$OS:$DISTRO" in
+        linux:redhat)
+            if command_exists dnf; then
+                run_with_spinner_warn "Install PostgreSQL packages" sudo -n dnf install -y postgresql-server postgresql-contrib || true
+            elif command_exists yum; then
+                run_with_spinner_warn "Install PostgreSQL packages" sudo -n yum install -y postgresql-server postgresql-contrib || true
+            fi
+            ;;
+        linux:debian)
+            if command_exists apt-get; then
+                run_with_spinner_warn "Refresh package index" sudo -n apt-get update || true
+                run_with_spinner_warn "Install PostgreSQL packages" sudo -n apt-get install -y postgresql postgresql-contrib || true
+            fi
+            ;;
+    esac
+}
+
+start_postgres_if_possible() {
+    if ! command_exists sudo || ! sudo -n true >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if command_exists postgresql-setup; then
+        sudo -n postgresql-setup --initdb >/dev/null 2>&1 || true
+    fi
+
+    if command_exists systemctl; then
+        sudo -n systemctl enable --now postgresql >/dev/null 2>&1 || true
+    fi
+}
+
+write_postgres_bootstrap_sql() {
+    local sql_file="$1"
+    PG_USER_NAME="$PG_USER_NAME" \
+    PG_PASSWORD_VALUE="$PG_PASSWORD_VALUE" \
+    PG_DATABASE_NAME="$PG_DATABASE_NAME" \
+    node > "$sql_file" <<'NODE'
+const user = process.env.PG_USER_NAME || "seqdesk";
+const password = process.env.PG_PASSWORD_VALUE || "";
+const database = process.env.PG_DATABASE_NAME || "seqdesk";
+
+function literal(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+process.stdout.write(`DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${literal(user)}) THEN
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', ${literal(user)}, ${literal(password)});
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', ${literal(user)}, ${literal(password)});
+  END IF;
+END
+$$;
+
+SELECT format('CREATE DATABASE %I OWNER %I', ${literal(database)}, ${literal(user)})
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = ${literal(database)})
+\\gexec
+
+ALTER DATABASE "${database.replace(/"/g, '""')}" OWNER TO "${user.replace(/"/g, '""')}";
+`);
+NODE
+}
+
+ensure_local_postgres_database() {
+    if ! load_postgres_url_parts; then
+        return 0
+    fi
+
+    if postgres_connection_ready; then
+        print_kv "PostgreSQL" "ready"
+        return 0
+    fi
+
+    print_info "Preparing local PostgreSQL database"
+
+    if ! sudo_postgres_ready; then
+        install_postgres_packages_if_possible || true
+        start_postgres_if_possible || true
+    fi
+
+    if ! sudo_postgres_ready; then
+        print_warning "Could not access local PostgreSQL as the postgres system user without an interactive sudo prompt."
+        return 1
+    fi
+
+    local sql_file
+    sql_file="$(mktemp)"
+    write_postgres_bootstrap_sql "$sql_file"
+
+    if ! run_with_spinner "Local PostgreSQL database" sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+        rm -f "$sql_file"
+        return 1
+    fi
+    rm -f "$sql_file"
+
+    if postgres_connection_ready; then
+        print_kv "PostgreSQL" "ready"
+        return 0
+    fi
+
+    print_warning "Local PostgreSQL setup ran, but the SeqDesk database is still not reachable."
+    return 1
+}
+
 parse_release_version_info() {
     local version_info="$1"
 
@@ -1452,6 +1620,7 @@ if (fs.existsSync(configPath)) {
 
 const runtime = config && typeof config.runtime === "object" ? config.runtime : {};
 const nextAuthUrl = trimString(runtime.nextAuthUrl);
+const nextAuthSecret = trimString(runtime.nextAuthSecret);
 const databaseUrl = trimString(runtime.databaseUrl);
 const directUrl = trimString(runtime.directUrl);
 const app = config && typeof config.app === "object" ? config.app : {};
@@ -1492,6 +1661,7 @@ if (typeof config?.pipelines?.enabled === "boolean") {
 const out = {};
 if (port) out.SEQDESK_EXISTING_PORT = port;
 if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
+if (nextAuthSecret) out.SEQDESK_EXISTING_NEXTAUTH_SECRET = nextAuthSecret;
 if (databaseUrl) out.SEQDESK_EXISTING_DATABASE_URL = databaseUrl;
 if (directUrl) out.SEQDESK_EXISTING_DATABASE_DIRECT_URL = directUrl;
 if (dataPath) out.SEQDESK_EXISTING_DATA_PATH = dataPath;
@@ -1516,13 +1686,14 @@ NODE
 
     apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
+    apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_EXISTING_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_EXISTING_DATABASE_URL
     apply_config_value SEQDESK_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL
     apply_config_value SEQDESK_DATA_PATH SEQDESK_EXISTING_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_EXISTING_RUN_DIR
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
-    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL
+    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
     unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_WITH_PIPELINES
 }
@@ -2714,6 +2885,7 @@ else
     if is_truthy "$SEQDESK_RECONFIGURE" && is_truthy "$SEQDESK_RESEED_DB"; then
         print_warning "Reconfigure mode with --reseed-db: running migrations + seed on existing database."
     fi
+    ensure_local_postgres_database || true
     if ! run_with_spinner "PostgreSQL migrations" node scripts/run-prisma.mjs migrate deploy; then
         print_postgres_setup_instructions
         exit 1
