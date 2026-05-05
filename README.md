@@ -19,31 +19,37 @@ Full user and operator documentation is published at:
 Recommended for regular installs and upgrades:
 
 ```bash
-curl -fsSL https://seqdesk.com/install.sh | bash
-```
-
-NPM launcher (same installer flow):
-
-```bash
 npm i -g seqdesk
 seqdesk
 ```
 
-Common flags:
+Pass installer flags directly through the launcher:
 
 ```bash
-curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config ./infrastructure-setup.json
-curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
+seqdesk -y --config ./infrastructure-setup.json
+seqdesk -y --reconfigure --config ./infrastructure-setup.json
 seqdesk -y --use-pm2 --dir /opt/seqdesk
 ```
 
 Install with a hosted profile (pre-configured settings from seqdesk.com):
 
 ```bash
-curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --profile <id> --profile-code <code>
+seqdesk -y --profile <id> --profile-code <code>
 ```
 
 Organizations can create install profiles at [seqdesk.com](https://www.seqdesk.com) that bundle form fields, pipeline settings, and module configuration. The installer fetches and applies the profile during setup.
+
+Advanced fallback when npm is unavailable:
+
+```bash
+curl -fsSL https://seqdesk.com/install.sh | bash
+```
+
+The npm package is the supported public entry point. Internally, it downloads
+and runs the public shell installer served from `seqdesk.com/install.sh`.
+Updating `scripts/install-dist.sh` in this repository does not change the live
+installer until the matching `public/install.sh` in the SeqDesk.com repository
+has been updated and deployed.
 
 ## Source Installer
 
