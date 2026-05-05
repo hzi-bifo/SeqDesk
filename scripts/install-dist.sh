@@ -638,7 +638,9 @@ prompt_yes_no() {
 print_usage() {
     cat <<'EOF'
 Usage:
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]
+  npx -y seqdesk@latest [options]
+  seqdesk [options]
+  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]  # advanced fallback
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
@@ -672,11 +674,11 @@ Options:
   -h, --help                   Show this help
 
 Examples:
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --reconfigure --config ./infrastructure-setup.json
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+  npx -y seqdesk@latest -y
+  npx -y seqdesk@latest -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
+  seqdesk -y --config https://example.org/infrastructure-setup.json
+  seqdesk -y --reconfigure --config ./infrastructure-setup.json
+  seqdesk -y --reconfigure --reseed-db --config ./infrastructure-setup.json
 EOF
 }
 
