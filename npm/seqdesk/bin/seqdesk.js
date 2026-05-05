@@ -320,24 +320,53 @@ function summarizeTelemetry(config) {
     .join(", ");
 }
 
+const useColor = Boolean(process.stdout.isTTY && !process.env.NO_COLOR);
+const style = {
+  bold: useColor ? "\u001b[1m" : "",
+  red: useColor ? "\u001b[0;31m" : "",
+  yellow: useColor ? "\u001b[1;33m" : "",
+  reset: useColor ? "\u001b[0m" : "",
+};
+
+function printHeader(label) {
+  console.log("");
+  console.log(`${style.bold}${label}${style.reset}`);
+}
+
+function printKv(label, value) {
+  console.log(`  ${label.padEnd(24, " ")} ${value}`);
+}
+
+function printCheck(check) {
+  const detail = check.detail || "ok";
+  if (check.status === "pass") {
+    printKv(check.name, detail);
+    return;
+  }
+
+  const label = check.status === "warn" ? "warning" : "error";
+  const color = check.status === "warn" ? style.yellow : style.red;
+  const detailSuffix = check.detail ? ` - ${check.detail}` : "";
+  console.log(`  ${color}${label}${style.reset} ${check.name}${detailSuffix}`);
+}
+
 function printDoctorResult(result) {
-  console.log(`SeqDesk doctor ${version}`);
-  console.log(`Install dir: ${result.installDir}`);
+  console.log(`${style.bold}SeqDesk doctor${style.reset}`);
+  printKv("Version", version);
+  printKv("Directory", result.installDir);
   if (result.appUrl) {
-    console.log(`App URL: ${result.appUrl}`);
+    printKv("URL", result.appUrl);
   }
-  console.log("");
 
+  printHeader("Checks");
   for (const check of result.checks) {
-    const label = check.status.toUpperCase().padEnd(4, " ");
-    const detail = check.detail ? ` - ${check.detail}` : "";
-    console.log(`[${label}] ${check.name}${detail}`);
+    printCheck(check);
   }
 
-  console.log("");
-  console.log(
-    `Summary: ${result.summary.pass} pass, ${result.summary.warn} warn, ${result.summary.fail} fail`
-  );
+  printHeader("Summary");
+  printKv("Passed", result.summary.pass);
+  printKv("Warnings", result.summary.warn);
+  printKv("Errors", result.summary.fail);
 }
 
 async function runDoctor(argv) {

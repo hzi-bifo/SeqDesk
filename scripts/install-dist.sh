@@ -26,8 +26,9 @@
 #   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
 #   SEQDESK_ORDER_FORM_SETTINGS=/path/order.json - Optional exported order form preset
 #   SEQDESK_STUDY_FORM_SETTINGS=/path/study.json - Optional exported study form preset
-#   SEQDESK_LOG=/path/install.log  - Optional install log path
+#   SEQDESK_LOG=/path/install.log  - Optional install log path (default: /tmp/seqdesk-install-*.log)
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
+#   SEQDESK_RUN_DOCTOR=1          - Run seqdesk doctor after install when the CLI is available
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
 #   SEQDESK_PROFILE=twincore       - Hosted install profile id
 #   SEQDESK_PROFILE_CODE=...       - Access code for hosted install profile
@@ -110,6 +111,7 @@ SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITU
 SEQDESK_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
+SEQDESK_RUN_DOCTOR="${SEQDESK_RUN_DOCTOR:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_PROFILE="${SEQDESK_PROFILE:-${SEQDESK_SETTING:-}}"
 SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
@@ -132,6 +134,7 @@ SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACK
 SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
 SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
 
+SEQDESK_LOG_ENABLED="false"
 PM2_CONFIGURED="false"
 PM2_STARTUP_ENABLED="false"
 PM2_PROCESS_EXISTS="false"
@@ -187,6 +190,164 @@ print_log_line() {
 format_elapsed() {
     local seconds="${1:-0}"
     printf '%dm%ds' $((seconds / 60)) $((seconds % 60))
+}
+
+shell_quote() {
+    printf '%q' "$1"
+}
+
+doctor_url() {
+    printf 'http://127.0.0.1:%s' "${SEQDESK_PORT:-8000}"
+}
+
+print_doctor_command() {
+    printf '  seqdesk doctor --dir %s --url %s\n' "$(shell_quote "$SEQDESK_DIR")" "$(shell_quote "$(doctor_url)")"
+}
+
+run_doctor_if_requested() {
+    if ! is_truthy "$SEQDESK_RUN_DOCTOR"; then
+        return 0
+    fi
+
+    if ! command_exists seqdesk; then
+        print_warning "seqdesk CLI not found; skipping automatic doctor run."
+        print_info "Install CLI: npm install -g seqdesk"
+        return 0
+    fi
+
+    echo ""
+    print_info "Running seqdesk doctor..."
+    if seqdesk doctor --dir "$SEQDESK_DIR" --url "$(doctor_url)"; then
+        print_success "Doctor checks completed"
+    else
+        print_warning "Doctor reported issues. Installation completed; review the checks above."
+    fi
+}
+
+can_mirror_output_to_log() {
+    ( : > >(cat >/dev/null) ) 2>/dev/null
+}
+
+configure_install_log() {
+    exec 3>&1 || true
+
+    if [ -z "$SEQDESK_LOG" ]; then
+        SEQDESK_LOG="/tmp/seqdesk-install-$(date '+%Y%m%d-%H%M%S').log"
+    fi
+
+    mkdir -p "$(dirname "$SEQDESK_LOG")" 2>/dev/null || true
+    : > "$SEQDESK_LOG" 2>/dev/null || {
+        print_warning "Could not create install log: $SEQDESK_LOG"
+        return 0
+    }
+    SEQDESK_LOG_ENABLED="true"
+
+    if command_exists mkfifo && command_exists tee; then
+        local fifo_path
+        local tee_pid
+        fifo_path="${TMPDIR:-/tmp}/seqdesk-install-log-$$.fifo"
+        rm -f "$fifo_path" 2>/dev/null || true
+        if mkfifo "$fifo_path" 2>/dev/null; then
+            tee -a "$SEQDESK_LOG" < "$fifo_path" &
+            tee_pid=$!
+            if exec > "$fifo_path" 2>&1; then
+                rm -f "$fifo_path" 2>/dev/null || true
+                return 0
+            fi
+            kill "$tee_pid" 2>/dev/null || true
+            rm -f "$fifo_path" 2>/dev/null || true
+        fi
+    fi
+
+    if can_mirror_output_to_log; then
+        exec > >(tee -a "$SEQDESK_LOG") 2>&1
+    else
+        print_warning "Could not mirror installer output to log in this shell."
+        print_info "Log: $SEQDESK_LOG"
+    fi
+}
+
+spinner_supported() {
+    [ "$SEQDESK_LOG_ENABLED" = "true" ] && [ -t 3 ] && [ -z "${CI:-}" ] && [ "${TERM:-}" != "dumb" ]
+}
+
+run_command_for_progress() {
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
+        "$@" >> "$SEQDESK_LOG" 2>&1
+    else
+        "$@"
+    fi
+}
+
+clear_progress_line() {
+    local columns="${COLUMNS:-120}"
+    case "$columns" in
+        ''|*[!0-9]*) columns=120 ;;
+    esac
+    printf '\r%*s\r' "$columns" "" >&3
+}
+
+run_with_progress_status() {
+    local failure_level="$1"
+    local label="$2"
+    shift 2
+
+    if [ "$#" -eq 0 ]; then
+        return 0
+    fi
+
+    local status
+    if spinner_supported; then
+        local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+        local frame_index=0
+        local command_pid
+
+        run_command_for_progress "$@" &
+        command_pid=$!
+
+        while kill -0 "$command_pid" 2>/dev/null; do
+            printf '\r  %s %s' "${frames[$frame_index]}" "$label" >&3
+            frame_index=$(((frame_index + 1) % ${#frames[@]}))
+            sleep 0.12
+        done
+
+        if wait "$command_pid"; then
+            status=0
+        else
+            status=$?
+        fi
+        clear_progress_line
+    else
+        print_info "$label..."
+        if run_command_for_progress "$@"; then
+            status=0
+        else
+            status=$?
+        fi
+    fi
+
+    if [ "$status" -eq 0 ]; then
+        print_success "$label"
+        return 0
+    fi
+
+    if [ "$failure_level" = "warning" ]; then
+        print_warning "$label failed"
+    else
+        print_error "$label failed"
+    fi
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
+        print_info "Log: $SEQDESK_LOG"
+    fi
+    return "$status"
+}
+
+run_with_spinner() {
+    run_with_progress_status "error" "$@"
+}
+
+run_with_spinner_warn() {
+    run_with_progress_status "warning" "$@"
 }
 
 command_exists() {
@@ -505,6 +666,7 @@ Options:
   --study-form-settings <path> Exported study form JSON to apply after seeding
   --use-pm2                    Enable PM2 auto-restart setup
   --no-pm2                     Disable PM2 setup
+  --run-doctor                 Run seqdesk doctor after install when available
   --reconfigure                Reconfigure an existing install in place
   --reseed-db                  Force DB push + seed (default off for --reconfigure)
   -h, --help                   Show this help
@@ -675,6 +837,9 @@ parse_args() {
                 ;;
             --no-pm2)
                 SEQDESK_USE_PM2="0"
+                ;;
+            --run-doctor)
+                SEQDESK_RUN_DOCTOR="1"
                 ;;
             --reconfigure)
                 SEQDESK_RECONFIGURE="1"
@@ -1572,11 +1737,10 @@ install_runtime_node_modules() {
     fi
 
     if [ -f package-lock.json ]; then
-        print_info "Running npm ci --omit=dev..."
-        npm ci --omit=dev --no-audit --no-fund
+        run_with_spinner "Runtime Node dependencies" npm ci --omit=dev --no-audit --no-fund
     else
         print_warning "package-lock.json not found, falling back to npm install --omit=dev."
-        npm install --omit=dev --no-audit --no-fund
+        run_with_spinner "Runtime Node dependencies" npm install --omit=dev --no-audit --no-fund
     fi
 
     if [ ! -x "./node_modules/.bin/next" ]; then
@@ -1584,8 +1748,6 @@ install_runtime_node_modules() {
         print_error "Run 'npm install --omit=dev' manually in $SEQDESK_DIR and retry."
         exit 1
     fi
-
-    print_success "Runtime Node dependencies installed"
 }
 
 run_wizard() {
@@ -1639,9 +1801,7 @@ ensure_seed_dependency() {
         return 1
     fi
 
-    print_info "Installing missing dependency: ${module_name}"
-    if npm install --no-save "${module_name}"; then
-        print_success "Installed ${module_name}"
+    if run_with_spinner "Dependency ${module_name}" npm install --no-save "${module_name}"; then
         return 0
     fi
 
@@ -1674,7 +1834,6 @@ install_private_metaxpath_if_configured() {
         exit 1
     fi
 
-    print_info "Installing private MetaxPath pipeline package..."
     local metaxpath_args=(
         --url "${SEQDESK_METAXPATH_PACKAGE_URL}"
         --token "${SEQDESK_METAXPATH_KEY}"
@@ -1684,10 +1843,7 @@ install_private_metaxpath_if_configured() {
         metaxpath_args+=(--sha256 "${SEQDESK_METAXPATH_SHA256}")
     fi
 
-    if ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
-        print_success "Private MetaxPath pipeline installed"
-    else
-        print_error "Private MetaxPath pipeline installation failed."
+    if ! run_with_spinner "Private MetaxPath pipeline package" ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
         exit 1
     fi
 }
@@ -2144,7 +2300,7 @@ on_error() {
     print_error "Install failed after $(format_elapsed "$elapsed")."
     print_info "Command: ${BASH_COMMAND}"
     print_info "Exit code: ${exit_code}"
-    if [ -n "$SEQDESK_LOG" ]; then
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
         print_info "Log: $SEQDESK_LOG"
     else
         print_info "Tip: re-run with SEQDESK_LOG=/tmp/seqdesk-install.log"
@@ -2157,10 +2313,7 @@ parse_args "$@"
 
 trap on_error ERR
 
-if [ -n "$SEQDESK_LOG" ]; then
-    mkdir -p "$(dirname "$SEQDESK_LOG")" 2>/dev/null || true
-    exec > >(tee -a "$SEQDESK_LOG") 2>&1
-fi
+configure_install_log
 
 if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ] && [ ! -t 1 ]; then
     print_error "No interactive TTY detected. Use -y (or SEQDESK_YES=1) for automated installs."
@@ -2178,6 +2331,7 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure"
 fi
 print_kv "Started" "$INSTALL_STARTED_AT"
+print_kv "Log" "$SEQDESK_LOG"
 
 # System detection
 print_step "Detect system"
@@ -2340,12 +2494,10 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
         fi
     fi
 
-    print_info "Downloading Miniconda..."
-    curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
+    run_with_spinner "Download Miniconda" curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
 
     CONDA_INSTALL_BASE="${SEQDESK_EXEC_CONDA_PATH:-$HOME/miniconda3}"
-    print_info "Installing Miniconda to $CONDA_INSTALL_BASE..."
-    bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
+    run_with_spinner "Install Miniconda" bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
     rm /tmp/miniconda.sh
 
     CONDA_INIT_BIN=""
@@ -2442,31 +2594,9 @@ else
         print_info "File size: ${SIZE_MB}MB"
     fi
 
-    if command_exists stdbuf; then
-        curl -fL "$DOWNLOAD_URL" -o "$TEMP_FILE" --progress-bar 2>&1 | \
-            stdbuf -oL tr '\r' '\n' | \
-            while IFS= read -r line; do
-                if [[ "$line" =~ ([0-9]+)\.([0-9]+)% ]]; then
-                    percent="${BASH_REMATCH[1]}"
-                    printf "\r  Downloading: [%-40s] %3d%%" "$(printf '#%.0s' $(seq 1 $((percent * 40 / 100))))" "$percent"
-                fi
-            done
-    else
-        curl -fL "$DOWNLOAD_URL" -o "$TEMP_FILE" --progress-bar 2>&1 | \
-            tr '\r' '\n' | \
-            while IFS= read -r line; do
-                if [[ "$line" =~ ([0-9]+)\.([0-9]+)% ]]; then
-                    percent="${BASH_REMATCH[1]}"
-                    printf "\r  Downloading: [%-40s] %3d%%" "$(printf '#%.0s' $(seq 1 $((percent * 40 / 100))))" "$percent"
-                fi
-            done
-    fi
-
-    printf '\r  Downloading: [########################################] 100%%\n'
-    print_success "Downloaded successfully"
+    run_with_spinner "Release package download" curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 
     if [ -n "$CHECKSUM" ]; then
-        print_info "Verifying checksum..."
         EXPECTED_CHECKSUM="$CHECKSUM"
         if [[ "$EXPECTED_CHECKSUM" == sha256:* ]]; then
             EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM#sha256:}"
@@ -2516,10 +2646,8 @@ else
     fi
 
     mkdir -p "$SEQDESK_DIR"
-    tar -xzf "$TEMP_FILE" -C "$SEQDESK_DIR" --strip-components=1
+    run_with_spinner "Package extraction" tar -xzf "$TEMP_FILE" -C "$SEQDESK_DIR" --strip-components=1
     rm "$TEMP_FILE"
-
-    print_success "Extracted"
 fi
 
 cd "$SEQDESK_DIR"
@@ -2588,23 +2716,21 @@ else
     if is_truthy "$SEQDESK_RECONFIGURE" && is_truthy "$SEQDESK_RESEED_DB"; then
         print_warning "Reconfigure mode with --reseed-db: running migrations + seed on existing database."
     fi
-    print_info "Running PostgreSQL migrations..."
-    if ! node scripts/run-prisma.mjs migrate deploy; then
+    if ! run_with_spinner "PostgreSQL migrations" node scripts/run-prisma.mjs migrate deploy; then
         print_postgres_setup_instructions
         exit 1
     fi
-    print_info "Seeding initial data..."
     ensure_seed_dependency "bcryptjs" || true
-    if npm run db:seed; then
+    if run_with_spinner_warn "Seed initial data" npm run db:seed; then
         SEED_OK="true"
     fi
 
     # Fallback: run seed.mjs directly if prisma db seed failed
     if [ "$SEED_OK" = "false" ]; then
-        print_info "Prisma seed command failed, trying direct seed..."
-        if [ -f prisma/seed.mjs ] && node prisma/seed.mjs; then
+        print_info "Trying direct seed..."
+        if [ -f prisma/seed.mjs ] && run_with_spinner_warn "Direct seed" node prisma/seed.mjs; then
             SEED_OK="true"
-        elif [ -f prisma/seed.js ] && node prisma/seed.js; then
+        elif [ -f prisma/seed.js ] && run_with_spinner_warn "Direct seed" node prisma/seed.js; then
             SEED_OK="true"
         fi
     fi
@@ -2634,19 +2760,14 @@ if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
         exit 1
     fi
 
-    print_info "Applying hosted install profile settings..."
-    if node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
-        print_success "Hosted install profile settings applied"
-        rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
-        SEQDESK_PROFILE_CONFIG_FILE=""
-    else
-        print_error "Failed to apply hosted install profile settings"
+    if ! run_with_spinner "Hosted install profile settings" node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
         exit 1
     fi
+    rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
+    SEQDESK_PROFILE_CONFIG_FILE=""
 fi
 
 if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ] || [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
-    print_info "Applying form preset settings..."
     form_args=()
     if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ]; then
         form_args+=(--order-form-settings "$SEQDESK_ORDER_FORM_SETTINGS")
@@ -2654,25 +2775,19 @@ if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ] || [ -n "$SEQDESK_STUDY_FORM_SETTINGS" 
     if [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
         form_args+=(--study-form-settings "$SEQDESK_STUDY_FORM_SETTINGS")
     fi
-    if node scripts/apply-form-configs.mjs "${form_args[@]}"; then
-        print_success "Form preset settings applied"
-    else
-        print_error "Failed to apply form preset settings"
+    if ! run_with_spinner "Form preset settings" node scripts/apply-form-configs.mjs "${form_args[@]}"; then
         exit 1
     fi
 fi
 
 if has_infrastructure_overrides; then
-    print_info "Applying infrastructure settings to site runtime config..."
-    apply_infrastructure_settings
-    print_success "Infrastructure settings applied"
+    run_with_spinner "Infrastructure settings" apply_infrastructure_settings
 fi
 
 # Pipeline environment
 print_step "Configure pipeline environment"
 
 if [ "$PIPELINES_ENABLED" = "true" ]; then
-    print_info "Setting up conda environment for pipelines..."
     setup_args=(
         --yes
         --write-config
@@ -2683,7 +2798,7 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
     if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
         setup_args+=(--conda-path "$SEQDESK_EXEC_CONDA_PATH")
     fi
-    ./scripts/setup-conda-env.sh "${setup_args[@]}"
+    run_with_spinner "Pipeline Conda environment" ./scripts/setup-conda-env.sh "${setup_args[@]}"
 else
     print_info "Skipped pipeline environment setup"
 fi
@@ -2709,13 +2824,11 @@ fi
 
 if is_truthy "$SEQDESK_USE_PM2"; then
     if ! resolve_pm2_bin; then
-        print_info "Installing PM2 globally (may require writable npm global prefix)..."
-        if npm install -g pm2; then
-            print_success "PM2 installed globally"
+        if run_with_spinner_warn "PM2 global install" npm install -g pm2; then
             resolve_pm2_bin || true
         else
-            print_warning "Global PM2 install failed. Trying local PM2 install (no sudo required)..."
-            if npm install --no-save pm2; then
+            print_warning "Trying local PM2 install (no sudo required)."
+            if run_with_spinner_warn "PM2 local install" npm install --no-save pm2; then
                 if resolve_pm2_bin; then
                     print_success "PM2 installed locally at ./node_modules/.bin/pm2"
                 else
@@ -2734,17 +2847,14 @@ if is_truthy "$SEQDESK_USE_PM2"; then
         fi
 
         if [ "$PM2_PROCESS_EXISTS" = "true" ]; then
-            print_info "Restarting existing SeqDesk PM2 process..."
-            if pm2_exec restart seqdesk; then
+            if run_with_spinner_warn "Restart SeqDesk PM2 process" pm2_exec restart seqdesk; then
                 PM2_CONFIGURED="true"
                 pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
-                print_success "PM2 process restarted"
             else
                 print_warning "PM2 failed to restart seqdesk. You can restart manually with: $PM2_DISPLAY_CMD restart seqdesk"
             fi
         else
-            print_info "Starting SeqDesk with PM2..."
-            if pm2_exec start "$SEQDESK_DIR/start.sh" --name seqdesk; then
+            if run_with_spinner_warn "Start SeqDesk with PM2" pm2_exec start "$SEQDESK_DIR/start.sh" --name seqdesk; then
                 PM2_CONFIGURED="true"
                 pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
                 if pm2_exec startup >/dev/null 2>&1; then
@@ -2752,7 +2862,6 @@ if is_truthy "$SEQDESK_USE_PM2"; then
                 else
                     print_warning "PM2 boot startup is not enabled yet. Run: $PM2_DISPLAY_CMD startup"
                 fi
-                print_success "PM2 configured for auto-restart"
             else
                 print_warning "PM2 failed to start SeqDesk. You can start manually with: $PM2_DISPLAY_CMD start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
             fi
@@ -2844,6 +2953,25 @@ else
     print_kv "Admin" "admin@example.com / admin"
     print_kv "Researcher" "user@example.com / user"
     echo "  Change the default admin password immediately after first login."
+fi
+
+print_header "Diagnose"
+
+if command_exists seqdesk; then
+    if [ "$PM2_CONFIGURED" = "true" ]; then
+        print_doctor_command
+    else
+        echo "  After starting SeqDesk:"
+        print_doctor_command
+    fi
+    run_doctor_if_requested
+else
+    if is_truthy "$SEQDESK_RUN_DOCTOR"; then
+        print_warning "seqdesk CLI not found; skipping automatic doctor run."
+    fi
+    print_kv "Install CLI" "npm install -g seqdesk"
+    echo "  Then run:"
+    print_doctor_command
 fi
 
 print_header "Next steps"
