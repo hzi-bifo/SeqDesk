@@ -280,11 +280,7 @@ run_command_for_progress() {
 }
 
 clear_progress_line() {
-    local columns="${COLUMNS:-120}"
-    case "$columns" in
-        ''|*[!0-9]*) columns=120 ;;
-    esac
-    printf '\r%*s\r' "$columns" "" >&3
+    printf '\r\033[K' >&3
 }
 
 run_with_progress_status() {
@@ -327,7 +323,7 @@ run_with_progress_status() {
     fi
 
     if [ "$status" -eq 0 ]; then
-        print_success "$label"
+        print_kv "$label" "done"
         return 0
     fi
 
@@ -419,7 +415,7 @@ configure_postgres_urls() {
 }
 
 print_postgres_setup_instructions() {
-    print_warning "PostgreSQL must be installed and the SeqDesk database must exist before migrations can run."
+    print_warning "PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
     case "$OS:$DISTRO" in
         linux:debian)
             echo "  sudo apt-get update"
@@ -446,6 +442,8 @@ print_postgres_setup_instructions() {
     echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
     echo "  SQL"
     echo "  Current DATABASE_URL: ${SEQDESK_DATABASE_URL}"
+    echo "  After creating the role/database, rerun:"
+    echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
 }
 
 parse_release_version_info() {
@@ -1624,22 +1622,20 @@ print_preflight_summary() {
 
     local writable="no"
     if is_writable_target "$SEQDESK_DIR"; then
-        writable="${GREEN}yes${NC}"
-    else
-        writable="${RED}no${NC}"
+        writable="yes"
     fi
 
     local parent_dir
     parent_dir="$(resolve_parent_dir "$SEQDESK_DIR")"
 
-    local conda_status="${YELLOW}not found${NC}"
+    local conda_status="not found"
     if command_exists conda; then
-        conda_status="${GREEN}found${NC}"
+        conda_status="found"
     fi
 
-    local nextflow_status="${YELLOW}not found${NC}"
+    local nextflow_status="not found"
     if command_exists nextflow; then
-        nextflow_status="${GREEN}found${NC}"
+        nextflow_status="found"
     fi
 
     local pipelines_status="pending"
@@ -2070,8 +2066,8 @@ if (adminBootstrap || researcherBootstrap) {
 }
 
 fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
-console.log('Wrote seqdesk.config.json');
 NODE
+    print_kv "seqdesk.config.json" "written"
 }
 
 clear_bootstrap_plaintext_passwords() {
