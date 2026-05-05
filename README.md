@@ -37,6 +37,14 @@ curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --reconfigure --config
 seqdesk -y --use-pm2 --dir /opt/seqdesk
 ```
 
+Install with a hosted profile (pre-configured settings from seqdesk.com):
+
+```bash
+curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --profile <id> --profile-code <code>
+```
+
+Organizations can create install profiles at [seqdesk.com](https://www.seqdesk.com) that bundle form fields, pipeline settings, and module configuration. The installer fetches and applies the profile during setup.
+
 ## Source Installer
 
 Use the source installer for advanced/dev checkouts rather than the recommended production path above:
