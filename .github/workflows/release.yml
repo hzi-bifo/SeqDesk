@@ -42,7 +42,7 @@ jobs:
           sha256sum "seqdesk-${VERSION}.tar.gz" > "seqdesk-${VERSION}.tar.gz.sha256"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             seqdesk-${{ steps.version.outputs.VERSION }}.tar.gz
