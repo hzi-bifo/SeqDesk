@@ -55,13 +55,22 @@
 
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Terminal style
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    CYAN=''
+    BOLD=''
+    NC=''
+fi
 
 # Config
 SEQDESK_DIR="${SEQDESK_DIR:-}"
@@ -137,31 +146,47 @@ CURRENT_STEP=0
 
 print_header() {
     echo ""
-    echo -e "${BLUE}======================================${NC}"
-    echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}======================================${NC}"
-    echo ""
+    printf '%b%s%b\n' "$BOLD" "$1" "$NC"
 }
 
 print_step() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
-    print_header "Step ${CURRENT_STEP}/${TOTAL_STEPS}: $1"
+    echo ""
+    printf '%b%d/%d %s%b\n' "$CYAN" "$CURRENT_STEP" "$TOTAL_STEPS" "$1" "$NC"
 }
 
 print_success() {
-    echo -e "${GREEN}[OK]${NC} $1"
+    print_log_line "$1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    printf '  %bwarning%b %s\n' "$YELLOW" "$NC" "$1"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    printf '  %berror%b %s\n' "$RED" "$NC" "$1"
 }
 
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    print_log_line "$1"
+}
+
+print_kv() {
+    printf "  %-20s %s\n" "$1" "$2"
+}
+
+print_log_line() {
+    local message="$1"
+    if [[ "$message" == *": "* ]]; then
+        print_kv "${message%%:*}" "${message#*: }"
+    else
+        printf '  %s\n' "$message"
+    fi
+}
+
+format_elapsed() {
+    local seconds="${1:-0}"
+    printf '%dm%ds' $((seconds / 60)) $((seconds % 60))
 }
 
 command_exists() {
@@ -1337,10 +1362,6 @@ NODE
     unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_WITH_PIPELINES
 }
 
-print_kv() {
-    printf "  %-24s %s\n" "$1" "$2"
-}
-
 redact_database_url() {
     local value="$1"
     if [ -z "$value" ]; then
@@ -1461,7 +1482,7 @@ print_preflight_summary() {
         pipelines_status="disabled"
     fi
 
-    print_header "Preflight Summary"
+    print_header "Preflight summary"
     print_kv "Target directory" "$SEQDESK_DIR ($target_status)"
     print_kv "Writable" "$writable"
     print_kv "Disk available" "$(get_disk_info "$parent_dir")"
@@ -1483,7 +1504,7 @@ print_config_summary() {
         pipeline_label="enabled"
     fi
 
-    print_header "Configuration Summary"
+    print_header "Configuration summary"
     print_kv "Pipelines" "$pipeline_label"
     print_kv "Data path" "${SEQDESK_DATA_PATH:-configure later in Admin > Data Storage}"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
@@ -2111,12 +2132,16 @@ NODE
 
 on_error() {
     local exit_code=$?
+    local failed_at
+    local elapsed
     set +e
+    failed_at=$(date +%s)
+    elapsed=$((failed_at - INSTALL_START_TS))
     if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
         rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
     fi
     echo ""
-    print_error "Installer failed."
+    print_error "Install failed after $(format_elapsed "$elapsed")."
     print_info "Command: ${BASH_COMMAND}"
     print_info "Exit code: ${exit_code}"
     if [ -n "$SEQDESK_LOG" ]; then
@@ -2144,22 +2169,18 @@ fi
 
 # Banner
 echo ""
-echo -e "${BLUE}"
-echo "  ____             ____            _    "
-echo " / ___|  ___  __ _|  _ \\  ___  ___| | __"
-echo " \\___ \\ / _ \\/ _\` | | | |/ _ \\/ __| |/ /"
-echo "  ___) |  __/ (_| | |_| |  __/\\__ \\   < "
-echo " |____/ \\___|\\__, |____/ \\___||___/_|\\_\\"
-echo "                |_|                      "
-echo -e "${NC}"
-echo ""
-echo "SeqDesk Installer (Distribution)"
-echo "Requested version: ${SEQDESK_VERSION:-latest}"
-echo "Started: ${INSTALL_STARTED_AT}"
-echo ""
+printf '%bSeqDesk install%b\n' "$BOLD" "$NC"
+print_kv "Version" "${SEQDESK_VERSION:-latest}"
+if [ -n "$SEQDESK_PROFILE" ]; then
+    print_kv "Profile" "$SEQDESK_PROFILE"
+fi
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    print_kv "Mode" "reconfigure"
+fi
+print_kv "Started" "$INSTALL_STARTED_AT"
 
 # System detection
-print_step "Detecting system"
+print_step "Detect system"
 
 OS="unknown"
 ARCH=$(uname -m)
@@ -2184,7 +2205,7 @@ print_success "OS: $OS ($DISTRO)"
 print_success "Architecture: $ARCH"
 
 # Dependencies
-print_step "Checking dependencies"
+print_step "Check dependencies"
 
 node_install_reason=""
 if ! command_exists node; then
@@ -2273,7 +2294,7 @@ if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
 fi
 
 # Pipeline support
-print_step "Pipeline support"
+print_step "Configure pipeline support"
 
 PIPELINES_ENABLED=""
 if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
@@ -2308,7 +2329,7 @@ fi
 print_preflight_summary
 
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
-    print_header "Installing Miniconda"
+    print_header "Install Miniconda"
 
     CONDA_INSTALLER="Miniconda3-latest-Linux-x86_64.sh"
     if [[ "$OS" == "macos" ]]; then
@@ -2378,7 +2399,7 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
 fi
 
 # Download
-print_step "Downloading SeqDesk"
+print_step "Download SeqDesk"
 
 LATEST_VERSION=""
 TEMP_FILE=""
@@ -2441,7 +2462,7 @@ else
             done
     fi
 
-    echo -e "\r  Downloading: [########################################] 100%"
+    printf '\r  Downloading: [########################################] 100%%\n'
     print_success "Downloaded successfully"
 
     if [ -n "$CHECKSUM" ]; then
@@ -2469,7 +2490,7 @@ else
 fi
 
 # Extract
-print_step "Extracting package"
+print_step "Extract package"
 
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     if [ ! -d "$SEQDESK_DIR" ]; then
@@ -2515,11 +2536,11 @@ if [ -z "$INSTALLED_VERSION" ]; then
 fi
 
 # Install runtime dependencies
-print_step "Installing runtime Node dependencies"
+print_step "Install runtime Node dependencies"
 install_runtime_node_modules
 
 # Configure environment
-print_step "Configuring environment"
+print_step "Configure environment"
 
 wizard_status=1
 if run_wizard; then
@@ -2648,7 +2669,7 @@ if has_infrastructure_overrides; then
 fi
 
 # Pipeline environment
-print_step "Pipeline environment"
+print_step "Configure pipeline environment"
 
 if [ "$PIPELINES_ENABLED" = "true" ]; then
     print_info "Setting up conda environment for pipelines..."
@@ -2669,7 +2690,7 @@ fi
 
 install_private_metaxpath_if_configured
 
-print_step "Process manager"
+print_step "Configure process manager"
 
 if [ -z "$SEQDESK_USE_PM2" ]; then
     if is_truthy "$SEQDESK_RECONFIGURE"; then
@@ -2744,93 +2765,89 @@ else
 fi
 
 # Done
-print_header "Installation Complete!"
-
-echo -e "${GREEN}SeqDesk v$INSTALLED_VERSION installed successfully!${NC}"
-echo ""
-echo "Installed version: v$INSTALLED_VERSION"
-if [ -n "$SEQDESK_PROFILE" ]; then
-    echo "Install profile: $SEQDESK_PROFILE"
-fi
-if is_truthy "$SEQDESK_RECONFIGURE"; then
-    echo "Mode: reconfigure existing install"
-fi
-echo "App directory: $SEQDESK_DIR"
-echo "Node: v$NODE_VERSION"
-if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then
-    CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}' || true)
-    if [ -n "$CONDA_VERSION" ]; then
-        echo "Conda: v$CONDA_VERSION"
-    fi
-fi
-echo "Pipelines: ${PIPELINES_ENABLED}" | sed 's/true/enabled/; s/false/disabled/'
-if [ -n "$SEQDESK_DATA_PATH" ]; then
-    echo "Data path: $SEQDESK_DATA_PATH"
-fi
-if [ -n "$SEQDESK_RUN_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
-    echo "Run directory: $SEQDESK_RUN_DIR"
-fi
-if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
-    echo "Config file: $SEQDESK_DIR/seqdesk.config.json"
-fi
 INSTALL_END_TS=$(date +%s)
 INSTALL_FINISHED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
 ELAPSED=$((INSTALL_END_TS - INSTALL_START_TS))
-printf 'Started: %s\n' "$INSTALL_STARTED_AT"
-printf 'Finished: %s\n' "$INSTALL_FINISHED_AT"
-printf 'Elapsed: %dm%ds\n' $((ELAPSED / 60)) $((ELAPSED % 60))
+
+print_header "Install complete"
+
+print_kv "Version" "v$INSTALLED_VERSION"
+if [ -n "$SEQDESK_PROFILE" ]; then
+    print_kv "Profile" "$SEQDESK_PROFILE"
+fi
+if is_truthy "$SEQDESK_RECONFIGURE"; then
+    print_kv "Mode" "reconfigure existing install"
+fi
+print_kv "Directory" "$SEQDESK_DIR"
+print_kv "URL" "http://localhost:${SEQDESK_PORT:-8000}"
+print_kv "Node.js" "v$NODE_VERSION"
+if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then
+    CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}' || true)
+    if [ -n "$CONDA_VERSION" ]; then
+        print_kv "Conda" "v$CONDA_VERSION"
+    fi
+fi
+PIPELINES_LABEL="disabled"
+if [ "$PIPELINES_ENABLED" = "true" ]; then
+    PIPELINES_LABEL="enabled"
+fi
+print_kv "Pipelines" "$PIPELINES_LABEL"
+if [ -n "$SEQDESK_DATA_PATH" ]; then
+    print_kv "Data path" "$SEQDESK_DATA_PATH"
+fi
+if [ -n "$SEQDESK_RUN_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
+    print_kv "Run directory" "$SEQDESK_RUN_DIR"
+fi
+if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
+    print_kv "Config" "$SEQDESK_DIR/seqdesk.config.json"
+fi
+print_kv "Started" "$INSTALL_STARTED_AT"
+print_kv "Finished" "$INSTALL_FINISHED_AT"
+print_kv "Elapsed" "$(format_elapsed "$ELAPSED")"
 if [ -n "$SEQDESK_LOG" ]; then
-    echo "Install log: $SEQDESK_LOG"
+    print_kv "Log" "$SEQDESK_LOG"
 fi
 
-echo ""
+print_header "Run"
+
 if [ "$PM2_CONFIGURED" = "true" ]; then
-    echo "SeqDesk is running under PM2."
+    print_kv "Mode" "PM2"
     echo "  $PM2_DISPLAY_CMD status"
     echo "  $PM2_DISPLAY_CMD logs seqdesk"
     echo "  $PM2_DISPLAY_CMD restart seqdesk"
     echo ""
-    echo "Recommended run mode:"
-    echo "  Keep SeqDesk running under PM2."
-    echo "  ./start.sh is manual/foreground mode and does not provide PM2 restart behavior."
-    echo ""
-    echo "If the PM2 process was removed (for example with 'pm2 delete'):"
+    echo "  If the PM2 process was removed:"
     echo "  $PM2_DISPLAY_CMD start \"$SEQDESK_DIR/start.sh\" --name seqdesk"
     echo "  $PM2_DISPLAY_CMD save"
     if [ "$PM2_STARTUP_ENABLED" != "true" ]; then
         echo ""
-        echo "Enable PM2 on reboot (one-time):"
+        echo "  Enable PM2 on reboot:"
         echo "  $PM2_DISPLAY_CMD startup"
-        echo "  # then run the sudo command printed by pm2 startup"
         echo "  $PM2_DISPLAY_CMD save"
     fi
 else
-    echo "To start SeqDesk manually:"
+    print_kv "Mode" "manual"
+    printf '  %bcd %s%b\n' "$CYAN" "$SEQDESK_DIR" "$NC"
+    printf '  %b./start.sh%b\n' "$CYAN" "$NC"
     echo ""
-    echo -e "  ${CYAN}cd $SEQDESK_DIR${NC}"
-    echo -e "  ${CYAN}./start.sh${NC}"
-    echo ""
-    echo "Note: manual start will not auto-restart after updates."
-    echo "For auto-restart, re-run the installer and choose PM2, or set up systemd."
+    echo "  Manual start will not auto-restart after updates."
 fi
-echo ""
-echo "Open http://localhost:${SEQDESK_PORT:-8000}"
-echo ""
+
+print_header "Login"
+
 if is_truthy "$SEQDESK_RECONFIGURE"; then
-    echo "Login:"
     echo "  Existing user accounts are unchanged (reconfigure mode)."
 elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ]; then
-    echo "Login:"
-    echo "  Admin:      ${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
-    echo "  Researcher: ${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / configured profile password"
+    print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+    print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / configured profile password"
 else
-    echo "Default login:"
-    echo "  Admin:      admin@example.com / admin"
-    echo "  Researcher: user@example.com / user"
+    print_kv "Admin" "admin@example.com / admin"
+    print_kv "Researcher" "user@example.com / user"
     echo "  Change the default admin password immediately after first login."
 fi
-echo ""
-echo "Next steps:"
+
+print_header "Next steps"
+
 echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
 echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
 echo ""
