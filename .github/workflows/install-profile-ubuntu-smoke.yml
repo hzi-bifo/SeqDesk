@@ -1,0 +1,261 @@
+name: Hosted Profile Smoke
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      profile_registry_url:
+        description: "Hosted profile registry URL"
+        required: true
+        default: "https://www.seqdesk.com/api/install-profiles"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-profile-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-profile-smoke:
+    name: Install ci-runner profile on Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: seqdesk_profile_ubuntu
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_USER: seqdesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_profile_ubuntu"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: seqdesk_profile_ubuntu
+      DB_PASSWORD: seqdesk
+      DB_PORT: 5432
+      DB_USER: seqdesk
+      NEXT_TELEMETRY_DISABLED: 1
+      PROFILE_ID: ci-runner
+      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
+      SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate profile secret
+        run: |
+          set -euo pipefail
+          if [ -z "${SEQDESK_CI_PROFILE_CODE:-}" ]; then
+            echo "Missing GitHub secret SEQDESK_CI_PROFILE_CODE for hosted dummy profile resolution."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Miniconda for pipeline tools
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: false
+          miniconda-version: latest
+
+      - name: Configure canary paths
+        run: |
+          set -euo pipefail
+          RUN_SUFFIX="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-ubuntu-profile"
+          PORT=$((23000 + (GITHUB_RUN_NUMBER % 1000)))
+          MOCK_RELEASE_PORT=$((24000 + (GITHUB_RUN_NUMBER % 1000)))
+          echo "PORT=$PORT" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=$MOCK_RELEASE_PORT" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-ubuntu-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/install-ubuntu-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/server-ubuntu-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-ubuntu-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-ubuntu-profile-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
+          echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-ubuntu-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "PIPELINE_SMOKE_JSON=$RUNNER_TEMP/pipeline-smoke-ubuntu-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "PROFILE_DATA_DIR=$RUNNER_TEMP/seqdesk-ubuntu-profile-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "PROFILE_RUN_DIR=$RUNNER_TEMP/seqdesk-ubuntu-profile-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/ubuntu-profile-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/ubuntu-profile-npm-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$RUNNER_TEMP/ubuntu-profile-npm-cache-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/ubuntu-profile-npm-prefix-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/ubuntu-profile-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/ubuntu-profile-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "NPM_PACK_METADATA=$RUNNER_TEMP/ubuntu-profile-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build release tarball
+        env:
+          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
+          mkdir -p "$RELEASE_ARTIFACT_DIR"
+          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RELEASE_ARTIFACT_DIR/"
+
+      - name: Pack npm launcher
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/npm/seqdesk"
+          npm run sync-version
+          mkdir -p "$NPM_ARTIFACT_DIR"
+          npm pack --pack-destination "$NPM_ARTIFACT_DIR" > "$NPM_ARTIFACT_DIR/npm-pack-name.txt"
+          npm pack --dry-run > "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" 2>&1
+
+      - name: Prepare mock installer and release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_RELEASE_ROOT/install.sh"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI ubuntu profile smoke release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Install side-by-side with hosted dummy profile through npm launcher
+        run: |
+          set -euo pipefail
+          NPM_TGZ="$(find "$NPM_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n 1)"
+          if [ -z "$NPM_TGZ" ]; then
+            echo "Npm launcher tarball not found in $NPM_ARTIFACT_DIR"
+            exit 1
+          fi
+          cp "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" "$NPM_PACK_METADATA"
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$NPM_CACHE"
+
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null && \
+               curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          PATH="$NPM_PREFIX/bin:$PATH" \
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
+          SEQDESK_PROFILE_REGISTRY_URL="$PROFILE_REGISTRY_URL" \
+          SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --with-pipelines \
+              --data-path "$PROFILE_DATA_DIR" \
+              --run-dir "$PROFILE_RUN_DIR" \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
+              --database-direct-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
+              --profile "$PROFILE_ID" \
+              --profile-code "$SEQDESK_CI_PROFILE_CODE"
+
+      - name: Verify install artifacts and profile settings
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
+          node "$GITHUB_WORKSPACE/scripts/assert-install-profile-applied.mjs" \
+            --dir "$INSTALL_DIR" \
+            --profile-id "$PROFILE_ID" \
+            --expected-device-id "ont-minion-mk1d" > "$PROFILE_ASSERT_JSON"
+
+      - name: Verify installed app startup and pipeline smoke
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-install-profile-pipeline-smoke.mjs" \
+            --dir "$INSTALL_DIR" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --output "$PIPELINE_SMOKE_JSON"
+
+      - name: Upload ubuntu profile smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-install-profile-smoke
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.PROFILE_ASSERT_JSON }}
+            ${{ env.PIPELINE_SMOKE_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.NPM_PACK_METADATA }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup canary resources
+        if: always()
+        run: |
+          set +e
+          rm -rf "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "$PROFILE_DATA_DIR" "$PROFILE_RUN_DIR"

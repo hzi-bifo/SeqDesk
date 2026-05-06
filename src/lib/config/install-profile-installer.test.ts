@@ -35,6 +35,10 @@ const profileWorkflow = fs.readFileSync(
   path.join(repoRoot, ".github/workflows/install-profile-alma.yml"),
   "utf8"
 );
+const hostedProfileSmokeWorkflow = fs.readFileSync(
+  path.join(repoRoot, ".github/workflows/install-profile-ubuntu-smoke.yml"),
+  "utf8"
+);
 
 describe("install profile installer wiring", () => {
   it("adds hosted profile flags and aliases to the distribution installer", () => {
@@ -108,11 +112,6 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("group: bifo_dmz");
     expect(profileWorkflow).toContain("labels: [self-hosted, Linux, X64, db-local, twincore, alma]");
     expect(profileWorkflow).toContain("build-install-artifacts:");
-    expect(profileWorkflow).toContain("install-profile-ubuntu-smoke:");
-    expect(profileWorkflow).toContain("name: Install with hosted profile on Ubuntu");
-    expect(profileWorkflow).toContain("runs-on: ubuntu-latest");
-    expect(profileWorkflow).toContain("image: postgres:16");
-    expect(profileWorkflow).toContain("POSTGRES_DB: seqdesk_profile_ubuntu");
     expect(profileWorkflow).toContain("install-without-profile:");
     expect(profileWorkflow).toContain("install-with-profile:");
     expect(profileWorkflow).toContain("default: \"ci-runner\"");
@@ -128,5 +127,18 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("PROFILE_RUN_DIR");
     expect(profileWorkflow).toContain("PIPELINE_SMOKE_JSON");
     expect(profileWorkflow).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
+  });
+
+  it("defines a GitHub-hosted ci-runner pipeline smoke canary", () => {
+    expect(hostedProfileSmokeWorkflow).toContain("name: Hosted Profile Smoke");
+    expect(hostedProfileSmokeWorkflow).toContain("runs-on: ubuntu-latest");
+    expect(hostedProfileSmokeWorkflow).toContain("image: postgres:16");
+    expect(hostedProfileSmokeWorkflow).toContain("POSTGRES_DB: seqdesk_profile_ubuntu");
+    expect(hostedProfileSmokeWorkflow).toContain("PROFILE_ID: ci-runner");
+    expect(hostedProfileSmokeWorkflow).toContain("SEQDESK_CI_PROFILE_CODE");
+    expect(hostedProfileSmokeWorkflow).toContain("Setup Miniconda for pipeline tools");
+    expect(hostedProfileSmokeWorkflow).toContain("--with-pipelines");
+    expect(hostedProfileSmokeWorkflow).toContain("scripts/assert-install-profile-applied.mjs");
+    expect(hostedProfileSmokeWorkflow).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
   });
 });
