@@ -301,7 +301,8 @@ jobs:
           cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
             --file "$INSTALL_DIR/seqdesk.config.json" \
-            --expected-port "$PORT"
+            --expected-port "$PORT" \
+            --expected-pipelines-enabled true
 
       - name: Verify installed app startup and auth flows
         run: |

@@ -127,6 +127,7 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("PROFILE_DATA_DIR");
     expect(profileWorkflow).toContain("PROFILE_RUN_DIR");
     expect(profileWorkflow).toContain("PIPELINE_SMOKE_JSON");
+    expect(profileWorkflow).toContain("--expected-pipelines-enabled true");
     expect(profileWorkflow).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
   });
 
@@ -139,6 +140,7 @@ describe("install profile installer wiring", () => {
     expect(hostedProfileSmokeWorkflow).toContain("SEQDESK_CI_PROFILE_CODE");
     expect(hostedProfileSmokeWorkflow).toContain("Setup Miniconda for pipeline tools");
     expect(hostedProfileSmokeWorkflow).toContain("--with-pipelines");
+    expect(hostedProfileSmokeWorkflow).toContain("--expected-pipelines-enabled true");
     expect(hostedProfileSmokeWorkflow).toContain("scripts/assert-install-profile-applied.mjs");
     expect(hostedProfileSmokeWorkflow).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
   });

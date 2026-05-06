@@ -54,6 +54,15 @@ function toOptionalPort(value) {
   return undefined;
 }
 
+function toOptionalBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
 function resolveConfiguredPort(config) {
   const appPort = toOptionalPort(config?.app?.port);
   if (appPort !== undefined) {
@@ -76,6 +85,7 @@ function resolveConfiguredPort(config) {
 const args = parseArgs(process.argv.slice(2));
 const filePath = args.file;
 const expectedPort = toOptionalPort(args["expected-port"]);
+const expectedPipelinesEnabled = toOptionalBoolean(args["expected-pipelines-enabled"]) ?? false;
 
 if (!filePath) {
   fail("Missing required --file");
@@ -95,8 +105,8 @@ try {
   );
 }
 
-if (config?.pipelines?.enabled !== false) {
-  fail("Expected pipelines.enabled to be false");
+if (config?.pipelines?.enabled !== expectedPipelinesEnabled) {
+  fail(`Expected pipelines.enabled to be ${String(expectedPipelinesEnabled)}`);
 }
 
 const configuredPort = resolveConfiguredPort(config);
