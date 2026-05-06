@@ -182,6 +182,12 @@ if [[ -f "${ROOT_DIR}/scripts/run-install-profile-pipeline-smoke.mjs" ]]; then
   cp "${ROOT_DIR}/scripts/run-install-profile-pipeline-smoke.mjs" "${RELEASE_DIR}/scripts/"
 fi
 
+if [[ -f "${ROOT_DIR}/scripts/setup-conda-env.sh" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/setup-conda-env.sh" "${RELEASE_DIR}/scripts/"
+  chmod +x "${RELEASE_DIR}/scripts/setup-conda-env.sh"
+fi
+
 if [[ -d "${ROOT_DIR}/scripts/lib" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp -R "${ROOT_DIR}/scripts/lib" "${RELEASE_DIR}/scripts/"

@@ -67,6 +67,7 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain("scripts/apply-install-profile.mjs");
     expect(buildRelease).toContain("scripts/apply-install-profile-assets.mjs");
     expect(buildRelease).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
+    expect(buildRelease).toContain("scripts/setup-conda-env.sh");
     expect(buildRelease).toContain("data/pipeline-databases.json");
   });
 
