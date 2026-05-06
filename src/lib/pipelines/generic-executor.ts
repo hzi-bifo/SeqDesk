@@ -213,6 +213,7 @@ function buildRunConfig(
   sections.push(
     [
       `profiles {`,
+      `  standard {}`,
       `  conda {`,
       `    conda.enabled = true`,
       `  }`,

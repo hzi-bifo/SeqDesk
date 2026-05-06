@@ -261,6 +261,7 @@ describe("generic-executor", () => {
     expect(script).toContain("--limit 10");
 
     const nextflowConfig = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(nextflowConfig).toContain("standard {}");
     expect(nextflowConfig).toContain("conda {");
     expect(nextflowConfig).toContain("conda.enabled = true");
 
