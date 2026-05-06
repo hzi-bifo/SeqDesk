@@ -54,6 +54,10 @@ export async function POST(request: NextRequest) {
     if (pipelineRunDir === '/' || pipelineRunDir === '') {
       pipelineRunDir = DEFAULT_EXECUTION_SETTINGS.pipelineRunDir;
     }
+    const pipelineDatabaseDir = normalizeString(
+      body.pipelineDatabaseDir,
+      DEFAULT_EXECUTION_SETTINGS.pipelineDatabaseDir
+    );
 
     // Validate and merge with defaults
     const newSettings: ExecutionSettings = {
@@ -71,6 +75,7 @@ export async function POST(request: NextRequest) {
         DEFAULT_EXECUTION_SETTINGS.nextflowProfile
       ),
       pipelineRunDir,
+      pipelineDatabaseDir,
       weblogUrl: normalizeString(body.weblogUrl, DEFAULT_EXECUTION_SETTINGS.weblogUrl),
       weblogSecret: normalizeString(
         body.weblogSecret,

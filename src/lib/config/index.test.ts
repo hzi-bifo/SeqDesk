@@ -8,7 +8,7 @@ import {
   loadConfig,
   validateConfig,
 } from "./loader";
-import { getEffectiveConfig, mergeWithDatabase } from "./database-merge";
+import { getEffectiveConfig, mergeWithDatabase, saveConfigToDatabase } from "./database-merge";
 
 describe("config index barrel exports", () => {
   it("re-exports loader functions", () => {
@@ -22,5 +22,6 @@ describe("config index barrel exports", () => {
   it("re-exports database merge functions", () => {
     expect(configIndex.mergeWithDatabase).toBe(mergeWithDatabase);
     expect(configIndex.getEffectiveConfig).toBe(getEffectiveConfig);
+    expect(configIndex.saveConfigToDatabase).toBe(saveConfigToDatabase);
   });
 });

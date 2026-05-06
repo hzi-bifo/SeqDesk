@@ -28,6 +28,7 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
     condaEnv: "seqdesk-pipelines",
     nextflowProfile: "",
     pipelineRunDir: "/data/pipeline_runs",
+    pipelineDatabaseDir: "",
     weblogUrl: "",
     weblogSecret: "",
   },

@@ -19,4 +19,4 @@
 
 export * from './types';
 export * from './loader';
-export { mergeWithDatabase, getEffectiveConfig } from './database-merge';
+export { mergeWithDatabase, getEffectiveConfig, saveConfigToDatabase } from './database-merge';

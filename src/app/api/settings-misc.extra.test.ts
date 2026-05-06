@@ -100,6 +100,7 @@ describe("settings and misc route quick wins", () => {
       condaEnv: "seqdesk",
       nextflowProfile: "docker",
       pipelineRunDir: "/runs",
+      pipelineDatabaseDir: "/pipeline-dbs",
       weblogUrl: "https://weblog.example",
       weblogSecret: "secret",
     });
@@ -296,6 +297,7 @@ describe("settings and misc route quick wins", () => {
         condaEnv: "seqdesk",
         nextflowProfile: "docker",
         pipelineRunDir: "/runs",
+        pipelineDatabaseDir: "/pipeline-dbs",
         weblogUrl: "https://weblog.example",
         weblogSecret: "secret",
       },
@@ -325,6 +327,7 @@ describe("settings and misc route quick wins", () => {
           condaEnv: " prod ",
           nextflowProfile: " slurm ",
           pipelineRunDir: "/",
+          pipelineDatabaseDir: " /dbs ",
           weblogUrl: " https://weblog.custom ",
           weblogSecret: " token ",
         }),
@@ -343,6 +346,7 @@ describe("settings and misc route quick wins", () => {
       condaEnv: "prod",
       nextflowProfile: "slurm",
       pipelineRunDir: "/tmp/seqdesk-runs",
+      pipelineDatabaseDir: "/dbs",
       weblogUrl: "https://weblog.custom",
       weblogSecret: "token",
     });
