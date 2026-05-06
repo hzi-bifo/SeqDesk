@@ -1,0 +1,574 @@
+import fs from "fs/promises";
+import os from "os";
+import path from "path";
+import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { gzipSync } from "zlib";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  applyProfilePipelineDatabases,
+  applyProfileSeedData,
+  buildProfilePipelineDatabaseInstallDir,
+  buildProfilePipelineDatabaseRoot,
+  buildProfilePipelineDatabaseTargetPath,
+  resolveProfileDatabaseRequests,
+} from "../../../scripts/lib/install-profile-assets.mjs";
+
+let tempDir: string;
+
+async function createDownloadedFastqBundle(options?: { corruptSha?: boolean }) {
+  const sourceDir = path.join(tempDir, "fastq-bundle-source");
+  const readsDir = path.join(sourceDir, "reads");
+  await fs.mkdir(readsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(sourceDir, "manifest.json"),
+    JSON.stringify(
+      {
+        order: { name: "CI runner FASTQ checksum smoke order" },
+        samples: [
+          {
+            sampleId: "CI-RUNNER-FASTQ-01",
+            sampleAlias: "CI-SMOKE-01",
+            sampleTitle: "CI smoke sample 01",
+            materialBodySite: "control",
+            file1: "reads/CI-RUNNER-FASTQ-01.fastq.gz",
+            readCount1: 2,
+          },
+          {
+            sampleId: "CI-RUNNER-FASTQ-02",
+            sampleAlias: "CI-SMOKE-02",
+            sampleTitle: "CI smoke sample 02",
+            materialBodySite: "control",
+            file1: "reads/CI-RUNNER-FASTQ-02.fastq.gz",
+            readCount1: 2,
+          },
+        ],
+      },
+      null,
+      2
+    )
+  );
+  await fs.writeFile(
+    path.join(readsDir, "CI-RUNNER-FASTQ-01.fastq.gz"),
+    gzipSync(Buffer.from("@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nHHHH\n", "utf8"))
+  );
+  await fs.writeFile(
+    path.join(readsDir, "CI-RUNNER-FASTQ-02.fastq.gz"),
+    gzipSync(Buffer.from("@r1\nGATTACA\n+\nIIIIIII\n@r2\nCATTAG\n+\nHHHHHH\n", "utf8"))
+  );
+
+  const archivePath = path.join(tempDir, "ci-runner-fastq-bundle.tar.gz");
+  execFileSync("tar", ["-czf", archivePath, "-C", sourceDir, "."], { stdio: "ignore" });
+  const archive = await fs.readFile(archivePath);
+  const sha256 = createHash("sha256").update(archive).digest("hex");
+  return {
+    archivePath,
+    sha256: options?.corruptSha ? "0".repeat(64) : sha256,
+  };
+}
+
+describe("install profile asset script helpers", () => {
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-profile-assets-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("resolves custom database roots and falls back to run-dir databases", () => {
+    expect(buildProfilePipelineDatabaseRoot("/runs", "")).toBe("/runs/databases");
+    expect(buildProfilePipelineDatabaseRoot("/runs", "/shared/dbs")).toBe("/shared/dbs");
+    expect(
+      buildProfilePipelineDatabaseTargetPath({
+        pipelineRunDir: "/runs",
+        databaseDirectory: "/shared/dbs",
+        pipelineId: "metaxpath",
+        databaseId: "db-bundle",
+        fileName: "metaxpath_db_bundle.tar",
+      })
+    ).toBe("/shared/dbs/metaxpath/db-bundle/metaxpath_db_bundle.tar");
+    expect(
+      buildProfilePipelineDatabaseInstallDir({
+        pipelineRunDir: "/runs",
+        databaseDirectory: "/shared/dbs",
+        pipelineId: "metaxpath",
+        databaseId: "db-bundle",
+      })
+    ).toBe("/shared/dbs/metaxpath/db-bundle/installed");
+  });
+
+  it("skips database downloads unless the profile opts in", async () => {
+    const result = await applyProfilePipelineDatabases({
+      prisma: {},
+      profile: {
+        pipelines: {
+          databases: {
+            autoDownload: false,
+            downloads: [{ pipelineId: "metaxpath", databaseId: "db-bundle" }],
+          },
+        },
+      },
+      rootDir: process.cwd(),
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result).toEqual({ skipped: true, downloaded: 0, failed: 0 });
+  });
+
+  it("fails install when a required database is not defined", async () => {
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma: {
+          siteSettings: {
+            findUnique: vi.fn().mockResolvedValue({
+              dataBasePath: tempDir,
+              extraSettings: JSON.stringify({ pipelineExecution: { pipelineRunDir: tempDir } }),
+            }),
+          },
+        },
+        profile: {
+          pipelines: {
+            databases: {
+              autoDownload: true,
+              downloads: [{ pipelineId: "metaxpath", databaseId: "missing-db", required: true }],
+            },
+          },
+        },
+        rootDir: process.cwd(),
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("Database missing-db is not defined for pipeline metaxpath");
+  });
+
+  it("installs a MetaXpath DB bundle into the configured directory and writes paramsFile config", async () => {
+    const rootDir = path.join(tempDir, "install-root");
+    const databaseRoot = path.join(tempDir, "profile-dbs");
+    const archiveSource = path.join(tempDir, "source", "metaxpath_db_bundle.tar");
+    await fs.mkdir(path.dirname(archiveSource), { recursive: true });
+    await fs.writeFile(archiveSource, "test archive");
+    await fs.mkdir(path.join(rootDir, "data"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "data", "pipeline-databases.json"),
+      JSON.stringify({
+        metaxpath: [
+          {
+            id: "db-bundle",
+            label: "MetaxPath Database Bundle",
+            description: "Test bundle",
+            version: "test",
+            fileName: "metaxpath_db_bundle.tar",
+            downloadUrl: `file://${archiveSource}`,
+            configKey: "paramsFile",
+            install: {
+              type: "metaxpath_db_bundle",
+              paramsFileName: "metaxpath.downloaded.params.yaml",
+            },
+          },
+        ],
+      })
+    );
+
+    const installerPath = path.join(
+      rootDir,
+      "pipelines",
+      "metaxpath",
+      "workflow",
+      "scripts",
+      "install_db_bundle.sh"
+    );
+    await fs.mkdir(path.dirname(installerPath), { recursive: true });
+    await fs.writeFile(
+      installerPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "dest=\"\"",
+        "while [ $# -gt 0 ]; do",
+        "  case \"$1\" in",
+        "    --dest) dest=\"$2\"; shift 2 ;;",
+        "    *) shift ;;",
+        "  esac",
+        "done",
+        "mkdir -p \"$dest\"",
+        "printf 'params: test\\n' > \"$dest/metaxpath.downloaded.params.yaml\"",
+        "",
+      ].join("\n")
+    );
+
+    const pipelineConfigUpsert = vi.fn().mockResolvedValue({});
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: tempDir,
+          extraSettings: JSON.stringify({ pipelineExecution: { pipelineRunDir: tempDir } }),
+        }),
+      },
+      pipelineConfig: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: pipelineConfigUpsert,
+      },
+    };
+
+    const result = await applyProfilePipelineDatabases({
+      prisma,
+      profile: {
+        pipelines: {
+          databaseDirectory: databaseRoot,
+          databases: {
+            autoDownload: true,
+            downloads: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+          },
+        },
+      },
+      rootDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const archivePath = path.join(
+      databaseRoot,
+      "metaxpath",
+      "db-bundle",
+      "metaxpath_db_bundle.tar"
+    );
+    const paramsPath = path.join(
+      databaseRoot,
+      "metaxpath",
+      "db-bundle",
+      "installed",
+      "metaxpath.downloaded.params.yaml"
+    );
+    await expect(fs.stat(archivePath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(fs.stat(paramsPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    expect(result).toMatchObject({ skipped: false, downloaded: 1, failed: 0 });
+    expect(pipelineConfigUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { pipelineId: "metaxpath" },
+        create: expect.objectContaining({
+          enabled: true,
+          config: JSON.stringify({ paramsFile: paramsPath }),
+        }),
+        update: {
+          config: JSON.stringify({ paramsFile: paramsPath }),
+        },
+      })
+    );
+  });
+
+  it("resolves explicit database requests and enabled-pipeline defaults", () => {
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            databases: {
+              autoDownload: true,
+              downloads: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+            },
+          },
+        },
+        {}
+      )
+    ).toEqual({
+      autoDownload: true,
+      requests: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+    });
+
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            enable: ["metaxpath"],
+            databases: { autoDownload: true },
+          },
+        },
+        {
+          metaxpath: [{ id: "db-bundle" }],
+        }
+      )
+    ).toEqual({
+      autoDownload: true,
+      requests: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+    });
+  });
+
+  it("seeds a smoke order with real FASTQ files and Read rows", async () => {
+    const readCreate = vi.fn().mockResolvedValue({});
+    const sampleCreate = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "sample-1", reads: [] })
+      .mockResolvedValueOnce({ id: "sample-2", reads: [] });
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: tempDir,
+          extraSettings: JSON.stringify({ pipelineExecution: {} }),
+        }),
+      },
+      user: {
+        findFirst: vi.fn(async ({ where }: { where: { role: string } }) => ({
+          id: where.role === "FACILITY_ADMIN" ? "admin-1" : "researcher-1",
+          email: where.role === "FACILITY_ADMIN" ? "admin@example.com" : "user@example.com",
+          firstName: where.role === "FACILITY_ADMIN" ? "Admin" : "Researcher",
+          lastName: "User",
+          role: where.role,
+        })),
+        create: vi.fn(),
+      },
+      study: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: "study-1" }),
+        update: vi.fn(),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: "order-1", orderNumber: "TWINCORE-SMOKE-001" }),
+        update: vi.fn(),
+      },
+      sample: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: sampleCreate,
+        update: vi.fn(),
+      },
+      read: {
+        create: readCreate,
+        update: vi.fn(),
+      },
+    };
+
+    const result = await applyProfileSeedData({
+      prisma,
+      profile: {
+        id: "twincore",
+        site: { dataBasePath: tempDir },
+        seedData: {
+          enabled: true,
+          fixtures: [
+            { id: "twincore-ont-smoke", kind: "orderPipelineSmoke", writeFastqFiles: true },
+          ],
+        },
+      },
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result.seeded).toBe(1);
+    expect(readCreate).toHaveBeenCalledTimes(2);
+    expect(readCreate.mock.calls[0][0].data.file1).toBe(
+      "fixtures/twincore/twincore-ont-smoke/TWINCORE-ONT-01.fastq.gz"
+    );
+
+    const firstFastq = path.join(
+      tempDir,
+      "fixtures/twincore/twincore-ont-smoke/TWINCORE-ONT-01.fastq.gz"
+    );
+    await expect(fs.stat(firstFastq)).resolves.toMatchObject({ size: expect.any(Number) });
+  });
+
+  it("downloads a FASTQ bundle fixture and creates Read rows without precomputed checksums", async () => {
+    const bundle = await createDownloadedFastqBundle();
+    const readCreate = vi.fn().mockResolvedValue({});
+    const sampleCreate = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "sample-1", reads: [] })
+      .mockResolvedValueOnce({ id: "sample-2", reads: [] });
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: tempDir,
+          extraSettings: JSON.stringify({ pipelineExecution: {} }),
+        }),
+      },
+      user: {
+        findFirst: vi.fn(async ({ where }: { where: { role: string } }) => ({
+          id: where.role === "FACILITY_ADMIN" ? "admin-1" : "researcher-1",
+          email: where.role === "FACILITY_ADMIN" ? "admin@example.com" : "user@example.com",
+          firstName: where.role === "FACILITY_ADMIN" ? "Admin" : "Researcher",
+          lastName: "User",
+          role: where.role,
+        })),
+        create: vi.fn(),
+      },
+      study: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: "study-1" }),
+        update: vi.fn(),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: "order-1", orderNumber: "CI-RUNNER-SMOKE-001" }),
+        update: vi.fn(),
+      },
+      sample: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: sampleCreate,
+        update: vi.fn(),
+      },
+      read: {
+        create: readCreate,
+        update: vi.fn(),
+      },
+    };
+
+    const result = await applyProfileSeedData({
+      prisma,
+      profile: {
+        id: "ci-runner",
+        site: { dataBasePath: tempDir },
+        seedData: {
+          enabled: true,
+          fixtures: [
+            {
+              id: "ci-runner-fastq-checksum-smoke",
+              kind: "orderPipelineSmoke",
+              orderNumber: "CI-RUNNER-SMOKE-001",
+              source: {
+                type: "downloadedFastqBundle",
+                url: `file://${bundle.archivePath}`,
+                sha256: bundle.sha256,
+              },
+            },
+          ],
+        },
+      },
+      rootDir: tempDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result.seeded).toBe(1);
+    expect(result.results[0]).toMatchObject({
+      fixtureId: "ci-runner-fastq-checksum-smoke",
+      orderNumber: "CI-RUNNER-SMOKE-001",
+      samples: 2,
+    });
+    expect(readCreate).toHaveBeenCalledTimes(2);
+    expect(readCreate.mock.calls[0][0].data).toMatchObject({
+      file1: "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz",
+      checksum1: null,
+      pipelineSources: null,
+    });
+    await expect(
+      fs.stat(
+        path.join(
+          tempDir,
+          "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz"
+        )
+      )
+    ).resolves.toMatchObject({ size: expect.any(Number) });
+  });
+
+  it("fails a required downloaded FASTQ fixture when the SHA256 does not match", async () => {
+    const bundle = await createDownloadedFastqBundle({ corruptSha: true });
+    await expect(
+      applyProfileSeedData({
+        prisma: {
+          siteSettings: {
+            findUnique: vi.fn().mockResolvedValue({
+              dataBasePath: tempDir,
+              extraSettings: JSON.stringify({ pipelineExecution: {} }),
+            }),
+          },
+        },
+        profile: {
+          id: "ci-runner",
+          site: { dataBasePath: tempDir },
+          seedData: {
+            enabled: true,
+            fixtures: [
+              {
+                id: "ci-runner-fastq-checksum-smoke",
+                kind: "orderPipelineSmoke",
+                source: {
+                  type: "downloadedFastqBundle",
+                  url: `file://${bundle.archivePath}`,
+                  sha256: bundle.sha256,
+                },
+              },
+            ],
+          },
+        },
+        rootDir: tempDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("SHA256 mismatch");
+  });
+
+  it("keeps downloaded FASTQ fixture read writebacks when reapplied", async () => {
+    const bundle = await createDownloadedFastqBundle();
+    const relativePath =
+      "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz";
+    const existingRead = {
+      id: "read-1",
+      file1: relativePath,
+      checksum1: "existing-md5",
+      pipelineRunId: null,
+      pipelineSources: JSON.stringify({ "fastq-checksum": "run-1" }),
+    };
+    const readUpdate = vi.fn().mockResolvedValue({});
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: tempDir,
+          extraSettings: JSON.stringify({ pipelineExecution: {} }),
+        }),
+      },
+      user: {
+        findFirst: vi.fn(async ({ where }: { where: { role: string } }) => ({
+          id: where.role === "FACILITY_ADMIN" ? "admin-1" : "researcher-1",
+          email: where.role === "FACILITY_ADMIN" ? "admin@example.com" : "user@example.com",
+          firstName: where.role === "FACILITY_ADMIN" ? "Admin" : "Researcher",
+          lastName: "User",
+          role: where.role,
+        })),
+        create: vi.fn(),
+      },
+      study: {
+        findFirst: vi.fn().mockResolvedValue({ id: "study-1" }),
+        create: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: "study-1" }),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue({ id: "order-1", orderNumber: "CI-RUNNER-SMOKE-001" }),
+        create: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: "order-1", orderNumber: "CI-RUNNER-SMOKE-001" }),
+      },
+      sample: {
+        findFirst: vi.fn().mockResolvedValue({ id: "sample-1", sampleId: "CI-RUNNER-FASTQ-01" }),
+        create: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: "sample-1", reads: [existingRead] }),
+      },
+      read: {
+        create: vi.fn(),
+        update: readUpdate,
+      },
+    };
+
+    await applyProfileSeedData({
+      prisma,
+      profile: {
+        id: "ci-runner",
+        site: { dataBasePath: tempDir },
+        seedData: {
+          enabled: true,
+          fixtures: [
+            {
+              id: "ci-runner-fastq-checksum-smoke",
+              kind: "orderPipelineSmoke",
+              orderNumber: "CI-RUNNER-SMOKE-001",
+              source: {
+                type: "downloadedFastqBundle",
+                url: `file://${bundle.archivePath}`,
+                sha256: bundle.sha256,
+              },
+            },
+          ],
+        },
+      },
+      rootDir: tempDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(readUpdate.mock.calls[0][0].data).toMatchObject({
+      checksum1: "existing-md5",
+      pipelineSources: JSON.stringify({ "fastq-checksum": "run-1" }),
+    });
+  });
+});

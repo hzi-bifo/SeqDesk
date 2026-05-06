@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
     order: {
       findUnique: vi.fn(),
     },
+    pipelineConfig: {
+      findUnique: vi.fn(),
+    },
+    siteSettings: {
+      findUnique: vi.fn(),
+    },
   },
   pipelineRegistry: {
     "simulate-reads": {
@@ -179,6 +185,8 @@ describe("POST /api/pipelines/runs", () => {
     mocks.validatePipelineMetadata.mockResolvedValue({ issues: [] });
     mocks.getAdapter.mockReturnValue(null);
     mocks.createGenericAdapter.mockReturnValue(null);
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue(null);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.study.findUnique.mockResolvedValue(null);
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
@@ -231,6 +239,30 @@ describe("POST /api/pipelines/runs", () => {
     expect(await response.json()).toEqual({
       error: "sampleIds must be an array of strings",
     });
+  });
+
+  it("rejects disabled pipelines before creating a run", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        installProfilePipelineAllowlist: [],
+      }),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "simulate-reads",
+          orderId: "order-1",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Pipeline simulate-reads is disabled",
+    });
+    expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
   });
 
   it("returns metadata validation errors", async () => {

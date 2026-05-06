@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
+import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 import {
   getPipelineRunConfigIssues,
@@ -185,6 +186,13 @@ export async function POST(request: NextRequest) {
     const definition = PIPELINE_REGISTRY[pipelineId];
     if (!definition) {
       return NextResponse.json({ error: 'Invalid pipeline ID' }, { status: 400 });
+    }
+
+    if (!(await getPipelineEnabled(pipelineId))) {
+      return NextResponse.json(
+        { error: `Pipeline ${pipelineId} is disabled` },
+        { status: 403 }
+      );
     }
 
     if (!supportsPipelineTarget(definition, target)) {

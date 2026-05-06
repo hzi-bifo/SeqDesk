@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
+import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import type { ExecutionSettings } from '@/lib/pipelines/execution-settings';
@@ -192,6 +193,13 @@ export async function POST(
       return NextResponse.json(
         { error: `Cannot start run with status: ${run.status}` },
         { status: 400 }
+      );
+    }
+
+    if (!(await getPipelineEnabled(run.pipelineId))) {
+      return NextResponse.json(
+        { error: `Pipeline ${run.pipelineId} is disabled` },
+        { status: 403 }
       );
     }
 

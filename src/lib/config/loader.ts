@@ -27,6 +27,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   },
   pipelines: {
     enabled: false,
+    databaseDirectory: '',
     execution: {
       mode: 'local',
       runDirectory: './pipeline_runs',
@@ -106,6 +107,7 @@ const ENV_MAPPINGS: Record<string, string> = {
 
   // Pipelines
   SEQDESK_PIPELINES_ENABLED: 'pipelines.enabled',
+  SEQDESK_PIPELINE_DATABASE_DIR: 'pipelines.databaseDirectory',
   SEQDESK_PIPELINE_RUN_DIR: 'pipelines.execution.runDirectory',
   SEQDESK_PIPELINE_MODE: 'pipelines.execution.mode',
 

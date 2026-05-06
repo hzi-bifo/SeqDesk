@@ -142,6 +142,7 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     });
     mocks.getExecutionSettings.mockResolvedValue({
       pipelineRunDir: "/data/runs",
+      pipelineDatabaseDir: "",
     });
     mocks.getPipelineDatabaseDefinition.mockReturnValue({
       id: "gtdb",
@@ -207,6 +208,26 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     expect(body.success).toBe(true);
     expect(body.pipelineId).toBe("mag");
     expect(body.databaseId).toBe("gtdb");
+  });
+
+  it("passes a configured database directory to target path resolution", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      pipelineRunDir: "/data/runs",
+      pipelineDatabaseDir: "/shared/pipeline-dbs",
+    });
+
+    const response = await POST(
+      makeRequest({ pipelineId: "mag", databaseId: "gtdb" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.buildPipelineDatabaseTargetPath).toHaveBeenCalledWith(
+      "/data/runs",
+      "mag",
+      "gtdb",
+      "gtdb.tar.gz",
+      "/shared/pipeline-dbs"
+    );
   });
 
   it("returns 403 when not authenticated", async () => {

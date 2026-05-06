@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getPipelinesDir } from './package-loader';
+import pipelineDatabaseDefinitions from '../../../data/pipeline-databases.json';
 
 const DB_DOWNLOAD_INDEX_FILE = '.pipeline-database-downloads.json';
 const DB_DOWNLOAD_STATUS_FILE = '.pipeline-database-download-status.json';
@@ -71,37 +72,8 @@ interface PipelineDatabaseDownloadStatusIndex {
   [key: string]: PipelineDatabaseDownloadJobStatus | undefined;
 }
 
-const PIPELINE_DATABASES: Record<string, PipelineDatabaseDefinition[]> = {
-  metaxpath: [
-    {
-      id: 'db-bundle',
-      label: 'MetaxPath Database Bundle',
-      description:
-        'Published MetaxPath runtime database bundle. The installer extracts the bundle and writes the Nextflow params file used by SeqDesk.',
-      version: 'published',
-      fileName: 'metaxpath_db_bundle.tar',
-      downloadUrl:
-        'https://research.bifo.helmholtz-hzi.de/downloads/genomenet/metaxpath_db_bundle.tar',
-      configKey: 'paramsFile',
-      install: {
-        type: 'metaxpath_db_bundle',
-        paramsFileName: 'metaxpath.downloaded.params.yaml',
-      },
-    },
-  ],
-  mag: [
-    {
-      id: 'gtdb',
-      label: 'GTDB-Tk Database',
-      description: 'GTDB-Tk reference data for taxonomy classification',
-      version: '214.1',
-      fileName: 'gtdbtk_r214_data.tar.gz',
-      downloadUrl:
-        'https://data.ace.uq.edu.au/public/gtdb/data/releases/release214/214.1/auxillary_files/gtdbtk_r214_data.tar.gz',
-      configKey: 'gtdbDb',
-    },
-  ],
-};
+const PIPELINE_DATABASES =
+  pipelineDatabaseDefinitions as Record<string, PipelineDatabaseDefinition[]>;
 
 function getRecordKey(pipelineId: string, databaseId: string): string {
   return `${pipelineId}:${databaseId}`;
@@ -217,25 +189,49 @@ export function getPipelineDatabaseDefinition(
   return definition || null;
 }
 
-export function buildPipelineDatabaseRoot(pipelineRunDir: string): string {
-  return path.join(path.resolve(pipelineRunDir), 'databases');
+function normalizeDatabaseDirectory(databaseDirectory?: string | null): string | undefined {
+  if (typeof databaseDirectory !== 'string') return undefined;
+  const trimmed = databaseDirectory.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function buildPipelineDatabaseRoot(
+  pipelineRunDir: string,
+  databaseDirectory?: string | null
+): string {
+  const configuredDirectory = normalizeDatabaseDirectory(databaseDirectory);
+  return configuredDirectory
+    ? path.resolve(configuredDirectory)
+    : path.join(path.resolve(pipelineRunDir), 'databases');
 }
 
 export function buildPipelineDatabaseTargetPath(
   pipelineRunDir: string,
   pipelineId: string,
   databaseId: string,
-  fileName: string
+  fileName: string,
+  databaseDirectory?: string | null
 ): string {
-  return path.join(buildPipelineDatabaseRoot(pipelineRunDir), pipelineId, databaseId, fileName);
+  return path.join(
+    buildPipelineDatabaseRoot(pipelineRunDir, databaseDirectory),
+    pipelineId,
+    databaseId,
+    fileName
+  );
 }
 
 export function buildPipelineDatabaseInstallDir(
   pipelineRunDir: string,
   pipelineId: string,
-  databaseId: string
+  databaseId: string,
+  databaseDirectory?: string | null
 ): string {
-  return path.join(buildPipelineDatabaseRoot(pipelineRunDir), pipelineId, databaseId, 'installed');
+  return path.join(
+    buildPipelineDatabaseRoot(pipelineRunDir, databaseDirectory),
+    pipelineId,
+    databaseId,
+    'installed'
+  );
 }
 
 export function calculateProgressPercent(
@@ -314,7 +310,8 @@ export async function updateDatabaseDownloadRecord(
 export async function getPipelineDatabaseStatuses(
   pipelineId: string,
   pipelineConfig: Record<string, unknown>,
-  pipelineRunDir?: string
+  pipelineRunDir?: string,
+  databaseDirectory?: string | null
 ): Promise<PipelineDatabaseStatus[]> {
   const definitions = getPipelineDatabaseDefinitions(pipelineId);
   if (definitions.length === 0) return [];
@@ -335,7 +332,8 @@ export async function getPipelineDatabaseStatuses(
             pipelineRunDir,
             pipelineId,
             definition.id,
-            definition.fileName
+            definition.fileName,
+            databaseDirectory
           )
         : undefined;
 

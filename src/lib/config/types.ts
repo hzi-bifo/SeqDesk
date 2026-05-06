@@ -55,6 +55,8 @@ export interface MagPipelineConfig {
 export interface PipelinesConfig {
   /** Master switch for pipeline features */
   enabled?: boolean;
+  /** Optional shared root directory for large pipeline database assets */
+  databaseDirectory?: string;
   execution?: PipelineExecutionConfig;
   mag?: MagPipelineConfig;
 }

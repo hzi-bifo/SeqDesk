@@ -433,6 +433,9 @@ jobs:
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX.config.json" >> "$GITHUB_ENV"
           echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "TELEMETRY_JSON=$RUNNER_TEMP/telemetry-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "PIPELINE_SMOKE_JSON=$RUNNER_TEMP/pipeline-smoke-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "PROFILE_DATA_DIR=$RUNNER_TEMP/seqdesk-profile-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "PROFILE_RUN_DIR=$RUNNER_TEMP/seqdesk-profile-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
@@ -595,17 +598,24 @@ jobs:
           SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
           SEQDESK_PROFILE_REGISTRY_URL="$PROFILE_REGISTRY_URL" \
           SEQDESK_LOG="$INSTALL_LOG" \
-            seqdesk \
-              -y \
-              --without-pipelines \
-              --no-pm2 \
-              --dir "$INSTALL_DIR" \
-              --port "$PORT" \
-              --nextauth-url "http://127.0.0.1:$PORT" \
-              --database-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
-              --database-direct-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
-              --profile "$PROFILE_ID" \
-              --profile-code "$SEQDESK_CI_PROFILE_CODE"
+            bash -c '
+              set -euo pipefail
+              pipeline_args=(--without-pipelines)
+              if [ "$PROFILE_ID" = "ci-runner" ]; then
+                pipeline_args=(--with-pipelines --data-path "$PROFILE_DATA_DIR" --run-dir "$PROFILE_RUN_DIR")
+              fi
+              seqdesk \
+                -y \
+                "${pipeline_args[@]}" \
+                --no-pm2 \
+                --dir "$INSTALL_DIR" \
+                --port "$PORT" \
+                --nextauth-url "http://127.0.0.1:$PORT" \
+                --database-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
+                --database-direct-url "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public" \
+                --profile "$PROFILE_ID" \
+                --profile-code "$SEQDESK_CI_PROFILE_CODE"
+            '
 
       - name: Verify install artifacts and profile settings
         run: |
@@ -621,24 +631,6 @@ jobs:
             --dir "$INSTALL_DIR" \
             --profile-id "$PROFILE_ID" \
             --expected-device-id "ont-minion-mk1d" > "$PROFILE_ASSERT_JSON"
-
-      - name: Verify dummy private MetaXpath package installer
-        run: |
-          set -euo pipefail
-          PROFILE_ORIGIN="$(node -e 'process.stdout.write(new URL(process.env.PROFILE_REGISTRY_URL).origin)')"
-          "$INSTALL_DIR/scripts/install-private-metaxpath.sh" \
-            --url "$PROFILE_ORIGIN/api/private/metaxpath/0.0.0-ci" \
-            --token "$SEQDESK_CI_PROFILE_CODE" \
-            --dir "$INSTALL_DIR"
-          test -f "$INSTALL_DIR/pipelines/metaxpath/manifest.json"
-          node -e '
-            const fs = require("fs");
-            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            if (manifest.id !== "metaxpath") {
-              console.error(`Unexpected package id: ${manifest.id}`);
-              process.exit(1);
-            }
-          ' "$INSTALL_DIR/pipelines/metaxpath/manifest.json"
 
       - name: Verify installed app startup and auth flows
         run: |
@@ -688,6 +680,14 @@ jobs:
             --email "admin@example.com" \
             --password "admin" \
             --output "$TELEMETRY_JSON"
+          if [ "$PROFILE_ID" = "ci-runner" ]; then
+            node "$GITHUB_WORKSPACE/scripts/run-install-profile-pipeline-smoke.mjs" \
+              --dir "$INSTALL_DIR" \
+              --base-url "http://127.0.0.1:${PORT}" \
+              --email "admin@example.com" \
+              --password "admin" \
+              --output "$PIPELINE_SMOKE_JSON"
+          fi
 
       - name: Upload install-profile e2e artifacts
         if: always()
@@ -701,6 +701,7 @@ jobs:
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PROFILE_ASSERT_JSON }}
             ${{ env.TELEMETRY_JSON }}
+            ${{ env.PIPELINE_SMOKE_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}
@@ -718,4 +719,4 @@ jobs:
           if command -v psql >/dev/null 2>&1; then
             PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_profile_missing}" >/dev/null 2>&1 || true
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX"
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}"

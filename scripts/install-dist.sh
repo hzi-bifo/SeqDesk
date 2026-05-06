@@ -16,6 +16,7 @@
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
+#   SEQDESK_PIPELINE_DATABASE_DIR=/data/pipeline-dbs - Optional pipeline DB directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
@@ -132,6 +133,7 @@ SEQDESK_EXEC_CONDA_ENV="${SEQDESK_EXEC_CONDA_ENV:-}"
 SEQDESK_EXEC_NEXTFLOW_PROFILE="${SEQDESK_EXEC_NEXTFLOW_PROFILE:-}"
 SEQDESK_EXEC_WEBLOG_URL="${SEQDESK_EXEC_WEBLOG_URL:-}"
 SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
+SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}"
 SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
 SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
 SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
@@ -447,43 +449,60 @@ configure_postgres_urls() {
 }
 
 print_postgres_setup_instructions() {
-    print_warning "PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
+    local redacted_database_url
+    redacted_database_url="$(redact_database_url "$SEQDESK_DATABASE_URL")"
+
     if load_postgres_url_parts; then
+        print_warning "Local PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
         echo "  Run this once from a sudo-capable account:"
         echo "  sudo env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
         echo "  Then rerun:"
         echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
         echo ""
         echo "  Manual fallback:"
-    fi
-    case "$OS:$DISTRO" in
-        linux:debian)
-            echo "  sudo apt-get update"
-            echo "  sudo apt-get install -y postgresql postgresql-contrib"
-            echo "  sudo systemctl enable --now postgresql"
-            ;;
-        linux:redhat)
-            if command_exists dnf; then
-                echo "  sudo dnf install -y postgresql-server postgresql-contrib"
-                echo "  sudo postgresql-setup --initdb"
+        case "$OS:$DISTRO" in
+            linux:debian)
+                echo "  sudo apt-get update"
+                echo "  sudo apt-get install -y postgresql postgresql-contrib"
                 echo "  sudo systemctl enable --now postgresql"
-            else
-                echo "  sudo yum install -y postgresql-server postgresql-contrib"
-                echo "  sudo postgresql-setup initdb"
-                echo "  sudo systemctl enable --now postgresql"
-            fi
-            ;;
-        *)
-            echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
-            ;;
-    esac
-    echo "  sudo -u postgres psql <<'SQL'"
-    echo "  CREATE ROLE seqdesk LOGIN PASSWORD 'replace-with-password-from-DATABASE_URL';"
-    echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
-    echo "  SQL"
-    echo "  Current DATABASE_URL: ${SEQDESK_DATABASE_URL}"
-    if ! load_postgres_url_parts; then
-        echo "  After creating the role/database, rerun:"
+                ;;
+            linux:redhat)
+                if command_exists dnf; then
+                    echo "  sudo dnf install -y postgresql-server postgresql-contrib"
+                    echo "  sudo postgresql-setup --initdb"
+                    echo "  sudo systemctl enable --now postgresql"
+                else
+                    echo "  sudo yum install -y postgresql-server postgresql-contrib"
+                    echo "  sudo postgresql-setup initdb"
+                    echo "  sudo systemctl enable --now postgresql"
+                fi
+                ;;
+            *)
+                echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
+                ;;
+        esac
+        echo "  sudo -u postgres psql <<'SQL'"
+        echo "  CREATE ROLE seqdesk LOGIN PASSWORD 'replace-with-password-from-DATABASE_URL';"
+        echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
+        echo "  SQL"
+        echo "  Current DATABASE_URL: ${redacted_database_url}"
+    else
+        local database_host
+        database_host="$(postgres_url_host "$SEQDESK_DATABASE_DIRECT_URL")"
+        if [ -z "$database_host" ]; then
+            database_host="$(postgres_url_host "$SEQDESK_DATABASE_URL")"
+        fi
+
+        print_warning "Configured PostgreSQL is remote. The installer will not install or prepare a local database for this URL."
+        echo "  Current DATABASE_URL: ${redacted_database_url}"
+        if [ -n "$database_host" ]; then
+            echo "  Database host: ${database_host}"
+            echo "  Verify outbound TCP 5432 from this machine:"
+            echo "  timeout 8 bash -lc '</dev/tcp/${database_host}/5432' && echo 'tcp ok' || echo 'tcp failed'"
+        fi
+        echo "  If TCP fails, ask the network administrator to allow outbound PostgreSQL access to the database host."
+        echo "  If TCP succeeds, check the database credentials, Neon project status, and DIRECT_URL."
+        echo "  After fixing connectivity or credentials, rerun:"
         echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
     fi
 }
@@ -526,6 +545,25 @@ NODE
     source "$temp_env"
     rm -f "$temp_env"
     return 0
+}
+
+postgres_url_host() {
+    local raw_url="${1:-}"
+    if [ -z "$raw_url" ]; then
+        return 1
+    fi
+
+    DATABASE_URL="$raw_url" node <<'NODE'
+const raw = process.env.DATABASE_URL || "";
+try {
+  const url = new URL(raw);
+  const protocol = url.protocol.replace(/:$/, "");
+  if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
+  process.stdout.write(url.hostname || "");
+} catch {
+  process.exit(2);
+}
+NODE
 }
 
 postgres_connection_ready() {
@@ -883,6 +921,7 @@ Options:
   --port <port>                App port
   --data-path <path>           Sequencing data directory
   --run-dir <path>             Pipeline run directory
+  --pipeline-db-dir <path>     Pipeline database asset directory
   --nextauth-url <url>         NEXTAUTH_URL override
   --nextauth-secret <secret>   NEXTAUTH_SECRET override
   --database-url <url>         DATABASE_URL override
@@ -988,6 +1027,14 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_RUN_DIR="$2"
+                shift
+                ;;
+            --pipeline-db-dir|--pipeline-database-dir)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                SEQDESK_PIPELINE_DATABASE_DIR="$2"
                 shift
                 ;;
             --nextauth-url)
@@ -1290,6 +1337,14 @@ const values = {
       execution?.pipelineRunDir
     )
   ),
+  pipelineDatabaseDir: toOptionalString(
+    firstDefined(
+      root.pipelineDatabaseDir,
+      root.pipelineDatabaseDirectory,
+      root.databaseDirectory,
+      pipelines?.databaseDirectory
+    )
+  ),
   nextAuthUrl: toOptionalString(
     firstDefined(
       root.nextAuthUrl,
@@ -1436,6 +1491,7 @@ let withPipelines = explicitPipelines;
 if (withPipelines === undefined) {
   const hints = [
     values.runDir,
+    values.pipelineDatabaseDir,
     values.useSlurm,
     values.condaPath,
     values.condaEnv,
@@ -1457,6 +1513,7 @@ if (values.usePm2 !== undefined) out.SEQDESK_CFG_USE_PM2 = values.usePm2 ? "1" :
 if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
 if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
+if (values.pipelineDatabaseDir) out.SEQDESK_CFG_PIPELINE_DATABASE_DIR = values.pipelineDatabaseDir;
 if (values.nextAuthUrl) out.SEQDESK_CFG_NEXTAUTH_URL = values.nextAuthUrl;
 if (values.nextAuthSecret) out.SEQDESK_CFG_NEXTAUTH_SECRET = values.nextAuthSecret;
 if (values.databaseUrl) out.SEQDESK_CFG_DATABASE_URL = values.databaseUrl;
@@ -1557,6 +1614,7 @@ NODE
     apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
     apply_config_value SEQDESK_DATA_PATH SEQDESK_CFG_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
+    apply_config_value SEQDESK_PIPELINE_DATABASE_DIR SEQDESK_CFG_PIPELINE_DATABASE_DIR
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_URL
     apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_CFG_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_CFG_DATABASE_URL
@@ -1605,6 +1663,7 @@ NODE
 
     unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2
     unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
+    unset SEQDESK_CFG_PIPELINE_DATABASE_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_SECRET
     unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
@@ -1717,6 +1776,7 @@ if (!port && nextAuthUrl) {
 }
 const dataPath = trimString(config?.site?.dataBasePath);
 const runDir = trimString(config?.pipelines?.execution?.runDirectory);
+const pipelineDatabaseDir = trimString(config?.pipelines?.databaseDirectory);
 
 let withPipelines;
 if (typeof config?.pipelines?.enabled === "boolean") {
@@ -1731,6 +1791,7 @@ if (databaseUrl) out.SEQDESK_EXISTING_DATABASE_URL = databaseUrl;
 if (directUrl) out.SEQDESK_EXISTING_DATABASE_DIRECT_URL = directUrl;
 if (dataPath) out.SEQDESK_EXISTING_DATA_PATH = dataPath;
 if (runDir) out.SEQDESK_EXISTING_RUN_DIR = runDir;
+if (pipelineDatabaseDir) out.SEQDESK_EXISTING_PIPELINE_DATABASE_DIR = pipelineDatabaseDir;
 if (withPipelines !== undefined) {
   out.SEQDESK_EXISTING_WITH_PIPELINES = withPipelines;
 }
@@ -1756,11 +1817,12 @@ NODE
     apply_config_value SEQDESK_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL
     apply_config_value SEQDESK_DATA_PATH SEQDESK_EXISTING_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_EXISTING_RUN_DIR
+    apply_config_value SEQDESK_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
     unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
-    unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_WITH_PIPELINES
+    unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_WITH_PIPELINES
 }
 
 redact_database_url() {
@@ -1908,6 +1970,9 @@ print_config_summary() {
     print_kv "Data path" "${SEQDESK_DATA_PATH:-configure later in Admin > Data Storage}"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
         print_kv "Run directory" "${SEQDESK_RUN_DIR:-configure later in Admin > Pipeline Runtime}"
+        if [ -n "${SEQDESK_PIPELINE_DATABASE_DIR:-}" ]; then
+            print_kv "Pipeline DB directory" "$SEQDESK_PIPELINE_DATABASE_DIR"
+        fi
     else
         print_kv "Run directory" "not used"
     fi
@@ -2094,6 +2159,7 @@ write_config() {
 
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
+    SEQDESK_INSTALL_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
     SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_INSTALL_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}" \
@@ -2128,6 +2194,7 @@ const fs = require('fs');
 
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
+const pipelineDatabaseDir = process.env.SEQDESK_INSTALL_PIPELINE_DATABASE_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
 const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
 const nextAuthSecret = process.env.SEQDESK_INSTALL_NEXTAUTH_SECRET || '';
@@ -2241,6 +2308,7 @@ if (dataPath) config.site.dataBasePath = dataPath;
 
 config.pipelines = config.pipelines || {};
 if (pipelinesEnabled) config.pipelines.enabled = pipelinesEnabled === 'true';
+if (pipelineDatabaseDir) config.pipelines.databaseDirectory = pipelineDatabaseDir;
 
 if (runDir) {
   config.pipelines.execution = config.pipelines.execution || {};
@@ -2314,6 +2382,7 @@ clear_bootstrap_plaintext_passwords() {
 has_infrastructure_overrides() {
     [ -n "$SEQDESK_DATA_PATH" ] || \
     [ -n "$SEQDESK_RUN_DIR" ] || \
+    [ -n "$SEQDESK_PIPELINE_DATABASE_DIR" ] || \
     [ -n "$SEQDESK_EXEC_USE_SLURM" ] || \
     [ -n "$SEQDESK_EXEC_SLURM_QUEUE" ] || \
     [ -n "$SEQDESK_EXEC_SLURM_CORES" ] || \
@@ -2339,6 +2408,7 @@ apply_infrastructure_settings() {
 
     SEQDESK_INFRA_DATA_PATH="$SEQDESK_DATA_PATH" \
     SEQDESK_INFRA_RUN_DIR="$SEQDESK_RUN_DIR" \
+    SEQDESK_INFRA_PIPELINE_DATABASE_DIR="$SEQDESK_PIPELINE_DATABASE_DIR" \
     SEQDESK_INFRA_USE_SLURM="$SEQDESK_EXEC_USE_SLURM" \
     SEQDESK_INFRA_SLURM_QUEUE="$SEQDESK_EXEC_SLURM_QUEUE" \
     SEQDESK_INFRA_SLURM_CORES="$SEQDESK_EXEC_SLURM_CORES" \
@@ -2413,6 +2483,7 @@ async function main() {
       condaEnv: "seqdesk-pipelines",
       nextflowProfile: "",
       pipelineRunDir: "/data/pipeline_runs",
+      pipelineDatabaseDir: "",
       weblogUrl: "",
       weblogSecret: "",
     };
@@ -2442,6 +2513,7 @@ async function main() {
 
     const dataPath = trimOrUndefined(process.env.SEQDESK_INFRA_DATA_PATH);
     const runDir = trimOrUndefined(process.env.SEQDESK_INFRA_RUN_DIR);
+    const pipelineDatabaseDir = trimOrUndefined(process.env.SEQDESK_INFRA_PIPELINE_DATABASE_DIR);
     const useSlurm = parseEnvBool(process.env.SEQDESK_INFRA_USE_SLURM);
     const slurmQueue = trimOrUndefined(process.env.SEQDESK_INFRA_SLURM_QUEUE);
     const slurmCores = parseEnvInt(process.env.SEQDESK_INFRA_SLURM_CORES);
@@ -2456,6 +2528,9 @@ async function main() {
 
     if (runDir && runDir !== "/") {
       nextExecution.pipelineRunDir = runDir;
+    }
+    if (pipelineDatabaseDir) {
+      nextExecution.pipelineDatabaseDir = pipelineDatabaseDir;
     }
     if (useSlurm !== undefined) {
       nextExecution.useSlurm = useSlurm;
@@ -3009,8 +3084,6 @@ if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
     if ! run_with_spinner "Hosted install profile settings" node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
         exit 1
     fi
-    rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
-    SEQDESK_PROFILE_CONFIG_FILE=""
 fi
 
 if [ -n "$SEQDESK_ORDER_FORM_SETTINGS" ] || [ -n "$SEQDESK_STUDY_FORM_SETTINGS" ]; then
@@ -3050,6 +3123,19 @@ else
 fi
 
 install_private_metaxpath_if_configured
+
+if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
+    if [ ! -f "scripts/apply-install-profile-assets.mjs" ]; then
+        print_error "Missing scripts/apply-install-profile-assets.mjs; cannot apply hosted install profile assets."
+        exit 1
+    fi
+
+    if ! run_with_spinner "Hosted install profile pipeline assets" node scripts/apply-install-profile-assets.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
+        exit 1
+    fi
+    rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
+    SEQDESK_PROFILE_CONFIG_FILE=""
+fi
 
 print_step "Configure process manager"
 
@@ -3152,6 +3238,9 @@ if [ -n "$SEQDESK_DATA_PATH" ]; then
 fi
 if [ -n "$SEQDESK_RUN_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
     print_kv "Run directory" "$SEQDESK_RUN_DIR"
+fi
+if [ -n "$SEQDESK_PIPELINE_DATABASE_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
+    print_kv "Pipeline DB directory" "$SEQDESK_PIPELINE_DATABASE_DIR"
 fi
 if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
     print_kv "Config" "$SEQDESK_DIR/seqdesk.config.json"

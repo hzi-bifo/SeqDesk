@@ -189,6 +189,7 @@ async function installDatabaseIfNeeded(
   databaseId: string,
   archivePath: string,
   database: NonNullable<ReturnType<typeof getPipelineDatabaseDefinition>>,
+  databaseDirectory?: string,
   logStream?: WriteStream
 ): Promise<{ runtimePath: string; sizeBytes: number }> {
   if (database.install?.type !== 'metaxpath_db_bundle') {
@@ -210,7 +211,8 @@ async function installDatabaseIfNeeded(
   const installDir = buildPipelineDatabaseInstallDir(
     pipelineRunDir,
     pipelineId,
-    databaseId
+    databaseId,
+    databaseDirectory
   );
   await fs.mkdir(installDir, { recursive: true });
 
@@ -307,7 +309,8 @@ export async function POST(req: NextRequest) {
       executionSettings.pipelineRunDir,
       pipelineId,
       databaseId,
-      database.fileName
+      database.fileName,
+      executionSettings.pipelineDatabaseDir
     );
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
@@ -334,7 +337,8 @@ export async function POST(req: NextRequest) {
         pipelineId,
         databaseId,
         targetPath,
-        database
+        database,
+        executionSettings.pipelineDatabaseDir
       );
       await updateDatabaseDownloadRecord(pipelineId, databaseId, {
         version: database.version,
@@ -362,7 +366,8 @@ export async function POST(req: NextRequest) {
       const statuses = await getPipelineDatabaseStatuses(
         pipelineId,
         parsePipelineConfig(pipelineConfigRecord?.config),
-        executionSettings.pipelineRunDir
+        executionSettings.pipelineRunDir,
+        executionSettings.pipelineDatabaseDir
       );
 
       return NextResponse.json({
@@ -452,6 +457,7 @@ export async function POST(req: NextRequest) {
               databaseId,
               targetPath,
               database,
+              executionSettings.pipelineDatabaseDir,
               logStream
             );
             await updateDatabaseDownloadRecord(pipelineId, databaseId, {
@@ -519,7 +525,8 @@ export async function POST(req: NextRequest) {
     const statuses = await getPipelineDatabaseStatuses(
       pipelineId,
       parsePipelineConfig(pipelineConfigRecord?.config),
-      executionSettings.pipelineRunDir
+      executionSettings.pipelineRunDir,
+      executionSettings.pipelineDatabaseDir
     );
 
     return NextResponse.json({

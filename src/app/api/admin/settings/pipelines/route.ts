@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY, getAllPipelineIds } from '@/lib/pipelines';
 import { getPipelineDatabaseStatuses } from '@/lib/pipelines/database-downloads';
+import {
+  parsePipelineAllowlist,
+  resolvePipelineEnabled,
+} from '@/lib/pipelines/enablement';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { getPackage, getPackageManifest, type PackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
@@ -263,14 +267,26 @@ export async function GET(request: NextRequest) {
     const allPipelineIds = getAllPipelineIds();
 
     // Get existing configs from database
-    const configs = await db.pipelineConfig.findMany();
+    const [configs, siteSettings] = await Promise.all([
+      db.pipelineConfig.findMany(),
+      db.siteSettings.findUnique({
+        where: { id: 'singleton' },
+        select: { extraSettings: true },
+      }),
+    ]);
     const configMap = new Map(configs.map(c => [c.pipelineId, c]));
+    const profilePipelineAllowlist = parsePipelineAllowlist(siteSettings?.extraSettings);
     const executionSettings = await getExecutionSettings();
 
     // Build response with registry data + database config
     const pipelines = await Promise.all(allPipelineIds.map(async pipelineId => {
       const definition = PIPELINE_REGISTRY[pipelineId];
       const dbConfig = configMap.get(pipelineId);
+      const effectiveEnabled = resolvePipelineEnabled(
+        pipelineId,
+        dbConfig,
+        profilePipelineAllowlist
+      );
       const extendedDefaultConfig = extendDefaultConfigWithTechnologyAllowlist(
         definition.defaultConfig
       );
@@ -306,11 +322,12 @@ export async function GET(request: NextRequest) {
       const databaseDownloads = await getPipelineDatabaseStatuses(
         pipelineId,
         resolvedConfig,
-        executionSettings.pipelineRunDir
+        executionSettings.pipelineRunDir,
+        executionSettings.pipelineDatabaseDir
       );
       const readiness = await buildPipelineReadiness({
         pipelineId,
-        enabled: dbConfig ? dbConfig.enabled : true,
+        enabled: effectiveEnabled,
         manifest,
         resolvedConfig,
         databaseDownloads,
@@ -323,7 +340,7 @@ export async function GET(request: NextRequest) {
         category: definition.category,
         version: definition.version,
         icon: definition.icon,
-        enabled: dbConfig ? dbConfig.enabled : true,
+        enabled: effectiveEnabled,
         config: resolvedConfig,
         configSchema: extendedConfigSchema,
         defaultConfig: extendedDefaultConfig,

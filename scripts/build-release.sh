@@ -172,6 +172,21 @@ if [[ -f "${ROOT_DIR}/scripts/apply-install-profile.mjs" ]]; then
   cp "${ROOT_DIR}/scripts/apply-install-profile.mjs" "${RELEASE_DIR}/scripts/"
 fi
 
+if [[ -f "${ROOT_DIR}/scripts/apply-install-profile-assets.mjs" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/apply-install-profile-assets.mjs" "${RELEASE_DIR}/scripts/"
+fi
+
+if [[ -f "${ROOT_DIR}/scripts/run-install-profile-pipeline-smoke.mjs" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp "${ROOT_DIR}/scripts/run-install-profile-pipeline-smoke.mjs" "${RELEASE_DIR}/scripts/"
+fi
+
+if [[ -d "${ROOT_DIR}/scripts/lib" ]]; then
+  mkdir -p "${RELEASE_DIR}/scripts"
+  cp -R "${ROOT_DIR}/scripts/lib" "${RELEASE_DIR}/scripts/"
+fi
+
 if [[ -f "${ROOT_DIR}/scripts/install-private-metaxpath.sh" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"
   cp "${ROOT_DIR}/scripts/install-private-metaxpath.sh" "${RELEASE_DIR}/scripts/"
@@ -179,6 +194,9 @@ if [[ -f "${ROOT_DIR}/scripts/install-private-metaxpath.sh" ]]; then
 fi
 
 mkdir -p "${RELEASE_DIR}/data"
+if [[ -f "${ROOT_DIR}/data/pipeline-databases.json" ]]; then
+  cp "${ROOT_DIR}/data/pipeline-databases.json" "${RELEASE_DIR}/data/"
+fi
 
 cat > "${RELEASE_DIR}/start.sh" <<'EOF'
 #!/usr/bin/env bash

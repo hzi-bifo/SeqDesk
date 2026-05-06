@@ -14,6 +14,7 @@ export interface ExecutionSettings {
   condaEnv: string;
   nextflowProfile: string;
   pipelineRunDir: string;
+  pipelineDatabaseDir: string;
   weblogUrl: string;
   weblogSecret: string;
   /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
@@ -32,6 +33,7 @@ export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   condaEnv: "seqdesk-pipelines",
   nextflowProfile: "",
   pipelineRunDir: "/data/pipeline_runs",
+  pipelineDatabaseDir: "",
   weblogUrl: "",
   weblogSecret: "",
 };
@@ -117,6 +119,11 @@ function getConfigExecutionOverrides(
       resolvedConfig,
       "pipelines.execution.runDirectory",
       execution?.runDirectory
+    ),
+    pipelineDatabaseDir: getConfiguredValue(
+      resolvedConfig,
+      "pipelines.databaseDirectory",
+      resolvedConfig.config.pipelines?.databaseDirectory
     ),
   };
 }

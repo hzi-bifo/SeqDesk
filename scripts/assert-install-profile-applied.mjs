@@ -83,9 +83,7 @@ try {
   const [settings, orderForm, pipelineConfigs] = await Promise.all([
     prisma.siteSettings.findUnique({ where: { id: "singleton" } }),
     prisma.orderFormConfig.findUnique({ where: { id: "singleton" } }),
-    prisma.pipelineConfig.findMany({
-      where: { pipelineId: { in: ["fastqc", "fastq-checksum", "metaxpath"] } },
-    }),
+    prisma.pipelineConfig.findMany(),
   ]);
 
   if (!settings) fail("SiteSettings singleton is missing");
@@ -136,9 +134,116 @@ try {
     .filter((pipeline) => pipeline.enabled)
     .map((pipeline) => pipeline.pipelineId)
     .sort();
-  for (const expectedPipeline of ["fastq-checksum", "fastqc", "metaxpath"]) {
+  const expectedEnabledPipelines =
+    expectedProfileId === "ci-runner"
+      ? ["fastq-checksum"]
+      : ["fastq-checksum", "fastqc", "metaxpath"];
+  for (const expectedPipeline of expectedEnabledPipelines) {
     if (!enabledPipelines.includes(expectedPipeline)) {
       fail(`Expected pipeline '${expectedPipeline}' to be enabled`);
+    }
+  }
+  const unexpectedEnabledPipelines = enabledPipelines.filter(
+    (pipelineId) => !expectedEnabledPipelines.includes(pipelineId)
+  );
+  if (unexpectedEnabledPipelines.length > 0) {
+    fail(`Unexpected enabled pipeline(s): ${unexpectedEnabledPipelines.join(", ")}`);
+  }
+
+  if (expectedProfileId === "twincore") {
+    const metaxpathManifest = path.join(installDir, "pipelines", "metaxpath", "manifest.json");
+    if (!fs.existsSync(metaxpathManifest)) {
+      fail(`Expected private MetaxPath package to be installed at ${metaxpathManifest}`);
+    }
+
+    const metaxpathConfig = pipelineConfigs.find(
+      (pipeline) => pipeline.pipelineId === "metaxpath"
+    );
+    const parsedMetaxpathConfig = parseJsonObject(
+      metaxpathConfig?.config,
+      "PipelineConfig.metaxpath.config"
+    );
+    const paramsFile = parsedMetaxpathConfig.paramsFile;
+    if (typeof paramsFile !== "string" || paramsFile.trim().length === 0) {
+      fail("Expected MetaxPath paramsFile to be configured after profile DB download");
+    }
+    if (!fs.existsSync(paramsFile)) {
+      fail(`Expected MetaxPath paramsFile to exist: ${paramsFile}`);
+    }
+
+    const smokeOrder = await prisma.order.findUnique({
+      where: { orderNumber: "TWINCORE-SMOKE-001" },
+      include: {
+        samples: {
+          include: {
+            reads: true,
+          },
+        },
+      },
+    });
+    if (!smokeOrder) {
+      fail("Expected TwinCore smoke order TWINCORE-SMOKE-001 to be seeded");
+    }
+    if (!settings.dataBasePath) {
+      fail("Expected site dataBasePath for TwinCore smoke FASTQ files");
+    }
+    for (const sample of smokeOrder.samples) {
+      const read = sample.reads[0];
+      if (!read?.file1) {
+        fail(`Expected smoke sample ${sample.sampleId} to have an R1 FASTQ`);
+      }
+      const fastqPath = path.join(settings.dataBasePath, read.file1);
+      if (!fs.existsSync(fastqPath)) {
+        fail(`Expected smoke FASTQ to exist for ${sample.sampleId}: ${fastqPath}`);
+      }
+    }
+  }
+
+  if (expectedProfileId === "ci-runner") {
+    const seedData = parseJsonObject(
+      extra.installProfileSeedData,
+      "extraSettings.installProfileSeedData"
+    );
+    const pipelineSmokeTests = parseJsonObject(
+      extra.installProfilePipelineSmokeTests,
+      "extraSettings.installProfilePipelineSmokeTests"
+    );
+    if (seedData.enabled !== true) {
+      fail(`Expected ci-runner seedData.enabled to be true, got '${seedData.enabled}'`);
+    }
+    if (pipelineSmokeTests.enabled !== true) {
+      fail(
+        `Expected ci-runner pipelineSmokeTests.enabled to be true, got '${pipelineSmokeTests.enabled}'`
+      );
+    }
+    const smokeOrder = await prisma.order.findUnique({
+      where: { orderNumber: "CI-RUNNER-SMOKE-001" },
+      include: {
+        samples: {
+          include: {
+            reads: true,
+          },
+        },
+      },
+    });
+    if (!smokeOrder) {
+      fail("Expected CI runner smoke order CI-RUNNER-SMOKE-001 to be seeded");
+    }
+    if (!settings.dataBasePath) {
+      fail("Expected site dataBasePath for CI runner smoke FASTQ files");
+    }
+    if (smokeOrder.samples.length !== 2) {
+      fail(`Expected CI runner smoke order to have 2 samples, got ${smokeOrder.samples.length}`);
+    }
+    for (const sample of smokeOrder.samples) {
+      const read = sample.reads[0];
+      if (!read?.file1) {
+        fail(`Expected CI runner smoke sample ${sample.sampleId} to have an R1 FASTQ`);
+      }
+      const fastqPath = path.join(settings.dataBasePath, read.file1);
+      if (!fs.existsSync(fastqPath)) {
+        fail(`Expected CI runner smoke FASTQ to exist for ${sample.sampleId}: ${fastqPath}`);
+      }
     }
   }
 

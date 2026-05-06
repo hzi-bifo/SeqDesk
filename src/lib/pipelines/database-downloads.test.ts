@@ -73,6 +73,22 @@ describe("database-downloads", () => {
     );
   });
 
+  it("uses a configured pipeline database directory instead of the run directory", () => {
+    expect(buildPipelineDatabaseRoot("/run/root", "/shared/dbs")).toBe("/shared/dbs");
+    expect(
+      buildPipelineDatabaseTargetPath(
+        "/run/root",
+        "metaxpath",
+        "db-bundle",
+        "metaxpath_db_bundle.tar",
+        "/shared/dbs"
+      )
+    ).toBe("/shared/dbs/metaxpath/db-bundle/metaxpath_db_bundle.tar");
+    expect(buildPipelineDatabaseInstallDir("/run/root", "metaxpath", "db-bundle", "/shared/dbs")).toBe(
+      "/shared/dbs/metaxpath/db-bundle/installed"
+    );
+  });
+
   it("calculates download progress with safe clamp", () => {
     expect(calculateProgressPercent(5, 10)).toBe(50);
     expect(calculateProgressPercent(150, 100)).toBe(100);

@@ -9,6 +9,12 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    pipelineConfig: {
+      findUnique: vi.fn(),
+    },
+    siteSettings: {
+      findUnique: vi.fn(),
+    },
   },
   getResolvedDataBasePath: vi.fn(),
   prepareGenericRun: vi.fn(),
@@ -165,6 +171,8 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     mocks.isDemoSession.mockReturnValue(false);
     mocks.db.pipelineRun.findUnique.mockResolvedValue(defaultRun);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue(null);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.getExecutionSettings.mockResolvedValue(defaultExecutionSettings);
     mocks.getResolvedDataBasePath.mockResolvedValue({ dataBasePath: "/data" });
     mocks.getPackage.mockReturnValue(defaultPkg);
@@ -251,6 +259,22 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toContain("Cannot start run with status");
+  });
+
+  it("returns 403 when the run pipeline is disabled", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        installProfilePipelineAllowlist: [],
+      }),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Pipeline fastqc is disabled",
+    });
+    expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
   });
 
   it("returns 400 when run has no associated target", async () => {

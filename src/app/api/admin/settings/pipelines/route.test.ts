@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       upsert: vi.fn(),
     },
+    siteSettings: {
+      findUnique: vi.fn(),
+    },
   },
   getAllPipelineIds: vi.fn(),
   getExecutionSettings: vi.fn(),
@@ -82,6 +85,39 @@ const mocks = vi.hoisted(() => ({
       outputs: [],
       sampleResult: null,
     },
+    metaxpath: {
+      name: "MetaXpath",
+      description: "ONT metagenomics",
+      category: "analysis",
+      version: "1.0.0",
+      icon: "Dna",
+      defaultConfig: {},
+      configSchema: {
+        type: "object",
+        properties: {},
+      },
+      input: {
+        supportedScopes: ["order"],
+        perSample: {
+          reads: true,
+          pairedEnd: false,
+        },
+      },
+      visibility: {
+        showToUser: false,
+        userCanStart: false,
+      },
+      requires: {
+        reads: true,
+        assemblies: false,
+        bins: false,
+        checksums: false,
+        studyAccession: false,
+        sampleMetadata: false,
+      },
+      outputs: [],
+      sampleResult: null,
+    },
   },
 }));
 
@@ -129,6 +165,7 @@ describe("GET /api/admin/settings/pipelines", () => {
     });
     mocks.getAllPipelineIds.mockReturnValue(["fastqc", "mag"]);
     mocks.db.pipelineConfig.findMany.mockResolvedValue([]);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.getExecutionSettings.mockResolvedValue({
       pipelineRunDir: "/tmp/seqdesk-runs",
     });
@@ -172,6 +209,33 @@ describe("GET /api/admin/settings/pipelines", () => {
                   avgQuality1: "avgQuality1",
                 },
               },
+            },
+          ],
+        };
+      }
+
+      if (pipelineId === "metaxpath") {
+        return {
+          execution: {
+            pipeline: `${process.cwd()}/package.json`,
+            version: "1.0.0",
+          },
+          targets: {
+            supported: ["order"],
+          },
+          inputs: [
+            {
+              id: "reads",
+              scope: "sample",
+              source: "sample.reads",
+              required: true,
+            },
+          ],
+          outputs: [
+            {
+              id: "metaxpath_summary",
+              scope: "run",
+              destination: "pipeline_run",
             },
           ],
         };
@@ -310,6 +374,150 @@ describe("GET /api/admin/settings/pipelines", () => {
         },
       }),
     ]);
+  });
+
+  it("uses an install-profile pipeline allowlist for pipelines without explicit config rows", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({
+        installProfilePipelineAllowlist: ["fastqc"],
+      }),
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines?enabled=true")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.pipelines.map((pipeline: { pipelineId: string }) => pipeline.pipelineId))
+      .toEqual(["fastqc"]);
+  });
+
+  it("reports missing and ready database assets in pipeline readiness", async () => {
+    mocks.getAllPipelineIds.mockReturnValue(["mag"]);
+    mocks.getPipelineDatabaseStatuses.mockResolvedValueOnce([
+      {
+        id: "gtdb",
+        label: "GTDB-Tk Database",
+        status: "missing",
+        configKey: "gtdbDb",
+      },
+    ]);
+
+    const missingResponse = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const missingPayload = await missingResponse.json();
+
+    expect(missingPayload.pipelines[0].readiness).toEqual(
+      expect.objectContaining({
+        status: "missing",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "databases",
+            status: "missing",
+            action: "download-db",
+          }),
+        ]),
+      })
+    );
+
+    mocks.getPipelineDatabaseStatuses.mockResolvedValueOnce([
+      {
+        id: "gtdb",
+        label: "GTDB-Tk Database",
+        status: "downloaded",
+        configKey: "gtdbDb",
+        path: "/shared/dbs/mag/gtdb/gtdbtk_r214_data.tar.gz",
+      },
+    ]);
+
+    const readyResponse = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const readyPayload = await readyResponse.json();
+
+    expect(readyPayload.pipelines[0].readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "databases",
+          status: "ready",
+        }),
+      ])
+    );
+  });
+
+  it("reports MetaXpath missing before DB install and ready after params file exists", async () => {
+    mocks.getAllPipelineIds.mockReturnValue(["metaxpath"]);
+    mocks.getPipelineDatabaseStatuses.mockResolvedValueOnce([
+      {
+        id: "db-bundle",
+        label: "MetaxPath Database Bundle",
+        status: "missing",
+        configKey: "paramsFile",
+      },
+    ]);
+
+    const missingResponse = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const missingPayload = await missingResponse.json();
+
+    expect(missingPayload.pipelines[0].readiness).toEqual(
+      expect.objectContaining({
+        status: "missing",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "databases",
+            status: "missing",
+            action: "download-db",
+          }),
+          expect.objectContaining({
+            id: "params-file",
+            status: "missing",
+            action: "download-db",
+          }),
+        ]),
+      })
+    );
+
+    mocks.db.pipelineConfig.findMany.mockResolvedValue([
+      {
+        pipelineId: "metaxpath",
+        enabled: true,
+        config: JSON.stringify({ paramsFile: `${process.cwd()}/package.json` }),
+      },
+    ]);
+    mocks.getPipelineDatabaseStatuses.mockResolvedValueOnce([
+      {
+        id: "db-bundle",
+        label: "MetaxPath Database Bundle",
+        status: "downloaded",
+        configKey: "paramsFile",
+        path: `${process.cwd()}/package.json`,
+      },
+    ]);
+
+    const readyResponse = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const readyPayload = await readyResponse.json();
+
+    expect(readyPayload.pipelines[0].readiness).toEqual(
+      expect.objectContaining({
+        status: "ready",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "databases",
+            status: "ready",
+          }),
+          expect.objectContaining({
+            id: "params-file",
+            status: "ready",
+          }),
+        ]),
+      })
+    );
   });
 });
 

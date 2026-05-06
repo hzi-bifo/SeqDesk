@@ -9,6 +9,7 @@ const SEQUENCING_TECH_CONFIG_KEY = "sequencingTechConfig";
 const RUN_ASSIGNMENT_FIELDS_KEY = "sequencingRunSampleFormFields";
 const RUN_ASSIGNMENT_GROUPS_KEY = "sequencingRunSampleFormGroups";
 const RUN_ASSIGNMENT_DEFAULTS_VERSION_KEY = "sequencingRunSampleFormDefaultsVersion";
+const INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY = "installProfilePipelineAllowlist";
 
 function usage() {
   console.log(`Usage:
@@ -210,6 +211,58 @@ function mergeStringArrays(existing, incoming) {
   );
 }
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function discoverInstalledPipelineIds() {
+  const candidates = [
+    path.join(process.cwd(), "pipelines"),
+    path.join(process.cwd(), "..", "pipelines"),
+  ];
+  const pipelineIds = new Set();
+
+  for (const pipelinesDir of candidates) {
+    if (!fs.existsSync(pipelinesDir)) continue;
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(pipelinesDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.startsWith("_")) {
+        continue;
+      }
+
+      const manifestPath = path.join(pipelinesDir, entry.name, "manifest.json");
+      let pipelineId = entry.name;
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        const manifestId = toOptionalString(toRecord(manifest.package).id);
+        if (manifestId) pipelineId = manifestId;
+      } catch {
+        // Missing or invalid manifests are ignored by the runtime loader too.
+      }
+      pipelineIds.add(pipelineId);
+    }
+
+    break;
+  }
+
+  return Array.from(pipelineIds).sort();
+}
+
 function parseModulesConfig(raw) {
   const parsed = parseJsonObject(raw);
   if (isRecord(parsed.modules)) {
@@ -403,8 +456,16 @@ async function applySiteProfile(prisma, profile) {
   }
 
   const pipelines = toRecord(profile.pipelines);
+  const pipelinesEnabled = toOptionalBoolean(pipelines.enabled);
+  const enablePipelineIds = normalizeStringArray(pipelines.enable);
+  const databaseDirectory = toOptionalString(pipelines.databaseDirectory);
+  if (pipelinesEnabled === false) {
+    extra[INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY] = [];
+  } else if (pipelinesEnabled === true && enablePipelineIds.length > 0) {
+    extra[INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY] = enablePipelineIds;
+  }
   const execution = toRecord(pipelines.execution);
-  if (Object.keys(execution).length > 0) {
+  if (Object.keys(execution).length > 0 || databaseDirectory) {
     const slurm = toRecord(execution.slurm);
     const conda = toRecord(execution.conda);
     const currentExecution = isRecord(extra.pipelineExecution) ? extra.pipelineExecution : {};
@@ -443,6 +504,7 @@ async function applySiteProfile(prisma, profile) {
     if (nextflowProfile !== undefined) nextExecution.nextflowProfile = nextflowProfile;
     if (weblogUrl !== undefined) nextExecution.weblogUrl = weblogUrl;
     if (weblogSecret !== undefined) nextExecution.weblogSecret = weblogSecret;
+    if (databaseDirectory) nextExecution.pipelineDatabaseDir = databaseDirectory;
 
     extra.pipelineExecution = nextExecution;
   }
@@ -454,6 +516,18 @@ async function applySiteProfile(prisma, profile) {
     appliedAt: new Date().toISOString(),
   };
 
+  if (isRecord(profile.seedData)) {
+    extra.installProfileSeedData = profile.seedData;
+  } else {
+    delete extra.installProfileSeedData;
+  }
+
+  if (isRecord(profile.pipelineSmokeTests)) {
+    extra.installProfilePipelineSmokeTests = profile.pipelineSmokeTests;
+  } else {
+    delete extra.installProfilePipelineSmokeTests;
+  }
+
   update.extraSettings = JSON.stringify(extra);
   await updateSiteSettings(prisma, update);
 
@@ -463,27 +537,50 @@ async function applySiteProfile(prisma, profile) {
 async function applyPipelineEnablement(prisma, profile) {
   const pipelines = toRecord(profile.pipelines);
   const enabled = toOptionalBoolean(pipelines.enabled);
-  const enableIds = Array.isArray(pipelines.enable)
-    ? pipelines.enable.filter((item) => typeof item === "string" && item.trim())
-    : [];
+  const enableIds = normalizeStringArray(pipelines.enable);
+  const allowlist = new Set(enableIds);
+  const managedIds = Array.from(
+    new Set([...discoverInstalledPipelineIds(), ...enableIds])
+  ).sort();
+
+  if (enabled === false) {
+    for (const pipelineId of managedIds) {
+      const existing = await prisma.pipelineConfig.findUnique({
+        where: { pipelineId },
+      });
+      await prisma.pipelineConfig.upsert({
+        where: { pipelineId },
+        update: {
+          enabled: false,
+          config: existing?.config || null,
+        },
+        create: {
+          pipelineId,
+          enabled: false,
+          config: null,
+        },
+      });
+    }
+    return 0;
+  }
 
   if (enabled !== true || enableIds.length === 0) {
     return 0;
   }
 
-  for (const pipelineId of enableIds) {
+  for (const pipelineId of managedIds) {
     const existing = await prisma.pipelineConfig.findUnique({
       where: { pipelineId },
     });
     await prisma.pipelineConfig.upsert({
       where: { pipelineId },
       update: {
-        enabled: true,
+        enabled: allowlist.has(pipelineId),
         config: existing?.config || null,
       },
       create: {
         pipelineId,
-        enabled: true,
+        enabled: allowlist.has(pipelineId),
         config: null,
       },
     });

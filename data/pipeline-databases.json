@@ -1,0 +1,28 @@
+{
+  "metaxpath": [
+    {
+      "id": "db-bundle",
+      "label": "MetaxPath Database Bundle",
+      "description": "Published MetaxPath runtime database bundle. The installer extracts the bundle and writes the Nextflow params file used by SeqDesk.",
+      "version": "published",
+      "fileName": "metaxpath_db_bundle.tar",
+      "downloadUrl": "https://research.bifo.helmholtz-hzi.de/downloads/genomenet/metaxpath_db_bundle.tar",
+      "configKey": "paramsFile",
+      "install": {
+        "type": "metaxpath_db_bundle",
+        "paramsFileName": "metaxpath.downloaded.params.yaml"
+      }
+    }
+  ],
+  "mag": [
+    {
+      "id": "gtdb",
+      "label": "GTDB-Tk Database",
+      "description": "GTDB-Tk reference data for taxonomy classification",
+      "version": "214.1",
+      "fileName": "gtdbtk_r214_data.tar.gz",
+      "downloadUrl": "https://data.ace.uq.edu.au/public/gtdb/data/releases/release214/214.1/auxillary_files/gtdbtk_r214_data.tar.gz",
+      "configKey": "gtdbDb"
+    }
+  ]
+}
