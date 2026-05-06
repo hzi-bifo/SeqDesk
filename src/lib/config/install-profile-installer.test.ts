@@ -108,6 +108,11 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("group: bifo_dmz");
     expect(profileWorkflow).toContain("labels: [self-hosted, Linux, X64, db-local, twincore, alma]");
     expect(profileWorkflow).toContain("build-install-artifacts:");
+    expect(profileWorkflow).toContain("install-profile-ubuntu-smoke:");
+    expect(profileWorkflow).toContain("name: Install with hosted profile on Ubuntu");
+    expect(profileWorkflow).toContain("runs-on: ubuntu-latest");
+    expect(profileWorkflow).toContain("image: postgres:16");
+    expect(profileWorkflow).toContain("POSTGRES_DB: seqdesk_profile_ubuntu");
     expect(profileWorkflow).toContain("install-without-profile:");
     expect(profileWorkflow).toContain("install-with-profile:");
     expect(profileWorkflow).toContain("default: \"ci-runner\"");
