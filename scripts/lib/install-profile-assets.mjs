@@ -185,8 +185,8 @@ export async function resolveProfilePipelineAssetSettings(prisma, profile) {
       toOptionalString(pipelines.databaseDirectory) ||
       toOptionalString(execution.pipelineDatabaseDir),
     dataBasePath:
-      toOptionalString(site.dataBasePath) ||
-      toOptionalString(settings?.dataBasePath),
+      toOptionalString(settings?.dataBasePath) ||
+      toOptionalString(site.dataBasePath),
   };
 }
 

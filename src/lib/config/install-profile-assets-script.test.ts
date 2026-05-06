@@ -365,6 +365,8 @@ describe("install profile asset script helpers", () => {
 
   it("downloads a FASTQ bundle fixture and creates Read rows without precomputed checksums", async () => {
     const bundle = await createDownloadedFastqBundle();
+    const installedDataPath = path.join(tempDir, "installed-data");
+    const profileDefaultDataPath = path.join(tempDir, "profile-default-data");
     const readCreate = vi.fn().mockResolvedValue({});
     const sampleCreate = vi
       .fn()
@@ -373,7 +375,7 @@ describe("install profile asset script helpers", () => {
     const prisma = {
       siteSettings: {
         findUnique: vi.fn().mockResolvedValue({
-          dataBasePath: tempDir,
+          dataBasePath: installedDataPath,
           extraSettings: JSON.stringify({ pipelineExecution: {} }),
         }),
       },
@@ -412,7 +414,7 @@ describe("install profile asset script helpers", () => {
       prisma,
       profile: {
         id: "ci-runner",
-        site: { dataBasePath: tempDir },
+        site: { dataBasePath: profileDefaultDataPath },
         seedData: {
           enabled: true,
           fixtures: [
@@ -448,11 +450,19 @@ describe("install profile asset script helpers", () => {
     await expect(
       fs.stat(
         path.join(
-          tempDir,
+          installedDataPath,
           "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz"
         )
       )
     ).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(
+      fs.stat(
+        path.join(
+          profileDefaultDataPath,
+          "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz"
+        )
+      )
+    ).rejects.toThrow();
   });
 
   it("fails a required downloaded FASTQ fixture when the SHA256 does not match", async () => {
