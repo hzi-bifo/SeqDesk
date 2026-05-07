@@ -46,6 +46,16 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("--profile-code <code>");
     expect(installDist).toContain("--setting <id>");
     expect(installDist).toContain("--key <code>");
+    expect(installDist).toContain("--additional-setting <path=value>");
+    expect(installDist).toContain("--additional-settings <path=value...>");
+    expect(installDist).toContain("--additional-settings-file <path>");
+    expect(installDist).toContain("SEQDESK_ADDITIONAL_SETTINGS_FILE");
+    expect(installDist).toContain("SEQDESK_ADDITIONAL_SETTINGS=()");
+    expect(installDist).toContain("apply_additional_settings_to_config_path");
+    expect(installDist).toContain("Applied additional installer settings");
+    expect(installDist).toContain("allowedRoots");
+    expect(installDist).toContain("__proto__");
+    expect(installDist).toContain("Additional installer settings require --profile or --config.");
     expect(installDist).toContain("resolve_install_profile");
     expect(installDist).toContain('Authorization: Bearer ${SEQDESK_PROFILE_CODE}');
     expect(installDist).toContain("install?.dir");

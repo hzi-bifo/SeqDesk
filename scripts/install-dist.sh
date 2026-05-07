@@ -34,6 +34,7 @@
 #   SEQDESK_PROFILE=twincore       - Hosted install profile id
 #   SEQDESK_PROFILE_CODE=...       - Access code for hosted install profile
 #   SEQDESK_PROFILE_REGISTRY_URL=https://www.seqdesk.com/api/install-profiles
+#   SEQDESK_ADDITIONAL_SETTINGS_FILE=/etc/seqdesk/install-overrides.json - Optional local JSON overrides
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
 #   SEQDESK_PREPARE_POSTGRES=1     - Prepare local PostgreSQL role/database, then exit
@@ -119,6 +120,8 @@ SEQDESK_PROFILE="${SEQDESK_PROFILE:-${SEQDESK_SETTING:-}}"
 SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
 SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://www.seqdesk.com/api/install-profiles}"
 SEQDESK_PROFILE_CONFIG_FILE=""
+SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
+SEQDESK_ADDITIONAL_SETTINGS=()
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_PREPARE_POSTGRES="${SEQDESK_PREPARE_POSTGRES:-}"
@@ -913,6 +916,12 @@ Options:
   --profile-code <code>        Access code for --profile
   --setting <id>               Alias for --profile
   --key <code>                 Alias for --profile-code
+  --additional-setting <path=value>
+                              Local profile/config override (repeatable)
+  --additional-settings <path=value...>
+                              One or more local profile/config overrides
+  --additional-settings-file <path>
+                              JSON overrides applied after --profile/--config
   --dir <path>                 Install directory
   --version <version>          Release version (default: latest)
   --with-pipelines             Enable pipeline dependencies
@@ -942,6 +951,7 @@ Options:
 Examples:
   npx -y seqdesk@latest -y
   npx -y seqdesk@latest -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
+  seqdesk -y --profile dev --profile-code "$SEQDESK_DEV_SETUP_CODE" --additional-settings-file /etc/seqdesk/install-overrides.json
   seqdesk -y --config https://example.org/infrastructure-setup.json
   seqdesk -y --reconfigure --config ./infrastructure-setup.json
   seqdesk -y --reconfigure --reseed-db --config ./infrastructure-setup.json
@@ -977,6 +987,34 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_PROFILE_CODE="$2"
+                shift
+                ;;
+            --additional-setting|--additional_setting)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                SEQDESK_ADDITIONAL_SETTINGS+=("$2")
+                shift
+                ;;
+            --additional-settings|--additional_settings)
+                shift
+                if [ $# -eq 0 ] || [[ "$1" == -* ]]; then
+                    print_error "Missing value for --additional-settings"
+                    exit 1
+                fi
+                while [ $# -gt 0 ] && [[ "$1" != -* ]]; do
+                    SEQDESK_ADDITIONAL_SETTINGS+=("$1")
+                    shift
+                done
+                continue
+                ;;
+            --additional-settings-file|--additional_settings_file)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                SEQDESK_ADDITIONAL_SETTINGS_FILE="$2"
                 shift
                 ;;
             --dir)
@@ -1152,6 +1190,169 @@ apply_config_value() {
     fi
 }
 
+has_additional_settings() {
+    [ -n "${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}" ] || [ ${#SEQDESK_ADDITIONAL_SETTINGS[@]} -gt 0 ]
+}
+
+apply_additional_settings_to_config_path() {
+    local config_path="$1"
+    local settings_blob=""
+
+    if ! has_additional_settings; then
+        return 0
+    fi
+
+    if [ ${#SEQDESK_ADDITIONAL_SETTINGS[@]} -gt 0 ]; then
+        settings_blob="$(printf '%s\n' "${SEQDESK_ADDITIONAL_SETTINGS[@]}")"
+    fi
+
+    if ! SEQDESK_ADDITIONAL_SETTINGS_FILE_PATH="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}" \
+        SEQDESK_ADDITIONAL_SETTINGS_BLOB="$settings_blob" \
+        node - "$config_path" <<'NODE'
+const fs = require("fs");
+
+const configPath = process.argv[2];
+const allowedRoots = new Set([
+  "app",
+  "bootstrap",
+  "ena",
+  "forms",
+  "install",
+  "modules",
+  "notifications",
+  "pipelines",
+  "privatePipelines",
+  "runtime",
+  "sequencingTech",
+  "site",
+  "telemetry",
+]);
+const forbiddenKeys = new Set(["__proto__", "constructor", "prototype"]);
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonFile(filePath, label) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!isRecord(parsed)) {
+      throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Failed to read ${label}: ${error.message}`);
+  }
+}
+
+function validatePathParts(parts, source) {
+  if (parts.length === 0) {
+    throw new Error(`Invalid additional setting path from ${source}.`);
+  }
+  if (!allowedRoots.has(parts[0])) {
+    throw new Error(
+      `Unsupported additional setting root "${parts[0]}" from ${source}.`
+    );
+  }
+  for (const part of parts) {
+    if (forbiddenKeys.has(part)) {
+      throw new Error(`Forbidden additional setting key "${part}" from ${source}.`);
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(part)) {
+      throw new Error(`Invalid additional setting key "${part}" from ${source}.`);
+    }
+  }
+}
+
+function parsePath(rawPath, source) {
+  const path = String(rawPath || "").trim();
+  const parts = path.split(".");
+  if (
+    !path ||
+    parts.some((part) => part.length === 0 || part.trim() !== part)
+  ) {
+    throw new Error(`Invalid additional setting path "${rawPath}" from ${source}.`);
+  }
+  validatePathParts(parts, source);
+  return parts;
+}
+
+function setDeepValue(root, parts, value) {
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    if (!isRecord(current[part])) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
+function mergeValue(root, parts, value, source) {
+  validatePathParts(parts, source);
+  if (!isRecord(value)) {
+    setDeepValue(root, parts, value);
+    return;
+  }
+
+  let current = root;
+  for (const part of parts) {
+    if (!isRecord(current[part])) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+
+  for (const [key, childValue] of Object.entries(value)) {
+    if (key.includes(".")) {
+      setDeepValue(current, parsePath(key, source), childValue);
+    } else {
+      mergeValue(root, [...parts, key], childValue, source);
+    }
+  }
+}
+
+function applyObjectOverrides(root, overrides, source) {
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key.includes(".")) {
+      setDeepValue(root, parsePath(key, source), value);
+    } else {
+      mergeValue(root, parsePath(key, source), value, source);
+    }
+  }
+}
+
+const config = parseJsonFile(configPath, "installer config");
+const settingsFile = process.env.SEQDESK_ADDITIONAL_SETTINGS_FILE_PATH || "";
+if (settingsFile) {
+  applyObjectOverrides(
+    config,
+    parseJsonFile(settingsFile, "additional settings file"),
+    settingsFile
+  );
+}
+
+const inlineSettings = process.env.SEQDESK_ADDITIONAL_SETTINGS_BLOB || "";
+for (const line of inlineSettings.split(/\n/).filter(Boolean)) {
+  const equalsIndex = line.indexOf("=");
+  if (equalsIndex <= 0) {
+    throw new Error(`Additional setting must be dot.path=value: ${line}`);
+  }
+  const key = line.slice(0, equalsIndex);
+  const value = line.slice(equalsIndex + 1);
+  setDeepValue(config, parsePath(key, "CLI"), value);
+}
+
+fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+NODE
+    then
+        print_error "Failed to apply additional installer settings."
+        exit 1
+    fi
+
+    print_success "Applied additional installer settings"
+}
+
 resolve_install_profile() {
     if [ -z "$SEQDESK_PROFILE" ]; then
         return 0
@@ -1215,6 +1416,17 @@ load_install_config() {
     elif [ ! -f "$config_ref" ]; then
         print_error "Config file not found: $config_ref"
         exit 1
+    fi
+
+    if has_additional_settings; then
+        if [ "$config_path" = "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] || [ -n "$temp_json" ]; then
+            apply_additional_settings_to_config_path "$config_path"
+        else
+            temp_json=$(mktemp)
+            cp "$config_path" "$temp_json"
+            config_path="$temp_json"
+            apply_additional_settings_to_config_path "$config_path"
+        fi
     fi
 
     temp_env=$(mktemp)
@@ -2636,6 +2848,9 @@ print_kv "Version" "${SEQDESK_VERSION:-latest}"
 if [ -n "$SEQDESK_PROFILE" ]; then
     print_kv "Profile" "$SEQDESK_PROFILE"
 fi
+if has_additional_settings; then
+    print_kv "Local overrides" "configured"
+fi
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure"
 fi
@@ -2714,6 +2929,11 @@ NPM_VERSION=$(npm -v)
 print_success "npm $NPM_VERSION"
 
 resolve_install_profile
+
+if has_additional_settings && [ -z "$SEQDESK_CONFIG" ]; then
+    print_error "Additional installer settings require --profile or --config."
+    exit 1
+fi
 
 if [ -n "$SEQDESK_CONFIG" ]; then
     if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
