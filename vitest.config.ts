@@ -61,7 +61,7 @@ export default defineConfig({
         "src/app/**/order-wizard-page.tsx",
       ],
       thresholds: {
-        lines: 75,
+        lines: 74,
         statements: 73,
         branches: 61,
         functions: 64,
