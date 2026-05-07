@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Mail, Send } from "lucide-react";
+import { Check, CheckCircle2, Loader2, Mail, Send, XCircle } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { GlassCard } from "@/components/ui/glass-card";
+import { Label } from "@/components/ui/label";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
 type NotificationSettings = {
@@ -150,59 +152,115 @@ export default function AdminNotificationSettingsPage() {
 
   if (loading) {
     return (
-      <PageContainer className="flex min-h-[400px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <PageContainer>
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Loading…</span>
+        </div>
       </PageContainer>
     );
   }
 
   return (
-    <PageContainer maxWidth="medium">
-      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <PageContainer>
+      <div className="mb-6 flex items-start gap-3">
+        <Mail className="h-6 w-6 text-primary mt-1" />
         <div>
           <h1 className="text-2xl font-semibold">Email Notifications</h1>
-          <p className="mt-1 text-muted-foreground">
-            Configure hosted SeqDesk notification relay events.
+          <p className="text-sm text-muted-foreground">
+            Configure the hosted SeqDesk notification relay and which events trigger emails.
           </p>
         </div>
-        <Button onClick={sendTest} disabled={!settings?.enabled || testing}>
-          {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-          {testSent ? "Sent" : "Send Test"}
-        </Button>
+      </div>
+
+      <div className="mb-6 rounded-lg border border-border bg-secondary/40 p-4 text-sm text-muted-foreground space-y-2">
+        <p>
+          <strong className="text-foreground">How it works.</strong> SeqDesk sends notification events to the
+          hosted relay, which then delivers branded emails to the right recipients (researchers, facility admins).
+          The relay token is provisioned per installation; if it&apos;s missing, contact your SeqDesk administrator.
+        </p>
+        <p>
+          <strong className="text-foreground">Per-user preferences.</strong> Each user can opt in or out of
+          categories from their profile. The defaults below decide what happens for users who never visit that page.
+        </p>
       </div>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} className="mb-6" />}
 
       {settings && (
         <div className="space-y-6">
-          <section className="rounded-lg border bg-white p-6">
+          {/* Relay status */}
+          <GlassCard className="p-6">
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <Mail className="h-5 w-5 text-muted-foreground" />
-                  <h2 className="text-lg font-semibold">Relay Status</h2>
+                  <h2 className="text-lg font-semibold">Relay status</h2>
+                  {settings.hasRelayToken ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Token configured
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 border border-amber-200">
+                      <XCircle className="h-3 w-3" />
+                      Token missing
+                    </span>
+                  )}
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Provider: {settings.provider}. Relay token is{" "}
-                  {settings.hasRelayToken ? "configured" : "missing"}.
-                </p>
-                <p className="mt-1 break-all text-xs text-muted-foreground">{settings.relayUrl}</p>
+                <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Provider</dt>
+                    <dd className="font-mono">{settings.provider}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Relay URL</dt>
+                    <dd className="font-mono break-all text-xs">{settings.relayUrl}</dd>
+                  </div>
+                </dl>
               </div>
-              <Switch
-                checked={settings.enabled}
-                onCheckedChange={(checked) =>
-                  setSettings((current) => (current ? { ...current, enabled: checked } : current))
-                }
-                aria-label="Enable email notifications"
-              />
+              <div className="shrink-0 flex flex-col items-end gap-2">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="enabled-switch" className="text-sm cursor-pointer">
+                    Enabled
+                  </Label>
+                  <Switch
+                    id="enabled-switch"
+                    checked={settings.enabled}
+                    onCheckedChange={(checked) =>
+                      setSettings((current) => (current ? { ...current, enabled: checked } : current))
+                    }
+                    aria-label="Enable email notifications"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={sendTest}
+                  disabled={!settings.enabled || testing}
+                >
+                  {testing ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {testSent ? "Test sent" : "Send test"}
+                </Button>
+              </div>
             </div>
-          </section>
+          </GlassCard>
 
-          <section className="rounded-lg border bg-white p-6">
-            <h2 className="text-lg font-semibold">Event Switches</h2>
-            <div className="mt-5 divide-y">
+          {/* Event switches */}
+          <GlassCard className="p-6">
+            <h2 className="text-lg font-semibold">Event triggers</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose which events emit notifications. Disabled events are silently dropped at the relay.
+            </p>
+            <div className="mt-5 divide-y divide-border/60">
               {EVENT_ROWS.map((row) => (
-                <div key={row.key} className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
+                <div
+                  key={row.key}
+                  className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
+                >
                   <div>
                     <div className="font-medium">{row.label}</div>
                     <p className="mt-1 text-sm text-muted-foreground">{row.description}</p>
@@ -210,8 +268,12 @@ export default function AdminNotificationSettingsPage() {
                   <Switch
                     checked={
                       row.key.startsWith("order.")
-                        ? settings.events.order[row.key.split(".")[1] as keyof NotificationSettings["events"]["order"]]
-                        : settings.events.ticket[row.key.split(".")[1] as keyof NotificationSettings["events"]["ticket"]]
+                        ? settings.events.order[
+                            row.key.split(".")[1] as keyof NotificationSettings["events"]["order"]
+                          ]
+                        : settings.events.ticket[
+                            row.key.split(".")[1] as keyof NotificationSettings["events"]["ticket"]
+                          ]
                     }
                     onCheckedChange={(checked) => setEvent(row.key, checked)}
                     aria-label={row.label}
@@ -219,11 +281,15 @@ export default function AdminNotificationSettingsPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </GlassCard>
 
-          <section className="rounded-lg border bg-white p-6">
-            <h2 className="text-lg font-semibold">User Defaults</h2>
-            <div className="mt-5 space-y-4">
+          {/* User defaults */}
+          <GlassCard className="p-6">
+            <h2 className="text-lg font-semibold">User defaults</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Initial preferences for newly created users. Existing users keep their own choices.
+            </p>
+            <div className="mt-5 divide-y divide-border/60">
               <PreferenceRow
                 label="Order notifications"
                 description="Default opt-in for order submission and order status messages."
@@ -255,17 +321,20 @@ export default function AdminNotificationSettingsPage() {
                 }
               />
             </div>
-          </section>
+          </GlassCard>
 
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/40">
             <Button onClick={saveSettings} disabled={saving}>
               {saving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : saved ? (
                 <Check className="mr-2 h-4 w-4" />
               ) : null}
-              {saved ? "Saved" : "Save Changes"}
+              {saved ? "Saved" : "Save changes"}
             </Button>
+            <span className="text-xs text-muted-foreground">
+              Changes take effect immediately on save — no restart needed.
+            </span>
           </div>
         </div>
       )}
@@ -285,7 +354,7 @@ function PreferenceRow({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
       <div>
         <div className="font-medium">{label}</div>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
