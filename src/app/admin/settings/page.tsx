@@ -1763,6 +1763,91 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+
+        {process.env.NODE_ENV === "development" && (
+          <section className="bg-card rounded-xl border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold flex items-center gap-2">
+                  Development
+                  <Badge variant="warning">dev only</Badge>
+                </h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Browse internal pages with mocked state. Hidden in production builds.
+                </p>
+              </div>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <p className="eyebrow mb-2">Setup page scenarios</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Open <code className="font-mono">/setup</code> with a forced state instead of waiting for real polling outcomes.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {[
+                    { key: "loading", label: "Loading", detail: "Initial check" },
+                    { key: "connecting", label: "Connecting", detail: "DB not yet reachable" },
+                    { key: "seeding", label: "Seeding", detail: "DB ready, data being created" },
+                    { key: "configured", label: "Configured", detail: "Both checks pass" },
+                    { key: "failed", label: "Failed (DB ready)", detail: "Auto-seed timed out" },
+                    { key: "failed-no-db", label: "Failed (no DB)", detail: "DB missing" },
+                    { key: "error", label: "Error", detail: "Connection error message" },
+                  ].map((scenario) => (
+                    <Button
+                      key={scenario.key}
+                      asChild
+                      variant="outline"
+                      className="justify-between bg-white h-auto py-2"
+                    >
+                      <Link href={`/setup?preview=${scenario.key}`} target="_blank">
+                        <span className="flex flex-col items-start text-left">
+                          <span className="text-sm font-medium">
+                            {scenario.label}
+                          </span>
+                          <span className="text-xs text-muted-foreground font-normal">
+                            {scenario.detail}
+                          </span>
+                        </span>
+                        <ArrowRight className="h-4 w-4 shrink-0" />
+                      </Link>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="eyebrow mb-2">Live pages</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="justify-between bg-white"
+                  >
+                    <Link href="/setup" target="_blank">
+                      <span className="inline-flex items-center gap-2">
+                        <Server className="h-4 w-4" />
+                        Setup (real polling)
+                      </span>
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="justify-between bg-white"
+                  >
+                    <Link href="/login" target="_blank">
+                      <span className="inline-flex items-center gap-2">
+                        <Server className="h-4 w-4" />
+                        Login
+                      </span>
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </PageContainer>
     </>
