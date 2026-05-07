@@ -138,6 +138,23 @@ Vitest commands assume a local PostgreSQL test database at
 `postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public`
 unless you override `DATABASE_URL` and `DIRECT_URL`.
 
+### Background workers
+
+Two long-lived helper processes run alongside the Next.js server:
+
+```bash
+npm run pipeline:monitor          # poll SLURM/local pipeline runs, update PipelineRun rows
+npm run stream:monitor            # watch MinKNOW output dirs, ingest reads into active StreamRuns
+npm run stream:monitor:simulate   # drop fake FASTQs into a directory for end-to-end testing without hardware
+```
+
+`stream:monitor` reads its configuration (output root, gRPC host/port, TLS cert) from
+*Application Settings → MinKNOW Stream* in the admin UI. Facility admins attach a running
+sequencing run to an order from *Sequencing Data → Stream* on the order page. The simulator
+flag drops MinKNOW-shaped FASTQs into a target directory at a configurable cadence
+(`SIMULATE_INTERVAL_MS`, `SIMULATE_BARCODES`) so the full pipeline can be exercised without
+a real device.
+
 ## Live Test Dashboard
 
 SeqDesk includes a local test dashboard that groups tests by section and shows live pass/fail/running state while the suite executes.

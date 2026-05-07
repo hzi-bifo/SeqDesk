@@ -244,6 +244,9 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
               Sequencers
             </Link>
+            <Link href="/admin/minknow-stream" className={adminSubItemClass("/admin/minknow-stream")}>
+              MinKNOW Stream
+            </Link>
             <Link
               href="/admin/data-compute"
               className={cn(
@@ -326,6 +329,9 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+            </Link>
+            <Link href="/admin/background-workers" className={adminSubItemClass("/admin/background-workers")}>
+              Background Workers
             </Link>
             <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
               Accounts

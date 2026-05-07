@@ -9,6 +9,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { FastqcMetricBadges } from "@/components/orders/FastqcMetricBadges";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
 import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
+import { SequencingStreamView } from "@/components/orders/SequencingStreamView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpBox } from "@/components/ui/help-box";
@@ -1331,6 +1332,19 @@ export default function OrderSequencingPage({
           samples={data.samples}
           canManage={canManage}
           dataBasePathConfigured={data.dataBasePathConfigured}
+          onDataChanged={() => void refreshSummary({ silent: true })}
+        />
+      </PageContainer>
+    );
+  }
+
+  if (activeView === "stream" && !activePipelineId) {
+    return (
+      <PageContainer>
+        <SequencingStreamView
+          orderId={orderId}
+          samples={data.samples}
+          canManage={canManage}
           onDataChanged={() => void refreshSummary({ silent: true })}
         />
       </PageContainer>

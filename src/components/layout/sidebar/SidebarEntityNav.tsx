@@ -592,6 +592,7 @@ export function SidebarEntityNav({
                 const seqSubItems = [
                   { id: "overview", label: "Overview", href: `/orders/${entityId}/sequencing` },
                   { id: "discover", label: "Associate", href: `/orders/${entityId}/sequencing?view=discover` },
+                  { id: "stream", label: "Stream", href: `/orders/${entityId}/sequencing?view=stream` },
                 ];
                 return (
                   <div className="ml-5 border-l border-border/70 pl-2">
@@ -599,7 +600,9 @@ export function SidebarEntityNav({
                       const isSubActive =
                         sub.id === "discover"
                           ? currentOrderSubview === "sequencing" && searchParams.get("view") === "discover"
-                          : currentOrderSubview === "sequencing" && !searchParams.get("view") && !searchParams.get("pipeline");
+                          : sub.id === "stream"
+                            ? currentOrderSubview === "sequencing" && searchParams.get("view") === "stream"
+                            : currentOrderSubview === "sequencing" && !searchParams.get("view") && !searchParams.get("pipeline");
                       const indicatorStatus =
                         sub.id === "discover"
                           ? seqAssocStatus === "complete"

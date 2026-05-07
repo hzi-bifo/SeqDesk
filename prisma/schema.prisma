@@ -38,6 +38,7 @@ model User {
   pipelineRuns   PipelineRun[]
   sequencingArtifactsCreated SequencingArtifact[] @relation("SequencingArtifactCreator")
   sequencingUploadsCreated   SequencingUpload[]   @relation("SequencingUploadCreator")
+  backgroundWorkersStarted   BackgroundWorkerProcess[] @relation("BackgroundWorkerStartedBy")
   department     Department?     @relation(fields: [departmentId], references: [id])
 }
 
@@ -81,6 +82,7 @@ model Order {
   sequencingArtifacts SequencingArtifact[]
   sequencingUploads   SequencingUpload[]
   sequencingRuns      SequencingRun[]
+  streamRuns          StreamRun[]
   pipelineRuns      PipelineRun[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
@@ -173,14 +175,25 @@ model Read {
   sequencingRunId           String?
   pipelineRunId             String?
   pipelineSources           String?
+  dataClass                 String         @default("cleaned")
+  dataClassSource           String         @default("legacy_assumed_cleaned")
+  isActive                  Boolean        @default(true)
+  supersededByReadId        String?
+  classifiedAt              DateTime?
+  classifiedById            String?
+  classificationNote        String?
   sequencingRun             SequencingRun? @relation(fields: [sequencingRunId], references: [id])
   pipelineRun               PipelineRun?   @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
   sample                    Sample         @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  @@index([sampleId, isActive])
+  @@index([dataClass])
+  @@index([supersededByReadId])
 }
 
 model SequencingRun {
   id             String    @id @default(cuid())
-  runId          String    @unique
+  runId          String
   runName        String?
   platform       String?
   instrument     String?
@@ -202,6 +215,7 @@ model SequencingRun {
   samples        SequencingRunSample[]
   sequencingArtifacts SequencingArtifact[]
 
+  @@unique([orderId, runId])
   @@index([orderId])
   @@index([runDate])
 }
@@ -221,6 +235,59 @@ model SequencingRunSample {
   @@unique([sequencingRunId, sampleId])
   @@unique([sequencingRunId, barcode])
   @@index([sampleId])
+}
+
+model StreamRun {
+  id           String           @id @default(cuid())
+  orderId      String
+  minknowRunId String?
+  flowCellId   String?
+  deviceId     String?
+  outputDir    String
+  status       String           @default("ACTIVE")
+  totalBases   BigInt           @default(0)
+  totalReads   Int              @default(0)
+  barcodeMap   String?
+  startedAt    DateTime         @default(now())
+  lastSeenAt   DateTime         @updatedAt
+  stoppedAt    DateTime?
+  monitorId    String?
+  heartbeatAt  DateTime?
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events       StreamRunEvent[]
+
+  @@index([orderId, status])
+  @@index([status, heartbeatAt])
+}
+
+model StreamRunEvent {
+  id          String    @id @default(cuid())
+  streamRunId String
+  seq         Int       @default(autoincrement())
+  ts          DateTime  @default(now())
+  kind        String
+  payload     String?
+  streamRun   StreamRun @relation(fields: [streamRunId], references: [id], onDelete: Cascade)
+
+  @@index([streamRunId, seq])
+  @@index([streamRunId, ts])
+}
+
+model BackgroundWorkerProcess {
+  id           String    @id @default(cuid())
+  name         String
+  pid          Int
+  startedAt    DateTime  @default(now())
+  startedById  String?
+  status       String    @default("RUNNING")
+  stoppedAt    DateTime?
+  exitCode     Int?
+  logPath      String
+  lastErrorMsg String?
+  startedBy    User?     @relation("BackgroundWorkerStartedBy", fields: [startedById], references: [id], onDelete: SetNull)
+
+  @@index([name, status])
+  @@index([name, startedAt])
 }
 
 model SequencingArtifact {
