@@ -22,6 +22,69 @@ function isRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
+// Load bundled sequencing technology defaults from data/. Used at seed time so
+// the order form has technologies to choose from without hitting the remote
+// registry at seqdesk.com (which is unreachable from CI / air-gapped installs).
+function loadBundledSequencingTechConfig() {
+  const repoRoot = process.cwd();
+  const defaultsPath = path.join(
+    repoRoot,
+    "data",
+    "sequencing-technologies",
+    "defaults.json",
+  );
+  const devicesDir = path.join(repoRoot, "data", "sequencing-devices");
+
+  let baseConfig;
+  try {
+    baseConfig = JSON.parse(fs.readFileSync(defaultsPath, "utf-8"));
+  } catch (error) {
+    console.warn("Could not read sequencing technology defaults:", error?.message || error);
+    return null;
+  }
+
+  if (!isRecord(baseConfig) || !Array.isArray(baseConfig.technologies)) {
+    return null;
+  }
+
+  // Per-platform device files contribute devices/flowCells/kits/software.
+  const devices = [];
+  const flowCells = [];
+  const kits = [];
+  const software = [];
+  if (fs.existsSync(devicesDir)) {
+    for (const file of fs.readdirSync(devicesDir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(devicesDir, file), "utf-8"));
+        const platformId = parsed?.platformId;
+        if (Array.isArray(parsed?.devices)) {
+          for (const device of parsed.devices) {
+            devices.push({ ...device, platformId: device.platformId || platformId });
+          }
+        }
+        if (Array.isArray(parsed?.flowCells)) flowCells.push(...parsed.flowCells);
+        if (Array.isArray(parsed?.kits)) kits.push(...parsed.kits);
+        if (Array.isArray(parsed?.software)) software.push(...parsed.software);
+      } catch (error) {
+        console.warn(`Could not parse ${file}:`, error?.message || error);
+      }
+    }
+  }
+
+  return {
+    technologies: baseConfig.technologies,
+    devices,
+    flowCells,
+    kits,
+    software,
+    barcodeSchemes: Array.isArray(baseConfig.barcodeSchemes) ? baseConfig.barcodeSchemes : [],
+    barcodeSets: Array.isArray(baseConfig.barcodeSets) ? baseConfig.barcodeSets : [],
+    version: typeof baseConfig.version === "number" ? baseConfig.version : 1,
+    lastSyncedAt: new Date().toISOString(),
+  };
+}
+
 function findConfigPath(baseDir) {
   for (const name of CONFIG_FILE_NAMES) {
     const candidate = path.join(baseDir, name);
@@ -588,6 +651,12 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
     },
   ];
 
+  // Load bundled sequencing technology defaults so the order form can render
+  // without an external network fetch. This mirrors what /api/sequencing-tech
+  // would otherwise pull from the seqdesk.com registry, but lets fresh installs
+  // and offline CI environments work out of the box.
+  const sequencingTechConfig = loadBundledSequencingTechConfig();
+
   // Update siteSettings with study form config
   await prisma.siteSettings.update({
     where: { id: "singleton" },
@@ -596,10 +665,16 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         studyFormFields,
         studyFormGroups,
         studyFormDefaultsVersion: 1,
+        ...(sequencingTechConfig ? { sequencingTechConfig } : {}),
       }),
     },
   });
   console.log("Created default STUDY form configuration");
+  if (sequencingTechConfig) {
+    console.log(
+      `Seeded ${sequencingTechConfig.technologies.length} sequencing technologies from bundled defaults`,
+    );
+  }
 
   console.log("\n========================================");
   console.log("Seeding completed!");
