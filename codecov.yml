@@ -1,0 +1,21 @@
+coverage:
+  status:
+    project:
+      default:
+        # Allow up to 1% coverage drop before failing the project check.
+        # The Vitest config in vitest.config.ts enforces hard floors per metric;
+        # this threshold is for short-term drift (e.g. landing a feature with a
+        # follow-up test PR). Tighten back to 0% once /lib/workers and
+        # /lib/notifications stop seeing churn.
+        target: auto
+        threshold: 1%
+        if_ci_failed: error
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
