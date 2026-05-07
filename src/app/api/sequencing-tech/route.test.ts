@@ -55,6 +55,24 @@ describe("GET /api/sequencing-tech", () => {
       syncUrl: "",
     });
     mocks.withResolvedTechAssetUrls.mockReturnValue(baseConfig);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          config: {
+            technologies: [],
+            devices: [],
+            flowCells: [],
+            kits: [],
+            software: [],
+            barcodeSchemes: [],
+            barcodeSets: [],
+            version: 1,
+          },
+        }),
+      } as unknown as Response)
+    );
   });
 
   it("returns available technologies filtered and sorted", async () => {
@@ -80,6 +98,42 @@ describe("GET /api/sequencing-tech", () => {
     await GET();
 
     expect(mocks.parseTechConfig).toHaveBeenCalledWith(configPayload);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("loads the registry config when no sequencing tech config has been stored yet", async () => {
+    const remoteConfig = {
+      technologies: [
+        { id: "remote-tech", name: "Remote Tech", available: true, comingSoon: false, order: 1 },
+      ],
+      devices: [],
+      flowCells: [],
+      kits: [],
+      software: [],
+      barcodeSchemes: [],
+      barcodeSets: [],
+      version: 7,
+    };
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ config: remoteConfig }),
+    } as unknown as Response);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
+    mocks.withResolvedTechAssetUrls.mockImplementationOnce((config) => config);
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(fetch).toHaveBeenCalledWith(
+      "https://seqdesk.com/api/registry/sequencing-tech",
+      expect.objectContaining({
+        headers: { Accept: "application/json" },
+        next: { revalidate: 0 },
+      })
+    );
+    expect(body.technologies).toHaveLength(1);
+    expect(body.technologies[0].id).toBe("remote-tech");
   });
 
   it("handles invalid JSON in extraSettings gracefully", async () => {

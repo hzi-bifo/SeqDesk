@@ -1,5 +1,6 @@
 "use client";
 
+import { Label } from "@/components/ui/label";
 import { TechnologySelector } from "@/components/forms/fields/TechnologySelector";
 import { FormFieldDefinition } from "@/types/form-config";
 import { SequencingTechSelection } from "@/types/sequencing-technology";
@@ -25,6 +26,10 @@ export function SequencingTechFormRenderer({
 }: SequencingTechFormRendererProps) {
   return (
     <div className="space-y-2">
+      <Label className="text-base">
+        {field.label}
+        {field.required && <span className="text-destructive ml-1">*</span>}
+      </Label>
       <TechnologySelector
         value={value}
         onChange={onChange}

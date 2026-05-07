@@ -5,12 +5,51 @@ import {
   parseTechConfig,
   withResolvedTechAssetUrls,
 } from "@/lib/sequencing-tech/config";
+import type { SequencingTechConfig } from "@/types/sequencing-technology";
 
 // Storage key in SiteSettings.extraSettings
 const SETTINGS_KEY = "sequencingTechConfig";
 const DEFAULT_SEQDESK_API_URL = getDefaultTechSyncUrl();
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+async function fetchRemoteTechConfig(syncUrl: string): Promise<SequencingTechConfig> {
+  const response = await fetch(syncUrl, {
+    headers: {
+      Accept: "application/json",
+    },
+    next: { revalidate: 0 },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API returned ${response.status}`);
+  }
+
+  const remoteData = await response.json();
+  const rawRemoteConfig =
+    remoteData?.config && typeof remoteData.config === "object"
+      ? remoteData.config
+      : remoteData;
+  if (!rawRemoteConfig || typeof rawRemoteConfig !== "object" || Array.isArray(rawRemoteConfig)) {
+    throw new Error("Registry returned invalid sequencing tech config");
+  }
+
+  const remoteConfig = rawRemoteConfig as SequencingTechConfig;
+
+  return {
+    ...remoteConfig,
+    technologies: Array.isArray(remoteConfig.technologies) ? remoteConfig.technologies : [],
+    devices: Array.isArray(remoteConfig.devices) ? remoteConfig.devices : [],
+    flowCells: Array.isArray(remoteConfig.flowCells) ? remoteConfig.flowCells : [],
+    kits: Array.isArray(remoteConfig.kits) ? remoteConfig.kits : [],
+    software: Array.isArray(remoteConfig.software) ? remoteConfig.software : [],
+    barcodeSchemes: Array.isArray(remoteConfig.barcodeSchemes) ? remoteConfig.barcodeSchemes : [],
+    barcodeSets: Array.isArray(remoteConfig.barcodeSets) ? remoteConfig.barcodeSets : [],
+    version: parseInt(String(remoteConfig.version || 0), 10) || 1,
+    lastSyncedAt: new Date().toISOString(),
+    syncUrl,
+  };
+}
 
 // GET available sequencing technologies (public endpoint for order form)
 export async function GET() {
@@ -34,7 +73,15 @@ export async function GET() {
       }
     }
 
-    const parsedConfig = parseTechConfig(extraSettings[SETTINGS_KEY] ?? null);
+    const storedConfig = extraSettings[SETTINGS_KEY] ?? null;
+    let parsedConfig = parseTechConfig(storedConfig);
+    if (!storedConfig && parsedConfig.technologies.length === 0) {
+      try {
+        parsedConfig = await fetchRemoteTechConfig(DEFAULT_SEQDESK_API_URL);
+      } catch (error) {
+        console.error("Error loading default sequencing technologies:", error);
+      }
+    }
     const config = withResolvedTechAssetUrls(
       {
         ...parsedConfig,
