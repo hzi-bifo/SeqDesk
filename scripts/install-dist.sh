@@ -510,6 +510,147 @@ print_postgres_setup_instructions() {
     fi
 }
 
+probe_postgres_database() {
+    # Connect to DATABASE_URL using the pg module installed with the runtime
+    # dependencies and report a categorized failure if anything is wrong.
+    # Must be called from the install directory so node can resolve "pg".
+    if [ -z "$SEQDESK_DATABASE_URL" ]; then
+        return 0
+    fi
+
+    local probe_output probe_status
+    probe_output="$(DATABASE_URL="$SEQDESK_DATABASE_URL" node --no-warnings 2>&1 <<'NODE'
+async function main() {
+  const url = process.env.DATABASE_URL || "";
+  let pg;
+  try {
+    pg = require("pg");
+  } catch {
+    console.log("SKIP\tno-pg");
+    return;
+  }
+  const { Client } = pg;
+  const client = new Client({ connectionString: url, connectionTimeoutMillis: 8000, statement_timeout: 8000 });
+  try {
+    await client.connect();
+  } catch (error) {
+    console.log("CONNECT_FAIL\t" + (error.code || "") + "\t" + (error.message || "").replace(/[\n\r\t]+/g, " "));
+    return;
+  }
+  try {
+    const meta = await client.query("SELECT current_database() AS db, current_user AS usr");
+    console.log("OK\t" + (meta.rows[0].db || "") + "\t" + (meta.rows[0].usr || ""));
+    try {
+      await client.query("CREATE TEMP TABLE _seqdesk_probe_temp (id INT)");
+      await client.query("DROP TABLE _seqdesk_probe_temp");
+      console.log("WRITE_OK");
+    } catch (error) {
+      console.log("WRITE_FAIL\t" + (error.code || "") + "\t" + (error.message || "").replace(/[\n\r\t]+/g, " "));
+    }
+  } catch (error) {
+    console.log("QUERY_FAIL\t" + (error.code || "") + "\t" + (error.message || "").replace(/[\n\r\t]+/g, " "));
+  } finally {
+    try { await client.end(); } catch {}
+  }
+}
+main().catch((error) => console.log("UNCAUGHT\t\t" + (error.message || "").replace(/[\n\r\t]+/g, " ")));
+NODE
+)"
+    probe_status=$?
+
+    # If node itself failed (e.g. node not found, syntax error), bail out gracefully
+    # so we don't block migrations on a broken probe.
+    if [ "$probe_status" -ne 0 ] && [ -z "$probe_output" ]; then
+        return 0
+    fi
+
+    local first_line
+    first_line="$(printf '%s\n' "$probe_output" | head -n 1)"
+
+    case "$first_line" in
+        SKIP*)
+            return 0
+            ;;
+        OK*)
+            if printf '%s\n' "$probe_output" | grep -q "^WRITE_OK$"; then
+                return 0
+            fi
+            local write_line
+            write_line="$(printf '%s\n' "$probe_output" | grep "^WRITE_FAIL" | head -n 1)"
+            print_error "PostgreSQL connection succeeded, but the role cannot create tables in the database."
+            postgres_probe_print_grant_hint "$write_line"
+            return 1
+            ;;
+        CONNECT_FAIL*|QUERY_FAIL*|UNCAUGHT*)
+            postgres_probe_print_failure "$probe_output"
+            return 1
+            ;;
+        *)
+            print_error "PostgreSQL connection probe returned an unexpected result:"
+            printf '%s\n' "$probe_output" | sed 's/^/  /'
+            return 1
+            ;;
+    esac
+}
+
+postgres_probe_print_grant_hint() {
+    local write_line="$1"
+    local redacted
+    redacted="$(redact_database_url "$SEQDESK_DATABASE_URL")"
+    if printf '%s' "$write_line" | grep -qi "permission denied"; then
+        echo "  The role connected but cannot CREATE in the public schema."
+        echo "  Ask a privileged DB user (e.g. the database superuser) to run:"
+        echo "    GRANT ALL ON SCHEMA public TO <role>;"
+        echo "    GRANT ALL ON DATABASE <db> TO <role>;"
+    else
+        echo "  Probe write step failed: $write_line"
+    fi
+    echo "  Current DATABASE_URL: ${redacted}"
+}
+
+postgres_probe_print_failure() {
+    local probe_output="$1"
+    local redacted
+    redacted="$(redact_database_url "$SEQDESK_DATABASE_URL")"
+    local lower
+    lower="$(printf '%s' "$probe_output" | tr '[:upper:]' '[:lower:]')"
+
+    if printf '%s' "$lower" | grep -q "econnrefused"; then
+        print_error "PostgreSQL refused the connection (ECONNREFUSED)."
+        echo "  Host responded but nothing is listening on the configured port. Verify"
+        echo "  the port number, that PostgreSQL is running, and that pg_hba.conf permits"
+        echo "  connections from this machine."
+    elif printf '%s' "$lower" | grep -q "etimedout\|econnreset\|enetunreach\|ehostunreach"; then
+        print_error "Network timeout / unreachable when reaching the PostgreSQL host."
+        echo "  Check firewall rules, that outbound TCP to this host:port is allowed,"
+        echo "  and that the host has not gone away."
+    elif printf '%s' "$lower" | grep -q "enotfound"; then
+        print_error "Cannot resolve the PostgreSQL hostname (DNS)."
+        echo "  Inspect /etc/resolv.conf and try: getent hosts <host>"
+    elif printf '%s' "$lower" | grep -q "password authentication failed\|28p01"; then
+        print_error "PostgreSQL rejected the password (28P01)."
+        echo "  Confirm the credentials and URL-encode any of @ : / ? # & in the password."
+    elif printf '%s' "$lower" | grep -q '3d000\|database ".*" does not exist'; then
+        print_error "The PostgreSQL database does not exist on the server."
+        echo "  Ask a privileged DB user to run:"
+        echo "    CREATE DATABASE <name> OWNER <role>;"
+    elif printf '%s' "$lower" | grep -q 'role ".*" does not exist'; then
+        print_error "The PostgreSQL role does not exist on the server."
+        echo "  Ask a privileged DB user to run:"
+        echo "    CREATE ROLE <name> LOGIN PASSWORD '<password>';"
+    elif printf '%s' "$lower" | grep -q "no pg_hba.conf entry"; then
+        print_error "PostgreSQL rejected the connection (pg_hba.conf entry missing)."
+        echo "  The DB admin must allow this host's IP in pg_hba.conf and reload."
+    elif printf '%s' "$lower" | grep -q "ssl required\|sslmode"; then
+        print_error "PostgreSQL requires SSL but the connection string does not request it."
+        echo "  Append '?sslmode=require' (or '?sslmode=verify-full' with a CA) to DATABASE_URL."
+    else
+        print_error "PostgreSQL connection probe failed:"
+        printf '%s\n' "$probe_output" | sed 's/^/  /'
+    fi
+    echo "  Current DATABASE_URL: ${redacted}"
+}
+
 load_postgres_url_parts() {
     local temp_env
     temp_env="$(mktemp)"
@@ -2400,6 +2541,7 @@ write_config() {
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}" \
+    SEQDESK_INSTALL_PROFILE_CONFIG_FILE="${SEQDESK_PROFILE_CONFIG_FILE:-}" \
     SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
 const fs = require('fs');
@@ -2422,6 +2564,7 @@ const notificationsEnabledRaw = process.env.SEQDESK_INSTALL_NOTIFICATIONS_ENABLE
 const notificationProvider = process.env.SEQDESK_INSTALL_NOTIFICATION_PROVIDER || '';
 const notificationRelayUrl = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_URL || '';
 const notificationRelayToken = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_TOKEN || '';
+const profileConfigFile = process.env.SEQDESK_INSTALL_PROFILE_CONFIG_FILE || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
 const bootstrapEnv = {
   admin: {
@@ -2513,7 +2656,32 @@ function buildBootstrapUserConfig(input) {
   return Object.keys(user).length > 0 ? user : undefined;
 }
 
+function buildInstallProfileConfig(filePath) {
+  const profilePath = toOptionalString(filePath);
+  if (!profilePath || !fs.existsSync(profilePath)) return undefined;
+  const parsed = readJson(profilePath);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const profile = parsed.profile && typeof parsed.profile === 'object' && !Array.isArray(parsed.profile)
+    ? parsed.profile
+    : {};
+  const safeProfile = {};
+  const id = toOptionalString(parsed.id);
+  const name = toOptionalString(profile.name) || toOptionalString(parsed.name);
+  const version = toOptionalString(parsed.version);
+  if (id) safeProfile.id = id;
+  if (name) safeProfile.name = name;
+  if (version) safeProfile.version = version;
+  if (Object.keys(safeProfile).length === 0) return undefined;
+  safeProfile.appliedAt = new Date().toISOString();
+  return safeProfile;
+}
+
 const config = readJson('seqdesk.config.json') || {};
+
+const installProfile = buildInstallProfileConfig(profileConfigFile);
+if (installProfile) {
+  config.installProfile = installProfile;
+}
 
 config.site = config.site || {};
 if (dataPath) config.site.dataBasePath = dataPath;
@@ -3257,7 +3425,23 @@ else
         print_warning "Reconfigure mode with --reseed-db: running migrations + seed on existing database."
     fi
     ensure_local_postgres_database || true
+    if ! probe_postgres_database; then
+        echo ""
+        echo "  After fixing the database, rerun:"
+        echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+        exit 1
+    fi
     if ! run_with_spinner "PostgreSQL migrations" node scripts/run-prisma.mjs migrate deploy; then
+        echo ""
+        if [ "$SEQDESK_LOG_ENABLED" = "true" ] && [ -f "$SEQDESK_LOG" ]; then
+            PRISMA_EXCERPT="$(grep -iE 'P[0-9]{4}|prisma|migrat|fatal|error|permission denied|does not exist' "$SEQDESK_LOG" | tail -n 12 || true)"
+            if [ -n "$PRISMA_EXCERPT" ]; then
+                print_warning "Prisma migration error excerpt (full log: $SEQDESK_LOG):"
+                printf '%s\n' "$PRISMA_EXCERPT" | sed 's/^/  /'
+                echo ""
+            fi
+            unset PRISMA_EXCERPT
+        fi
         print_postgres_setup_instructions
         exit 1
     fi
