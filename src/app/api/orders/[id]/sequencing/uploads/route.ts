@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSequencingUploadSession } from "@/lib/sequencing/workspace";
+import type { ReadDataClass } from "@/lib/sequencing/constants";
 import {
   requireFacilityAdminSequencingSession,
   SequencingApiError,
@@ -26,6 +27,7 @@ export async function POST(
         visibility?: string;
         sequencingRunId?: string | null;
         source?: string;
+        dataClass?: ReadDataClass;
       } | null;
     };
 

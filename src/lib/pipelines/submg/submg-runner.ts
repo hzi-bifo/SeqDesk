@@ -924,10 +924,13 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   const study = await db.study.findUnique({
     where: { id: options.studyId },
     include: {
-      samples: {
-        include: {
-          reads: true,
-          assemblies: {
+          samples: {
+            include: {
+              reads: {
+                where: { isActive: true },
+                orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+              },
+              assemblies: {
             select: {
               id: true,
               assemblyName: true,
@@ -1462,7 +1465,10 @@ export async function processSubmgRunResults(runId: string): Promise<SubmgProces
         include: {
           samples: {
             include: {
-              reads: true,
+              reads: {
+                where: { isActive: true },
+                orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+              },
               assemblies: true,
               bins: true,
             },

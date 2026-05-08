@@ -58,6 +58,8 @@
         "fields": {
           "file1": "file1",
           "file2": "file2",
+          "checksum1": "checksum1",
+          "checksum2": "checksum2",
           "readCount1": "readCount1",
           "readCount2": "readCount2"
         }

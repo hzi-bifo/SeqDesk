@@ -375,7 +375,10 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         db.sample.findMany({
           where: whereClause,
           include: {
-            reads: true,
+            reads: {
+              where: { isActive: true },
+              orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+            },
             assemblies: true,
             bins: true,
             order: {

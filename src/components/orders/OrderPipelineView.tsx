@@ -52,6 +52,13 @@ import {
   X,
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
+import {
+  READ_DATA_CLASS_BADGE_CLASSNAMES,
+  READ_DATA_CLASS_LABELS,
+  READ_ORIGIN_BADGE_CLASSNAMES,
+  type ReadDataClass,
+  type ReadOrigin,
+} from "@/lib/sequencing/constants";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 import { getOrderPipelineSampleReadiness } from "@/lib/pipelines/order-pipeline-readiness";
 import {
@@ -233,6 +240,14 @@ function getReadinessProblemText(reason?: string): string {
     default:
       return reason || "This sample is not ready for this pipeline.";
   }
+}
+
+function getReadDataClassBadgeClassName(dataClass?: ReadDataClass | null) {
+  return READ_DATA_CLASS_BADGE_CLASSNAMES[dataClass ?? "cleaned"];
+}
+
+function getReadOriginBadgeClassName(origin?: ReadOrigin | null) {
+  return READ_ORIGIN_BADGE_CLASSNAMES[origin ?? "unknown"];
 }
 
 function getOrderPipelineHelpText(pipeline: AdminPipeline): string {
@@ -529,15 +544,38 @@ export function OrderPipelineView({
     () => samples.filter((s) => getSampleReadiness(s).ready),
     [samples, getSampleReadiness]
   );
+  const protectedReadySamples = useMemo(
+    () => readySamples.filter((sample) => sample.read?.isProtectedRaw),
+    [readySamples]
+  );
   const blockedSampleCount = Math.max(samples.length - readySamples.length, 0);
   const activeRunCount =
     (statusCounts.running ?? 0) + (statusCounts.queued ?? 0) + (statusCounts.pending ?? 0);
   const completedRunCount = statusCounts.completed ?? 0;
   const failedRunCount = statusCounts.failed ?? 0;
+  const staleReadsPreservedCount = useMemo(() => {
+    if (
+      pipeline?.pipelineId !== SIMULATE_READS_PIPELINE_ID ||
+      simulateReadsConfig?.replaceExisting !== false
+    ) {
+      return 0;
+    }
+
+    return samples.filter((sample) => sample.read?.filesMissing).length;
+  }, [pipeline?.pipelineId, samples, simulateReadsConfig?.replaceExisting]);
 
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
       if (!pipeline) return;
+      const protectedSamples = samples.filter(
+        (sample) => sampleIds.includes(sample.id) && sample.read?.isProtectedRaw
+      );
+      if (protectedSamples.length > 0) {
+        const confirmed = window.confirm(
+          `${protectedSamples.length} selected sample${protectedSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination. Continue running ${pipeline.name}?`
+        );
+        if (!confirmed) return;
+      }
       setError("");
 
       try {
@@ -577,7 +615,7 @@ export function OrderPipelineView({
         setError(err instanceof Error ? err.message : "Failed to start pipeline");
       }
     },
-    [localConfig, orderId, pipeline, runsResponse]
+    [localConfig, orderId, pipeline, runsResponse, samples]
   );
 
   const handleDeleteRun = useCallback(
@@ -1188,6 +1226,30 @@ export function OrderPipelineView({
         </div>
       )}
 
+      {staleReadsPreservedCount > 0 ? (
+        <PageNotice
+          variant="warning"
+          title="Stale reads will be preserved"
+          className="rounded-xl border"
+        >
+          Replace Existing Reads is off. Simulate Reads will leave{" "}
+          {staleReadsPreservedCount} stale linked sample
+          {staleReadsPreservedCount === 1 ? "" : "s"} unchanged; turn it on to
+          regenerate and repair those reads.
+        </PageNotice>
+      ) : null}
+
+      {protectedReadySamples.length > 0 ? (
+        <PageNotice
+          variant="warning"
+          title="Raw or unknown reads selected"
+          className="rounded-xl border"
+        >
+          {protectedReadySamples.length} ready sample
+          {protectedReadySamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination; pipeline launch will ask for confirmation.
+        </PageNotice>
+      ) : null}
+
       {/* Sample table */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1458,6 +1520,20 @@ export function OrderPipelineView({
                         <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50">
                           {sample.read.file2 ? "Paired-end" : "Single-end"}
                         </Badge>
+                        <Badge
+                          variant="outline"
+                          className={cn("text-[11px]", getReadDataClassBadgeClassName(sample.read.dataClass))}
+                        >
+                          {sample.read.dataClassLabel ?? READ_DATA_CLASS_LABELS[sample.read.dataClass ?? "cleaned"]}
+                        </Badge>
+                        {sample.read.isSimulated ? (
+                          <Badge
+                            variant="outline"
+                            className={cn("text-[11px]", getReadOriginBadgeClassName(sample.read.readOrigin))}
+                          >
+                            {sample.read.readOriginLabel}
+                          </Badge>
+                        ) : null}
                         {sample.read.filesMissing && (
                           <Badge
                             variant="outline"
@@ -1743,13 +1819,37 @@ export function OrderPipelineView({
                     return (
                       <tr
                         key={run.id}
+                        tabIndex={selectMode ? undefined : 0}
+                        aria-label={`View details for ${run.runNumber}`}
                         className={cn(
                           "transition-colors hover:bg-secondary/20",
+                          !selectMode &&
+                            "cursor-pointer focus-visible:bg-secondary/20 focus-visible:outline-none",
                           selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
                         )}
+                        onClick={() => {
+                          if (!selectMode) {
+                            setDetailRun(run);
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            selectMode ||
+                            event.currentTarget !== event.target ||
+                            (event.key !== "Enter" && event.key !== " ")
+                          ) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          setDetailRun(run);
+                        }}
                       >
                         {selectMode && (
-                          <td className="px-3 py-3 align-top">
+                          <td
+                            className="px-3 py-3 align-top"
+                            onClick={(event) => event.stopPropagation()}
+                          >
                             <Checkbox
                               checked={selectedRunIds.has(run.id)}
                               onCheckedChange={() => toggleSelectRun(run.id)}
@@ -1763,7 +1863,7 @@ export function OrderPipelineView({
                             className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
                             title={run.runNumber}
                           >
-                            #{run.runNumber.split("-").pop()}
+                            {run.runNumber}
                           </code>
                         </td>
                         <td className="px-4 py-3 align-top">
@@ -1809,7 +1909,10 @@ export function OrderPipelineView({
                         <td className="px-4 py-3 align-top whitespace-nowrap text-xs text-muted-foreground">
                           {getUserDisplay(run)}
                         </td>
-                        <td className="px-4 py-3 align-top text-right">
+                        <td
+                          className="px-4 py-3 align-top text-right"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -1914,11 +2017,11 @@ export function OrderPipelineView({
         } catch { /* ignore */ }
 
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
-              <h3 className="text-base font-semibold">
-                Run Details
-                <code className="ml-2 rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+            <div className="w-full max-w-2xl rounded-xl border bg-card p-6 shadow-lg">
+              <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold">
+                <span>Run Details</span>
+                <code className="min-w-0 max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
                   {detailRun.runNumber}
                 </code>
               </h3>
@@ -1962,7 +2065,7 @@ export function OrderPipelineView({
                         Settings
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-[minmax(10rem,14rem)_minmax(0,1fr)]">
                       {Object.entries(parsedConfig).map(([key, value]) => {
                         const schemaProp = pipeline?.configSchema?.properties?.[key];
                         const label = schemaProp?.title || key;
@@ -1980,7 +2083,12 @@ export function OrderPipelineView({
                         return (
                           <div key={key} className="contents">
                             <span className="text-muted-foreground">{label}:</span>
-                            <span className="font-mono text-xs">{displayValue}</span>
+                            <span
+                              className="min-w-0 break-all font-mono text-xs"
+                              title={displayValue}
+                            >
+                              {displayValue}
+                            </span>
                           </div>
                         );
                       })}

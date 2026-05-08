@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     siteSettings: {
       findUnique: vi.fn(),
@@ -300,7 +301,7 @@ describe("output-resolver", () => {
     expect(result.artifactsCreated).toBe(0);
     expect(result.errors).toEqual([]);
     expect(mocks.db.read.findFirst).toHaveBeenCalledWith({
-      where: { sampleId: "sample-1" },
+      where: { sampleId: "sample-1", isActive: true },
       select: { id: true, pipelineSources: true },
       orderBy: { id: "asc" },
     });
@@ -522,6 +523,8 @@ describe("output-resolver", () => {
               fields: {
                 generatedFile1: "file1",
                 generatedFile2: "file2",
+                generatedChecksum1: "checksum1",
+                generatedChecksum2: "checksum2",
                 generatedReadCount1: "readCount1",
                 generatedReadCount2: "readCount2",
               },
@@ -558,6 +561,8 @@ describe("output-resolver", () => {
             generatedFile2: "simulated/order_order-1/sample-1_R2.fastq.gz",
             sourceFile1,
             sourceFile2,
+            generatedChecksum1: "new-checksum-r1",
+            generatedChecksum2: "new-checksum-r2",
             generatedReadCount1: 1000,
             generatedReadCount2: 1000,
             replaceExisting: true,
@@ -569,15 +574,15 @@ describe("output-resolver", () => {
     expect(result.success).toBe(true);
     expect(result.errors).toEqual([]);
     expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
-      where: { sampleId: "sample-1" },
+      where: { id: { in: ["read-old"] } },
     });
     expect(mocks.db.read.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         sampleId: "sample-1",
         file1: "simulated/order_order-1/sample-1_R1.fastq.gz",
         file2: "simulated/order_order-1/sample-1_R2.fastq.gz",
-        checksum1: null,
-        checksum2: null,
+        checksum1: "new-checksum-r1",
+        checksum2: "new-checksum-r2",
         readCount1: 1000,
         readCount2: 1000,
         avgQuality1: null,
@@ -586,7 +591,11 @@ describe("output-resolver", () => {
         fastqcReport2: null,
         pipelineRunId: "run-id",
         pipelineSources: '{"simulate-reads":"run-id"}',
-      },
+        dataClass: "cleaned",
+        dataClassSource: "pipeline",
+        isActive: true,
+        classifiedAt: expect.any(Date),
+      }),
     });
     await expect(
       fs.readFile(path.join(storageDir, "simulated", "order_order-1", "sample-1_R1.fastq.gz"), "utf8")
@@ -794,7 +803,7 @@ describe("output-resolver", () => {
     expect(result.success).toBe(true);
     // Should delete old reads and create new one with new pipelineRunId
     expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
-      where: { sampleId: "sample-1" },
+      where: { id: { in: ["read-existing"] } },
     });
     expect(mocks.db.read.create).toHaveBeenCalledWith({
       data: expect.objectContaining({

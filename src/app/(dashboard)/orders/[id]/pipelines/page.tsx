@@ -43,6 +43,11 @@ import {
   Trash2,
 } from "lucide-react";
 import type { OrderSequencingSummaryResponse } from "@/lib/sequencing/types";
+import {
+  READ_DATA_CLASS_BADGE_CLASSNAMES,
+  READ_DATA_CLASS_LABELS,
+  READ_ORIGIN_BADGE_CLASSNAMES,
+} from "@/lib/sequencing/constants";
 import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
@@ -260,6 +265,13 @@ export default function OrderPipelinesPage({
     sequencingResponse.data,
     selectedSamples
   );
+  const selectedProtectedReadSamples = useMemo(
+    () =>
+      (sequencingResponse.data?.samples || []).filter(
+        (sample) => selectedSamples.has(sample.id) && sample.read?.isProtectedRaw
+      ),
+    [selectedSamples, sequencingResponse.data?.samples]
+  );
   const hasActiveRuns = useMemo(
     () =>
       (runsResponse.data?.runs || []).some(
@@ -298,6 +310,12 @@ export default function OrderPipelinesPage({
 
   const handleStartPipeline = async () => {
     if (!selectedPipeline) return;
+    if (selectedProtectedReadSamples.length > 0) {
+      const confirmed = window.confirm(
+        `${selectedProtectedReadSamples.length} selected sample${selectedProtectedReadSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination. Continue running ${selectedPipeline.name}?`
+      );
+      if (!confirmed) return;
+    }
 
     setStartingPipelineId(selectedPipeline.pipelineId);
     setError("");
@@ -531,6 +549,22 @@ export default function OrderPipelinesPage({
                                 Missing reads
                               </Badge>
                             )}
+                            {sample.read ? (
+                              <Badge
+                                variant="outline"
+                                className={READ_DATA_CLASS_BADGE_CLASSNAMES[sample.read.dataClass]}
+                              >
+                                {sample.read.dataClassLabel ?? READ_DATA_CLASS_LABELS[sample.read.dataClass]}
+                              </Badge>
+                            ) : null}
+                            {sample.read?.isSimulated ? (
+                              <Badge
+                                variant="outline"
+                                className={READ_ORIGIN_BADGE_CLASSNAMES[sample.read.readOrigin]}
+                              >
+                                {sample.read.readOriginLabel}
+                              </Badge>
+                            ) : null}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {sample.read?.file1
@@ -662,14 +696,24 @@ export default function OrderPipelinesPage({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {readinessIssues.length === 0 ? (
-                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
-                      <div className="flex items-center gap-2 font-medium">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Ready to run
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
+                        <div className="flex items-center gap-2 font-medium">
+                          <CheckCircle2 className="h-4 w-4" />
+                          Ready to run
+                        </div>
+                        <p className="mt-1 text-emerald-800">
+                          {selectedSamples.size} selected sample{selectedSamples.size === 1 ? "" : "s"} meet the current input requirements.
+                        </p>
                       </div>
-                      <p className="mt-1 text-emerald-800">
-                        {selectedSamples.size} selected sample{selectedSamples.size === 1 ? "" : "s"} meet the current input requirements.
-                      </p>
+                      {selectedProtectedReadSamples.length > 0 ? (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-900">
+                          <div className="font-medium">Raw or unknown reads selected</div>
+                          <p className="mt-1 text-rose-800">
+                            {selectedProtectedReadSamples.length} selected sample{selectedProtectedReadSamples.length === 1 ? "" : "s"} may still contain human contamination. Starting the run will ask for confirmation.
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">

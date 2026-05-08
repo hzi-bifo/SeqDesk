@@ -6,6 +6,7 @@ import {
   type FormFieldGroup,
 } from "@/types/form-config";
 import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
+import { FILES_ASSIGNABLE_STATUSES } from "./constants";
 
 export const RUN_ASSIGNMENT_FORM_DEFAULTS_VERSION = 1;
 export const RUN_PLAN_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
@@ -16,6 +17,12 @@ export const RUN_PLAN_ASSIGNMENT_MAX_BATCH = 500;
 const RUN_ASSIGNMENT_FIELDS_KEY = "sequencingRunSampleFormFields";
 const RUN_ASSIGNMENT_GROUPS_KEY = "sequencingRunSampleFormGroups";
 const RUN_ASSIGNMENT_DEFAULTS_VERSION_KEY = "sequencingRunSampleFormDefaultsVersion";
+
+function assertRunPlanManageableOrderStatus(status: string): void {
+  if (!FILES_ASSIGNABLE_STATUSES.includes(status as (typeof FILES_ASSIGNABLE_STATUSES)[number])) {
+    throw new Error("Sequencing run plans can only be managed on submitted or completed orders");
+  }
+}
 
 export const RUN_ASSIGNMENT_GROUPS: FormFieldGroup[] = [
   {
@@ -571,6 +578,62 @@ export function normalizeBarcode(value: unknown): string | null {
   return lower;
 }
 
+export async function getRunPlanSampleBarcodeAssignments(orderId: string): Promise<{
+  assignments: Array<{ sampleId: string; barcode: string }>;
+  duplicateBarcodes: string[];
+}> {
+  const samples = await db.sample.findMany({
+    where: { orderId },
+    select: {
+      id: true,
+      customFields: true,
+    },
+  });
+
+  const rows = samples
+    .map((sample) => {
+      const customFields = parseJsonObject(sample.customFields);
+      const barcode = normalizeBarcode(customFields._barcode);
+      return barcode ? { sampleId: sample.id, barcode } : null;
+    })
+    .filter((row): row is { sampleId: string; barcode: string } => row !== null);
+
+  const barcodeCounts = new Map<string, number>();
+  for (const row of rows) {
+    barcodeCounts.set(row.barcode, (barcodeCounts.get(row.barcode) ?? 0) + 1);
+  }
+
+  const duplicateBarcodes = Array.from(barcodeCounts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([barcode]) => barcode);
+
+  return {
+    assignments: rows.filter((row) => barcodeCounts.get(row.barcode) === 1),
+    duplicateBarcodes,
+  };
+}
+
+export async function prefillSequencingRunSamplesFromOrderBarcodes(input: {
+  orderId: string;
+  runDbId: string;
+}): Promise<{ assigned: number; duplicateBarcodes: string[] }> {
+  const { assignments, duplicateBarcodes } =
+    await getRunPlanSampleBarcodeAssignments(input.orderId);
+
+  if (assignments.length > 0) {
+    await upsertSequencingRunSamples({
+      orderId: input.orderId,
+      runDbId: input.runDbId,
+      assignments,
+    });
+  }
+
+  return {
+    assigned: assignments.length,
+    duplicateBarcodes,
+  };
+}
+
 function parseRunDate(value: unknown): Date | null {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
@@ -716,11 +779,12 @@ export async function createSequencingRunForOrder(input: {
 }) {
   const order = await db.order.findUnique({
     where: { id: input.orderId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!order) {
     throw new Error("Order not found");
   }
+  assertRunPlanManageableOrderStatus(order.status);
   const runId = input.runId.trim();
   if (!runId) {
     throw new Error("Run ID is required");
@@ -775,11 +839,19 @@ export async function deleteSequencingRunForOrder(orderId: string, runDbId: stri
 async function assertRunBelongsToOrder(runDbId: string, orderId: string) {
   const run = await db.sequencingRun.findFirst({
     where: { id: runDbId, orderId },
-    select: { id: true },
+    select: {
+      id: true,
+      order: {
+        select: {
+          status: true,
+        },
+      },
+    },
   });
   if (!run) {
     throw new Error("Sequencing run not found");
   }
+  assertRunPlanManageableOrderStatus(run.order?.status ?? "");
 }
 
 export async function upsertSequencingRunSamples(input: {

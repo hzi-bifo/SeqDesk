@@ -13,11 +13,12 @@ export {
 // Directory scanner
 export {
   scanDirectory,
+  scanDirectoryWithReport,
   clearScanCache,
   getScanCacheStats,
   checkFileExists,
 } from "./scanner";
-export type { FileInfo, ScanOptions } from "./scanner";
+export type { FileInfo, ScanOptions, ScanDirectoryReport, ScanWarnings } from "./scanner";
 
 // File matcher
 export {

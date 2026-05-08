@@ -1,22 +1,34 @@
 import { stat } from "fs/promises";
 import * as path from "path";
-import type { FileMatchSuggestion } from "@/lib/files";
+import { Prisma } from "@prisma/client";
 import {
   checkFileExists,
   ensureWithinBase,
   findFilesForSample,
+  matchPairedEndFiles,
   hasAllowedExtension,
-  scanDirectory,
+  scanDirectoryWithReport,
+  safeJoin,
   toRelativePath,
   validateFilePair,
+  type FileInfo,
+  type FileMatchSuggestion,
 } from "@/lib/files";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { db } from "@/lib/db";
 import { checkAndCompleteOrder } from "@/lib/orders/auto-complete";
 import {
   FILES_ASSIGNABLE_STATUSES,
+  READ_DATA_CLASS_LABELS,
+  READ_ORIGIN_LABELS,
   getSequencingIntegrityStatus,
+  isProtectedReadDataClass,
   isFacilitySampleStatus,
+  normalizeReadDataClass,
+  normalizeReadDataClassSource,
+  type ReadOrigin,
+  type ReadDataClass,
+  type ReadDataClassSource,
 } from "./constants";
 import {
   buildSequencingArtifactUploadRelativePath,
@@ -28,17 +40,19 @@ import {
   statSequencingRelativePath,
   writeSequencingUploadChunk,
 } from "./storage";
+import { normalizeBarcode } from "./run-plan";
 import type {
   OrderSequencingSummaryResponse,
   SequencingArtifactSummary,
   SequencingChecksumSummary,
   SequencingDiscoveryResult,
+  SequencingDiscoveryScanWarnings,
+  SequencingPlannedBarcodeSource,
   SequencingRunSummary,
+  SequencingTechSelectionSummary,
   SequencingSampleRow,
   SequencingStatusCounts,
 } from "./types";
-
-type OrderWithSequencing = Awaited<ReturnType<typeof loadOrderWithSequencing>>;
 
 type UploadMetadata = {
   stage?: string;
@@ -46,6 +60,7 @@ type UploadMetadata = {
   visibility?: string;
   sequencingRunId?: string | null;
   source?: string;
+  dataClass?: ReadDataClass;
 };
 
 const DEFAULT_STATUS_COUNTS: SequencingStatusCounts = {
@@ -56,79 +71,79 @@ const DEFAULT_STATUS_COUNTS: SequencingStatusCounts = {
   READY: 0,
   ISSUE: 0,
 };
+const DISCOVERY_MAX_FILES = 10_000;
 
-async function loadOrderWithSequencing(orderId: string) {
-  return db.order.findUnique({
-    where: { id: orderId },
+const ORDER_WITH_SEQUENCING_SELECT = Prisma.validator<Prisma.OrderSelect>()({
+  id: true,
+  name: true,
+  status: true,
+  userId: true,
+  customFields: true,
+  samples: {
+    orderBy: { sampleId: "asc" },
     select: {
       id: true,
-      name: true,
-      status: true,
-      userId: true,
-      samples: {
-        orderBy: { sampleId: "asc" },
+      sampleId: true,
+      sampleAlias: true,
+      sampleTitle: true,
+      customFields: true,
+      facilityStatus: true,
+      facilityStatusUpdatedAt: true,
+      updatedAt: true,
+      reads: {
+        orderBy: [
+          { isActive: "desc" },
+          { id: "desc" },
+        ],
         select: {
           id: true,
-          sampleId: true,
-          sampleAlias: true,
-          sampleTitle: true,
-          facilityStatus: true,
-          facilityStatusUpdatedAt: true,
-          updatedAt: true,
-          reads: {
+          file1: true,
+          file2: true,
+          checksum1: true,
+          checksum2: true,
+          readCount1: true,
+          readCount2: true,
+          avgQuality1: true,
+          avgQuality2: true,
+          fastqcReport1: true,
+          fastqcReport2: true,
+          pipelineRunId: true,
+          pipelineSources: true,
+          dataClass: true,
+          dataClassSource: true,
+          isActive: true,
+          supersededByReadId: true,
+          classifiedAt: true,
+          classifiedById: true,
+          classificationNote: true,
+          pipelineRun: {
             select: {
-              id: true,
-              file1: true,
-              file2: true,
-              checksum1: true,
-              checksum2: true,
-              readCount1: true,
-              readCount2: true,
-              avgQuality1: true,
-              avgQuality2: true,
-              fastqcReport1: true,
-              fastqcReport2: true,
-              pipelineRunId: true,
-              pipelineSources: true,
-              pipelineRun: {
-                select: {
-                  runNumber: true,
-                },
-              },
-              sequencingRun: {
-                select: {
-                  id: true,
-                  runId: true,
-                  runName: true,
-                },
-              },
+              runNumber: true,
             },
           },
-          sequencingArtifacts: {
-            orderBy: { updatedAt: "desc" },
+          sequencingRun: {
             select: {
               id: true,
-              orderId: true,
-              sampleId: true,
-              sequencingRunId: true,
-              stage: true,
-              artifactType: true,
-              source: true,
-              visibility: true,
-              path: true,
-              originalName: true,
-              size: true,
-              checksum: true,
-              mimeType: true,
-              metadata: true,
-              createdAt: true,
-              updatedAt: true,
+              runId: true,
+              runName: true,
+            },
+          },
+        },
+      },
+      sequencingRunSamples: {
+        orderBy: { updatedAt: "desc" },
+        select: {
+          barcode: true,
+          sequencingRun: {
+            select: {
+              id: true,
+              runId: true,
+              runName: true,
             },
           },
         },
       },
       sequencingArtifacts: {
-        where: { sampleId: null },
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -150,7 +165,310 @@ async function loadOrderWithSequencing(orderId: string) {
         },
       },
     },
+  },
+  sequencingArtifacts: {
+    where: { sampleId: null },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      orderId: true,
+      sampleId: true,
+      sequencingRunId: true,
+      stage: true,
+      artifactType: true,
+      source: true,
+      visibility: true,
+      path: true,
+      originalName: true,
+      size: true,
+      checksum: true,
+      mimeType: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+});
+
+type OrderWithSequencing = Prisma.OrderGetPayload<{
+  select: typeof ORDER_WITH_SEQUENCING_SELECT;
+}>;
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function toStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function toSequencingTechSelectionSummary(
+  customFields: string | null | undefined
+): SequencingTechSelectionSummary | null {
+  const selection = parseJsonObject(customFields)._sequencing_tech;
+  if (!selection) return null;
+
+  if (typeof selection === "string") {
+    const value = selection.trim();
+    return value ? { id: value, name: value, label: value, platform: value } : null;
+  }
+
+  if (typeof selection !== "object" || Array.isArray(selection)) {
+    return null;
+  }
+
+  const record = selection as Record<string, unknown>;
+  const id = toStringOrNull(record.technologyId) ?? toStringOrNull(record.id);
+  const name = toStringOrNull(record.technologyName) ?? toStringOrNull(record.name);
+  const platform = name ?? id;
+  return id || name
+    ? {
+        id,
+        name,
+        label: name ?? id,
+        platform,
+      }
+    : null;
+}
+
+function getLatestRunPlanBarcode(sample: NonNullable<OrderWithSequencing>["samples"][number]): {
+  barcode: string | null;
+  runId: string | null;
+} {
+  const assignment = (sample.sequencingRunSamples ?? []).find((item) =>
+    Boolean(normalizeBarcode(item.barcode))
+  );
+  return {
+    barcode: normalizeBarcode(assignment?.barcode),
+    runId: assignment?.sequencingRun?.runId ?? null,
+  };
+}
+
+function getSampleCustomBarcode(
+  sample: NonNullable<OrderWithSequencing>["samples"][number]
+): string | null {
+  return normalizeBarcode(parseJsonObject(sample.customFields)._barcode);
+}
+
+function getPlannedBarcode(sample: NonNullable<OrderWithSequencing>["samples"][number]): {
+  barcode: string | null;
+  source: SequencingPlannedBarcodeSource;
+  runId: string | null;
+} {
+  const runPlan = getLatestRunPlanBarcode(sample);
+  if (runPlan.barcode) {
+    return { barcode: runPlan.barcode, source: "run-plan", runId: runPlan.runId };
+  }
+
+  const sampleBarcode = getSampleCustomBarcode(sample);
+  if (sampleBarcode) {
+    return { barcode: sampleBarcode, source: "sample-barcode", runId: null };
+  }
+
+  return { barcode: null, source: null, runId: null };
+}
+
+function emptyFileSuggestion(): FileMatchSuggestion {
+  return {
+    status: "none",
+    read1: null,
+    read2: null,
+    alternatives: [],
+    confidence: 0,
+    matchedBy: null,
+  };
+}
+
+function filePathContainsBarcode(file: FileInfo, barcode: string): boolean {
+  const normalizedBarcode = normalizeBarcode(barcode);
+  if (!normalizedBarcode) return false;
+
+  return file.relativePath
+    .split(/[\\/]+/)
+    .some((part) => normalizeBarcode(part) === normalizedBarcode);
+}
+
+function findFilesForBarcode(
+  barcode: string | null,
+  files: FileInfo[],
+  allowSingleEnd: boolean
+): FileMatchSuggestion {
+  if (!barcode) return emptyFileSuggestion();
+
+  const candidates = files.filter((file) => filePathContainsBarcode(file, barcode));
+  if (candidates.length === 0) return emptyFileSuggestion();
+
+  const pairs = matchPairedEndFiles(candidates);
+  if (pairs.length === 0) return emptyFileSuggestion();
+
+  if (pairs.length === 1) {
+    const pair = pairs[0];
+    return {
+      status: pair.isPaired || allowSingleEnd ? "exact" : "partial",
+      read1: pair.read1,
+      read2: pair.read2,
+      alternatives: [],
+      confidence: pair.isPaired ? 0.99 : 0.92,
+      matchedBy: "barcode",
+    };
+  }
+
+  return {
+    status: "ambiguous",
+    read1: null,
+    read2: null,
+    alternatives: pairs,
+    confidence: 0.75,
+    matchedBy: "barcode",
+  };
+}
+
+function withDiscoveryMatchedBy(
+  suggestion: FileMatchSuggestion,
+  matchedBy: NonNullable<SequencingDiscoveryResult["suggestion"]["matchedBy"]>
+): FileMatchSuggestion {
+  return {
+    ...suggestion,
+    matchedBy,
+  };
+}
+
+function findSequencingSuggestionForSample(
+  sample: NonNullable<OrderWithSequencing>["samples"][number],
+  files: FileInfo[],
+  allowSingleEnd: boolean
+): FileMatchSuggestion {
+  const runPlan = getLatestRunPlanBarcode(sample);
+  if (runPlan.barcode) {
+    const suggestion = findFilesForBarcode(runPlan.barcode, files, allowSingleEnd);
+    if (suggestion.status !== "none") {
+      return withDiscoveryMatchedBy(suggestion, "run-plan-barcode");
+    }
+  }
+
+  const sampleBarcode = getSampleCustomBarcode(sample);
+  if (sampleBarcode) {
+    const suggestion = findFilesForBarcode(sampleBarcode, files, allowSingleEnd);
+    if (suggestion.status !== "none") {
+      return withDiscoveryMatchedBy(suggestion, "sample-barcode");
+    }
+  }
+
+  return withDiscoveryMatchedBy(
+    findFilesForSample(
+      {
+        sampleId: sample.sampleId,
+        sampleAlias: sample.sampleAlias,
+        sampleTitle: sample.sampleTitle,
+      },
+      files,
+      allowSingleEnd
+    ),
+    "sample-id"
+  );
+}
+
+async function loadOrderWithSequencing(orderId: string): Promise<OrderWithSequencing | null> {
+  return db.order.findUnique({
+    where: { id: orderId },
+    select: ORDER_WITH_SEQUENCING_SELECT,
   });
+}
+
+function selectActiveRead(
+  reads: NonNullable<OrderWithSequencing>["samples"][number]["reads"]
+) {
+  return (
+    reads.find((read) => read.isActive !== false && read.dataClass === "cleaned" && (read.file1 || read.file2)) ||
+    reads.find((read) => read.isActive !== false && (read.file1 || read.file2)) ||
+    reads.find((read) => read.file1 || read.file2) ||
+    reads[0] ||
+    null
+  );
+}
+
+function parsePipelineSources(value: string | null | undefined): Record<string, string> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, string>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function deriveReadOrigin(
+  dataClassSource: ReadDataClassSource,
+  pipelineSources: Record<string, string> | null
+): ReadOrigin {
+  if (pipelineSources?.["simulate-reads"]) {
+    return "simulated";
+  }
+  if (pipelineSources && Object.keys(pipelineSources).length > 0) {
+    return "pipeline";
+  }
+
+  if (dataClassSource === "legacy_assumed_cleaned") {
+    return "legacy";
+  }
+
+  return dataClassSource;
+}
+
+function toReadSummary(
+  read: NonNullable<OrderWithSequencing>["samples"][number]["reads"][number],
+  fileSize1: number | null = null,
+  fileSize2: number | null = null
+) {
+  const dataClass = normalizeReadDataClass(read.dataClass);
+  const dataClassSource = normalizeReadDataClassSource(
+    read.dataClassSource,
+    "legacy_assumed_cleaned"
+  );
+  const pipelineSources = parsePipelineSources(read.pipelineSources);
+  const readOrigin = deriveReadOrigin(dataClassSource, pipelineSources);
+
+  return {
+    id: read.id,
+    file1: read.file1,
+    file2: read.file2,
+    checksum1: read.checksum1,
+    checksum2: read.checksum2,
+    readCount1: read.readCount1,
+    readCount2: read.readCount2,
+    avgQuality1: read.avgQuality1,
+    avgQuality2: read.avgQuality2,
+    fileSize1,
+    fileSize2,
+    fastqcReport1: read.fastqcReport1,
+    fastqcReport2: read.fastqcReport2,
+    pipelineRunId: read.pipelineRunId,
+    pipelineRunNumber: read.pipelineRun?.runNumber ?? null,
+    pipelineSources,
+    dataClass,
+    dataClassLabel: READ_DATA_CLASS_LABELS[dataClass],
+    dataClassSource,
+    readOrigin,
+    readOriginLabel: READ_ORIGIN_LABELS[readOrigin],
+    isSimulated: readOrigin === "simulated",
+    isProtectedRaw: isProtectedReadDataClass(dataClass),
+    isActive: read.isActive !== false,
+    supersededByReadId: read.supersededByReadId,
+    classifiedAt: read.classifiedAt?.toISOString() ?? null,
+    classifiedById: read.classifiedById,
+    classificationNote: read.classificationNote,
+    filesMissing: false,
+  };
 }
 
 function assertManageableOrderStatus(status: string): void {
@@ -307,8 +625,12 @@ export async function getOrderSequencingSummary(
 
   const statusCounts: SequencingStatusCounts = { ...DEFAULT_STATUS_COUNTS };
   const rows: SequencingSampleRow[] = order.samples.map((sample) => {
-    const read = sample.reads[0] || null;
+    const read = selectActiveRead(sample.reads);
+    const protectedProvenanceReads = sample.reads.filter(
+      (item) => !item.isActive && isProtectedReadDataClass(item.dataClass) && (item.file1 || item.file2)
+    );
     const artifacts = sample.sequencingArtifacts.map(toArtifactSummary);
+    const plannedBarcode = getPlannedBarcode(sample);
     const integrityStatus = getSequencingIntegrityStatus({
       file1: read?.file1,
       file2: read?.file2,
@@ -340,30 +662,15 @@ export async function getOrderSequencingSummary(
       facilityStatusUpdatedAt: sample.facilityStatusUpdatedAt?.toISOString() ?? null,
       updatedAt: new Date(latestTimestamp).toISOString(),
       read: read
-        ? {
-            id: read.id,
-            file1: read.file1,
-            file2: read.file2,
-            checksum1: read.checksum1,
-            checksum2: read.checksum2,
-            readCount1: read.readCount1,
-            readCount2: read.readCount2,
-            avgQuality1: read.avgQuality1,
-            avgQuality2: read.avgQuality2,
-            fileSize1: null,
-            fileSize2: null,
-            fastqcReport1: read.fastqcReport1,
-            fastqcReport2: read.fastqcReport2,
-            pipelineRunId: read.pipelineRunId,
-            pipelineRunNumber: read.pipelineRun?.runNumber ?? null,
-            pipelineSources: read.pipelineSources
-              ? (() => { try { return JSON.parse(read.pipelineSources); } catch { return null; } })()
-              : null,
-            filesMissing: false, // resolved below after stat checks
-          }
+        ? toReadSummary(read)
         : null,
       integrityStatus,
       hasReads: Boolean(read?.file1 || read?.file2),
+      protectedProvenanceCount: protectedProvenanceReads.length,
+      protectedProvenance: protectedProvenanceReads.map((item) => toReadSummary(item)),
+      plannedBarcode: plannedBarcode.barcode,
+      plannedBarcodeSource: plannedBarcode.source,
+      plannedBarcodeRunId: plannedBarcode.runId,
       sequencingRun: toSequencingRunSummary(read?.sequencingRun),
       artifactCount: artifacts.length,
       qcArtifactCount: artifacts.filter((artifact) =>
@@ -393,7 +700,7 @@ export async function getOrderSequencingSummary(
             if (!filePath || !row.read) return;
             anyLinked = true;
             try {
-              const resolved = path.resolve(basePath, filePath);
+              const resolved = safeJoin(basePath, filePath);
               const stats = await stat(resolved);
               row.read[key] = stats.size;
             } catch {
@@ -421,6 +728,7 @@ export async function getOrderSequencingSummary(
       allowedExtensions: configResult.config.allowedExtensions,
       allowSingleEnd: configResult.config.allowSingleEnd,
     },
+    sequencingTechSelection: toSequencingTechSelectionSummary(order.customFields),
     summary: {
       totalSamples: rows.length,
       readsLinkedSamples: rows.filter((row) => row.hasReads).length,
@@ -493,6 +801,7 @@ export async function discoverOrderSequencingFiles(
     noMatch: number;
     autoAssigned: number;
   };
+  scanWarnings: SequencingDiscoveryScanWarnings;
 }> {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
@@ -503,45 +812,53 @@ export async function discoverOrderSequencingFiles(
 
   const { dataBasePath, config } = await requireDataBasePath();
 
-  const files = await scanDirectory(
+  const scanReport = await scanDirectoryWithReport(
     dataBasePath,
     {
       allowedExtensions: config.allowedExtensions,
       maxDepth: config.scanDepth,
       ignorePatterns: config.ignorePatterns,
+      maxFiles: DISCOVERY_MAX_FILES,
+      activeWriteMinAgeMs: config.activeWriteMinAgeMs,
     },
     options.force ?? false
   );
+  const files = scanReport.files;
 
   const results: SequencingDiscoveryResult[] = [];
   let autoAssigned = 0;
 
   for (const sample of order.samples) {
-    const existingRead = sample.reads[0] || null;
+    const existingRead = selectActiveRead(sample.reads);
     const hasExistingAssignment = Boolean(existingRead?.file1 || existingRead?.file2);
 
     if (hasExistingAssignment && !options.force) {
+      const plannedBarcode = getPlannedBarcode(sample);
       results.push({
         sampleId: sample.sampleId,
         sampleAlias: sample.sampleAlias,
+        plannedBarcode: plannedBarcode.barcode,
+        plannedBarcodeSource: plannedBarcode.source,
+        plannedBarcodeRunId: plannedBarcode.runId,
         suggestion: {
           status: "exact",
           read1: null,
           read2: null,
           confidence: 1,
           alternatives: [],
+          matchedBy: null,
         },
         autoAssigned: false,
+        dataClass: normalizeReadDataClass(existingRead?.dataClass),
+        dataClassLabel: READ_DATA_CLASS_LABELS[normalizeReadDataClass(existingRead?.dataClass)],
+        isProtectedRaw: isProtectedReadDataClass(existingRead?.dataClass),
       });
       continue;
     }
 
-    const suggestion = findFilesForSample(
-      {
-        sampleId: sample.sampleId,
-        sampleAlias: sample.sampleAlias,
-        sampleTitle: sample.sampleTitle,
-      },
+    const plannedBarcode = getPlannedBarcode(sample);
+    const suggestion = findSequencingSuggestionForSample(
+      sample,
       files,
       config.allowSingleEnd
     );
@@ -562,7 +879,14 @@ export async function discoverOrderSequencingFiles(
         sample.facilityStatus,
         existingRead?.id ?? null,
         suggestion.read1.relativePath,
-        suggestion.read2?.relativePath || null
+        suggestion.read2?.relativePath || null,
+        {
+          dataClass: "cleaned",
+          dataClassSource: "associate",
+          existingDataClass: existingRead?.dataClass,
+          existingFile1: existingRead?.file1,
+          existingFile2: existingRead?.file2,
+        }
       );
       wasAutoAssigned = true;
       autoAssigned += 1;
@@ -571,8 +895,14 @@ export async function discoverOrderSequencingFiles(
     results.push({
       sampleId: sample.sampleId,
       sampleAlias: sample.sampleAlias,
+      plannedBarcode: plannedBarcode.barcode,
+      plannedBarcodeSource: plannedBarcode.source,
+      plannedBarcodeRunId: plannedBarcode.runId,
       suggestion: cleanSuggestion,
       autoAssigned: wasAutoAssigned,
+      dataClass: "cleaned",
+      dataClassLabel: READ_DATA_CLASS_LABELS.cleaned,
+      isProtectedRaw: false,
     });
   }
 
@@ -587,10 +917,13 @@ export async function discoverOrderSequencingFiles(
       noMatch: results.filter((item) => item.suggestion.status === "none").length,
       autoAssigned,
     },
+    scanWarnings: scanReport.warnings,
   };
 }
 
-function toDiscoverySuggestion(suggestion: FileMatchSuggestion) {
+function toDiscoverySuggestion(
+  suggestion: FileMatchSuggestion
+): SequencingDiscoveryResult["suggestion"] {
   return {
     status: suggestion.status,
     read1: suggestion.read1
@@ -606,6 +939,12 @@ function toDiscoverySuggestion(suggestion: FileMatchSuggestion) {
         }
       : null,
     confidence: suggestion.confidence,
+    matchedBy:
+      suggestion.matchedBy === "run-plan-barcode" ||
+      suggestion.matchedBy === "sample-barcode" ||
+      suggestion.matchedBy === "sample-id"
+        ? suggestion.matchedBy
+        : null,
     alternatives: suggestion.alternatives.map((alternative) => ({
       identifier: alternative.identifier,
       read1: {
@@ -633,21 +972,79 @@ async function upsertSampleReadAssignment(
     checksum1?: string | null;
     checksum2?: string | null;
     sequencingRunId?: string | null;
+    dataClass?: ReadDataClass;
+    dataClassSource?: ReadDataClassSource;
+    classifiedById?: string | null;
+    classificationNote?: string | null;
+    existingDataClass?: string | null;
+    existingFile1?: string | null;
+    existingFile2?: string | null;
   }
 ) {
+  const dataClass = normalizeReadDataClass(options?.dataClass);
+  const dataClassSource = normalizeReadDataClassSource(options?.dataClassSource, "associate");
+  const classificationData = {
+    dataClass,
+    dataClassSource,
+    classifiedAt: new Date(),
+    classifiedById: options?.classifiedById ?? null,
+    classificationNote: options?.classificationNote ?? null,
+  };
+
   if (existingReadId) {
-    await db.read.update({
-      where: { id: existingReadId },
-      data: {
-        file1,
-        file2,
-        checksum1: options?.checksum1 ?? undefined,
-        checksum2: options?.checksum2 ?? undefined,
-        sequencingRunId: options?.sequencingRunId ?? undefined,
-        pipelineRunId: null,
-        pipelineSources: null,
-      },
-    });
+    const preserveProtectedSource =
+      isProtectedReadDataClass(options?.existingDataClass) &&
+      dataClass === "cleaned" &&
+      Boolean(file1 || file2) &&
+      (options?.existingFile1 !== file1 || options?.existingFile2 !== file2);
+
+    if (preserveProtectedSource) {
+      await db.$transaction(async (tx) => {
+        const newRead = await tx.read.create({
+          data: {
+            sampleId: sampleRecordId,
+            file1,
+            file2,
+            checksum1: options?.checksum1 ?? null,
+            checksum2: options?.checksum2 ?? null,
+            sequencingRunId: options?.sequencingRunId ?? null,
+            pipelineRunId: null,
+            pipelineSources: null,
+            isActive: false,
+            ...classificationData,
+          },
+        });
+
+        await tx.read.update({
+          where: { id: existingReadId },
+          data: {
+            isActive: false,
+            supersededByReadId: newRead.id,
+          },
+        });
+
+        await tx.read.update({
+          where: { id: newRead.id },
+          data: { isActive: true },
+        });
+      });
+    } else {
+      await db.read.update({
+        where: { id: existingReadId },
+        data: {
+          file1,
+          file2,
+          checksum1: options?.checksum1 ?? undefined,
+          checksum2: options?.checksum2 ?? undefined,
+          sequencingRunId: options?.sequencingRunId ?? undefined,
+          pipelineRunId: null,
+          pipelineSources: null,
+          isActive: true,
+          supersededByReadId: null,
+          ...classificationData,
+        },
+      });
+    }
   } else if (file1 || file2) {
     await db.read.create({
       data: {
@@ -659,6 +1056,8 @@ async function upsertSampleReadAssignment(
         sequencingRunId: options?.sequencingRunId ?? null,
         pipelineRunId: null,
         pipelineSources: null,
+        isActive: true,
+        ...classificationData,
       },
     });
   }
@@ -676,6 +1075,8 @@ export async function assignOrderSequencingReads(
     checksum1?: string | null;
     checksum2?: string | null;
     sequencingRunId?: string | null;
+    dataClass?: ReadDataClass;
+    classificationNote?: string | null;
   }>
 ) {
   const order = await loadOrderWithSequencing(orderId);
@@ -735,7 +1136,7 @@ export async function assignOrderSequencingReads(
       }
     }
 
-    const existingRead = sample.reads[0] || null;
+    const existingRead = selectActiveRead(sample.reads);
 
     if (!read1 && !read2) {
       if (existingRead) {
@@ -768,6 +1169,12 @@ export async function assignOrderSequencingReads(
         checksum1: assignment.checksum1 ?? null,
         checksum2: assignment.checksum2 ?? null,
         sequencingRunId: assignment.sequencingRunId ?? null,
+        dataClass: assignment.dataClass ?? "cleaned",
+        dataClassSource: "associate",
+        classificationNote: assignment.classificationNote ?? null,
+        existingDataClass: existingRead?.dataClass,
+        existingFile1: existingRead?.file1,
+        existingFile2: existingRead?.file2,
       }
     );
 
@@ -776,6 +1183,57 @@ export async function assignOrderSequencingReads(
 
   await checkAndCompleteOrder(orderId);
   return results;
+}
+
+export async function classifyOrderSequencingRead(
+  orderId: string,
+  input: {
+    sampleId: string;
+    readId?: string | null;
+    dataClass: ReadDataClass;
+    classificationNote?: string | null;
+  },
+  classifiedById?: string | null
+) {
+  const order = await loadOrderWithSequencing(orderId);
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  assertManageableOrderStatus(order.status);
+
+  const sample = findOrderSample(order, input.sampleId);
+  if (!sample) {
+    throw new Error("Sample not found");
+  }
+
+  const read = input.readId
+    ? sample.reads.find((item) => item.id === input.readId)
+    : selectActiveRead(sample.reads);
+
+  if (!read) {
+    throw new Error("Read record not found");
+  }
+
+  const dataClass = normalizeReadDataClass(input.dataClass);
+  const updated = await db.read.update({
+    where: { id: read.id },
+    data: {
+      dataClass,
+      dataClassSource: "manual",
+      classifiedAt: new Date(),
+      classifiedById: classifiedById ?? null,
+      classificationNote: input.classificationNote ?? null,
+    },
+  });
+
+  return {
+    id: updated.id,
+    dataClass: normalizeReadDataClass(updated.dataClass),
+    dataClassLabel: READ_DATA_CLASS_LABELS[normalizeReadDataClass(updated.dataClass)],
+    dataClassSource: normalizeReadDataClassSource(updated.dataClassSource, "manual"),
+    isProtectedRaw: isProtectedReadDataClass(updated.dataClass),
+  };
 }
 
 export async function linkOrderSequencingArtifact(
@@ -960,7 +1418,11 @@ export async function appendSequencingUploadChunk(
 function parseUploadMetadata(metadata: string | null): UploadMetadata {
   if (!metadata) return {};
   try {
-    return JSON.parse(metadata) as UploadMetadata;
+    const parsed = JSON.parse(metadata) as UploadMetadata;
+    return {
+      ...parsed,
+      dataClass: parsed.dataClass ? normalizeReadDataClass(parsed.dataClass) : undefined,
+    };
   } catch {
     return {};
   }
@@ -1035,7 +1497,7 @@ export async function completeSequencingUpload(
       throw new Error("Read uploads require a target sample");
     }
 
-    const existingRead = sample.reads[0] || null;
+    const existingRead = selectActiveRead(sample.reads);
     const existingFile1 =
       upload.targetRole.toUpperCase() === "R1" ? finalPath : existingRead?.file1 ?? null;
     const existingFile2 =
@@ -1060,6 +1522,11 @@ export async function completeSequencingUpload(
         checksum1,
         checksum2,
         sequencingRunId: metadata.sequencingRunId ?? null,
+        dataClass: metadata.dataClass ?? "cleaned",
+        dataClassSource: "upload",
+        existingDataClass: existingRead?.dataClass,
+        existingFile1: existingRead?.file1,
+        existingFile2: existingRead?.file2,
       }
     );
   } else {

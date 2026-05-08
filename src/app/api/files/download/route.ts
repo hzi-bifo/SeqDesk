@@ -68,6 +68,7 @@ export async function GET(request: NextRequest) {
           OR: [{ file1: filePath }, { file2: filePath }],
         },
         select: {
+          dataClass: true,
           sample: {
             select: {
               order: {
@@ -195,6 +196,7 @@ export async function GET(request: NextRequest) {
         "Content-Type": "application/octet-stream",
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Content-Length": String(stat.size),
+        ...(readRecord?.dataClass ? { "X-SeqDesk-Read-Data-Class": readRecord.dataClass } : {}),
       },
     });
   } catch (error) {

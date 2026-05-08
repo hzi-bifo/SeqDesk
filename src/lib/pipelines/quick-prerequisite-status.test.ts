@@ -257,6 +257,44 @@ describe("quick-prerequisite-status", () => {
     ).rejects.toThrow("Could not check system");
   });
 
+  it("aborts hung prerequisite checks after the configured timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = createStorage();
+      const fetchImpl = vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          })
+      ) as unknown as typeof fetch;
+
+      const refresh = refreshQuickPrerequisiteStatus({
+        force: true,
+        storage,
+        fetchImpl,
+        timeoutMs: 25,
+      });
+      const refreshExpectation = expect(refresh).rejects.toThrow(
+        "Could not check system"
+      );
+
+      await vi.advanceTimersByTimeAsync(25);
+
+      await refreshExpectation;
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/admin/settings/pipelines/check-prerequisites?quick=true",
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+        })
+      );
+      expect(readCachedQuickPrerequisiteStatus(storage)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses forced refresh to bypass cache", async () => {
     const storage = createStorage();
     const fetchImpl = vi.fn().mockResolvedValue({

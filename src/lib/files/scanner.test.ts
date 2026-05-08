@@ -5,6 +5,7 @@ import * as path from "path";
 
 import {
   scanDirectory,
+  scanDirectoryWithReport,
   checkFileExists,
   clearScanCache,
   getScanCacheStats,
@@ -189,5 +190,66 @@ describe("scanner", () => {
 
     expect(files).toHaveLength(1);
     expect(files[0].relativePath).toBe(path.join("a", "b", "c", "deep.fastq.gz"));
+  });
+
+  it("scanDirectoryWithReport skips files that may still be actively written", async () => {
+    const fresh = path.join(tempDir, "fresh.fastq.gz");
+    const old = path.join(tempDir, "old.fastq.gz");
+    await writeFile(fresh);
+    await writeFile(old);
+    const oldDate = new Date(Date.now() - 120_000);
+    await fs.utimes(old, oldDate, oldDate);
+
+    const report = await scanDirectoryWithReport(
+      tempDir,
+      {
+        ...options,
+        activeWriteMinAgeMs: 60_000,
+      },
+      true
+    );
+
+    expect(report.files.map((file) => file.filename)).toEqual(["old.fastq.gz"]);
+    expect(report.warnings.activeWritesSkipped).toBe(1);
+    expect(report.warnings.skippedRecentFiles[0]).toEqual(
+      expect.objectContaining({ relativePath: "fresh.fastq.gz" })
+    );
+  });
+
+  it("scanDirectoryWithReport reports ignored entries", async () => {
+    await writeFile(path.join(tempDir, "data", "keep-a.fastq.gz"));
+    await writeFile(path.join(tempDir, "data", "keep-b.fastq.gz"));
+    await writeFile(path.join(tempDir, "data", "tmp", "skip.fastq.gz"));
+
+    const report = await scanDirectoryWithReport(
+      tempDir,
+      {
+        ...options,
+        ignorePatterns: ["**/tmp/**"],
+      },
+      true
+    );
+
+    expect(report.files).toHaveLength(2);
+    expect(report.warnings.ignoredEntries).toBe(1);
+    expect(report.warnings.truncated).toBe(false);
+  });
+
+  it("scanDirectoryWithReport reports truncation", async () => {
+    await writeFile(path.join(tempDir, "keep-a.fastq.gz"));
+    await writeFile(path.join(tempDir, "keep-b.fastq.gz"));
+
+    const report = await scanDirectoryWithReport(
+      tempDir,
+      {
+        ...options,
+        maxFiles: 1,
+      },
+      true
+    );
+
+    expect(report.files).toHaveLength(1);
+    expect(report.warnings.truncated).toBe(true);
+    expect(report.warnings.maxFiles).toBe(1);
   });
 });

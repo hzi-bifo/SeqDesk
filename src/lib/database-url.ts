@@ -1,5 +1,6 @@
 export const POSTGRES_PROTOCOLS = ["postgresql://", "postgres://"] as const;
 export type DatabaseProvider = "postgresql" | "sqlite" | "unknown";
+export type DatabaseHosting = "neon" | "self-hosted-postgres" | "unknown";
 
 export function normalizeDatabaseUrl(
   value: string | null | undefined
@@ -35,6 +36,47 @@ export function detectDatabaseProvider(
 
   if (isSqliteDatabaseUrl(value)) {
     return "sqlite";
+  }
+
+  return "unknown";
+}
+
+function parseDatabaseUrlHost(value: string | null | undefined): string | null {
+  const normalized = normalizeDatabaseUrl(value);
+  if (!normalized || !isPostgresDatabaseUrl(normalized)) {
+    return null;
+  }
+
+  try {
+    return new URL(normalized).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function isNeonDatabaseUrl(value: string | null | undefined): boolean {
+  const host = parseDatabaseUrlHost(value);
+  return host?.endsWith(".neon.tech") ?? false;
+}
+
+export function isPooledDatabaseUrl(value: string | null | undefined): boolean {
+  const host = parseDatabaseUrlHost(value);
+  if (!host) {
+    return false;
+  }
+
+  return host.includes("-pooler.") || host.includes("-pooler-");
+}
+
+export function detectDatabaseHosting(
+  value: string | null | undefined
+): DatabaseHosting {
+  if (isNeonDatabaseUrl(value)) {
+    return "neon";
+  }
+
+  if (isPostgresDatabaseUrl(value)) {
+    return "self-hosted-postgres";
   }
 
   return "unknown";

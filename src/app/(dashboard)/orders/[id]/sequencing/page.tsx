@@ -53,6 +53,10 @@ import { cn } from "@/lib/utils";
 import {
   FACILITY_SAMPLE_STATUSES,
   FACILITY_SAMPLE_STATUS_LABELS,
+  READ_DATA_CLASS_BADGE_CLASSNAMES,
+  READ_DATA_CLASS_LABELS,
+  READ_DATA_CLASSES,
+  READ_ORIGIN_BADGE_CLASSNAMES,
   getSequencingIntegrityIndicatorClassName,
   getSequencingIntegrityLabel,
   SEQUENCING_ARTIFACT_STAGE_LABELS,
@@ -60,6 +64,8 @@ import {
   SEQUENCING_ARTIFACT_TYPE_LABELS,
   SEQUENCING_ARTIFACT_TYPES,
   type FacilitySampleStatus,
+  type ReadDataClass,
+  type ReadOrigin,
 } from "@/lib/sequencing/constants";
 import {
   formatAvgQuality,
@@ -85,10 +91,34 @@ const STATUS_TEXT_COLORS: Record<FacilitySampleStatus, string> = {
   READY: "text-emerald-600",
   ISSUE: "text-rose-600",
 };
+
+function getReadDataClassBadgeClassName(dataClass?: ReadDataClass | null) {
+  return READ_DATA_CLASS_BADGE_CLASSNAMES[dataClass ?? "cleaned"];
+}
+
+function getReadOriginBadgeClassName(origin?: ReadOrigin | null) {
+  return READ_ORIGIN_BADGE_CLASSNAMES[origin ?? "unknown"];
+}
+
+function shouldConfirmProtectedReadUse(sample?: SequencingSampleRow | null): boolean {
+  return Boolean(sample?.read?.isProtectedRaw);
+}
+
+function confirmProtectedReadUse(action: string, sample?: SequencingSampleRow | null): boolean {
+  if (!shouldConfirmProtectedReadUse(sample)) return true;
+  return window.confirm(
+    `${sample?.sampleId ?? "This sample"} uses ${sample?.read?.dataClassLabel ?? "protected"} reads. Raw reads may still contain human contamination. Continue to ${action}?`
+  );
+}
+
+function confirmCleanClassification(): boolean {
+  return window.confirm(
+    "Only mark reads as cleaned after human contamination removal has completed. Continue?"
+  );
+}
 import type {
   OrderSequencingSummaryResponse,
   SequencingArtifactSummary,
-  SequencingDiscoveryResult,
   SequencingSampleRow,
 } from "@/lib/sequencing/types";
 import {
@@ -100,7 +130,6 @@ import {
   Eye,
   FlaskConical,
   FolderOpen,
-  FolderSearch,
   Loader2,
   MoreHorizontal,
   RefreshCw,
@@ -259,6 +288,27 @@ function copyToClipboard(value: string) {
   return navigator.clipboard.writeText(value);
 }
 
+function getAssignmentFailureMessage(payload: any, fallback: string): string | null {
+  if (payload?.error) return String(payload.error);
+  if (payload?.success === false) {
+    const failures = Array.isArray(payload.results)
+      ? payload.results.filter((result: any) => result && result.success === false)
+      : [];
+    if (failures.length > 0) {
+      return failures
+        .slice(0, 3)
+        .map((failure: any) =>
+          failure?.sampleId && failure?.error
+            ? `${failure.sampleId}: ${failure.error}`
+            : failure?.error || fallback
+        )
+        .join("; ");
+    }
+    return fallback;
+  }
+  return null;
+}
+
 export default function OrderSequencingPage({
   params,
 }: {
@@ -280,13 +330,11 @@ export default function OrderSequencingPage({
   const [detailOpen, setDetailOpen] = useState(false);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [scanDialogOpen, setScanDialogOpen] = useState(false);
-  const [scanResults, setScanResults] = useState<SequencingDiscoveryResult[]>([]);
-  const [discovering, setDiscovering] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<PickerMode>("read");
   const [pickerTargetSampleId, setPickerTargetSampleId] = useState<string>("");
   const [pickerReadRole, setPickerReadRole] = useState<"R1" | "R2">("R1");
+  const [pickerReadDataClass, setPickerReadDataClass] = useState<ReadDataClass>("cleaned");
   const [pickerArtifactStage, setPickerArtifactStage] = useState<string>("qc");
   const [pickerArtifactType, setPickerArtifactType] = useState<string>("qc_report");
   const [pickerSearch, setPickerSearch] = useState("");
@@ -296,6 +344,7 @@ export default function OrderSequencingPage({
   const [uploadMode, setUploadMode] = useState<UploadMode>("read");
   const [uploadTargetSampleId, setUploadTargetSampleId] = useState<string>("");
   const [uploadReadRole, setUploadReadRole] = useState<"R1" | "R2">("R1");
+  const [uploadReadDataClass, setUploadReadDataClass] = useState<ReadDataClass>("cleaned");
   const [uploadArtifactStage, setUploadArtifactStage] = useState<string>("qc");
   const [uploadArtifactType, setUploadArtifactType] = useState<string>("qc_report");
   const [uploadChecksum, setUploadChecksum] = useState("");
@@ -337,6 +386,7 @@ export default function OrderSequencingPage({
   const [assignmentSampleId, setAssignmentSampleId] = useState("");
   const [assignmentBarcode, setAssignmentBarcode] = useState("");
   const [savingAssignment, setSavingAssignment] = useState(false);
+  const [classifyingRead, setClassifyingRead] = useState(false);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
   const [savingRunAssignmentsId, setSavingRunAssignmentsId] = useState<string | null>(null);
   const [importingRunPlan, setImportingRunPlan] = useState(false);
@@ -412,7 +462,19 @@ export default function OrderSequencingPage({
     }
   }, [orderId]);
 
+  const getSampleForReadPath = useCallback(
+    (filePath: string) =>
+      data?.samples.find(
+        (sample) => sample.read?.file1 === filePath || sample.read?.file2 === filePath
+      ) ?? null,
+    [data?.samples]
+  );
+
   const handleInspectFile = useCallback(async (filePath: string) => {
+    const sample = getSampleForReadPath(filePath);
+    if (!confirmProtectedReadUse("inspect this file", sample)) {
+      return;
+    }
     setInspectFilePath(filePath);
     setInspectLoading(true);
     setInspectData(null);
@@ -450,7 +512,7 @@ export default function OrderSequencingPage({
     } finally {
       setInspectLoading(false);
     }
-  }, [orderId]);
+  }, [getSampleForReadPath, orderId]);
 
   const refreshOrderPipelines = useCallback(async () => {
     if (!isFacilityAdmin) {
@@ -624,6 +686,10 @@ export default function OrderSequencingPage({
   };
 
   const getReadSummary = (sample: SequencingSampleRow) => {
+    if (sample.read?.filesMissing) {
+      return "Linked file missing";
+    }
+
     const hasRead1 = Boolean(sample.read?.file1);
     const hasRead2 = Boolean(sample.read?.file2);
 
@@ -634,6 +700,18 @@ export default function OrderSequencingPage({
       return "Single read linked";
     }
     return "No reads linked";
+  };
+
+  const getReadIndicatorClassName = (sample: SequencingSampleRow) => {
+    if (!sample.hasReads) return "bg-slate-300";
+    if (sample.read?.filesMissing) return "bg-rose-500";
+    return getSequencingIntegrityIndicatorClassName(sample.integrityStatus);
+  };
+
+  const getBarcodeSourceLabel = (source?: SequencingSampleRow["plannedBarcodeSource"]) => {
+    if (source === "run-plan") return "Run plan";
+    if (source === "sample-barcode") return "Order barcode";
+    return null;
   };
 
   const hasReads = (sample: SequencingSampleRow) =>
@@ -660,6 +738,7 @@ export default function OrderSequencingPage({
           sample.sampleId,
           sample.sampleAlias,
           sample.sampleTitle,
+          sample.plannedBarcode,
           sample.sequencingRun?.runId,
           sample.sequencingRun?.runName,
           ...runPlanMatches,
@@ -683,6 +762,9 @@ export default function OrderSequencingPage({
       if (dataFilter === "missing_reads" && hasReads(sample)) {
         return false;
       }
+      if (dataFilter === "stale_reads" && !sample.read?.filesMissing) {
+        return false;
+      }
       if (dataFilter === "reports" && !hasReports(sample)) {
         return false;
       }
@@ -696,6 +778,11 @@ export default function OrderSequencingPage({
       return true;
     });
   }, [dataFilter, runPlans, sampleOptions, searchQuery, statusFilter]);
+
+  const protectedReadSamples = useMemo(
+    () => sampleOptions.filter((sample) => sample.read?.isProtectedRaw),
+    [sampleOptions]
+  );
 
   const hasActiveFilters = Boolean(searchQuery || statusFilter || dataFilter);
 
@@ -711,6 +798,7 @@ export default function OrderSequencingPage({
       sampleId || (mode === "artifact" ? "" : sampleOptions[0]?.id || "")
     );
     setPickerReadRole("R1");
+    setPickerReadDataClass("cleaned");
     setPickerArtifactStage("qc");
     setPickerArtifactType("qc_report");
     setPickerSearch("");
@@ -724,6 +812,7 @@ export default function OrderSequencingPage({
       sampleId || (mode === "artifact" ? "" : sampleOptions[0]?.id || "")
     );
     setUploadReadRole("R1");
+    setUploadReadDataClass("cleaned");
     setUploadArtifactStage("qc");
     setUploadArtifactType("qc_report");
     setUploadChecksum("");
@@ -762,7 +851,8 @@ export default function OrderSequencingPage({
   const handleApplyReadAssignment = async (
     sample: SequencingSampleRow,
     nextRead1: string | null,
-    nextRead2: string | null
+    nextRead2: string | null,
+    dataClass: ReadDataClass = "cleaned"
   ) => {
     const response = await fetch(`/api/orders/${orderId}/sequencing/reads`, {
       method: "PUT",
@@ -773,14 +863,53 @@ export default function OrderSequencingPage({
             sampleId: sample.id,
             read1: nextRead1,
             read2: nextRead2,
+            dataClass,
           },
         ],
       }),
     });
 
     const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.error || "Failed to assign reads");
+    const failureMessage = getAssignmentFailureMessage(payload, "Failed to assign reads");
+    if (!response.ok || failureMessage) {
+      throw new Error(failureMessage || "Failed to assign reads");
+    }
+  };
+
+  const handleClassifyRead = async (
+    sample: SequencingSampleRow,
+    dataClass: ReadDataClass
+  ) => {
+    if (!sample.read) return;
+    if (dataClass === "cleaned" && !confirmCleanClassification()) {
+      return;
+    }
+
+    setClassifyingRead(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/reads`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sampleId: sample.id,
+          readId: sample.read.id,
+          dataClass,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || "Failed to update read classification");
+      }
+      toast.success(`Marked reads as ${READ_DATA_CLASS_LABELS[dataClass].toLowerCase()}`);
+      await refreshSummary({ silent: true });
+    } catch (classificationError) {
+      toast.error(
+        classificationError instanceof Error
+          ? classificationError.message
+          : "Failed to update read classification"
+      );
+    } finally {
+      setClassifyingRead(false);
     }
   };
 
@@ -1005,7 +1134,7 @@ export default function OrderSequencingPage({
           pickerReadRole === "R1" ? relativePath : sample.read?.file1 ?? null;
         const nextRead2 =
           pickerReadRole === "R2" ? relativePath : sample.read?.file2 ?? null;
-        await handleApplyReadAssignment(sample, nextRead1, nextRead2);
+        await handleApplyReadAssignment(sample, nextRead1, nextRead2, pickerReadDataClass);
         toast.success(`Linked ${pickerReadRole} for ${sample.sampleId}`);
       } else {
         const response = await fetch(`/api/orders/${orderId}/sequencing/artifacts/link`, {
@@ -1029,94 +1158,6 @@ export default function OrderSequencingPage({
       await refreshSummary({ silent: true });
     } catch (pickError) {
       toast.error(pickError instanceof Error ? pickError.message : "Failed to add data");
-    }
-  };
-
-  const handleDiscover = async () => {
-    setDiscovering(true);
-    setScanResults([]);
-
-    try {
-      const response = await fetch(`/api/orders/${orderId}/sequencing/discover`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true, autoAssign: false }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to discover files");
-      }
-      setScanResults(payload.results as SequencingDiscoveryResult[]);
-    } catch (discoverError) {
-      toast.error(
-        discoverError instanceof Error
-          ? discoverError.message
-          : "Failed to discover sequencing files"
-      );
-    } finally {
-      setDiscovering(false);
-    }
-  };
-
-  const applyDiscoverySuggestion = async (result: SequencingDiscoveryResult) => {
-    const sample = data?.samples.find((item) => item.sampleId === result.sampleId);
-    if (!sample || !result.suggestion.read1) {
-      return;
-    }
-
-    try {
-      await handleApplyReadAssignment(
-        sample,
-        result.suggestion.read1.relativePath,
-        result.suggestion.read2?.relativePath ?? null
-      );
-      toast.success(`Linked reads for ${sample.sampleId}`);
-      await refreshSummary({ silent: true });
-    } catch (applyError) {
-      toast.error(applyError instanceof Error ? applyError.message : "Failed to apply match");
-    }
-  };
-
-  const applyExactSuggestions = async () => {
-    if (!data) return;
-
-    const assignments = scanResults
-      .filter((result) => result.suggestion.status === "exact" && result.suggestion.read1)
-      .map((result) => {
-        const sample = data.samples.find((row) => row.sampleId === result.sampleId);
-        if (!sample || !result.suggestion.read1) return null;
-        return {
-          sampleId: sample.id,
-          read1: result.suggestion.read1.relativePath,
-          read2: result.suggestion.read2?.relativePath ?? null,
-        };
-      })
-      .filter(
-        (
-          assignment
-        ): assignment is { sampleId: string; read1: string; read2: string | null } =>
-          assignment !== null
-      );
-
-    if (assignments.length === 0) {
-      toast.message("No exact matches to apply");
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/orders/${orderId}/sequencing/reads`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignments }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to apply matches");
-      }
-      toast.success(`Applied ${assignments.length} exact match${assignments.length === 1 ? "" : "es"}`);
-      await refreshSummary({ silent: true });
-    } catch (applyError) {
-      toast.error(applyError instanceof Error ? applyError.message : "Failed to apply matches");
     }
   };
 
@@ -1155,6 +1196,7 @@ export default function OrderSequencingPage({
                 }
               : {
                   source: "upload",
+                  dataClass: uploadReadDataClass,
                 },
         }),
       });
@@ -1226,7 +1268,7 @@ export default function OrderSequencingPage({
               nextValue === "__empty" ? "" : nextValue
             )
           }
-          disabled={isDemo || savingRunAssignmentsId !== null}
+          disabled={isDemo || !canManage || savingRunAssignmentsId !== null}
         >
           <SelectTrigger className="h-8 min-w-[9rem]">
             <SelectValue placeholder={field.label} />
@@ -1254,7 +1296,7 @@ export default function OrderSequencingPage({
               nextValue === "__empty" ? "" : nextValue
             )
           }
-          disabled={isDemo || savingRunAssignmentsId !== null}
+          disabled={isDemo || !canManage || savingRunAssignmentsId !== null}
         >
           <SelectTrigger className="h-8 min-w-[7rem]">
             <SelectValue placeholder={field.label} />
@@ -1276,7 +1318,7 @@ export default function OrderSequencingPage({
           updateRunAssignmentField(assignmentId, field.name, event.target.value)
         }
         className="h-8 min-w-[9rem]"
-        disabled={isDemo || savingRunAssignmentsId !== null}
+        disabled={isDemo || !canManage || savingRunAssignmentsId !== null}
       />
     );
   };
@@ -1496,12 +1538,22 @@ export default function OrderSequencingPage({
               <p className="text-sm text-muted-foreground mt-0.5">
                 {sampleOptions.length} sample{sampleOptions.length !== 1 ? "s" : ""} in this order
               </p>
+              {data.sequencingTechSelection?.label ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sequencing setup: {data.sequencingTechSelection.label}
+                </p>
+              ) : null}
             </div>
             {!isDemo && (
               <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => setScanDialogOpen(true)} disabled={!canManage}>
-                  <FolderSearch className="mr-1.5 h-3.5 w-3.5" />
-                  Scan Storage
+                <Button size="sm" variant="outline" asChild aria-disabled={!canManage}>
+                  <Link
+                    href={`/orders/${orderId}/sequencing?view=discover`}
+                    className={!canManage ? "pointer-events-none opacity-50" : undefined}
+                  >
+                    <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
+                    Associate Files
+                  </Link>
                 </Button>
                 <Button
                   size="sm"
@@ -1529,6 +1581,15 @@ export default function OrderSequencingPage({
             and generated QC or report artifacts. Use it to quickly see which samples are ready,
             missing data, or need facility review.
           </HelpBox>
+
+          {protectedReadSamples.length > 0 ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-900">
+              <div className="font-medium">Protected read data present</div>
+              <div className="mt-1 text-rose-800">
+                {protectedReadSamples.length} sample{protectedReadSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination; only mark them cleaned after removal has completed.
+              </div>
+            </div>
+          ) : null}
 
           {!isDemo && !data.dataBasePathConfigured && (
             <Card className="border-amber-200 bg-amber-50/70">
@@ -1558,8 +1619,8 @@ export default function OrderSequencingPage({
             </div>
           ) : null}
 
-          <Card>
-            <CardHeader className="pb-3">
+	          <Card className="rounded-xl border bg-card shadow-none">
+	            <CardHeader className="pb-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2 text-base">
@@ -1582,7 +1643,7 @@ export default function OrderSequencingPage({
                     size="sm"
                     variant="outline"
                     onClick={() => runPlanImportRef.current?.click()}
-                    disabled={importingRunPlan || isDemo}
+                    disabled={importingRunPlan || isDemo || !canManage}
                   >
                     {importingRunPlan ? (
                       <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1592,26 +1653,33 @@ export default function OrderSequencingPage({
                     Import Excel
                   </Button>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+	              </div>
+	            </CardHeader>
+	            <CardContent className="space-y-4">
+	              <HelpBox title="What is a run plan?">
+	                A run plan maps each order sample to the sequencing run barcode or lane label expected
+	                from the facility. SeqDesk uses it to match barcode-folder outputs such as
+	                barcode01 FASTQs before read files or reports arrive, while still allowing later
+	                corrections from facility imports.
+	              </HelpBox>
+
+	              <div className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
                 <Input
                   value={newRunId}
                   onChange={(event) => setNewRunId(event.target.value)}
                   placeholder="Run ID, e.g. 20260223"
-                  disabled={creatingRun || isDemo}
+                  disabled={creatingRun || isDemo || !canManage}
                 />
                 <Input
                   type="date"
                   value={newRunDate}
                   onChange={(event) => setNewRunDate(event.target.value)}
-                  disabled={creatingRun || isDemo}
+                  disabled={creatingRun || isDemo || !canManage}
                 />
                 <Button
                   type="button"
                   onClick={() => void handleCreateRunPlan()}
-                  disabled={creatingRun || isDemo}
+                  disabled={creatingRun || isDemo || !canManage}
                 >
                   {creatingRun ? (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1623,7 +1691,11 @@ export default function OrderSequencingPage({
               </div>
 
               <div className="grid gap-3 lg:grid-cols-[1fr_1fr_10rem_auto]">
-                <Select value={assignmentRunId} onValueChange={setAssignmentRunId}>
+                <Select
+                  value={assignmentRunId}
+                  onValueChange={setAssignmentRunId}
+                  disabled={savingAssignment || isDemo || !canManage}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Choose run" />
                   </SelectTrigger>
@@ -1635,7 +1707,11 @@ export default function OrderSequencingPage({
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={assignmentSampleId} onValueChange={setAssignmentSampleId}>
+                <Select
+                  value={assignmentSampleId}
+                  onValueChange={setAssignmentSampleId}
+                  disabled={savingAssignment || isDemo || !canManage}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Choose sample" />
                   </SelectTrigger>
@@ -1651,13 +1727,13 @@ export default function OrderSequencingPage({
                   value={assignmentBarcode}
                   onChange={(event) => setAssignmentBarcode(event.target.value)}
                   placeholder="barcode01"
-                  disabled={savingAssignment || isDemo}
+                  disabled={savingAssignment || isDemo || !canManage}
                 />
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => void handleSaveRunAssignment()}
-                  disabled={savingAssignment || runPlans.length === 0 || isDemo}
+                  disabled={savingAssignment || runPlans.length === 0 || isDemo || !canManage}
                 >
                   {savingAssignment ? (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1697,6 +1773,7 @@ export default function OrderSequencingPage({
                             onClick={() => void handleSaveRunAssignments(run)}
                             disabled={
                               isDemo ||
+                              !canManage ||
                               run.samples.length === 0 ||
                               savingRunAssignmentsId === run.id
                             }
@@ -1751,7 +1828,7 @@ export default function OrderSequencingPage({
                                       }
                                       className="h-8 min-w-[8rem] font-mono text-xs"
                                       placeholder="barcode01"
-                                      disabled={isDemo || savingRunAssignmentsId !== null}
+                                      disabled={isDemo || !canManage || savingRunAssignmentsId !== null}
                                     />
                                   </td>
                                   <td className="px-3 py-2">
@@ -1830,11 +1907,12 @@ export default function OrderSequencingPage({
                       onChange={(event) => setDataFilter(event.target.value)}
                       className="w-full appearance-none rounded-lg border-0 bg-secondary py-2 pr-8 pl-3 text-sm focus:outline-none focus:ring-2 focus:ring-foreground/20 sm:w-auto"
                     >
-                      <option value="">All Data</option>
-                      <option value="reads">With Reads</option>
-                      <option value="missing_reads">Missing Reads</option>
-                      <option value="reports">With QC / Reports</option>
-                      <option value="missing_hashes">Missing Hashes</option>
+	                      <option value="">All Data</option>
+	                      <option value="reads">With Reads</option>
+	                      <option value="missing_reads">Missing Reads</option>
+	                      <option value="stale_reads">Stale Read Paths</option>
+	                      <option value="reports">With QC / Reports</option>
+	                      <option value="missing_hashes">Missing Hashes</option>
                     </select>
                     <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   </div>
@@ -1854,11 +1932,11 @@ export default function OrderSequencingPage({
             </div>
 
             <div className="hidden grid-cols-12 gap-4 border-b border-border bg-secondary/50 px-5 py-2.5 text-xs font-medium text-muted-foreground md:grid">
-              <div className="col-span-3">Sample</div>
+              <div className="col-span-2">Sample</div>
+              <div className="col-span-2">Barcode</div>
               <div className="col-span-2">Status</div>
               <div className="col-span-3">Reads</div>
               <div className="col-span-2">QC / Reports</div>
-              <div className="col-span-1">Updated</div>
               <div className="col-span-1"></div>
             </div>
 
@@ -1868,6 +1946,7 @@ export default function OrderSequencingPage({
                 const dotColor = STATUS_DOT_COLORS[statusKey] ?? "bg-slate-400";
                 const textColor = STATUS_TEXT_COLORS[statusKey] ?? "text-muted-foreground";
                 const statusLabel = FACILITY_SAMPLE_STATUS_LABELS[statusKey] ?? sample.facilityStatus;
+                const barcodeSourceLabel = getBarcodeSourceLabel(sample.plannedBarcodeSource);
 
                 return (
                 <div
@@ -1884,6 +1963,37 @@ export default function OrderSequencingPage({
                           {(sample.sampleAlias || sample.sampleTitle) && " · "}
                           {getReadSummary(sample)} · {getSequencingReportSummary(sample)}
                         </p>
+                        {sample.plannedBarcode ? (
+                          <p className="mt-1 text-xs font-mono text-muted-foreground">
+                            {sample.plannedBarcode}
+                            {barcodeSourceLabel ? (
+                              <span className="ml-1 font-sans">({barcodeSourceLabel})</span>
+                            ) : null}
+                          </p>
+                        ) : null}
+                        {sample.read ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className={cn("text-[11px]", getReadDataClassBadgeClassName(sample.read.dataClass))}
+                            >
+                              {sample.read.dataClassLabel}
+                            </Badge>
+                            {sample.read.isSimulated ? (
+                              <Badge
+                                variant="outline"
+                                className={cn("text-[11px]", getReadOriginBadgeClassName(sample.read.readOrigin))}
+                              >
+                                {sample.read.readOriginLabel}
+                              </Badge>
+                            ) : null}
+                            {sample.protectedProvenanceCount > 0 ? (
+                              <span className="text-xs text-muted-foreground">
+                                {sample.protectedProvenanceCount} protected provenance
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {canManage ? (
@@ -1960,7 +2070,7 @@ export default function OrderSequencingPage({
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Sample */}
-                    <div className="col-span-3 min-w-0">
+                    <div className="col-span-2 min-w-0">
                       <p className="font-medium text-sm truncate">{sample.sampleId}</p>
                       {sample.sampleAlias ? (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">{sample.sampleAlias}</p>
@@ -1968,6 +2078,24 @@ export default function OrderSequencingPage({
                       {sample.sampleTitle ? (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">{sample.sampleTitle}</p>
                       ) : null}
+                    </div>
+
+                    {/* Barcode */}
+                    <div className="col-span-2 min-w-0">
+                      {sample.plannedBarcode ? (
+                        <div className="space-y-1">
+                          <Badge variant="outline" className="font-mono text-[11px]">
+                            {sample.plannedBarcode}
+                          </Badge>
+                          {barcodeSourceLabel ? (
+                            <p className="truncate text-xs text-muted-foreground">
+                              {barcodeSourceLabel}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Not planned</span>
+                      )}
                     </div>
 
                     {/* Status */}
@@ -2017,15 +2145,41 @@ export default function OrderSequencingPage({
                                 <span
                                   className={cn(
                                     "h-2 w-2 rounded-full shrink-0",
-                                    getSequencingIntegrityIndicatorClassName(sample.integrityStatus)
+                                    getReadIndicatorClassName(sample)
                                   )}
                                   aria-hidden="true"
                                 />
                                 <span className="text-sm truncate group-hover:underline">{getReadSummary(sample)}</span>
+                                {sample.read ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={cn("shrink-0 text-[11px]", getReadDataClassBadgeClassName(sample.read.dataClass))}
+                                  >
+                                    {sample.read.dataClassLabel}
+                                  </Badge>
+                                ) : null}
+                                {sample.read?.isSimulated ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={cn("shrink-0 text-[11px]", getReadOriginBadgeClassName(sample.read.readOrigin))}
+                                  >
+                                    {sample.read.readOriginLabel}
+                                  </Badge>
+                                ) : null}
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5 ml-4 truncate">
                                 {[sample.read?.file1, sample.read?.file2].filter(Boolean).map((f) => (f as string).split("/").pop()).join(", ")}
                               </p>
+                              {sample.read?.filesMissing ? (
+                                <p className="ml-4 mt-0.5 text-xs text-rose-600">
+                                  Linked path is stale or inaccessible
+                                </p>
+                              ) : null}
+                              {sample.read?.isProtectedRaw ? (
+                                <p className="ml-4 mt-0.5 text-xs text-rose-600">
+                                  Raw reads may still contain human contamination
+                                </p>
+                              ) : null}
                             </button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto max-w-md text-xs p-0" align="start">
@@ -2119,7 +2273,7 @@ export default function OrderSequencingPage({
                             <span
                               className={cn(
                                 "h-2 w-2 rounded-full shrink-0",
-                                getSequencingIntegrityIndicatorClassName(sample.integrityStatus)
+                                getReadIndicatorClassName(sample)
                               )}
                               aria-hidden="true"
                             />
@@ -2139,13 +2293,6 @@ export default function OrderSequencingPage({
                           {getSequencingReportStageLabel(sample)}
                         </p>
                       )}
-                    </div>
-
-                    {/* Updated */}
-                    <div className="col-span-1">
-                      <span className="text-sm text-muted-foreground tabular-nums" title={formatDateTime(sample.updatedAt)}>
-                        {formatRelativeTime(sample.updatedAt)}
-                      </span>
                     </div>
 
                     {/* Actions */}
@@ -2238,9 +2385,15 @@ export default function OrderSequencingPage({
                   Upload
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent>
-              {data.orderArtifacts.length === 0 ? (
+	            </CardHeader>
+	            <CardContent className="space-y-4">
+	              <HelpBox title="What are customer order files?">
+	                Customer order files are order-level documents such as delivery notes, combined QC
+	                summaries, or shared reports. They belong to the whole order rather than one sample
+	                and are kept separate from sample FASTQs and sample-specific QC artifacts.
+	              </HelpBox>
+
+	              {data.orderArtifacts.length === 0 ? (
                 <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
                   No customer order files linked yet.
                 </div>
@@ -2406,7 +2559,8 @@ export default function OrderSequencingPage({
               disabled={
                 applyingRunPlanImport ||
                 !runPlanImportPreview?.applyReady ||
-                isDemo
+                isDemo ||
+                !canManage
               }
             >
               {applyingRunPlanImport ? (
@@ -2457,12 +2611,55 @@ export default function OrderSequencingPage({
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3">
                     <div>
-                      <div className="text-sm font-medium">{getReadSummary(selectedSample)}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-medium">{getReadSummary(selectedSample)}</div>
+                        {selectedSample.read ? (
+                          <Badge
+                            variant="outline"
+                            className={cn("text-[11px]", getReadDataClassBadgeClassName(selectedSample.read.dataClass))}
+                          >
+                            {selectedSample.read.dataClassLabel}
+                          </Badge>
+                        ) : null}
+                        {selectedSample.read?.isSimulated ? (
+                          <Badge
+                            variant="outline"
+                            className={cn("text-[11px]", getReadOriginBadgeClassName(selectedSample.read.readOrigin))}
+                          >
+                            {selectedSample.read.readOriginLabel}
+                          </Badge>
+                        ) : null}
+                      </div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         {getSequencingIntegrityLabel(selectedSample.integrityStatus)}
                       </div>
+                      {selectedSample.read?.isProtectedRaw ? (
+                        <div className="mt-2 text-xs text-rose-700">
+                          Raw reads may still contain human contamination. Only mark as cleaned after human contamination removal has completed.
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
+                      {selectedSample.read && canManage ? (
+                        <Select
+                          value={selectedSample.read.dataClass}
+                          onValueChange={(value) =>
+                            void handleClassifyRead(selectedSample, value as ReadDataClass)
+                          }
+                          disabled={classifyingRead}
+                        >
+                          <SelectTrigger className="h-8 w-[150px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {READ_DATA_CLASSES.map((dataClass) => (
+                              <SelectItem key={dataClass} value={dataClass}>
+                                {READ_DATA_CLASS_LABELS[dataClass]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : null}
                       <Button
                         variant="outline"
                         size="sm"
@@ -2490,6 +2687,47 @@ export default function OrderSequencingPage({
                     </div>
                   </div>
 
+                  {selectedSample.protectedProvenance.length > 0 ? (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 px-4 py-3">
+                      <div className="text-sm font-medium text-rose-900">Protected provenance</div>
+                      <div className="mt-1 text-xs text-rose-800">
+                        Previous raw or unknown reads are retained for facility traceability and are not the active pipeline input.
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {selectedSample.protectedProvenance.map((read) => (
+                          <div key={read.id} className="rounded-lg border border-rose-200 bg-background/80 px-3 py-2 text-xs">
+                            <div className="mb-1 flex flex-wrap items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className={cn("text-[11px]", getReadDataClassBadgeClassName(read.dataClass))}
+                              >
+                                {read.dataClassLabel}
+                              </Badge>
+                              {read.isSimulated ? (
+                                <Badge
+                                  variant="outline"
+                                  className={cn("text-[11px]", getReadOriginBadgeClassName(read.readOrigin))}
+                                >
+                                  {read.readOriginLabel}
+                                </Badge>
+                              ) : null}
+                              {read.classifiedAt ? (
+                                <span className="text-muted-foreground">
+                                  Classified {formatDateTime(read.classifiedAt)}
+                                </span>
+                              ) : null}
+                            </div>
+                            {[read.file1, read.file2].filter(Boolean).map((filePath) => (
+                              <div key={filePath} className="break-all font-mono text-muted-foreground">
+                                {filePath}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="grid gap-3 md:grid-cols-2">
                     {(["file1", "file2"] as const).map((field, index) => {
                       const filePath = selectedSample.read?.[field];
@@ -2515,9 +2753,7 @@ export default function OrderSequencingPage({
                               className={cn(
                                 "h-2.5 w-2.5 rounded-full",
                                 filePath
-                                  ? getSequencingIntegrityIndicatorClassName(
-                                      selectedSample.integrityStatus
-                                    )
+                                  ? getReadIndicatorClassName(selectedSample)
                                   : "bg-slate-300"
                               )}
                               aria-hidden="true"
@@ -2529,6 +2765,11 @@ export default function OrderSequencingPage({
                               <div className="break-all text-xs text-muted-foreground">
                                 {filePath}
                               </div>
+                              {selectedSample.read?.filesMissing ? (
+                                <div className="text-xs text-rose-600">
+                                  Linked path is stale or inaccessible.
+                                </div>
+                              ) : null}
                               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                                 <span>
                                   Reads: {readCount ?? "Unknown"}
@@ -2652,98 +2893,6 @@ export default function OrderSequencingPage({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={scanDialogOpen} onOpenChange={setScanDialogOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Scan Storage</DialogTitle>
-            <DialogDescription>
-              Review suggested FASTQ matches before linking them to samples.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex items-center justify-between gap-3">
-            <Button onClick={handleDiscover} disabled={discovering || !canManage}>
-              {discovering ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FolderSearch className="mr-2 h-4 w-4" />
-              )}
-              Scan Storage
-            </Button>
-            <Button
-              variant="outline"
-              onClick={applyExactSuggestions}
-              disabled={scanResults.length === 0 || !canManage}
-            >
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-              Apply Exact Matches
-            </Button>
-          </div>
-          <ScrollArea className="max-h-[420px]">
-            <div className="space-y-3 pr-4">
-              {scanResults.length === 0 ? (
-                <div className="rounded-lg border border-dashed px-4 py-8 text-sm text-muted-foreground">
-                  Run a storage scan to review candidate FASTQ matches.
-                </div>
-              ) : (
-                scanResults.map((result) => (
-                  <div key={result.sampleId} className="rounded-xl border p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="space-y-2">
-                        <div className="font-medium">{result.sampleId}</div>
-                        <Badge variant="outline">{result.suggestion.status}</Badge>
-                        {result.suggestion.read1 ? (
-                          <div className="space-y-1 text-sm text-muted-foreground">
-                            <div>R1: {result.suggestion.read1.relativePath}</div>
-                            {result.suggestion.read2 ? (
-                              <div>R2: {result.suggestion.read2.relativePath}</div>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-muted-foreground">No direct match suggested.</div>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {result.suggestion.read1 ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void applyDiscoverySuggestion(result)}
-                            disabled={!canManage}
-                          >
-                            Use Suggestion
-                          </Button>
-                        ) : null}
-                        {result.suggestion.alternatives.slice(0, 3).map((alternative) => (
-                          <Button
-                            key={alternative.identifier}
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              void applyDiscoverySuggestion({
-                                ...result,
-                                suggestion: {
-                                  ...result.suggestion,
-                                  status: "exact",
-                                  read1: alternative.read1,
-                                  read2: alternative.read2,
-                                },
-                              })
-                            }
-                            disabled={!canManage}
-                          >
-                            {alternative.identifier}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent className="max-w-5xl">
           <DialogHeader>
@@ -2762,7 +2911,7 @@ export default function OrderSequencingPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="read">Raw Reads</SelectItem>
+                  <SelectItem value="read">Read Files</SelectItem>
                   <SelectItem value="artifact">QC / Reports</SelectItem>
                 </SelectContent>
               </Select>
@@ -2789,20 +2938,39 @@ export default function OrderSequencingPage({
               </Select>
             </div>
             {pickerMode === "read" ? (
-              <div className="space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Read Role
+              <>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Read Role
+                  </div>
+                  <Select value={pickerReadRole} onValueChange={(value) => setPickerReadRole(value as "R1" | "R2")}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="R1">Read 1 (R1)</SelectItem>
+                      <SelectItem value="R2">Read 2 (R2)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={pickerReadRole} onValueChange={(value) => setPickerReadRole(value as "R1" | "R2")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="R1">Read 1 (R1)</SelectItem>
-                    <SelectItem value="R2">Read 2 (R2)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Associate As
+                  </div>
+                  <Select value={pickerReadDataClass} onValueChange={(value) => setPickerReadDataClass(value as ReadDataClass)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {READ_DATA_CLASSES.map((dataClass) => (
+                        <SelectItem key={dataClass} value={dataClass}>
+                          {READ_DATA_CLASS_LABELS[dataClass]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             ) : (
               <>
                 <div className="space-y-2">
@@ -2906,7 +3074,7 @@ export default function OrderSequencingPage({
           <DialogHeader>
             <DialogTitle>Upload Files</DialogTitle>
             <DialogDescription>
-              Upload raw reads or internal reports directly into the sequencing storage area.
+              Upload read files or internal reports directly into the sequencing storage area.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
@@ -2919,7 +3087,7 @@ export default function OrderSequencingPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="read">Raw Reads</SelectItem>
+                  <SelectItem value="read">Read Files</SelectItem>
                   <SelectItem value="artifact">QC / Reports</SelectItem>
                 </SelectContent>
               </Select>
@@ -2946,20 +3114,39 @@ export default function OrderSequencingPage({
               </Select>
             </div>
             {uploadMode === "read" ? (
-              <div className="space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Read Role
+              <>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Read Role
+                  </div>
+                  <Select value={uploadReadRole} onValueChange={(value) => setUploadReadRole(value as "R1" | "R2")}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="R1">Read 1 (R1)</SelectItem>
+                      <SelectItem value="R2">Read 2 (R2)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={uploadReadRole} onValueChange={(value) => setUploadReadRole(value as "R1" | "R2")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="R1">Read 1 (R1)</SelectItem>
-                    <SelectItem value="R2">Read 2 (R2)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Upload As
+                  </div>
+                  <Select value={uploadReadDataClass} onValueChange={(value) => setUploadReadDataClass(value as ReadDataClass)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {READ_DATA_CLASSES.map((dataClass) => (
+                        <SelectItem key={dataClass} value={dataClass}>
+                          {READ_DATA_CLASS_LABELS[dataClass]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             ) : (
               <>
                 <div className="space-y-2">
@@ -3097,6 +3284,12 @@ export default function OrderSequencingPage({
                 <a
                   href={`/api/files/download?path=${encodeURIComponent(inspectFilePath)}`}
                   download
+                  onClick={(event) => {
+                    const sample = getSampleForReadPath(inspectFilePath);
+                    if (!confirmProtectedReadUse("download this file", sample)) {
+                      event.preventDefault();
+                    }
+                  }}
                 >
                   <Download className="mr-1.5 h-3.5 w-3.5" />
                   Download

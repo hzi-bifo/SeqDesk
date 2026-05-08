@@ -2,8 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
+    order: {
+      findUnique: vi.fn(),
+    },
     sequencingRun: {
       findFirst: vi.fn(),
+      create: vi.fn(),
     },
     sample: {
       findMany: vi.fn(),
@@ -24,20 +28,28 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
+  createSequencingRunForOrder,
   findDuplicateRunPlanBarcodes,
   filterRunAssignmentFieldsForRole,
+  getRunPlanSampleBarcodeAssignments,
   mapRunPlanHeader,
   normalizeBarcode,
   normalizeRunPlanImportedValue,
   normalizeRunAssignmentFormSchema,
   ONT_RUN_ASSIGNMENT_FIELDS,
+  prefillSequencingRunSamplesFromOrderBarcodes,
   upsertSequencingRunSamples,
 } from "./run-plan";
 
 describe("sequencing run plan helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.db.sequencingRun.findFirst.mockResolvedValue({ id: "run-db-1" });
+    mocks.db.order.findUnique.mockResolvedValue({ id: "order-1", status: "COMPLETED" });
+    mocks.db.sequencingRun.findFirst.mockResolvedValue({
+      id: "run-db-1",
+      order: { status: "COMPLETED" },
+    });
+    mocks.db.sequencingRun.create.mockResolvedValue({ id: "run-db-1" });
     mocks.db.sample.findMany.mockResolvedValue([
       { id: "sample-db-1", sampleId: "sample-1" },
     ]);
@@ -124,6 +136,95 @@ describe("sequencing run plan helpers", () => {
     ).toEqual([{ runId: "run-1", barcode: "barcode01", count: 2 }]);
   });
 
+  it("builds run-plan prefill assignments from order sample barcodes", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-db-1",
+        sampleId: "sample-1",
+        customFields: JSON.stringify({ _barcode: "BC1" }),
+      },
+      {
+        id: "sample-db-2",
+        sampleId: "sample-2",
+        customFields: JSON.stringify({ _barcode: "barcode02" }),
+      },
+      {
+        id: "sample-db-3",
+        sampleId: "sample-3",
+        customFields: JSON.stringify({ _barcode: "" }),
+      },
+    ]);
+
+    await expect(getRunPlanSampleBarcodeAssignments("order-1")).resolves.toEqual({
+      assignments: [
+        { sampleId: "sample-db-1", barcode: "barcode01" },
+        { sampleId: "sample-db-2", barcode: "barcode02" },
+      ],
+      duplicateBarcodes: [],
+    });
+  });
+
+  it("skips duplicate order barcodes during run-plan prefill", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-db-1",
+        sampleId: "sample-1",
+        customFields: JSON.stringify({ _barcode: "BC1" }),
+      },
+      {
+        id: "sample-db-2",
+        sampleId: "sample-2",
+        customFields: JSON.stringify({ _barcode: "barcode01" }),
+      },
+      {
+        id: "sample-db-3",
+        sampleId: "sample-3",
+        customFields: JSON.stringify({ _barcode: "BC2" }),
+      },
+    ]);
+
+    await expect(getRunPlanSampleBarcodeAssignments("order-1")).resolves.toEqual({
+      assignments: [{ sampleId: "sample-db-3", barcode: "barcode02" }],
+      duplicateBarcodes: ["barcode01"],
+    });
+  });
+
+  it("prefills sequencing run samples from order barcodes", async () => {
+    mocks.db.sample.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "sample-db-1",
+          sampleId: "sample-1",
+          customFields: JSON.stringify({ _barcode: "BC1" }),
+        },
+      ])
+      .mockResolvedValueOnce([
+        { id: "sample-db-1", sampleId: "sample-1" },
+      ]);
+
+    const result = await prefillSequencingRunSamplesFromOrderBarcodes({
+      orderId: "order-1",
+      runDbId: "run-db-1",
+    });
+
+    expect(result).toEqual({ assigned: 1, duplicateBarcodes: [] });
+    expect(mocks.db.sequencingRunSample.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          sequencingRunId_sampleId: {
+            sequencingRunId: "run-db-1",
+            sampleId: "sample-db-1",
+          },
+        },
+        create: expect.objectContaining({
+          sequencingRunId: "run-db-1",
+          sampleId: "sample-db-1",
+          barcode: "barcode01",
+        }),
+      })
+    );
+  });
+
   it("preserves existing run assignment metadata when fields are omitted", async () => {
     await upsertSequencingRunSamples({
       orderId: "order-1",
@@ -159,5 +260,37 @@ describe("sequencing run plan helpers", () => {
       customFields: null,
       notes: null,
     });
+  });
+
+  it("rejects run creation for non-manageable orders", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({ id: "order-1", status: "DRAFT" });
+
+    await expect(
+      createSequencingRunForOrder({
+        orderId: "order-1",
+        runId: "RUN-1",
+      })
+    ).rejects.toThrow(
+      "Sequencing run plans can only be managed on submitted or completed orders"
+    );
+    expect(mocks.db.sequencingRun.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects run assignment changes for non-manageable orders", async () => {
+    mocks.db.sequencingRun.findFirst.mockResolvedValue({
+      id: "run-db-1",
+      order: { status: "DRAFT" },
+    });
+
+    await expect(
+      upsertSequencingRunSamples({
+        orderId: "order-1",
+        runDbId: "run-db-1",
+        assignments: [{ sampleId: "sample-1", barcode: "BC1" }],
+      })
+    ).rejects.toThrow(
+      "Sequencing run plans can only be managed on submitted or completed orders"
+    );
+    expect(mocks.db.sequencingRunSample.upsert).not.toHaveBeenCalled();
   });
 });

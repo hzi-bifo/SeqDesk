@@ -241,7 +241,10 @@ export const magAdapter: PipelineAdapter = {
     const samples = await db.sample.findMany({
       where: whereClause,
       include: {
-        reads: true,
+        reads: {
+          where: { isActive: true },
+          orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+        },
       },
     });
 
@@ -308,7 +311,10 @@ export const magAdapter: PipelineAdapter = {
     const samples = await db.sample.findMany({
       where: whereClause,
       include: {
-        reads: true,
+        reads: {
+          where: { isActive: true },
+          orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+        },
         order: {
           select: {
             id: true,

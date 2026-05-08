@@ -18,6 +18,7 @@ import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
 import type { PipelineTarget } from './types';
 import { getPipelineSampleWhere, isStudyTarget } from './target';
+import { normalizeReadDataClass } from '@/lib/sequencing/constants';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
 type PackageColumn = PackageSamplesheet['columns'][number];
@@ -38,20 +39,37 @@ export interface GenerateResult {
  * Resolve a source path like "read.file1" or "sample.reads[paired].file1" to actual data
  */
 function selectRead(
-  reads: Array<{ file1: string | null; file2: string | null }>,
+  reads: Array<{ file1: string | null; file2: string | null; dataClass?: string | null; isActive?: boolean | null }>,
   filters?: Record<string, unknown>
 ): { file1: string | null; file2: string | null } | null {
   const paired = typeof filters?.paired === 'boolean' ? filters.paired : undefined;
+  const requestedDataClass =
+    typeof filters?.dataClass === 'string' ? normalizeReadDataClass(filters.dataClass) : null;
+  const activeReads = reads.filter((read) => read.isActive !== false);
+  const dataClassReads = requestedDataClass
+    ? activeReads.filter((read) => normalizeReadDataClass(read.dataClass) === requestedDataClass)
+    : activeReads;
+  const candidates = dataClassReads.length > 0 ? dataClassReads : activeReads;
+  const sortedReads = [...candidates].sort((a, b) => {
+    const aClass = normalizeReadDataClass(a.dataClass);
+    const bClass = normalizeReadDataClass(b.dataClass);
+    if (aClass === bClass) return 0;
+    if (aClass === 'cleaned') return -1;
+    if (bClass === 'cleaned') return 1;
+    if (aClass === 'raw') return -1;
+    if (bClass === 'raw') return 1;
+    return 0;
+  });
 
   if (paired === true) {
-    return reads.find(r => r.file1 && r.file2) || null;
+    return sortedReads.find(r => r.file1 && r.file2) || null;
   }
 
   if (paired === false) {
-    return reads.find(r => r.file1 && !r.file2) || null;
+    return sortedReads.find(r => r.file1 && !r.file2) || null;
   }
 
-  return reads.find(r => r.file1 && r.file2) || reads.find(r => r.file1) || null;
+  return sortedReads.find(r => r.file1 && r.file2) || sortedReads.find(r => r.file1) || null;
 }
 
 function resolveSource(
@@ -59,7 +77,7 @@ function resolveSource(
   context: {
     sample: {
       sampleId: string;
-      reads: Array<{ file1: string | null; file2: string | null }>;
+      reads: Array<{ file1: string | null; file2: string | null; dataClass?: string | null; isActive?: boolean | null }>;
     };
     study: { id: string; title: string | null } | null;
     order: { id?: string | null; platform?: string | null; customFields?: string | null } | null;
@@ -246,6 +264,8 @@ export class SamplesheetGenerator {
           reads: sample.reads.map(r => ({
             file1: r.file1,
             file2: r.file2,
+            dataClass: r.dataClass,
+            isActive: r.isActive,
           })),
         },
         study: sample.study || study,

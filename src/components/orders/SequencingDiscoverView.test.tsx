@@ -201,11 +201,12 @@ describe("SequencingDiscoverView", () => {
           sampleId: "sample-a",
           read1: "run-a/SAMPLE_A_R1.fastq.gz",
           read2: "run-a/SAMPLE_A_R2.fastq.gz",
+          dataClass: "cleaned",
         },
       ],
     });
     expect(readAssignments).toContainEqual({
-      assignments: [{ sampleId: "sample-a", read1: null, read2: null }],
+      assignments: [{ sampleId: "sample-a", read1: null, read2: null, dataClass: "cleaned" }],
     });
     expect(readAssignments).toContainEqual({
       assignments: [
@@ -213,8 +214,71 @@ describe("SequencingDiscoverView", () => {
           sampleId: "sample-b",
           read1: "run-a/SAMPLE_A_R2.fastq.gz",
           read2: null,
+          dataClass: "cleaned",
         },
       ],
     });
+  });
+
+  it("reports partial read-assignment failures without a success toast", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browse")) {
+        return Promise.resolve(jsonResponse({ files: storageFiles }));
+      }
+      if (url.includes("/discover")) {
+        return Promise.resolve(
+          jsonResponse({
+            results: discoveryResults,
+            scannedFiles: 3,
+            summary: { exactMatches: 1 },
+          })
+        );
+      }
+      if (url.includes("/sequencing/reads")) {
+        expect(init?.method).toBe("PUT");
+        return Promise.resolve(
+          jsonResponse({
+            success: false,
+            results: [
+              {
+                sampleId: "SAMPLE_A",
+                success: false,
+                error: "Read 1 file not found",
+              },
+            ],
+          })
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(
+      <SequencingDiscoverView
+        orderId="order-1"
+        canManage
+        dataBasePathConfigured
+        onDataChanged={onDataChanged}
+        samples={[
+          {
+            id: "sample-a",
+            sampleId: "SAMPLE_A",
+            sampleAlias: "Alpha",
+            read: null,
+          },
+        ] as any}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Auto-Discover/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Link" }));
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "SAMPLE_A: Read 1 file not found"
+      );
+    });
+    expect(mocks.toastSuccess).not.toHaveBeenCalledWith("Linked reads for SAMPLE_A");
+    expect(onDataChanged).not.toHaveBeenCalled();
   });
 });

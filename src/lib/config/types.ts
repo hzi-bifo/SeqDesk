@@ -161,11 +161,23 @@ export interface RuntimeConfig {
   updateServer?: string;
 }
 
+export interface InstallProfileConfig {
+  /** Hosted install profile id from seqdesk.com/admin */
+  id?: string;
+  /** Human-readable hosted profile name */
+  name?: string;
+  /** Hosted profile version */
+  version?: string;
+  /** Timestamp when this profile metadata was written locally */
+  appliedAt?: string;
+}
+
 /**
  * Complete SeqDesk configuration schema
  */
 export interface SeqDeskConfig {
   app?: AppConfig;
+  installProfile?: InstallProfileConfig;
   site?: SiteConfig;
   pipelines?: PipelinesConfig;
   ena?: EnaConfig;

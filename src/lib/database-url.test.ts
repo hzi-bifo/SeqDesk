@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   POSTGRES_PROTOCOLS,
+  detectDatabaseHosting,
   detectDatabaseProvider,
   getDatabaseConfigurationError,
+  isNeonDatabaseUrl,
+  isPooledDatabaseUrl,
   isPostgresDatabaseUrl,
   isSqliteDatabaseUrl,
   normalizeDatabaseUrl,
@@ -33,6 +36,28 @@ describe("database-url", () => {
     expect(detectDatabaseProvider("file:./dev.db")).toBe("sqlite");
     expect(detectDatabaseProvider("mysql://seqdesk/db")).toBe("unknown");
     expect(detectDatabaseProvider("   ")).toBe("unknown");
+  });
+
+  it("detects database hosting separately from SQL engine compatibility", () => {
+    const neonDirect =
+      "postgresql://user:pass@ep-silent-cell-a1b2c3d4.us-east-1.aws.neon.tech/neondb?sslmode=require";
+    const neonPooled =
+      "postgresql://user:pass@ep-silent-cell-a1b2c3d4-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require";
+    const localPostgres =
+      "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public";
+
+    expect(detectDatabaseProvider(neonDirect)).toBe("postgresql");
+    expect(detectDatabaseHosting(neonDirect)).toBe("neon");
+    expect(isNeonDatabaseUrl(neonDirect)).toBe(true);
+    expect(isPooledDatabaseUrl(neonDirect)).toBe(false);
+
+    expect(detectDatabaseHosting(neonPooled)).toBe("neon");
+    expect(isPooledDatabaseUrl(neonPooled)).toBe(true);
+
+    expect(detectDatabaseHosting(localPostgres)).toBe("self-hosted-postgres");
+    expect(isNeonDatabaseUrl(localPostgres)).toBe(false);
+    expect(isPooledDatabaseUrl(localPostgres)).toBe(false);
+    expect(detectDatabaseHosting("file:./dev.db")).toBe("unknown");
   });
 
   it("reports configuration errors for missing and unsupported URLs", () => {

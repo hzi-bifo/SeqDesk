@@ -68,6 +68,10 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("Configured PostgreSQL is remote");
     expect(installDist).toContain("postgres_url_host");
     expect(installDist).toContain("Current DATABASE_URL: ${redacted_database_url}");
+    expect(installDist).toContain("SEQDESK_INSTALL_PROFILE_CONFIG_FILE");
+    expect(installDist).toContain("buildInstallProfileConfig");
+    expect(installDist).toContain("config.installProfile = installProfile");
+    expect(installDist).not.toContain("safeProfile.relayToken");
   });
 
   it("applies resolved profiles after database setup and includes the applicator in releases", () => {
@@ -91,6 +95,10 @@ describe("install profile installer wiring", () => {
     expect(profileApplicator).toContain("extra.telemetry");
     expect(profileApplicator).toContain("installProfileSeedData");
     expect(profileApplicator).toContain("installProfilePipelineSmokeTests");
+    expect(profileApplicator).toContain("persistSafeInstallProfileMetadata");
+    expect(profileApplicator).toContain("buildSafeInstallProfileMetadata");
+    expect(profileApplicator).not.toContain("metadata.relayToken");
+    expect(profileApplicator).not.toContain("metadata.databaseUrl");
     expect(profileApplicator).not.toContain("deleteMany");
   });
 

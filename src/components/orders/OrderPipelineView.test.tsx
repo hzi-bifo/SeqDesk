@@ -429,12 +429,12 @@ describe("OrderPipelineView", () => {
       );
     });
 
-    fireEvent.click(screen.getByText("RUN-2026-001"));
+    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
     expect(screen.getByText("Change Source")).toBeTruthy();
     expect(screen.getByText("Current")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
-    fireEvent.click(screen.getAllByRole("button", { name: /View details/i })[0]);
+    fireEvent.click(screen.getByLabelText("View details for RUN-2026-001"));
     expect(screen.getByText("Run Details")).toBeTruthy();
     expect(screen.getByText("Read count:")).toBeTruthy();
     expect(screen.getByText("No")).toBeTruthy();
@@ -455,5 +455,36 @@ describe("OrderPipelineView", () => {
         method: "POST",
       });
     });
+  });
+
+  it("warns when simulate reads would preserve stale linked reads", () => {
+    const staleSamples = [
+      {
+        ...samples[0],
+        read: {
+          ...samples[0].read,
+          filesMissing: true,
+          fileSize1: null,
+          fileSize2: null,
+        },
+      },
+    ] as any;
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={staleSamples}
+      />
+    );
+
+    expect(screen.queryByText("Stale reads will be preserved")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Replace existing"));
+
+    expect(screen.getByText("Stale reads will be preserved")).toBeTruthy();
+    expect(
+      screen.getByText(/will leave 1 stale linked sample unchanged/i)
+    ).toBeTruthy();
   });
 });

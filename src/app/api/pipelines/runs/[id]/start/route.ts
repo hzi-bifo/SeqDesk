@@ -171,14 +171,24 @@ export async function POST(
         study: {
           include: {
             samples: {
-              include: { reads: true },
+              include: {
+                reads: {
+                  where: { isActive: true },
+                  orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+                },
+              },
             },
           },
         },
         order: {
           include: {
             samples: {
-              include: { reads: true },
+              include: {
+                reads: {
+                  where: { isActive: true },
+                  orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+                },
+              },
             },
           },
         },

@@ -22,10 +22,30 @@ export interface ScanOptions {
   maxDepth: number;
   /** Glob patterns for directories/files to ignore */
   ignorePatterns?: string[];
+  /** Maximum number of files to return before truncating the scan */
+  maxFiles?: number;
+  /** Skip files modified within this age window, useful while sequencers are still writing */
+  activeWriteMinAgeMs?: number;
+}
+
+export interface ScanWarnings {
+  inaccessibleDirectories: Array<{ relativePath: string; error: string }>;
+  ignoredEntries: number;
+  truncated: boolean;
+  activeWritesSkipped: number;
+  skippedRecentFiles: Array<{ relativePath: string; modifiedAt: string }>;
+  maxFiles: number | null;
+  maxDepth: number;
+}
+
+export interface ScanDirectoryReport {
+  files: FileInfo[];
+  warnings: ScanWarnings;
 }
 
 interface CacheEntry {
   files: FileInfo[];
+  warnings: ScanWarnings;
   scannedAt: number;
   basePath: string;
   options: ScanOptions;
@@ -44,7 +64,21 @@ function getCacheKey(basePath: string, options: ScanOptions): string {
     extensions: [...options.allowedExtensions].sort(),
     depth: options.maxDepth,
     ignore: options.ignorePatterns ? [...options.ignorePatterns].sort() : [],
+    maxFiles: options.maxFiles ?? null,
+    activeWriteMinAgeMs: options.activeWriteMinAgeMs ?? 0,
   });
+}
+
+function createScanWarnings(options: ScanOptions): ScanWarnings {
+  return {
+    inaccessibleDirectories: [],
+    ignoredEntries: 0,
+    truncated: false,
+    activeWritesSkipped: 0,
+    skippedRecentFiles: [],
+    maxFiles: options.maxFiles ?? null,
+    maxDepth: options.maxDepth,
+  };
 }
 
 /**
@@ -75,19 +109,22 @@ async function scanDirectoryRecursive(
   basePath: string,
   options: ScanOptions,
   currentDepth: number,
-  results: FileInfo[]
+  results: FileInfo[],
+  warnings: ScanWarnings
 ): Promise<void> {
-  if (currentDepth > options.maxDepth) return;
+  if (currentDepth > options.maxDepth || warnings.truncated) return;
 
   try {
     const entries = await fs.readdir(currentPath, { withFileTypes: true });
 
     for (const entry of entries) {
+      if (warnings.truncated) return;
       const fullPath = path.join(currentPath, entry.name);
       const relativePath = path.relative(basePath, fullPath);
 
       // Check ignore patterns
       if (shouldIgnore(relativePath, options.ignorePatterns || [])) {
+        warnings.ignoredEntries += 1;
         continue;
       }
 
@@ -98,13 +135,32 @@ async function scanDirectoryRecursive(
           basePath,
           options,
           currentDepth + 1,
-          results
+          results,
+          warnings
         );
       } else if (entry.isFile()) {
         // Check if file matches allowed extensions
         if (hasAllowedExtension(entry.name, options.allowedExtensions)) {
           try {
             const stats = await fs.stat(fullPath);
+            const activeWriteMinAgeMs = options.activeWriteMinAgeMs ?? 0;
+            if (
+              activeWriteMinAgeMs > 0 &&
+              Date.now() - stats.mtime.getTime() < activeWriteMinAgeMs
+            ) {
+              warnings.activeWritesSkipped += 1;
+              if (warnings.skippedRecentFiles.length < 25) {
+                warnings.skippedRecentFiles.push({
+                  relativePath,
+                  modifiedAt: stats.mtime.toISOString(),
+                });
+              }
+              continue;
+            }
+            if (options.maxFiles && results.length >= options.maxFiles) {
+              warnings.truncated = true;
+              return;
+            }
             results.push({
               absolutePath: fullPath,
               relativePath,
@@ -120,8 +176,39 @@ async function scanDirectoryRecursive(
     }
   } catch (error) {
     // Skip directories we can't read
+    warnings.inaccessibleDirectories.push({
+      relativePath: path.relative(basePath, currentPath) || ".",
+      error: error instanceof Error ? error.message : "Directory could not be read",
+    });
     console.warn(`[Scanner] Could not read directory ${currentPath}:`, error);
   }
+}
+
+async function scanDirectoryFresh(
+  basePath: string,
+  options: ScanOptions
+): Promise<ScanDirectoryReport> {
+  const resolvedBase = path.resolve(basePath);
+
+  // Verify base path exists and is a directory
+  try {
+    const stats = await fs.stat(resolvedBase);
+    if (!stats.isDirectory()) {
+      throw new Error(`${basePath} is not a directory`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Directory does not exist: ${basePath}`);
+    }
+    throw error;
+  }
+
+  const files: FileInfo[] = [];
+  const warnings = createScanWarnings(options);
+  await scanDirectoryRecursive(resolvedBase, resolvedBase, options, 1, files, warnings);
+
+  files.sort((a, b) => a.filename.localeCompare(b.filename));
+  return { files, warnings };
 }
 
 /**
@@ -148,35 +235,47 @@ export async function scanDirectory(
     }
   }
 
-  // Verify base path exists and is a directory
-  try {
-    const stats = await fs.stat(resolvedBase);
-    if (!stats.isDirectory()) {
-      throw new Error(`${basePath} is not a directory`);
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Directory does not exist: ${basePath}`);
-    }
-    throw error;
-  }
-
-  // Perform scan
-  const results: FileInfo[] = [];
-  await scanDirectoryRecursive(resolvedBase, resolvedBase, options, 1, results);
-
-  // Sort by filename for consistent ordering
-  results.sort((a, b) => a.filename.localeCompare(b.filename));
+  const report = await scanDirectoryFresh(resolvedBase, options);
 
   // Update cache
   scanCache.set(cacheKey, {
-    files: results,
+    files: report.files,
+    warnings: report.warnings,
     scannedAt: Date.now(),
     basePath: resolvedBase,
     options,
   });
 
-  return results;
+  return report.files;
+}
+
+export async function scanDirectoryWithReport(
+  basePath: string,
+  options: ScanOptions,
+  force: boolean = false
+): Promise<ScanDirectoryReport> {
+  const resolvedBase = path.resolve(basePath);
+  const cacheKey = getCacheKey(resolvedBase, options);
+
+  if (!force) {
+    const cached = scanCache.get(cacheKey);
+    if (cached && Date.now() - cached.scannedAt < CACHE_TTL_MS) {
+      return {
+        files: cached.files,
+        warnings: cached.warnings,
+      };
+    }
+  }
+
+  const report = await scanDirectoryFresh(resolvedBase, options);
+  scanCache.set(cacheKey, {
+    files: report.files,
+    warnings: report.warnings,
+    scannedAt: Date.now(),
+    basePath: resolvedBase,
+    options,
+  });
+  return report;
 }
 
 /**

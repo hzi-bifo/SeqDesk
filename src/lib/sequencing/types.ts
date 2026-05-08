@@ -1,5 +1,8 @@
 import type {
   FacilitySampleStatus,
+  ReadDataClass,
+  ReadDataClassSource,
+  ReadOrigin,
   SequencingArtifactStage,
   SequencingArtifactType,
   SequencingIntegrityStatus,
@@ -9,6 +12,15 @@ export interface SequencingRunSummary {
   id: string;
   runId: string;
   runName: string | null;
+}
+
+export type SequencingPlannedBarcodeSource = "run-plan" | "sample-barcode" | null;
+
+export interface SequencingTechSelectionSummary {
+  id: string | null;
+  name: string | null;
+  label: string | null;
+  platform: string | null;
 }
 
 export interface SequencingReadSummary {
@@ -28,6 +40,18 @@ export interface SequencingReadSummary {
   pipelineRunId: string | null;
   pipelineRunNumber: string | null;
   pipelineSources: Record<string, string> | null;
+  dataClass: ReadDataClass;
+  dataClassLabel: string;
+  dataClassSource: ReadDataClassSource;
+  readOrigin: ReadOrigin;
+  readOriginLabel: string;
+  isSimulated: boolean;
+  isProtectedRaw: boolean;
+  isActive: boolean;
+  supersededByReadId: string | null;
+  classifiedAt: string | null;
+  classifiedById: string | null;
+  classificationNote: string | null;
   /** True when linked read files no longer exist on disk */
   filesMissing: boolean;
 }
@@ -62,6 +86,11 @@ export interface SequencingSampleRow {
   read: SequencingReadSummary | null;
   integrityStatus: SequencingIntegrityStatus;
   hasReads: boolean;
+  protectedProvenanceCount: number;
+  protectedProvenance: SequencingReadSummary[];
+  plannedBarcode?: string | null;
+  plannedBarcodeSource?: SequencingPlannedBarcodeSource;
+  plannedBarcodeRunId?: string | null;
   sequencingRun: SequencingRunSummary | null;
   artifactCount: number;
   qcArtifactCount: number;
@@ -88,6 +117,7 @@ export interface OrderSequencingSummaryResponse {
     allowedExtensions: string[];
     allowSingleEnd: boolean;
   };
+  sequencingTechSelection?: SequencingTechSelectionSummary | null;
   summary: {
     totalSamples: number;
     readsLinkedSamples: number;
@@ -124,13 +154,30 @@ export interface SequencingDiscoverySuggestion {
   } | null;
   confidence: number;
   alternatives: SequencingDiscoveryAlternative[];
+  matchedBy?: "run-plan-barcode" | "sample-barcode" | "sample-id" | null;
+}
+
+export interface SequencingDiscoveryScanWarnings {
+  inaccessibleDirectories: Array<{ relativePath: string; error: string }>;
+  ignoredEntries: number;
+  truncated: boolean;
+  activeWritesSkipped: number;
+  skippedRecentFiles: Array<{ relativePath: string; modifiedAt: string }>;
+  maxFiles: number | null;
+  maxDepth: number;
 }
 
 export interface SequencingDiscoveryResult {
   sampleId: string;
   sampleAlias: string | null;
+  plannedBarcode?: string | null;
+  plannedBarcodeSource?: SequencingPlannedBarcodeSource;
+  plannedBarcodeRunId?: string | null;
   suggestion: SequencingDiscoverySuggestion;
   autoAssigned: boolean;
+  dataClass?: ReadDataClass;
+  dataClassLabel?: string;
+  isProtectedRaw?: boolean;
 }
 
 export interface SequencingChecksumSummary {

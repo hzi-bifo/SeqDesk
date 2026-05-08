@@ -177,6 +177,8 @@ export async function GET(
         file2: true,
         readCount1: true,
         readCount2: true,
+        dataClass: true,
+        dataClassSource: true,
       },
     });
 
@@ -288,6 +290,8 @@ export async function GET(
       readCount,
       readCountSource,
       readCountError,
+      dataClass: read.dataClass,
+      dataClassSource: read.dataClassSource,
       preview,
     });
   } catch (error) {

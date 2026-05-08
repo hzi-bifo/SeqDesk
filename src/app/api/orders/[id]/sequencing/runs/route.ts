@@ -7,6 +7,7 @@ import {
 import {
   createSequencingRunForOrder,
   listSequencingRunsForOrder,
+  prefillSequencingRunSamplesFromOrderBarcodes,
 } from "@/lib/sequencing/run-plan";
 
 export async function GET(
@@ -50,7 +51,11 @@ export async function POST(
           ? body.runParameters
           : {},
     });
-    return NextResponse.json(run, { status: 201 });
+    const prefill = await prefillSequencingRunSamplesFromOrderBarcodes({
+      orderId: id,
+      runDbId: run.id,
+    });
+    return NextResponse.json({ ...run, prefill }, { status: 201 });
   } catch (error) {
     if (error instanceof SequencingApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

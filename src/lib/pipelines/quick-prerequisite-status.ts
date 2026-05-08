@@ -7,6 +7,7 @@ export interface QuickPrerequisiteStatus {
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const STORAGE_KEY = "seqdesk:quick-prerequisite-status:v1";
+const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
 
 let memoryCache: QuickPrerequisiteStatus | null = null;
 let inflightRequest: Promise<QuickPrerequisiteStatus> | null = null;
@@ -133,10 +134,12 @@ export async function refreshQuickPrerequisiteStatus({
   force = false,
   storage = getSessionStorage(),
   fetchImpl = fetch,
+  timeoutMs = DEFAULT_REFRESH_TIMEOUT_MS,
 }: {
   force?: boolean;
   storage?: StorageLike | null;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 } = {}): Promise<QuickPrerequisiteStatus> {
   if (!force) {
     const cached = readCachedQuickPrerequisiteStatus(storage);
@@ -150,9 +153,32 @@ export async function refreshQuickPrerequisiteStatus({
   }
 
   inflightRequest = (async () => {
-    const response = await fetchImpl(
-      "/api/admin/settings/pipelines/check-prerequisites?quick=true"
-    );
+    const controller =
+      typeof AbortController !== "undefined" &&
+      Number.isFinite(timeoutMs) &&
+      timeoutMs > 0
+        ? new AbortController()
+        : null;
+    const timeoutId: ReturnType<typeof setTimeout> | null = controller
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+    let response: Response;
+    try {
+      response = await fetchImpl(
+        "/api/admin/settings/pipelines/check-prerequisites?quick=true",
+        controller ? { signal: controller.signal } : undefined
+      );
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new Error("Could not check system");
+      }
+      throw error;
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
 
     if (!response.ok) {
       throw new Error("Could not check system");

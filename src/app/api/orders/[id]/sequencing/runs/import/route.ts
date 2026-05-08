@@ -9,6 +9,7 @@ import {
   findDuplicateRunPlanBarcodes,
   mapRunPlanHeader,
   normalizeRunPlanImportedValue,
+  prefillSequencingRunSamplesFromOrderBarcodes,
   RUN_PLAN_IMPORT_MAX_BYTES,
   RUN_PLAN_IMPORT_MAX_COLUMNS,
   RUN_PLAN_IMPORT_MAX_ROWS,
@@ -195,6 +196,10 @@ export async function POST(
       });
       if (!run) {
         run = await createSequencingRunForOrder({ orderId: id, runId, runName: runId });
+        await prefillSequencingRunSamplesFromOrderBarcodes({
+          orderId: id,
+          runDbId: run.id,
+        });
       }
       await upsertSequencingRunSamples({
         orderId: id,

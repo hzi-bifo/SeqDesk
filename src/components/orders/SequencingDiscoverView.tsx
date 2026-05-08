@@ -7,6 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpBox } from "@/components/ui/help-box";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -39,8 +46,17 @@ import {
 } from "lucide-react";
 import type {
   SequencingDiscoveryResult,
+  SequencingDiscoveryScanWarnings,
   SequencingSampleRow,
 } from "@/lib/sequencing/types";
+import {
+  READ_DATA_CLASS_BADGE_CLASSNAMES,
+  READ_DATA_CLASS_LABELS,
+  READ_DATA_CLASSES,
+  READ_ORIGIN_BADGE_CLASSNAMES,
+  type ReadDataClass,
+  type ReadOrigin,
+} from "@/lib/sequencing/constants";
 
 interface StorageFile {
   relativePath: string;
@@ -70,6 +86,62 @@ function formatFileSize(bytes?: number | null): string {
   if (bytes < 1024 * 1024 * 1024)
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function getAssignmentFailureMessage(payload: any, fallback: string): string | null {
+  if (payload?.error) return String(payload.error);
+  if (payload?.success === false) {
+    const failures = Array.isArray(payload.results)
+      ? payload.results.filter((result: any) => result && result.success === false)
+      : [];
+    if (failures.length > 0) {
+      return failures
+        .slice(0, 3)
+        .map((failure: any) =>
+          failure?.sampleId && failure?.error
+            ? `${failure.sampleId}: ${failure.error}`
+            : failure?.error || fallback
+        )
+        .join("; ");
+    }
+    return fallback;
+  }
+  return null;
+}
+
+function getBarcodeSourceLabel(
+  source?: SequencingSampleRow["plannedBarcodeSource"]
+): string | null {
+  if (source === "run-plan") return "Run plan";
+  if (source === "sample-barcode") return "Order barcode";
+  return null;
+}
+
+function getMatchSourceLabel(
+  matchedBy?: SequencingDiscoveryResult["suggestion"]["matchedBy"]
+): string | null {
+  if (matchedBy === "run-plan-barcode") return "matched by run-plan barcode";
+  if (matchedBy === "sample-barcode") return "matched by order barcode";
+  if (matchedBy === "sample-id") return "matched by sample ID or alias";
+  return null;
+}
+
+function getReadDataClassBadgeClassName(dataClass: ReadDataClass) {
+  return READ_DATA_CLASS_BADGE_CLASSNAMES[dataClass];
+}
+
+function getReadOriginBadgeClassName(origin: ReadOrigin) {
+  return READ_ORIGIN_BADGE_CLASSNAMES[origin];
+}
+
+function readFileMissing(
+  sample: SequencingSampleRow,
+  field: "file1" | "file2"
+): boolean {
+  if (!sample.read?.filesMissing || !sample.read[field]) return false;
+  return field === "file1"
+    ? sample.read.fileSize1 == null
+    : sample.read.fileSize2 == null;
 }
 
 // ── File tree helpers ──
@@ -352,6 +424,8 @@ export function SequencingDiscoverView({
   const [discoveryResults, setDiscoveryResults] = useState<
     SequencingDiscoveryResult[]
   >([]);
+  const [scanWarnings, setScanWarnings] =
+    useState<SequencingDiscoveryScanWarnings | null>(null);
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [storageFiles, setStorageFiles] = useState<StorageFile[]>([]);
   const [storageLoading, setStorageLoading] = useState(false);
@@ -363,6 +437,21 @@ export function SequencingDiscoverView({
   const [pickerFiles, setPickerFiles] = useState<StorageFile[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [applyingIds, setApplyingIds] = useState<Set<string>>(new Set());
+  const [defaultReadDataClass, setDefaultReadDataClass] = useState<ReadDataClass>("cleaned");
+  const [sampleReadDataClasses, setSampleReadDataClasses] = useState<Record<string, ReadDataClass>>({});
+
+  const getSampleReadDataClass = useCallback(
+    (sampleId: string): ReadDataClass =>
+      sampleReadDataClasses[sampleId] ?? defaultReadDataClass,
+    [defaultReadDataClass, sampleReadDataClasses]
+  );
+
+  const setSampleReadDataClass = useCallback((sampleId: string, dataClass: ReadDataClass) => {
+    setSampleReadDataClasses((current) => ({
+      ...current,
+      [sampleId]: dataClass,
+    }));
+  }, []);
 
   const refreshStorageFiles = useCallback(() => {
     if (!dataBasePathConfigured) return;
@@ -384,6 +473,7 @@ export function SequencingDiscoverView({
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
     setDiscoveryResults([]);
+    setScanWarnings(null);
     try {
       const response = await fetch(
         `/api/orders/${orderId}/sequencing/discover`,
@@ -399,6 +489,9 @@ export function SequencingDiscoverView({
       }
       setDiscoveryResults(
         (payload.results as SequencingDiscoveryResult[]) ?? []
+      );
+      setScanWarnings(
+        (payload.scanWarnings as SequencingDiscoveryScanWarnings | undefined) ?? null
       );
       setHasDiscovered(true);
       toast.success(
@@ -431,14 +524,16 @@ export function SequencingDiscoverView({
                   sampleId: sample.id,
                   read1: result.suggestion.read1.relativePath,
                   read2: result.suggestion.read2?.relativePath ?? null,
+                  dataClass: getSampleReadDataClass(sample.id),
                 },
               ],
             }),
           }
         );
         const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || "Failed to apply match");
+        const failureMessage = getAssignmentFailureMessage(payload, "Failed to apply match");
+        if (!response.ok || failureMessage) {
+          throw new Error(failureMessage || "Failed to apply match");
         }
         toast.success(`Linked reads for ${sample.sampleId}`);
         onDataChanged();
@@ -454,7 +549,7 @@ export function SequencingDiscoverView({
         });
       }
     },
-    [orderId, samples, onDataChanged]
+    [getSampleReadDataClass, orderId, samples, onDataChanged]
   );
 
   const handleApplyAllExact = useCallback(async () => {
@@ -469,10 +564,11 @@ export function SequencingDiscoverView({
           sampleId: sample.id,
           read1: result.suggestion.read1.relativePath,
           read2: result.suggestion.read2?.relativePath ?? null,
+          dataClass: getSampleReadDataClass(sample.id),
         };
       })
       .filter(
-        (a): a is { sampleId: string; read1: string; read2: string | null } =>
+        (a): a is { sampleId: string; read1: string; read2: string | null; dataClass: ReadDataClass } =>
           a !== null
       );
 
@@ -491,8 +587,9 @@ export function SequencingDiscoverView({
         }
       );
       const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to apply matches");
+      const failureMessage = getAssignmentFailureMessage(payload, "Failed to apply matches");
+      if (!response.ok || failureMessage) {
+        throw new Error(failureMessage || "Failed to apply matches");
       }
       toast.success(`Linked reads for ${assignments.length} samples`);
       onDataChanged();
@@ -501,7 +598,7 @@ export function SequencingDiscoverView({
         err instanceof Error ? err.message : "Failed to apply matches"
       );
     }
-  }, [orderId, samples, discoveryResults, onDataChanged]);
+  }, [getSampleReadDataClass, orderId, samples, discoveryResults, onDataChanged]);
 
   const openPicker = useCallback(
     (sampleId: string, role: "R1" | "R2") => {
@@ -531,10 +628,12 @@ export function SequencingDiscoverView({
         sampleId: string;
         read1: string | null;
         read2: string | null;
+        dataClass: ReadDataClass;
       } = {
         sampleId: sample.id,
         read1: existingRead?.file1 ?? null,
         read2: existingRead?.file2 ?? null,
+        dataClass: getSampleReadDataClass(sample.id),
       };
 
       if (pickerRole === "R1") {
@@ -553,8 +652,9 @@ export function SequencingDiscoverView({
           }
         );
         const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || "Failed to assign file");
+        const failureMessage = getAssignmentFailureMessage(payload, "Failed to assign file");
+        if (!response.ok || failureMessage) {
+          throw new Error(failureMessage || "Failed to assign file");
         }
         toast.success(
           `Assigned ${pickerRole} for ${sample.sampleId}`
@@ -567,7 +667,7 @@ export function SequencingDiscoverView({
         );
       }
     },
-    [orderId, samples, pickerSampleId, pickerRole, onDataChanged]
+    [getSampleReadDataClass, orderId, samples, pickerSampleId, pickerRole, onDataChanged]
   );
 
   const handleUnlinkRead = useCallback(
@@ -579,6 +679,7 @@ export function SequencingDiscoverView({
         sampleId: sampleDbId,
         read1: role === "both" || role === "R1" ? null : (sample.read?.file1 ?? null),
         read2: role === "both" || role === "R2" ? null : (sample.read?.file2 ?? null),
+        dataClass: sample.read?.dataClass ?? getSampleReadDataClass(sampleDbId),
       };
 
       try {
@@ -591,8 +692,9 @@ export function SequencingDiscoverView({
           }
         );
         const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || "Failed to unlink read");
+        const failureMessage = getAssignmentFailureMessage(payload, "Failed to unlink read");
+        if (!response.ok || failureMessage) {
+          throw new Error(failureMessage || "Failed to unlink read");
         }
         toast.success(`Unlinked ${role === "both" ? "reads" : role} for ${sample.sampleId}`);
         onDataChanged();
@@ -602,7 +704,7 @@ export function SequencingDiscoverView({
         );
       }
     },
-    [orderId, samples, onDataChanged]
+    [getSampleReadDataClass, orderId, samples, onDataChanged]
   );
 
   const handleAssociateFromTree = useCallback(
@@ -611,10 +713,11 @@ export function SequencingDiscoverView({
       if (!sample) return;
 
       const existingRead = sample.read;
-      const assignment: { sampleId: string; read1: string | null; read2: string | null } = {
+      const assignment: { sampleId: string; read1: string | null; read2: string | null; dataClass: ReadDataClass } = {
         sampleId: sampleDbId,
         read1: existingRead?.file1 ?? null,
         read2: existingRead?.file2 ?? null,
+        dataClass: getSampleReadDataClass(sampleDbId),
       };
 
       if (role === "R1") {
@@ -633,8 +736,9 @@ export function SequencingDiscoverView({
           }
         );
         const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || "Failed to associate file");
+        const failureMessage = getAssignmentFailureMessage(payload, "Failed to associate file");
+        if (!response.ok || failureMessage) {
+          throw new Error(failureMessage || "Failed to associate file");
         }
         toast.success(`Assigned ${role} of ${file.filename} to ${sample.sampleId}`);
         onDataChanged();
@@ -644,7 +748,7 @@ export function SequencingDiscoverView({
         );
       }
     },
-    [orderId, samples, onDataChanged]
+    [getSampleReadDataClass, orderId, samples, onDataChanged]
   );
 
   const treeSamples: FileTreeSample[] = useMemo(
@@ -700,6 +804,11 @@ export function SequencingDiscoverView({
   const noMatchCount = discoveryResults.filter(
     (r) => r.suggestion.status === "none"
   ).length;
+  const scanWarningCount =
+    (scanWarnings?.inaccessibleDirectories.length ?? 0) +
+    (scanWarnings?.ignoredEntries ?? 0) +
+    (scanWarnings?.activeWritesSkipped ?? 0) +
+    (scanWarnings?.truncated ? 1 : 0);
 
   const pickerSample = samples.find((s) => s.id === pickerSampleId);
 
@@ -714,6 +823,11 @@ export function SequencingDiscoverView({
     const pairs = Math.min(r1Count, r2Count);
     return { totalSize, newest, oldest, r1Count, r2Count, pairs };
   }, [storageFiles]);
+
+  const staleReadSamples = useMemo(
+    () => samples.filter((sample) => sample.read?.filesMissing),
+    [samples]
+  );
 
   return (
     <div className="space-y-6">
@@ -746,6 +860,50 @@ export function SequencingDiscoverView({
         assign read files when names are incomplete or ambiguous.
       </HelpBox>
 
+      {staleReadSamples.length > 0 ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-900">
+          <div className="font-medium">Linked read paths need review</div>
+          <div className="mt-1 text-rose-800">
+            {staleReadSamples.length} sample{staleReadSamples.length === 1 ? "" : "s"} currently point
+            to missing or inaccessible FASTQ files. Re-associate the files here, or confirm the storage
+            path if they were moved.
+          </div>
+        </div>
+      ) : null}
+
+      <div className="rounded-xl border border-border bg-card px-4 py-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-sm font-medium">Associate reads as</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              Current storage is treated as cleaned by default. Choose raw only for unfiltered sequencer output.
+            </div>
+          </div>
+          <div className="inline-flex rounded-lg border bg-background p-1">
+            {READ_DATA_CLASSES.map((dataClass) => (
+              <button
+                key={dataClass}
+                type="button"
+                onClick={() => setDefaultReadDataClass(dataClass)}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  defaultReadDataClass === dataClass
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {READ_DATA_CLASS_LABELS[dataClass]}
+              </button>
+            ))}
+          </div>
+        </div>
+        {defaultReadDataClass !== "cleaned" ? (
+          <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2 text-xs text-rose-800">
+            Raw or unknown reads may still contain human contamination. Only mark files cleaned after removal has completed.
+          </div>
+        ) : null}
+      </div>
+
       {!dataBasePathConfigured && (
         <Card className="border-amber-200 bg-amber-50/70">
           <CardHeader>
@@ -758,6 +916,43 @@ export function SequencingDiscoverView({
             </CardDescription>
           </CardHeader>
         </Card>
+      )}
+
+      {hasDiscovered && scanWarnings && scanWarningCount > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+          <div className="font-medium">Scan completed with warnings</div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-amber-800">
+            {scanWarnings.inaccessibleDirectories.length > 0 && (
+              <span>
+                {scanWarnings.inaccessibleDirectories.length} inaccessible folder
+                {scanWarnings.inaccessibleDirectories.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            {scanWarnings.ignoredEntries > 0 && (
+              <span>{scanWarnings.ignoredEntries} ignored item{scanWarnings.ignoredEntries !== 1 ? "s" : ""}</span>
+            )}
+            {scanWarnings.activeWritesSkipped > 0 && (
+              <span>
+                {scanWarnings.activeWritesSkipped} active write
+                {scanWarnings.activeWritesSkipped !== 1 ? "s" : ""} skipped
+              </span>
+            )}
+            {scanWarnings.truncated && (
+              <span>
+                Results truncated at {scanWarnings.maxFiles?.toLocaleString() ?? "the configured file limit"} files
+              </span>
+            )}
+          </div>
+          {scanWarnings.skippedRecentFiles.length > 0 && (
+            <div className="mt-2 truncate text-xs text-amber-800">
+              Recently modified:{" "}
+              {scanWarnings.skippedRecentFiles
+                .slice(0, 3)
+                .map((file) => file.relativePath)
+                .join(", ")}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Discovery results summary */}
@@ -781,7 +976,7 @@ export function SequencingDiscoverView({
             </div>
             <CardDescription>
               {exactCount} exact, {partialCount} partial, {noMatchCount} no
-              match
+              match{scanWarningCount > 0 ? `, ${scanWarningCount} scan warning${scanWarningCount !== 1 ? "s" : ""}` : ""}
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
@@ -792,6 +987,10 @@ export function SequencingDiscoverView({
                   const sample = samples.find(
                     (s) => s.sampleId === result.sampleId
                   );
+                  const barcodeSourceLabel = getBarcodeSourceLabel(
+                    result.plannedBarcodeSource
+                  );
+                  const matchSourceLabel = getMatchSourceLabel(result.suggestion.matchedBy);
                   return (
                     <div
                       key={result.sampleId}
@@ -816,9 +1015,35 @@ export function SequencingDiscoverView({
                           >
                             {result.suggestion.status}
                           </Badge>
+                          {result.plannedBarcode ? (
+                            <Badge variant="outline" className="font-mono text-[11px]">
+                              {result.plannedBarcode}
+                            </Badge>
+                          ) : null}
+                          {sample ? (
+                            <Badge
+                              variant="outline"
+                              className={cn("text-[11px]", getReadDataClassBadgeClassName(getSampleReadDataClass(sample.id)))}
+                            >
+                              {READ_DATA_CLASS_LABELS[getSampleReadDataClass(sample.id)]}
+                            </Badge>
+                          ) : null}
                         </div>
+                        {(barcodeSourceLabel || matchSourceLabel) && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {[barcodeSourceLabel, matchSourceLabel]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                        )}
+                        {sample?.read?.filesMissing ? (
+                          <div className="mt-1 text-xs text-rose-700">
+                            Existing linked read path is stale; linking this match will
+                            replace the active read files.
+                          </div>
+                        ) : null}
                         {result.suggestion.read1 && (
-                          <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                             <div className="truncate">
                               R1: {result.suggestion.read1.filename}
                             </div>
@@ -831,20 +1056,38 @@ export function SequencingDiscoverView({
                         )}
                       </div>
                       {result.suggestion.read1 && sample && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleApplyMatch(result)}
-                          disabled={
-                            !canManage || applyingIds.has(sample.id)
-                          }
-                        >
-                          {applyingIds.has(sample.id) ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            "Link"
-                          )}
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Select
+                            value={getSampleReadDataClass(sample.id)}
+                            onValueChange={(value) => setSampleReadDataClass(sample.id, value as ReadDataClass)}
+                            disabled={!canManage}
+                          >
+                            <SelectTrigger className="h-8 w-[130px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {READ_DATA_CLASSES.map((dataClass) => (
+                                <SelectItem key={dataClass} value={dataClass}>
+                                  {READ_DATA_CLASS_LABELS[dataClass]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleApplyMatch(result)}
+                            disabled={
+                              !canManage || applyingIds.has(sample.id)
+                            }
+                          >
+                            {applyingIds.has(sample.id) ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              "Link"
+                            )}
+                          </Button>
+                        </div>
                       )}
                     </div>
                   );
@@ -856,11 +1099,12 @@ export function SequencingDiscoverView({
 
       {/* Sample-file association table */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="border-b border-border bg-secondary/50 px-5 py-2.5">
+        <div className="hidden border-b border-border bg-secondary/50 px-5 py-2.5 md:block">
           <div className="grid grid-cols-12 gap-4 text-xs font-medium text-muted-foreground">
             <div className="col-span-3">Sample</div>
-            <div className="col-span-4">Read 1 (Forward)</div>
-            <div className="col-span-4">Read 2 (Reverse)</div>
+            <div className="col-span-2">Planned Barcode</div>
+            <div className="col-span-3">Read 1 (Forward)</div>
+            <div className="col-span-3">Read 2 (Reverse)</div>
             <div className="col-span-1"></div>
           </div>
         </div>
@@ -869,14 +1113,15 @@ export function SequencingDiscoverView({
           {samples.map((sample) => {
             const hasR1 = !!sample.read?.file1;
             const hasR2 = !!sample.read?.file2;
+            const barcodeSourceLabel = getBarcodeSourceLabel(sample.plannedBarcodeSource);
 
             return (
               <div
                 key={sample.id}
-                className="grid grid-cols-12 gap-4 px-5 py-3 items-center hover:bg-secondary/30 transition-colors"
+                className="grid gap-3 px-4 py-3 transition-colors hover:bg-secondary/30 md:grid-cols-12 md:items-center md:gap-4 md:px-5"
               >
                 {/* Sample info */}
-                <div className="col-span-3 min-w-0">
+                <div className="min-w-0 md:col-span-3">
                   <p className="text-sm font-medium truncate">
                     {sample.sampleId}
                   </p>
@@ -887,24 +1132,110 @@ export function SequencingDiscoverView({
                   )}
                 </div>
 
-                {/* R1 */}
-                <div className="col-span-4 min-w-0">
-                  {hasR1 ? (
-                    <div className="flex items-center gap-1.5 group/r1">
-                      <span className="text-xs font-mono truncate text-foreground">
-                        {sample.read!.file1!.split("/").pop()}
-                      </span>
-                      {canManage && (
-                        <button
-                          onClick={() =>
-                            void handleUnlinkRead(sample.id, "R1")
-                          }
-                          className="opacity-0 group-hover/r1:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-all"
-                          title="Unlink R1"
+                <div className="min-w-0 md:col-span-2">
+                  {sample.plannedBarcode ? (
+                    <div className="space-y-1">
+                      <Badge variant="outline" className="font-mono text-[11px]">
+                        {sample.plannedBarcode}
+                      </Badge>
+                      {barcodeSourceLabel ? (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {barcodeSourceLabel}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">-</span>
+                  )}
+                  <div className="mt-2">
+                    <Select
+                      value={getSampleReadDataClass(sample.id)}
+                      onValueChange={(value) => setSampleReadDataClass(sample.id, value as ReadDataClass)}
+                      disabled={!canManage}
+                    >
+                      <SelectTrigger className="h-8 w-full text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {READ_DATA_CLASSES.map((dataClass) => (
+                          <SelectItem key={dataClass} value={dataClass}>
+                            {READ_DATA_CLASS_LABELS[dataClass]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {sample.read ? (
+                    <>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[11px]",
+                            getReadDataClassBadgeClassName(sample.read.dataClass)
+                          )}
                         >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
+                          Active: {sample.read.dataClassLabel}
+                        </Badge>
+                        {sample.read.isSimulated ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[11px]",
+                              getReadOriginBadgeClassName(sample.read.readOrigin)
+                            )}
+                          >
+                            {sample.read.readOriginLabel}
+                          </Badge>
+                        ) : null}
+                        {sample.read.filesMissing ? (
+                          <Badge
+                            variant="outline"
+                            className="border-rose-200 bg-rose-50 text-[11px] text-rose-700"
+                          >
+                            Stale path
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {sample.read.filesMissing ? (
+                        <div className="mt-1 text-xs text-rose-700">
+                          Linked file path is missing or inaccessible.
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+
+                {/* R1 */}
+                <div className="min-w-0 md:col-span-3">
+                  {hasR1 ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 group/r1">
+                        <span
+                          className={cn(
+                            "truncate font-mono text-xs",
+                            readFileMissing(sample, "file1")
+                              ? "text-rose-700"
+                              : "text-foreground"
+                          )}
+                        >
+                          {sample.read!.file1!.split("/").pop()}
+                        </span>
+                        {canManage && (
+                          <button
+                            onClick={() =>
+                              void handleUnlinkRead(sample.id, "R1")
+                            }
+                            className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover/r1:opacity-100"
+                            title="Unlink R1"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                      {readFileMissing(sample, "file1") ? (
+                        <div className="text-xs text-rose-700">Missing from storage</div>
+                      ) : null}
                     </div>
                   ) : (
                     <button
@@ -919,23 +1250,35 @@ export function SequencingDiscoverView({
                 </div>
 
                 {/* R2 */}
-                <div className="col-span-4 min-w-0">
+                <div className="min-w-0 md:col-span-3">
                   {hasR2 ? (
-                    <div className="flex items-center gap-1.5 group/r2">
-                      <span className="text-xs font-mono truncate text-foreground">
-                        {sample.read!.file2!.split("/").pop()}
-                      </span>
-                      {canManage && (
-                        <button
-                          onClick={() =>
-                            void handleUnlinkRead(sample.id, "R2")
-                          }
-                          className="opacity-0 group-hover/r2:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-all"
-                          title="Unlink R2"
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 group/r2">
+                        <span
+                          className={cn(
+                            "truncate font-mono text-xs",
+                            readFileMissing(sample, "file2")
+                              ? "text-rose-700"
+                              : "text-foreground"
+                          )}
                         >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
+                          {sample.read!.file2!.split("/").pop()}
+                        </span>
+                        {canManage && (
+                          <button
+                            onClick={() =>
+                              void handleUnlinkRead(sample.id, "R2")
+                            }
+                            className="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover/r2:opacity-100"
+                            title="Unlink R2"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                      {readFileMissing(sample, "file2") ? (
+                        <div className="text-xs text-rose-700">Missing from storage</div>
+                      ) : null}
                     </div>
                   ) : (
                     <button
@@ -951,7 +1294,7 @@ export function SequencingDiscoverView({
                 </div>
 
                 {/* Actions */}
-                <div className="col-span-1 flex justify-end">
+                <div className="flex justify-end md:col-span-1">
                   {(hasR1 || hasR2) && canManage && (
                     <button
                       onClick={() =>

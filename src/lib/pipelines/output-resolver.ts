@@ -20,6 +20,10 @@ import {
   type PackageOutputWriteback,
   type ReadWritebackField,
 } from './package-contracts';
+import {
+  isProtectedReadDataClass,
+  normalizeReadDataClass,
+} from '@/lib/sequencing/constants';
 
 /**
  * Result of resolving outputs to database records
@@ -147,6 +151,7 @@ async function replaceSampleReads(
     fastqcReport2: string | null | undefined;
     pipelineRunId?: string | null;
     pipelineSources?: string | null;
+    dataClass?: string | null;
   }
 ): Promise<void> {
   const existingReads = await db.read.findMany({
@@ -155,21 +160,33 @@ async function replaceSampleReads(
       id: true,
       file1: true,
       file2: true,
+      dataClass: true,
     },
   });
+  const protectedReads = existingReads.filter((read) =>
+    isProtectedReadDataClass(read.dataClass)
+  );
+  const deletableReads = existingReads.filter((read) =>
+    !isProtectedReadDataClass(read.dataClass)
+  );
 
-  for (const read of existingReads) {
+  for (const read of deletableReads) {
     await safeDeleteReadFile(dataBasePath, read.file1);
     await safeDeleteReadFile(dataBasePath, read.file2);
   }
 
-  if (existingReads.length > 0) {
+  await db.read.updateMany({
+    where: { sampleId },
+    data: { isActive: false },
+  });
+
+  if (deletableReads.length > 0) {
     await db.read.deleteMany({
-      where: { sampleId },
+      where: { id: { in: deletableReads.map((read) => read.id) } },
     });
   }
 
-  await db.read.create({
+  const newRead = await db.read.create({
     data: {
       sampleId,
       file1: readData.file1,
@@ -184,8 +201,19 @@ async function replaceSampleReads(
       fastqcReport2: readData.fastqcReport2 ?? null,
       pipelineRunId: readData.pipelineRunId ?? null,
       pipelineSources: readData.pipelineSources ?? null,
+      dataClass: normalizeReadDataClass(readData.dataClass),
+      dataClassSource: 'pipeline',
+      isActive: true,
+      classifiedAt: new Date(),
     },
   });
+
+  if (protectedReads.length > 0) {
+    await db.read.updateMany({
+      where: { id: { in: protectedReads.map((read) => read.id) } },
+      data: { supersededByReadId: newRead.id },
+    });
+  }
 }
 
 /**
@@ -404,6 +432,7 @@ async function updateSampleRead(
   const file2 = typeof writebackData.file2 === 'string' ? writebackData.file2 : null;
   const sourceFile1 = getStringMetadata(metadata, 'sourceFile1');
   const sourceFile2 = getStringMetadata(metadata, 'sourceFile2');
+  const outputDataClass = normalizeReadDataClass(getStringMetadata(metadata, 'dataClass'));
   const replaceExistingPreference = getBooleanMetadata(metadata, 'replaceExisting');
   const replaceExisting =
     replaceExistingPreference === undefined
@@ -425,9 +454,9 @@ async function updateSampleRead(
     let existingRead: { id: string; file1: string | null; pipelineSources?: string | null } | null = null;
     try {
       existingRead = await db.read.findFirst({
-        where: { sampleId: file.sampleId },
+        where: { sampleId: file.sampleId, isActive: true },
         select: { id: true, file1: true, pipelineSources: true },
-        orderBy: { id: 'asc' },
+        orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
       });
     } catch {
       existingRead = await db.read.findFirst({
@@ -502,6 +531,7 @@ async function updateSampleRead(
               : undefined,
           pipelineRunId: runId,
           pipelineSources: newSources,
+          dataClass: outputDataClass,
         });
         return { success: true };
       }
@@ -531,6 +561,10 @@ async function updateSampleRead(
               typeof writebackData.fastqcReport2 === 'string' ? writebackData.fastqcReport2 : null,
             pipelineRunId: runId,
             pipelineSources: newSources,
+            dataClass: outputDataClass,
+            dataClassSource: 'pipeline',
+            isActive: true,
+            classifiedAt: new Date(),
           },
         });
         return { success: true };
@@ -560,6 +594,10 @@ async function updateSampleRead(
             typeof writebackData.fastqcReport2 === 'string' ? writebackData.fastqcReport2 : null,
           pipelineRunId: runId,
           pipelineSources: newSources,
+          dataClass: outputDataClass,
+          dataClassSource: 'pipeline',
+          isActive: true,
+          classifiedAt: new Date(),
         },
       });
       return { success: true };
@@ -573,7 +611,7 @@ async function updateSampleRead(
   let read: { id: string; pipelineSources?: string | null } | null = null;
   try {
     read = await db.read.findFirst({
-      where: { sampleId: file.sampleId },
+      where: { sampleId: file.sampleId, isActive: true },
       select: { id: true, pipelineSources: true },
       orderBy: { id: 'asc' },
     });

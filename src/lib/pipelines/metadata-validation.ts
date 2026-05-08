@@ -10,6 +10,7 @@ import {
 } from '@/lib/pipelines/order-platform';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
+import type { Prisma } from '@prisma/client';
 
 export interface MetadataIssue {
   field: string;
@@ -270,11 +271,15 @@ export async function validatePipelineMetadata(
 
   const sampleInclude = {
     reads: {
+      where: { isActive: true },
+      orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
       select: {
         file1: true,
         file2: true,
         checksum1: true,
         checksum2: true,
+        dataClass: true,
+        isActive: true,
       },
     },
     assemblies: {
@@ -305,7 +310,7 @@ export async function validatePipelineMetadata(
         librarySource: true,
       },
     },
-  } as const;
+  } satisfies Prisma.SampleInclude;
 
   const [study, order] = await Promise.all([
     isStudyTarget(target)

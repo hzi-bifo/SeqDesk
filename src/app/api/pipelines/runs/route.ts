@@ -209,7 +209,10 @@ export async function POST(request: NextRequest) {
             include: {
               samples: {
                 include: {
-                  reads: true,
+                  reads: {
+                    where: { isActive: true },
+                    orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+                  },
                   assemblies: true,
                   bins: true,
                 },
@@ -223,7 +226,10 @@ export async function POST(request: NextRequest) {
             include: {
               samples: {
                 include: {
-                  reads: true,
+                  reads: {
+                    where: { isActive: true },
+                    orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+                  },
                   assemblies: true,
                   bins: true,
                 },

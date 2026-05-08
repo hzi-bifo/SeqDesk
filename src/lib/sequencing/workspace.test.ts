@@ -30,7 +30,10 @@ const mocks = vi.hoisted(() => ({
     ensureWithinBase: vi.fn(),
     findFilesForSample: vi.fn(),
     hasAllowedExtension: vi.fn(),
+    matchPairedEndFiles: vi.fn(),
     scanDirectory: vi.fn(),
+    scanDirectoryWithReport: vi.fn(),
+    safeJoin: vi.fn(),
     toRelativePath: vi.fn(),
     validateFilePair: vi.fn(),
   },
@@ -61,7 +64,10 @@ vi.mock("@/lib/files", () => ({
   ensureWithinBase: mocks.files.ensureWithinBase,
   findFilesForSample: mocks.files.findFilesForSample,
   hasAllowedExtension: mocks.files.hasAllowedExtension,
+  matchPairedEndFiles: mocks.files.matchPairedEndFiles,
   scanDirectory: mocks.files.scanDirectory,
+  scanDirectoryWithReport: mocks.files.scanDirectoryWithReport,
+  safeJoin: mocks.files.safeJoin,
   toRelativePath: mocks.files.toRelativePath,
   validateFilePair: mocks.files.validateFilePair,
 }));
@@ -126,9 +132,36 @@ function resetWorkspaceMocks() {
     read2: null,
     confidence: 0,
     alternatives: [],
+    matchedBy: null,
   });
   mocks.files.hasAllowedExtension.mockReturnValue(true);
+  mocks.files.matchPairedEndFiles.mockImplementation((files: any[]) =>
+    files.map((file) => ({
+      identifier: file.filename.replace(/\.f(?:ast)?q(?:\.gz)?$/i, ""),
+      read1: file,
+      read2: null,
+      isPaired: false,
+    }))
+  );
   mocks.files.scanDirectory.mockResolvedValue([]);
+  mocks.files.scanDirectoryWithReport.mockResolvedValue({
+    files: [],
+    warnings: {
+      inaccessibleDirectories: [],
+      ignoredEntries: 0,
+      truncated: false,
+      activeWritesSkipped: 0,
+      skippedRecentFiles: [],
+      maxFiles: 10000,
+      maxDepth: 4,
+    },
+  });
+  mocks.files.safeJoin.mockImplementation((base: string, relative: string) => {
+    if (relative.includes("..")) {
+      throw new Error("Path traversal not allowed");
+    }
+    return `${base}/${relative}`;
+  });
   mocks.files.toRelativePath.mockImplementation((base: string, absolute: string) => {
     const prefix = `${base}/`;
     return absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute;
@@ -142,6 +175,7 @@ function resetWorkspaceMocks() {
       scanDepth: 4,
       ignorePatterns: [],
       autoAssign: false,
+      activeWriteMinAgeMs: 30_000,
     },
   });
   mocks.db.read.update.mockResolvedValue({});
@@ -287,7 +321,7 @@ describe("assignOrderSequencingReads", () => {
 
     expect(result).toEqual([{ sampleId: "S1", success: true }]);
     expect(mocks.db.read.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         sampleId: "sample-1",
         file1: "manual/S1_R1.fastq.gz",
         file2: "manual/S1_R2.fastq.gz",
@@ -296,7 +330,10 @@ describe("assignOrderSequencingReads", () => {
         sequencingRunId: "seq-run-1",
         pipelineRunId: null,
         pipelineSources: null,
-      },
+        dataClass: "cleaned",
+        dataClassSource: "associate",
+        isActive: true,
+      }),
     });
     expect(mocks.db.sample.update).toHaveBeenCalledWith({
       where: { id: "sample-1" },
@@ -448,7 +485,7 @@ describe("getOrderSequencingSummary", () => {
                 fastqcReport1: "qc/S1.html",
                 fastqcReport2: null,
                 pipelineRunId: "run-1",
-                pipelineSources: '{"fastqc":"run-9"}',
+                pipelineSources: '{"simulate-reads":"run-1","fastqc":"run-9"}',
                 pipelineRun: { runNumber: 9 },
                 sequencingRun: {
                   id: "seq-1",
@@ -543,7 +580,10 @@ describe("getOrderSequencingSummary", () => {
         fileSize1: 111,
         filesMissing: false,
         pipelineRunNumber: 9,
-        pipelineSources: { fastqc: "run-9" },
+        pipelineSources: { "simulate-reads": "run-1", fastqc: "run-9" },
+        readOrigin: "simulated",
+        readOriginLabel: "Simulated",
+        isSimulated: true,
       })
     );
     expect(result.samples[1].read).toEqual(
@@ -553,6 +593,103 @@ describe("getOrderSequencingSummary", () => {
         filesMissing: true,
         pipelineSources: null,
       })
+    );
+  });
+
+  it("exposes planned barcode and sequencing technology context", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        customFields: JSON.stringify({
+          _sequencing_tech: {
+            technologyId: "ont",
+            technologyName: "Oxford Nanopore",
+          },
+        }),
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: JSON.stringify({ _barcode: "BC9" }),
+            sequencingRunSamples: [],
+            facilityStatus: "WAITING",
+            facilityStatusUpdatedAt: null,
+            updatedAt: baseTime,
+            reads: [],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.sequencingTechSelection).toEqual({
+      id: "ont",
+      name: "Oxford Nanopore",
+      label: "Oxford Nanopore",
+      platform: "Oxford Nanopore",
+    });
+    expect(result.samples[0]).toEqual(
+      expect.objectContaining({
+        plannedBarcode: "barcode09",
+        plannedBarcodeSource: "sample-barcode",
+        plannedBarcodeRunId: null,
+      })
+    );
+  });
+
+  it("treats traversal read paths as stale instead of resolving outside storage", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: null,
+            sequencingRunSamples: [],
+            facilityStatus: "SEQUENCED",
+            facilityStatusUpdatedAt: null,
+            updatedAt: baseTime,
+            reads: [
+              {
+                id: "read-1",
+                file1: "../outside.fastq.gz",
+                file2: null,
+                checksum1: null,
+                checksum2: null,
+                readCount1: null,
+                readCount2: null,
+                avgQuality1: null,
+                avgQuality2: null,
+                fastqcReport1: null,
+                fastqcReport2: null,
+                pipelineRunId: null,
+                pipelineSources: null,
+                pipelineRun: null,
+                sequencingRun: null,
+              },
+            ],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(mocks.files.safeJoin).toHaveBeenCalledWith(
+      "/data/sequencing",
+      "../outside.fastq.gz"
+    );
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
+    expect(result.samples[0].read).toEqual(
+      expect.objectContaining({ filesMissing: true })
     );
   });
 });
@@ -611,15 +748,27 @@ describe("discoverOrderSequencingFiles", () => {
         ],
       })
     );
-    mocks.files.scanDirectory.mockResolvedValue([
-      { relativePath: "reads/S2_R1.fastq.gz", filename: "S2_R1.fastq.gz" },
-      { relativePath: "reads/S2_R2.fastq.gz", filename: "S2_R2.fastq.gz" },
-    ]);
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [
+        { relativePath: "reads/S2_R1.fastq.gz", filename: "S2_R1.fastq.gz" },
+        { relativePath: "reads/S2_R2.fastq.gz", filename: "S2_R2.fastq.gz" },
+      ],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
     mocks.files.findFilesForSample.mockReturnValue({
       status: "exact",
       read1: { relativePath: "reads/S2_R1.fastq.gz", filename: "S2_R1.fastq.gz" },
       read2: { relativePath: "reads/S2_R2.fastq.gz", filename: "S2_R2.fastq.gz" },
       confidence: 0.95,
+      matchedBy: "sampleId",
       alternatives: [
         {
           identifier: "alt-1",
@@ -631,18 +780,20 @@ describe("discoverOrderSequencingFiles", () => {
 
     const result = await discoverOrderSequencingFiles("order-1", { autoAssign: true });
 
-    expect(mocks.files.scanDirectory).toHaveBeenCalledWith(
+    expect(mocks.files.scanDirectoryWithReport).toHaveBeenCalledWith(
       "/data/sequencing",
       {
         allowedExtensions: [".fastq.gz"],
         maxDepth: 4,
         ignorePatterns: [],
+        maxFiles: 10000,
+        activeWriteMinAgeMs: 30_000,
       },
       false
     );
     expect(mocks.files.findFilesForSample).toHaveBeenCalledTimes(1);
     expect(mocks.db.read.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         sampleId: "sample-2",
         file1: "reads/S2_R1.fastq.gz",
         file2: "reads/S2_R2.fastq.gz",
@@ -651,7 +802,10 @@ describe("discoverOrderSequencingFiles", () => {
         sequencingRunId: null,
         pipelineRunId: null,
         pipelineSources: null,
-      },
+        dataClass: "cleaned",
+        dataClassSource: "associate",
+        isActive: true,
+      }),
     });
     expect(result.summary).toEqual({
       total: 2,
@@ -684,6 +838,208 @@ describe("discoverOrderSequencingFiles", () => {
             },
           ],
         }),
+      })
+    );
+  });
+
+  it("matches barcode folders from sample custom fields before sample-name fallback", async () => {
+    const read1 = {
+      relativePath: "run-1/barcode01/SAMPLE_A_R1.fastq.gz",
+      filename: "SAMPLE_A_R1.fastq.gz",
+    };
+    const read2 = {
+      relativePath: "run-1/barcode01/SAMPLE_A_R2.fastq.gz",
+      filename: "SAMPLE_A_R2.fastq.gz",
+    };
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "SAMPLE_A",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: JSON.stringify({ _barcode: "BC1" }),
+            sequencingRunSamples: [],
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [read1, read2],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
+    mocks.files.matchPairedEndFiles.mockReturnValue([
+      {
+        identifier: "SAMPLE_A",
+        read1,
+        read2,
+        isPaired: true,
+      },
+    ]);
+
+    const result = await discoverOrderSequencingFiles("order-1");
+
+    expect(mocks.files.findFilesForSample).not.toHaveBeenCalled();
+    expect(result.results[0]).toEqual(
+      expect.objectContaining({
+        plannedBarcode: "barcode01",
+        plannedBarcodeSource: "sample-barcode",
+        suggestion: expect.objectContaining({
+          status: "exact",
+          matchedBy: "sample-barcode",
+          read1: expect.objectContaining({ relativePath: read1.relativePath }),
+          read2: expect.objectContaining({ relativePath: read2.relativePath }),
+        }),
+      })
+    );
+  });
+
+  it("prefers run-plan barcodes over order sample barcodes", async () => {
+    const runPlanRead = {
+      relativePath: "run-2/barcode02/SAMPLE_A.fastq.gz",
+      filename: "SAMPLE_A.fastq.gz",
+    };
+    const sampleBarcodeRead = {
+      relativePath: "run-2/barcode01/SAMPLE_A.fastq.gz",
+      filename: "SAMPLE_A.fastq.gz",
+    };
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "SAMPLE_A",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: JSON.stringify({ _barcode: "barcode01" }),
+            sequencingRunSamples: [
+              {
+                barcode: "barcode02",
+                sequencingRun: {
+                  id: "run-db-2",
+                  runId: "RUN-2",
+                  runName: "Run 2",
+                },
+              },
+            ],
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [sampleBarcodeRead, runPlanRead],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
+    mocks.files.matchPairedEndFiles.mockReturnValue([
+      {
+        identifier: "SAMPLE_A",
+        read1: runPlanRead,
+        read2: null,
+        isPaired: false,
+      },
+    ]);
+
+    const result = await discoverOrderSequencingFiles("order-1");
+
+    expect(mocks.files.matchPairedEndFiles).toHaveBeenCalledWith([runPlanRead]);
+    expect(result.results[0]).toEqual(
+      expect.objectContaining({
+        plannedBarcode: "barcode02",
+        plannedBarcodeSource: "run-plan",
+        plannedBarcodeRunId: "RUN-2",
+        suggestion: expect.objectContaining({
+          status: "exact",
+          matchedBy: "run-plan-barcode",
+          read1: expect.objectContaining({ relativePath: runPlanRead.relativePath }),
+        }),
+      })
+    );
+  });
+
+  it("marks barcode folder matches ambiguous when multiple pairs are present", async () => {
+    const firstRead = {
+      relativePath: "run-1/barcode03/part-a.fastq.gz",
+      filename: "part-a.fastq.gz",
+    };
+    const secondRead = {
+      relativePath: "run-1/barcode03/part-b.fastq.gz",
+      filename: "part-b.fastq.gz",
+    };
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "SAMPLE_A",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: JSON.stringify({ _barcode: "barcode03" }),
+            sequencingRunSamples: [],
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [firstRead, secondRead],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
+    mocks.files.matchPairedEndFiles.mockReturnValue([
+      {
+        identifier: "part-a",
+        read1: firstRead,
+        read2: null,
+        isPaired: false,
+      },
+      {
+        identifier: "part-b",
+        read1: secondRead,
+        read2: null,
+        isPaired: false,
+      },
+    ]);
+
+    const result = await discoverOrderSequencingFiles("order-1");
+
+    expect(result.summary.ambiguous).toBe(1);
+    expect(result.results[0].suggestion).toEqual(
+      expect.objectContaining({
+        status: "ambiguous",
+        matchedBy: "sample-barcode",
+        alternatives: expect.arrayContaining([
+          expect.objectContaining({ identifier: "part-a" }),
+          expect.objectContaining({ identifier: "part-b" }),
+        ]),
       })
     );
   });
@@ -998,13 +1354,25 @@ describe("discoverOrderSequencingFiles additional branches", () => {
         ],
       })
     );
-    mocks.files.scanDirectory.mockResolvedValue([]);
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
     mocks.files.findFilesForSample.mockReturnValue({
       status: "none",
       read1: null,
       read2: null,
       confidence: 0,
       alternatives: [],
+      matchedBy: null,
     });
 
     const result = await discoverOrderSequencingFiles("order-1");
@@ -1029,15 +1397,27 @@ describe("discoverOrderSequencingFiles additional branches", () => {
         ],
       })
     );
-    mocks.files.scanDirectory.mockResolvedValue([
-      { relativePath: "reads/S1_R1.fastq.gz", filename: "S1_R1.fastq.gz" },
-    ]);
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [
+        { relativePath: "reads/S1_R1.fastq.gz", filename: "S1_R1.fastq.gz" },
+      ],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
     mocks.files.findFilesForSample.mockReturnValue({
       status: "partial",
       read1: { relativePath: "reads/S1_R1.fastq.gz", filename: "S1_R1.fastq.gz" },
       read2: null,
       confidence: 0.8,
       alternatives: [],
+      matchedBy: "sampleId",
     });
 
     const result = await discoverOrderSequencingFiles("order-1", { force: true });

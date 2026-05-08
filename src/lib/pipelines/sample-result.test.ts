@@ -6,6 +6,43 @@ import {
 } from "./sample-result";
 import type { SequencingSampleRow } from "@/lib/sequencing/types";
 
+type SequencingReadSummary = NonNullable<SequencingSampleRow["read"]>;
+
+function makeRead(overrides: Partial<SequencingReadSummary> = {}): SequencingReadSummary {
+  return {
+    id: "read-1",
+    file1: "reads/sample_R1.fastq.gz",
+    file2: "reads/sample_R2.fastq.gz",
+    checksum1: "abcdef1234567890",
+    checksum2: "fedcba0987654321",
+    readCount1: 1200,
+    readCount2: 1200,
+    avgQuality1: null,
+    avgQuality2: null,
+    fastqcReport1: null,
+    fastqcReport2: null,
+    fileSize1: null,
+    fileSize2: null,
+    pipelineRunId: null,
+    pipelineRunNumber: null,
+    pipelineSources: null,
+    dataClass: "cleaned",
+    dataClassLabel: "Cleaned",
+    dataClassSource: "legacy_assumed_cleaned",
+    readOrigin: "legacy",
+    readOriginLabel: "Legacy",
+    isSimulated: false,
+    isProtectedRaw: false,
+    isActive: true,
+    supersededByReadId: null,
+    classifiedAt: null,
+    classifiedById: null,
+    classificationNote: null,
+    filesMissing: false,
+    ...overrides,
+  };
+}
+
 function makeSample(overrides: Partial<SequencingSampleRow> = {}): SequencingSampleRow {
   return {
     id: "sample-1",
@@ -15,25 +52,7 @@ function makeSample(overrides: Partial<SequencingSampleRow> = {}): SequencingSam
     facilityStatus: "WAITING",
     facilityStatusUpdatedAt: null,
     updatedAt: new Date().toISOString(),
-    read: {
-      id: "read-1",
-      file1: "reads/sample_R1.fastq.gz",
-      file2: "reads/sample_R2.fastq.gz",
-      checksum1: "abcdef1234567890",
-      checksum2: "fedcba0987654321",
-      readCount1: 1200,
-      readCount2: 1200,
-      avgQuality1: null,
-      avgQuality2: null,
-      fastqcReport1: null,
-      fastqcReport2: null,
-      fileSize1: null,
-      fileSize2: null,
-      pipelineRunId: null,
-      pipelineRunNumber: null,
-      pipelineSources: null,
-      filesMissing: false,
-    },
+    read: makeRead(),
     integrityStatus: "complete",
     hasReads: true,
     sequencingRun: null,
@@ -81,7 +100,7 @@ describe("getSampleResultPreview", () => {
   it("hides optional paired fields for single-end samples", () => {
     const preview = getSampleResultPreview(
       makeSample({
-        read: {
+        read: makeRead({
           id: "read-1",
           file1: "reads/sample.fastq.gz",
           file2: null,
@@ -99,7 +118,7 @@ describe("getSampleResultPreview", () => {
           pipelineRunNumber: null,
           pipelineSources: null,
           filesMissing: false,
-        },
+        }),
       }),
       {
         columnLabel: "Checksums",
@@ -126,7 +145,7 @@ describe("getSampleResultPreview", () => {
   it("formats FastQC filename values into compact report labels", () => {
     const preview = getSampleResultPreview(
       makeSample({
-        read: {
+        read: makeRead({
           id: "read-1",
           file1: "reads/sample_R1.fastq.gz",
           file2: "reads/sample_R2.fastq.gz",
@@ -144,7 +163,7 @@ describe("getSampleResultPreview", () => {
           pipelineRunNumber: null,
           pipelineSources: null,
           filesMissing: false,
-        },
+        }),
       }),
       {
         columnLabel: "FastQC",
@@ -217,7 +236,7 @@ describe("getSampleResultPreview", () => {
 
   it("returns checksums as Not computed when read exists but checksums are empty", () => {
     const sample = makeSample({
-      read: {
+      read: makeRead({
         id: "read-1",
         file1: "reads/sample_R1.fastq.gz",
         file2: "reads/sample_R2.fastq.gz",
@@ -233,7 +252,7 @@ describe("getSampleResultPreview", () => {
         pipelineRunNumber: "SIMULATE-READS-001",
         pipelineSources: { "simulate-reads": "run-1" },
         filesMissing: false,
-      },
+      }),
     });
     const preview = getSampleResultPreview(sample, {
       columnLabel: "Checksums",
@@ -266,7 +285,7 @@ describe("getSampleResultPreview", () => {
 
   it("returns FastQC reports for sample with pipelineSources tracking", () => {
     const sample = makeSample({
-      read: {
+      read: makeRead({
         id: "read-1",
         file1: "reads/sample_R1.fastq.gz",
         file2: "reads/sample_R2.fastq.gz",
@@ -286,7 +305,7 @@ describe("getSampleResultPreview", () => {
           "fastqc": "qc-run-1",
         },
         filesMissing: false,
-      },
+      }),
     });
     const preview = getSampleResultPreview(sample, {
       columnLabel: "QC Reports",
@@ -320,7 +339,7 @@ describe("getSampleResultPreview", () => {
   it("returns the configured empty text when no values are available", () => {
     const preview = getSampleResultPreview(
       makeSample({
-        read: {
+        read: makeRead({
           id: "read-1",
           file1: null,
           file2: null,
@@ -336,7 +355,7 @@ describe("getSampleResultPreview", () => {
           pipelineRunNumber: null,
           pipelineSources: null,
           filesMissing: false,
-        },
+        }),
       }),
       {
         columnLabel: "Checksums",
@@ -361,7 +380,7 @@ describe("getSampleResultPreview", () => {
 
   it("includes previewPath for previewable items", () => {
     const sample = makeSample({
-      read: {
+      read: makeRead({
         id: "read-1",
         file1: "reads/sample_R1.fastq.gz",
         file2: "reads/sample_R2.fastq.gz",
@@ -377,7 +396,7 @@ describe("getSampleResultPreview", () => {
         pipelineRunNumber: null,
         pipelineSources: null,
         filesMissing: false,
-      },
+      }),
     });
     const preview = getSampleResultPreview(sample, {
       columnLabel: "QC Reports",
@@ -408,7 +427,7 @@ describe("getSampleResultPreview", () => {
 
   it("does not include previewPath when previewable is not set", () => {
     const sample = makeSample({
-      read: {
+      read: makeRead({
         id: "read-1",
         file1: "reads/sample_R1.fastq.gz",
         file2: null,
@@ -424,7 +443,7 @@ describe("getSampleResultPreview", () => {
         pipelineRunNumber: null,
         pipelineSources: null,
         filesMissing: false,
-      },
+      }),
     });
     const preview = getSampleResultPreview(sample, {
       columnLabel: "QC Reports",
@@ -445,7 +464,7 @@ describe("getSampleResultPreview", () => {
 
   it("returns a single preview item for a descriptor when the value exists", () => {
     const sample = makeSample({
-      read: {
+      read: makeRead({
         id: "read-1",
         file1: "reads/sample_R1.fastq.gz",
         file2: "reads/sample_R2.fastq.gz",
@@ -463,7 +482,7 @@ describe("getSampleResultPreview", () => {
         pipelineRunNumber: null,
         pipelineSources: null,
         filesMissing: false,
-      },
+      }),
     });
 
     expect(

@@ -208,12 +208,16 @@ export async function GET(
                 id: true,
                 sampleId: true,
                 reads: {
+                  where: { isActive: true },
+                  orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
                   select: {
                     id: true,
                     file1: true,
                     file2: true,
                     checksum1: true,
                     checksum2: true,
+                    dataClass: true,
+                    isActive: true,
                   },
                 },
               },
@@ -231,12 +235,16 @@ export async function GET(
                 id: true,
                 sampleId: true,
                 reads: {
+                  where: { isActive: true },
+                  orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
                   select: {
                     id: true,
                     file1: true,
                     file2: true,
                     checksum1: true,
                     checksum2: true,
+                    dataClass: true,
+                    isActive: true,
                   },
                 },
               },
@@ -342,6 +350,7 @@ export async function GET(
       sampleId?: string;
       checksum?: string;
       size?: number;
+      dataClass?: string;
     }[] = [];
 
     const targetSamples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
@@ -361,6 +370,7 @@ export async function GET(
               type: 'read_1',
               sampleId: sample.sampleId,
               checksum: read.checksum1 || undefined,
+              dataClass: read.dataClass,
             });
           }
           if (read.file2) {
@@ -371,6 +381,7 @@ export async function GET(
               type: 'read_2',
               sampleId: sample.sampleId,
               checksum: read.checksum2 || undefined,
+              dataClass: read.dataClass,
             });
           }
         }

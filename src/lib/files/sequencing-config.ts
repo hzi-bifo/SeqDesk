@@ -7,6 +7,7 @@ export interface SequencingFilesConfig {
   ignorePatterns: string[];
   allowSingleEnd: boolean;
   autoAssign: boolean;
+  activeWriteMinAgeMs: number;
   simulationMode: "auto" | "synthetic" | "template";
   simulationTemplateDir: string;
 }
@@ -17,6 +18,7 @@ const DEFAULT_CONFIG: SequencingFilesConfig = {
   ignorePatterns: ["**/tmp/**", "**/undetermined/**"],
   allowSingleEnd: true,
   autoAssign: false,
+  activeWriteMinAgeMs: 30_000,
   simulationMode: "auto",
   simulationTemplateDir: "",
 };

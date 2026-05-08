@@ -1,13 +1,15 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import { pathToFileURL } from "url";
 import { gunzipSync, gzipSync } from "zlib";
 
 const BASES = ["A", "C", "G", "T"];
 const GC_PROFILES = [0.42, 0.49, 0.56, 0.63, 0.38, 0.45, 0.52, 0.59];
 const DEFAULT_TEMPLATE_SUBDIR = "_simulation_templates/mag";
 const TEMPLATE_NUMBERED_REGEX = /^template_(\d+)_(1|2)\.(fastq|fq)\.gz$/i;
-const TEMPLATE_GENERIC_REGEX = /^(.+?)(?:_R([12])|_([12]))\.(fastq|fq)\.gz$/i;
+const TEMPLATE_GENERIC_REGEX =
+  /^(.+?)(?:_R([12])(?:_\d+)?|_([12])(?:_\d+)?)\.(fastq|fq)\.gz$/i;
 const SUMMARY_HEADERS = [
   "sample_id",
   "mode",
@@ -369,7 +371,8 @@ function resolveTemplateDir(templateDir, dataBasePath) {
   return path.resolve(basePath, DEFAULT_TEMPLATE_SUBDIR);
 }
 
-async function discoverTemplatePairs(templateDir) {
+export async function discoverTemplatePairs(templateDir, mode = "shortReadPaired") {
+  const pairedEnd = mode !== "shortReadSingle";
   let entries;
   try {
     entries = await fs.readdir(templateDir, { withFileTypes: true });
@@ -398,8 +401,12 @@ async function discoverTemplatePairs(templateDir) {
   const numberedPairs = Array.from(numberedMap.entries())
     .sort((a, b) => a[0] - b[0])
     .flatMap(([, pair]) =>
-      pair.read1Path && pair.read2Path
-        ? [{ read1Path: pair.read1Path, read2Path: pair.read2Path, label: pair.label }]
+      pair.read1Path && (!pairedEnd || pair.read2Path)
+        ? [{
+            read1Path: pair.read1Path,
+            read2Path: pair.read2Path ?? null,
+            label: pair.label,
+          }]
         : [],
     );
 
@@ -426,8 +433,12 @@ async function discoverTemplatePairs(templateDir) {
   return Array.from(genericMap.values())
     .sort((a, b) => a.label.localeCompare(b.label))
     .flatMap((pair) =>
-      pair.read1Path && pair.read2Path
-        ? [{ read1Path: pair.read1Path, read2Path: pair.read2Path, label: pair.label }]
+      pair.read1Path && (!pairedEnd || pair.read2Path)
+        ? [{
+            read1Path: pair.read1Path,
+            read2Path: pair.read2Path ?? null,
+            label: pair.label,
+          }]
         : [],
     );
 }
@@ -463,7 +474,7 @@ function analyzeFastqBuffer(buffer, filePath) {
   };
 }
 
-async function loadTemplateReads(options) {
+export async function loadTemplateReads(options) {
   const { templatePair, mode, sampleId } = options;
   const pairedEnd = mode === "shortReadPaired";
 
@@ -488,7 +499,7 @@ async function loadTemplateReads(options) {
   };
 }
 
-async function resolveSimulationSource(options) {
+export async function resolveSimulationSource(options) {
   const { simulationMode, mode, templateDir, dataBasePath } = options;
 
   if (mode === "longRead") {
@@ -527,9 +538,14 @@ async function resolveSimulationSource(options) {
     };
   }
 
-  const templatePairs = await discoverTemplatePairs(resolvedTemplateDir);
+  const templatePairs = await discoverTemplatePairs(resolvedTemplateDir, mode);
   if (templatePairs.length === 0) {
     if (simulationMode === "template") {
+      if (mode === "shortReadSingle") {
+        throw new Error(
+          `No template FASTQ reads found in "${resolvedTemplateDir}". Add files like "template_1_1.fastq.gz" or "sample_R1_001.fastq.gz".`,
+        );
+      }
       throw new Error(
         `No template FASTQ pairs found in "${resolvedTemplateDir}". Add files like "template_1_1.fastq.gz" and "template_1_2.fastq.gz".`,
       );
@@ -714,7 +730,11 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  process.stderr.write(error instanceof Error ? error.stack || error.message : String(error));
-  process.exit(1);
-});
+const entryPoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+
+if (entryPoint === import.meta.url) {
+  main().catch((error) => {
+    process.stderr.write(error instanceof Error ? error.stack || error.message : String(error));
+    process.exit(1);
+  });
+}

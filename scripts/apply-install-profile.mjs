@@ -99,6 +99,39 @@ function readJsonFile(filePath) {
   return { resolved, parsed };
 }
 
+function buildSafeInstallProfileMetadata(profile) {
+  const profileDetails = toRecord(profile.profile);
+  const metadata = {};
+  const id = toOptionalString(profile.id);
+  const name = toOptionalString(profileDetails.name) || toOptionalString(profile.name);
+  const version = toOptionalString(profile.version);
+  if (id) metadata.id = id;
+  if (name) metadata.name = name;
+  if (version) metadata.version = version;
+  if (Object.keys(metadata).length === 0) return undefined;
+  metadata.appliedAt = new Date().toISOString();
+  return metadata;
+}
+
+function persistSafeInstallProfileMetadata(profile) {
+  const metadata = buildSafeInstallProfileMetadata(profile);
+  if (!metadata) return false;
+
+  let config = {};
+  try {
+    if (fs.existsSync("seqdesk.config.json")) {
+      const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+      config = isRecord(parsed) ? parsed : {};
+    }
+  } catch {
+    config = {};
+  }
+
+  config.installProfile = metadata;
+  fs.writeFileSync("seqdesk.config.json", JSON.stringify(config, null, 2));
+  return true;
+}
+
 function loadDatabaseConfigFromConfig() {
   try {
     const raw = fs.readFileSync("seqdesk.config.json", "utf8");
@@ -599,11 +632,15 @@ async function main() {
     const appliedOrderForm = await applyOrderForm(prisma, parsed);
     await applySiteProfile(prisma, parsed);
     const enabledPipelines = await applyPipelineEnablement(prisma, parsed);
+    const persistedProfile = persistSafeInstallProfileMetadata(parsed);
 
     console.log(`Applied install profile ${parsed.id || "unknown"} from ${resolved}`);
     console.log(
       `Profile changes: orderForm=${appliedOrderForm ? "yes" : "no"}, pipelinesEnabled=${enabledPipelines}`
     );
+    if (persistedProfile) {
+      console.log("Persisted safe install profile metadata in seqdesk.config.json");
+    }
   } finally {
     await prisma.$disconnect();
   }

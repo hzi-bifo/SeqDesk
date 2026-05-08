@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { assignOrderSequencingReads } from "@/lib/sequencing/workspace";
+import {
+  assignOrderSequencingReads,
+  classifyOrderSequencingRead,
+} from "@/lib/sequencing/workspace";
+import { normalizeReadDataClass, type ReadDataClass } from "@/lib/sequencing/constants";
 import {
   requireFacilityAdminSequencingSession,
   SequencingApiError,
@@ -11,7 +15,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireFacilityAdminSequencingSession();
+    const session = await requireFacilityAdminSequencingSession();
     const { id } = await params;
     const body = (await request.json()) as {
       assignments?: Array<{
@@ -21,6 +25,8 @@ export async function PUT(
         checksum1?: string | null;
         checksum2?: string | null;
         sequencingRunId?: string | null;
+        dataClass?: ReadDataClass;
+        classificationNote?: string | null;
       }>;
     };
 
@@ -71,12 +77,30 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireFacilityAdminSequencingSession();
+    const session = await requireFacilityAdminSequencingSession();
     const { id: orderId } = await params;
     const body = (await request.json()) as {
       sampleId: string;
       clearFields: string[];
+      readId?: string | null;
+      dataClass?: ReadDataClass;
+      classificationNote?: string | null;
     };
+
+    if (body.dataClass) {
+      const result = await classifyOrderSequencingRead(
+        orderId,
+        {
+          sampleId: body.sampleId,
+          readId: body.readId ?? null,
+          dataClass: normalizeReadDataClass(body.dataClass),
+          classificationNote: body.classificationNote ?? null,
+        },
+        session.user.id
+      );
+
+      return NextResponse.json({ success: true, read: result });
+    }
 
     if (!body.sampleId || !Array.isArray(body.clearFields) || body.clearFields.length === 0) {
       return NextResponse.json({ error: "Missing sampleId or clearFields" }, { status: 400 });
@@ -113,6 +137,14 @@ export async function PATCH(
   } catch (error) {
     if (error instanceof SequencingApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (
+      error instanceof Error &&
+      (error.message === "Order not found" ||
+        error.message === "Sample not found" ||
+        error.message === "Read record not found")
+    ) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
     }
     console.error("[Order Sequencing] reads PATCH error:", error);
     return NextResponse.json(
