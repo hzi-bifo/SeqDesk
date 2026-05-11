@@ -302,11 +302,11 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       const runDetails = await getPipelineRunDetails(page, run.id);
       expect(runDetails.config?.readCount).toBe(42);
 
-      const runRow = page.locator("tbody tr").filter({
-        has: page.getByText(run.runNumber, { exact: true }),
-      }).first();
+      const runRow = page.locator(
+        `tr[aria-label="View details for ${run.runNumber}"]`,
+      );
       await expect(runRow).toBeVisible({ timeout: 15000 });
-      await expect(runRow).toContainText("Completed");
+      await expect(runRow).toContainText("Completed", { timeout: 15000 });
 
       await page.goto(`${orderPath}/sequencing`);
       await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
@@ -617,10 +617,10 @@ test("simulate reads shows a clear error when template mode has no usable templa
         timeout: 30000,
       });
 
-      const runRow = page.locator("tbody tr").filter({
-        has: page.getByText(run.runNumber, { exact: true }),
-      }).first();
-      await expect(runRow).toContainText("Failed");
+      const runRow = page.locator(
+        `tr[aria-label="View details for ${run.runNumber}"]`,
+      );
+      await expect(runRow).toContainText("Failed", { timeout: 15000 });
 
       await runRow.getByRole("button", { name: `Actions for ${run.runNumber}` }).click();
       await page.getByRole("menuitem", { name: /View details/i }).click();
