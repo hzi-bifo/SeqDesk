@@ -32,6 +32,7 @@ describe("checkDatabaseStatus additional cases", () => {
     await expect(checkDatabaseStatus()).resolves.toEqual({
       exists: true,
       configured: false,
+      reason: "not_seeded",
       error: "Database exists but has not been seeded with initial data.",
     });
   });
@@ -44,6 +45,7 @@ describe("checkDatabaseStatus additional cases", () => {
     await expect(checkDatabaseStatus()).resolves.toEqual({
       exists: false,
       configured: false,
+      reason: "unreachable",
       error:
         "PostgreSQL is unreachable. Verify DATABASE_URL and DIRECT_URL, then retry.",
     });
@@ -57,6 +59,7 @@ describe("checkDatabaseStatus additional cases", () => {
     await expect(checkDatabaseStatus()).resolves.toEqual({
       exists: false,
       configured: false,
+      reason: "schema_missing",
       error: "Database schema is missing. Run `npm run db:migrate:deploy` first.",
     });
   });
@@ -67,6 +70,7 @@ describe("checkDatabaseStatus additional cases", () => {
     await expect(checkDatabaseStatus()).resolves.toEqual({
       exists: false,
       configured: false,
+      reason: "unknown",
       error: "boom",
     });
   });
@@ -77,6 +81,7 @@ describe("checkDatabaseStatus additional cases", () => {
     await expect(checkDatabaseStatus()).resolves.toEqual({
       exists: false,
       configured: false,
+      reason: "unknown",
       error: "plain failure",
     });
   });

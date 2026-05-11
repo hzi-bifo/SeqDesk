@@ -303,7 +303,7 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       expect(runDetails.config?.readCount).toBe(42);
 
       const runRow = page.locator("tbody tr").filter({
-        has: page.getByText(`#${run.runNumber.split("-").pop()}`, { exact: true }),
+        has: page.getByText(run.runNumber, { exact: true }),
       }).first();
       await expect(runRow).toBeVisible({ timeout: 15000 });
       await expect(runRow).toContainText("Completed");
@@ -618,7 +618,7 @@ test("simulate reads shows a clear error when template mode has no usable templa
       });
 
       const runRow = page.locator("tbody tr").filter({
-        has: page.getByText(`#${run.runNumber.split("-").pop()}`, { exact: true }),
+        has: page.getByText(run.runNumber, { exact: true }),
       }).first();
       await expect(runRow).toContainText("Failed");
 
