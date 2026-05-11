@@ -150,7 +150,7 @@ describe("startWorker", () => {
     await startWorker(getWorkerSpec("stream-simulator")!);
 
     const opts = mocks.spawn.mock.calls[0][2];
-    expect(opts.env.SIMULATE_INTERVAL_MS).toBe("5000");
+    expect(opts.env.SIMULATE_INTERVAL_MS).toBe("15000");
     expect(opts.env.SIMULATE_BARCODES).toBe("barcode01,barcode02,barcode03");
   });
 

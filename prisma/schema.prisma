@@ -153,6 +153,7 @@ model Sample {
   sequencingRunSamples SequencingRunSample[]
   sequencingArtifacts   SequencingArtifact[]
   sequencingUploads     SequencingUpload[]
+  streamIngestedFiles   StreamIngestedFile[]
   study                 Study?     @relation(fields: [studyId], references: [id])
   order                 Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
@@ -238,26 +239,50 @@ model SequencingRunSample {
 }
 
 model StreamRun {
-  id           String           @id @default(cuid())
-  orderId      String
-  minknowRunId String?
-  flowCellId   String?
-  deviceId     String?
-  outputDir    String
-  status       String           @default("ACTIVE")
-  totalBases   BigInt           @default(0)
-  totalReads   Int              @default(0)
-  barcodeMap   String?
-  startedAt    DateTime         @default(now())
-  lastSeenAt   DateTime         @updatedAt
-  stoppedAt    DateTime?
-  monitorId    String?
-  heartbeatAt  DateTime?
-  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  events       StreamRunEvent[]
+  id            String              @id @default(cuid())
+  orderId       String
+  minknowRunId  String?
+  flowCellId    String?
+  deviceId      String?
+  outputDir     String
+  status        String              @default("ACTIVE")
+  totalBases    BigInt              @default(0)
+  totalReads    Int                 @default(0)
+  barcodeMap    String?
+  startedAt     DateTime            @default(now())
+  lastSeenAt    DateTime            @updatedAt
+  stoppedAt     DateTime?
+  monitorId     String?
+  heartbeatAt   DateTime?
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events        StreamRunEvent[]
+  ingestedFiles StreamIngestedFile[]
 
   @@index([orderId, status])
   @@index([status, heartbeatAt])
+}
+
+// Tracks every FASTQ file ingested into a stream run, with a unique constraint
+// on (streamRunId, filePath) so chokidar re-emits (rename, atomic-write,
+// duplicate add/change events) cannot double-count reads. The stream-monitor
+// upserts here BEFORE incrementing StreamRun totals; if the upsert was a
+// no-op (file already present), it skips the increment.
+model StreamIngestedFile {
+  id          String    @id @default(cuid())
+  streamRunId String
+  sampleId    String?
+  filePath    String
+  barcode     String?
+  size        Int       @default(0)
+  reads       Int       @default(0)
+  bases       BigInt    @default(0)
+  ingestedAt  DateTime  @default(now())
+  streamRun   StreamRun @relation(fields: [streamRunId], references: [id], onDelete: Cascade)
+  sample      Sample?   @relation(fields: [sampleId], references: [id], onDelete: SetNull)
+
+  @@unique([streamRunId, filePath])
+  @@index([streamRunId, ingestedAt])
+  @@index([sampleId, ingestedAt])
 }
 
 model StreamRunEvent {

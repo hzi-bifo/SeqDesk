@@ -38,7 +38,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Leaf,
-  Rocket,
   ExternalLink,
   Wallet,
   Receipt,
@@ -166,11 +165,6 @@ export default function FormBuilderPage() {
   const lastPersistedSnapshotRef = useRef("");
   const saveInFlightRef = useRef(false);
 
-  // Integration service banner
-  const [bannerDismissed, setBannerDismissed] = useState(false);
-  const [, setIsNewSetup] = useState(false);
-  const showIntegrationServiceBanner = process.env.NODE_ENV === "production";
-
   // Field delete confirmation dialog
   const [deleteFieldDialogOpen, setDeleteFieldDialogOpen] = useState(false);
   const [fieldToDelete, setFieldToDelete] = useState<FormFieldDefinition | null>(null);
@@ -286,28 +280,19 @@ export default function FormBuilderPage() {
           const loadedGroups = data.groups || DEFAULT_GROUPS;
           if (loadedFields.length === 0) {
             setFields(DEFAULT_SYSTEM_FIELDS);
-            setIsNewSetup(true); // No saved config = new setup
           } else {
             setFields(loadedFields);
-            // Check if only default system fields exist (new/uncustomized setup)
-            const hasOnlySystemFields = loadedFields.every(
-              (f: FormFieldDefinition) => f.isSystem
-            );
-            const hasDefaultGroups = loadedGroups.length <= DEFAULT_GROUPS.length;
-            setIsNewSetup(hasOnlySystemFields && hasDefaultGroups);
           }
           setGroups(loadedGroups);
         } else {
           // No config yet, use defaults
           setFields(DEFAULT_SYSTEM_FIELDS);
           setGroups(DEFAULT_GROUPS);
-          setIsNewSetup(true);
         }
       } catch {
         setError("Failed to load form configuration");
         setFields(DEFAULT_SYSTEM_FIELDS);
         setGroups(DEFAULT_GROUPS);
-        setIsNewSetup(true);
       } finally {
         setLoading(false);
       }
@@ -1276,51 +1261,6 @@ export default function FormBuilderPage() {
           <p className="text-lg font-semibold">{hiddenByDisabledModulesCount}</p>
         </div>
       </div>
-
-      {/* Integration Service Banner */}
-      {showIntegrationServiceBanner && !bannerDismissed && (
-        <div className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-primary/10 to-violet-500/10">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-          <div className="relative p-6">
-            <button
-              onClick={() => setBannerDismissed(true)}
-              className="absolute top-4 right-4 p-1 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Dismiss"
-            >
-              <X className="h-4 w-4" />
-            </button>
-
-            <div className="flex items-start gap-4">
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Rocket className="h-6 w-6 text-primary" />
-              </div>
-              <div className="flex-1 pr-8">
-                <h3 className="text-base font-semibold mb-1">Need help setting up SeqDesk?</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Our integration team can configure your forms, set up workflows, and customize SeqDesk
-                  to match your sequencing facility&apos;s specific requirements. Get a tailored solution
-                  without the hassle of manual configuration.
-                </p>
-                <div className="flex items-center gap-3">
-                  <a
-                    href="mailto:hello@seqdesk.com?subject=SeqDesk Integration Service Inquiry&body=Hi,%0A%0AI'm interested in learning more about SeqDesk integration services for our sequencing facility.%0A%0APlease send me a quote for:%0A- Form configuration and customization%0A- Workflow setup%0A- Integration with our existing systems%0A%0AThank you!"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors"
-                  >
-                    Get a Quote
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                  <button
-                    onClick={() => setBannerDismissed(true)}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Maybe later
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ===== Tab: Per-Order Fields ===== */}
       <TabsContent value="fields">

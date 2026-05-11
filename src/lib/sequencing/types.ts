@@ -96,6 +96,19 @@ export interface SequencingSampleRow {
   qcArtifactCount: number;
   latestArtifactStage: string | null;
   artifacts: SequencingArtifactSummary[];
+  /**
+   * Aggregated stats over any FASTQ files this sample has ingested via the
+   * MinKNOW stream watcher. Null when no stream has ever touched this sample.
+   * `activeRunId` is set while an ACTIVE stream is still writing — the UI uses
+   * it to show a live "streaming" badge.
+   */
+  stream: {
+    fileCount: number;
+    totalReads: number;
+    totalBases: number;
+    lastFileAt: string | null;
+    activeRunId: string | null;
+  } | null;
 }
 
 export interface SequencingStatusCounts {

@@ -12,6 +12,7 @@ function sanitize(input: unknown): MinknowStreamConfig {
   const partial = (input ?? {}) as Partial<MinknowStreamConfig>;
   const port = Number(partial.grpcPort ?? DEFAULT_MINKNOW_CONFIG.grpcPort);
   const interval = Number(partial.pollIntervalMs ?? DEFAULT_MINKNOW_CONFIG.pollIntervalMs);
+  const stability = Number(partial.stabilityThresholdMs ?? DEFAULT_MINKNOW_CONFIG.stabilityThresholdMs);
   return {
     enabled: Boolean(partial.enabled ?? false),
     host: typeof partial.host === "string" && partial.host.trim().length > 0
@@ -21,6 +22,11 @@ function sanitize(input: unknown): MinknowStreamConfig {
     tlsCaCertPath: typeof partial.tlsCaCertPath === "string" ? partial.tlsCaCertPath.trim() : "",
     outputRoot: typeof partial.outputRoot === "string" ? partial.outputRoot.trim() : "",
     pollIntervalMs: Number.isFinite(interval) && interval >= 1000 ? interval : DEFAULT_MINKNOW_CONFIG.pollIntervalMs,
+    usePolling: Boolean(partial.usePolling ?? DEFAULT_MINKNOW_CONFIG.usePolling),
+    stabilityThresholdMs:
+      Number.isFinite(stability) && stability >= 500
+        ? stability
+        : DEFAULT_MINKNOW_CONFIG.stabilityThresholdMs,
   };
 }
 

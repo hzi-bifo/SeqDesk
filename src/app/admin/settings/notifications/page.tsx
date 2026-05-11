@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { HelpBox } from "@/components/ui/help-box";
 
 type NotificationSettings = {
   enabled: boolean;
@@ -162,28 +163,59 @@ export default function AdminNotificationSettingsPage() {
   }
 
   return (
-    <PageContainer>
-      <div className="mb-6 flex items-start gap-3">
-        <Mail className="h-6 w-6 text-primary mt-1" />
-        <div>
-          <h1 className="text-2xl font-semibold">Email Notifications</h1>
-          <p className="text-sm text-muted-foreground">
-            Configure the hosted SeqDesk notification relay and which events trigger emails.
-          </p>
+    <>
+      <div className="sticky top-0 z-30 bg-card border-b border-border">
+        <div className="flex min-h-12 flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <div className="text-xs text-muted-foreground">
+            {settings?.hasRelayToken ? (
+              <span className="text-green-600 font-medium">Relay token configured</span>
+            ) : (
+              <span className="text-amber-600 font-medium">Relay token missing</span>
+            )}
+            {settings ? (
+              <>
+                {" "}&middot; Notifications{" "}
+                <span className={settings.enabled ? "text-green-600 font-medium" : "text-muted-foreground"}>
+                  {settings.enabled ? "enabled" : "disabled"}
+                </span>
+              </>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-white"
+              onClick={saveSettings}
+              disabled={saving || !settings}
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : saved ? (
+                <Check className="h-4 w-4 mr-2 text-green-600" />
+              ) : (
+                <Check className="h-4 w-4 mr-2" />
+              )}
+              {saved ? "Saved" : "Save changes"}
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="mb-6 rounded-lg border border-border bg-secondary/40 p-4 text-sm text-muted-foreground space-y-2">
-        <p>
-          <strong className="text-foreground">How it works.</strong> SeqDesk sends notification events to the
-          hosted relay, which then delivers branded emails to the right recipients (researchers, facility admins).
-          The relay token is provisioned per installation; if it&apos;s missing, contact your SeqDesk administrator.
-        </p>
-        <p>
-          <strong className="text-foreground">Per-user preferences.</strong> Each user can opt in or out of
-          categories from their profile. The defaults below decide what happens for users who never visit that page.
-        </p>
-      </div>
+      <PageContainer>
+        <div className="mb-4 mt-6">
+          <h1 className="text-xl font-semibold">Email Notifications</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Configure the hosted SeqDesk notification relay and which events trigger emails
+          </p>
+        </div>
+
+      <HelpBox title="How it works">
+        SeqDesk sends notification events to the hosted relay, which then delivers branded emails to the right
+        recipients (researchers, facility admins). The relay token is provisioned per installation; if it&apos;s
+        missing, contact your SeqDesk administrator. Each user can opt in or out of categories from their profile,
+        and the defaults below decide what happens for users who never visit that page.
+      </HelpBox>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} className="mb-6" />}
 
@@ -323,22 +355,14 @@ export default function AdminNotificationSettingsPage() {
             </div>
           </GlassCard>
 
-          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/40">
-            <Button onClick={saveSettings} disabled={saving}>
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : saved ? (
-                <Check className="mr-2 h-4 w-4" />
-              ) : null}
-              {saved ? "Saved" : "Save changes"}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Changes take effect immediately on save — no restart needed.
-            </span>
-          </div>
+          <p className="text-xs text-muted-foreground pt-2 border-t border-border/40">
+            Changes take effect immediately on save — no restart needed. Use the Save changes button at the
+            top of the page.
+          </p>
         </div>
       )}
-    </PageContainer>
+      </PageContainer>
+    </>
   );
 }
 

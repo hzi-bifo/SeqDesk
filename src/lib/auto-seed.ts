@@ -2,6 +2,12 @@ import fs from "fs";
 import path from "path";
 import { hashSync } from "bcryptjs";
 import { db } from "./db";
+import { resolveDataBasePathFromStoredValue } from "./files/data-base-path";
+import {
+  DummySeedAlreadyExistsError,
+  resolveWritableBase,
+  runDummySeed,
+} from "./seed/run-seed";
 
 // Keep auto-seeding independent from external module resolution.
 // These hashes correspond to the default credentials:
@@ -41,6 +47,68 @@ let seedingInProgress = false;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function envFlagTrue(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes";
+}
+
+function shouldSeedDummyData(config: Record<string, unknown>): boolean {
+  if (envFlagTrue("SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA")) return true;
+  const bootstrap = config?.bootstrap;
+  if (isRecord(bootstrap) && bootstrap.includeDummyData === true) return true;
+  return false;
+}
+
+async function tryAutoSeedDummyData(adminEmail: string): Promise<void> {
+  try {
+    const admin = await db.user.findUnique({
+      where: { email: adminEmail },
+      select: { id: true, email: true, firstName: true, lastName: true },
+    });
+    if (!admin) {
+      console.warn("[auto-seed] Skipping dummy data: bootstrap admin missing");
+      return;
+    }
+
+    const settings = await db.siteSettings.findUnique({
+      where: { id: "singleton" },
+      select: { dataBasePath: true },
+    });
+    const resolved = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
+    const resolvedBase = await resolveWritableBase(resolved.dataBasePath);
+    if (!resolvedBase) {
+      console.warn(
+        "[auto-seed] Skipping dummy data: dataBasePath not configured or not writable"
+      );
+      return;
+    }
+
+    const result = await runDummySeed({
+      ownerUserId: admin.id,
+      resolvedBase,
+      ownerEmail: admin.email,
+      ownerDisplayName: [admin.firstName, admin.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim(),
+    });
+    console.log(
+      `[auto-seed] Seeded dummy data: ${result.ordersCreated} orders, ` +
+        `${result.samplesCreated} samples, ${result.readsCreated} reads ` +
+        `(${result.platform.instrumentModel}${
+          result.platform.fromConfiguredDevice ? "" : ", fallback"
+        })`
+    );
+  } catch (error) {
+    if (error instanceof DummySeedAlreadyExistsError) {
+      console.log("[auto-seed] Dummy data already present, skipping");
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[auto-seed] Dummy data seed failed (continuing):", message);
+  }
 }
 
 function trimToString(value: unknown): string | undefined {
@@ -658,6 +726,13 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
       },
     });
     console.log("[auto-seed] Created default STUDY form configuration");
+
+    // 5. Optionally seed realistic dummy orders / samples / reads on first install.
+    //    Off by default; opt in by setting SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA=true
+    //    (also accepts bootstrap.includeDummyData=true in seqdesk.config.json).
+    if (shouldSeedDummyData(seedConfig)) {
+      await tryAutoSeedDummyData(adminBootstrap.email);
+    }
 
     console.log("[auto-seed] Database seeding completed successfully");
     return { seeded: true };

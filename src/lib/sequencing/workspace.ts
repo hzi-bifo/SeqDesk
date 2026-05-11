@@ -623,6 +623,58 @@ export async function getOrderSequencingSummary(
     throw new Error("Order not found");
   }
 
+  // Aggregate stream-ingested files per sample so the response can advertise
+  // streamed data alongside the existing Read-based files. We use a groupBy
+  // for totals plus a separate query for the latest file timestamp per sample
+  // (Prisma's groupBy doesn't return a per-group max in the same call).
+  const sampleIds = order.samples.map((s) => s.id);
+  const streamGroups = sampleIds.length
+    ? await db.streamIngestedFile.groupBy({
+        by: ["sampleId"],
+        where: { sampleId: { in: sampleIds } },
+        _count: { _all: true },
+        _sum: { reads: true, bases: true },
+        _max: { ingestedAt: true },
+      })
+    : [];
+  // Find the most-recent ACTIVE stream run touching each sample, if any.
+  const activeStreamBySample = sampleIds.length
+    ? await db.streamIngestedFile.findMany({
+        where: {
+          sampleId: { in: sampleIds },
+          streamRun: { status: "ACTIVE" },
+        },
+        distinct: ["sampleId"],
+        orderBy: { ingestedAt: "desc" },
+        select: { sampleId: true, streamRunId: true },
+      })
+    : [];
+  const streamStatsBySampleId = new Map<
+    string,
+    {
+      fileCount: number;
+      totalReads: number;
+      totalBases: number;
+      lastFileAt: string | null;
+      activeRunId: string | null;
+    }
+  >();
+  for (const g of streamGroups) {
+    if (!g.sampleId) continue;
+    streamStatsBySampleId.set(g.sampleId, {
+      fileCount: g._count._all,
+      totalReads: g._sum.reads ?? 0,
+      totalBases: Number(g._sum.bases ?? BigInt(0)),
+      lastFileAt: g._max.ingestedAt ? g._max.ingestedAt.toISOString() : null,
+      activeRunId: null,
+    });
+  }
+  for (const a of activeStreamBySample) {
+    if (!a.sampleId) continue;
+    const cur = streamStatsBySampleId.get(a.sampleId);
+    if (cur) cur.activeRunId = a.streamRunId;
+  }
+
   const statusCounts: SequencingStatusCounts = { ...DEFAULT_STATUS_COUNTS };
   const rows: SequencingSampleRow[] = order.samples.map((sample) => {
     const read = selectActiveRead(sample.reads);
@@ -680,6 +732,7 @@ export async function getOrderSequencingSummary(
       ).length,
       latestArtifactStage: latestArtifact?.stage ?? null,
       artifacts,
+      stream: streamStatsBySampleId.get(sample.id) ?? null,
     };
   });
 

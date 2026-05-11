@@ -77,8 +77,29 @@ export async function startWorker(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Capture the async 'error' event so a failed spawn (ENOENT/EACCES/etc.)
+  // surfaces with a real reason instead of the generic "no PID assigned".
+  let asyncSpawnError: NodeJS.ErrnoException | null = null;
+  child.once("error", (err) => {
+    asyncSpawnError = err as NodeJS.ErrnoException;
+  });
+
   if (!child.pid) {
-    throw new Error(`Failed to spawn ${spec.name}: no PID assigned`);
+    // spawn() returned without assigning a pid — the underlying exec failed.
+    // Wait briefly for the async 'error' event so we can include its reason.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    const reasonParts: string[] = [];
+    if (asyncSpawnError) {
+      const e = asyncSpawnError as NodeJS.ErrnoException;
+      if (e.code) reasonParts.push(e.code);
+      if (e.syscall) reasonParts.push(e.syscall);
+      reasonParts.push(e.message);
+    } else {
+      reasonParts.push(
+        `no PID assigned (cmd=${tsx} cwd=${REPO_ROOT}). tsx-exists=${existsSync(tsx)} script-exists=${existsSync(args[0])}`,
+      );
+    }
+    throw new Error(`Failed to spawn ${spec.name}: ${reasonParts.join(" ")}`);
   }
 
   const logPath = buildLogPath(spec.name, child.pid);

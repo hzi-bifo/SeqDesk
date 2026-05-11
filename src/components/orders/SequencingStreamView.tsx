@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,21 @@ import { HelpBox } from "@/components/ui/help-box";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Activity, Info, Loader2, Radio, Square, Wifi, WifiOff } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Info,
+  Loader2,
+  Play,
+  Radio,
+  Square,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import type { SequencingSampleRow } from "@/lib/sequencing/types";
 
 interface StreamRunSummary {
@@ -59,6 +74,28 @@ function formatBytes(value: string | number | bigint): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+// Format a base-pair count using the sequencing convention (kb/Mb/Gb, base-10).
+function formatBases(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 bp";
+  if (value < 1_000) return `${value} bp`;
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)} kb`;
+  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(2)} Mb`;
+  return `${(value / 1_000_000_000).toFixed(2)} Gb`;
+}
+
+// Format reads-per-second; show "—" when no rate is available yet.
+function formatReadsPerSec(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value < 0) return "—";
+  if (value < 1) return `<1 r/s`;
+  if (value < 1_000) return `${value.toFixed(0)} r/s`;
+  return `${(value / 1_000).toFixed(1)}k r/s`;
+}
+
+function avgReadLength(reads: number, bases: number): number {
+  if (reads <= 0) return 0;
+  return Math.round(bases / reads);
+}
+
 function formatRelative(ts: string): string {
   const date = new Date(ts);
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
@@ -96,6 +133,39 @@ export function SequencingStreamView({
   const [stopping, setStopping] = useState(false);
   const lastEventSeqRef = useRef<number | null>(null);
 
+  // Stream-monitor daemon status. Only populated when the user has admin access
+  // (the /api/admin/workers endpoint is FACILITY_ADMIN only). Non-admins see
+  // the static fallback hint.
+  const [daemon, setDaemon] = useState<
+    | { available: true; status: string; pid: number | null; lastErrorMsg: string | null }
+    | { available: false }
+    | null
+  >(null);
+  const [startingDaemon, setStartingDaemon] = useState(false);
+
+  // Per-barcode aggregates, computed server-side over the run's full FILE_INGESTED
+  // history (the events array client-side only holds the last 50 — not enough for
+  // accurate totals on a long-running stream). `readsPerSec` is derived client-side
+  // from the delta between consecutive polls.
+  const [barcodeStats, setBarcodeStats] = useState<
+    Array<{
+      barcode: string;
+      fileCount: number;
+      totalSize: number;
+      totalReads: number;
+      totalBases: number;
+      readsPerSec: number | null;
+      lastFileAt: string | null;
+      lastFilePath: string | null;
+    }>
+  >([]);
+  const prevBarcodeSnapshotRef = useRef<{
+    at: number;
+    byBarcode: Map<string, { totalReads: number; totalBases: number }>;
+  } | null>(null);
+  const [showRecentFiles, setShowRecentFiles] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+
   const activeRun = useMemo(() => runs.find((r) => r.status === "ACTIVE") ?? null, [runs]);
 
   const refreshRuns = useCallback(async () => {
@@ -116,6 +186,130 @@ export function SequencingStreamView({
     const handle = setInterval(() => void refreshRuns(), 5000);
     return () => clearInterval(handle);
   }, [refreshRuns]);
+
+  const refreshDaemon = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/workers");
+      if (res.status === 401 || res.status === 403) {
+        setDaemon({ available: false });
+        return;
+      }
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        workers: Array<{
+          name: string;
+          latest: { status: string; pid: number; lastErrorMsg: string | null } | null;
+        }>;
+      };
+      const m = data.workers.find((w) => w.name === "stream-monitor");
+      setDaemon({
+        available: true,
+        status: m?.latest?.status ?? "STOPPED",
+        pid: m?.latest?.pid ?? null,
+        lastErrorMsg: m?.latest?.lastErrorMsg ?? null,
+      });
+    } catch (error) {
+      console.error("Failed to load daemon status:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDaemon();
+    const handle = setInterval(() => void refreshDaemon(), 5000);
+    return () => clearInterval(handle);
+  }, [refreshDaemon]);
+
+  // Poll per-barcode aggregates only while a run is active. Stops polling
+  // automatically when the run ends to avoid churning the DB.
+  useEffect(() => {
+    if (!activeRun) {
+      setBarcodeStats([]);
+      prevBarcodeSnapshotRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    const fetchBarcodes = async () => {
+      try {
+        const res = await fetch(`/api/orders/${orderId}/stream/${activeRun.id}/by-barcode`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          barcodes: Array<{
+            barcode: string;
+            fileCount: number;
+            totalSize: number;
+            totalReads: number;
+            totalBases: number;
+            lastFileAt: string | null;
+            lastFilePath: string | null;
+          }>;
+        };
+        if (cancelled) return;
+
+        // Derive reads/sec from the delta to the previous snapshot. First poll
+        // has no previous, so rate is null and the UI shows "—".
+        const now = Date.now();
+        const prev = prevBarcodeSnapshotRef.current;
+        const elapsedSec = prev ? Math.max(1, (now - prev.at) / 1000) : 0;
+        const next = data.barcodes.map((row) => {
+          let readsPerSec: number | null = null;
+          if (prev && elapsedSec > 0) {
+            const before = prev.byBarcode.get(row.barcode);
+            if (before) {
+              readsPerSec = Math.max(0, (row.totalReads - before.totalReads) / elapsedSec);
+            } else {
+              // New barcode this poll — treat all reads as having arrived in the window.
+              readsPerSec = row.totalReads / elapsedSec;
+            }
+          }
+          return { ...row, readsPerSec };
+        });
+        setBarcodeStats(next);
+        prevBarcodeSnapshotRef.current = {
+          at: now,
+          byBarcode: new Map(
+            data.barcodes.map((r) => [r.barcode, { totalReads: r.totalReads, totalBases: r.totalBases }]),
+          ),
+        };
+      } catch (error) {
+        console.error("Failed to load barcode stats:", error);
+      }
+    };
+    void fetchBarcodes();
+    const handle = setInterval(() => void fetchBarcodes(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [activeRun, orderId]);
+
+  const handleStartDaemon = async () => {
+    setStartingDaemon(true);
+    try {
+      const res = await fetch("/api/admin/workers/stream-monitor/start", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 409) {
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("Stream monitor started");
+      await refreshDaemon();
+    } catch (error) {
+      toast.error(`Failed to start daemon: ${(error as Error).message}`);
+    } finally {
+      setStartingDaemon(false);
+    }
+  };
+
+  // In dev, default the run-dir to the simulator's output path on first render
+  // so testing without a real MinION is one click. No-op once the user has
+  // typed anything (we only seed when the field is still empty).
+  const isDev = process.env.NODE_ENV !== "production";
+  useEffect(() => {
+    if (isDev && outputDir === "" && !activeRun) {
+      setOutputDir("/tmp/seqdesk-sim");
+    }
+    // We intentionally don't re-run when outputDir changes — this only seeds once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun, isDev]);
 
   // Reset event polling when active run changes
   useEffect(() => {
@@ -296,16 +490,16 @@ export function SequencingStreamView({
                 <div>{formatElapsed(activeRun.startedAt)}</div>
               </div>
               <div>
-                <div className="text-muted-foreground text-xs" title="Number of FASTQ files ingested so far. One MinKNOW run typically produces many files per sample.">
-                  Files ingested
+                <div className="text-muted-foreground text-xs" title="Total reads parsed from all ingested FASTQ files across every barcode in this run.">
+                  Reads
                 </div>
-                <div>{activeRun.totalReads}</div>
+                <div className="tabular-nums">{activeRun.totalReads.toLocaleString()}</div>
               </div>
               <div>
-                <div className="text-muted-foreground text-xs" title="Sum of all ingested file sizes (compressed FASTQ on disk), not basecalled yield.">
-                  Bytes ingested
+                <div className="text-muted-foreground text-xs" title="Total bases (basecalled yield) summed across every barcode. Shown in kb / Mb / Gb (base-10).">
+                  Bases
                 </div>
-                <div>{formatBytes(activeRun.totalBases)}</div>
+                <div className="tabular-nums">{formatBases(Number(activeRun.totalBases))}</div>
               </div>
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-2">
@@ -394,10 +588,51 @@ export function SequencingStreamView({
                 {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}
                 Start receiving
               </Button>
-              <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                <Info className="h-3 w-3" />
-                Make sure the stream-monitor daemon is running (<code>npm run stream:monitor</code>), otherwise files won&apos;t be picked up.
-              </span>
+              {daemon == null ? (
+                <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Checking daemon status…
+                </span>
+              ) : !daemon.available ? (
+                <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                  <Info className="h-3 w-3" />
+                  Make sure the stream-monitor daemon is running (<code>npm run stream:monitor</code>), otherwise files won&apos;t be picked up.
+                </span>
+              ) : daemon.status === "RUNNING" ? (
+                <span className="text-xs inline-flex items-center gap-1.5 text-emerald-700">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Stream-monitor daemon running
+                  {daemon.pid != null ? <span className="text-muted-foreground">(pid {daemon.pid})</span> : null}
+                </span>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs inline-flex items-center gap-1.5 text-amber-700">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Stream-monitor daemon {daemon.status === "ERROR" ? "errored" : "stopped"} — files won&apos;t be picked up
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="bg-white h-7 px-2 text-xs"
+                    onClick={() => void handleStartDaemon()}
+                    disabled={startingDaemon}
+                  >
+                    {startingDaemon ? (
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    ) : (
+                      <Play className="mr-1 h-3 w-3" />
+                    )}
+                    Start daemon
+                  </Button>
+                  <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                    <Link href="/admin/minknow-stream">
+                      <ExternalLink className="mr-1 h-3 w-3" />
+                      Settings
+                    </Link>
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -444,47 +679,87 @@ export function SequencingStreamView({
       {activeRun ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Recently ingested files</CardTitle>
+            <CardTitle className="text-base">By barcode</CardTitle>
             <CardDescription>
-              The 20 most recent FASTQ files the stream monitor has picked up. Files marked
+              Live totals per barcode across the whole run. Rows marked
               <em> unmapped</em> arrived in a barcode folder that wasn&apos;t in the mapping above &mdash;
               they&apos;re recorded for audit but not linked to any sample.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {ingestedFiles.length === 0 ? (
+            {barcodeStats.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No files ingested yet. They&apos;ll appear here within a few seconds of MinKNOW writing
-                them. Typical first-file latency for a fresh nanopore run is 30&ndash;90 seconds depending
-                on MinKNOW&apos;s &ldquo;reads per file&rdquo; setting.
+                No files ingested yet. The first batch typically appears 30&ndash;90 seconds after MinKNOW
+                starts writing.
               </p>
             ) : (
-              <ScrollArea className="max-h-72">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs text-muted-foreground border-b">
-                      <th className="py-1">When</th>
-                      <th className="py-1">Barcode</th>
-                      <th className="py-1">Sample</th>
-                      <th className="py-1">Size</th>
-                      <th className="py-1">File</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ingestedFiles.map((f, idx) => (
-                      <tr key={`${f.filePath}-${idx}`} className="border-b last:border-0">
-                        <td className="py-1 whitespace-nowrap">{formatRelative(f.ts)}</td>
-                        <td className="py-1 font-mono">{f.barcode}</td>
-                        <td className="py-1">
-                          {f.sampleId ? (sampleNameById.get(f.sampleId) ?? f.sampleId) : <span className="text-muted-foreground">unmapped</span>}
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground border-b">
+                    <th className="py-2 pr-3">Barcode</th>
+                    <th className="py-2 pr-3">Sample</th>
+                    <th className="py-2 pr-3 text-right">Reads</th>
+                    <th className="py-2 pr-3 text-right">Bases</th>
+                    <th className="py-2 pr-3 text-right">Avg length</th>
+                    <th className="py-2 pr-3 text-right" title="Reads ingested per second since the last 5-second poll. Empty for the first poll.">
+                      Rate
+                    </th>
+                    <th className="py-2 pr-3 text-right text-muted-foreground font-normal">Files</th>
+                    <th className="py-2 pr-3">Last update</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {barcodeStats.map((row) => {
+                    const sampleId = activeRun.barcodeMap[row.barcode];
+                    const avg = avgReadLength(row.totalReads, row.totalBases);
+                    const lastAgeMs = row.lastFileAt ? Date.now() - new Date(row.lastFileAt).getTime() : null;
+                    const isActive = lastAgeMs != null && lastAgeMs < 30_000;
+                    return (
+                      <tr key={row.barcode} className="border-b last:border-0">
+                        <td className="py-2 pr-3 font-mono">{row.barcode}</td>
+                        <td className="py-2 pr-3">
+                          {sampleId ? (
+                            sampleNameById.get(sampleId) ?? sampleId
+                          ) : (
+                            <span className="text-muted-foreground">unmapped</span>
+                          )}
                         </td>
-                        <td className="py-1">{formatBytes(f.size)}</td>
-                        <td className="py-1 font-mono text-xs break-all">{f.filePath}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums font-medium">
+                          {row.totalReads.toLocaleString()}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums font-medium">
+                          {formatBases(row.totalBases)}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
+                          {avg > 0 ? `${avg.toLocaleString()} bp` : "—"}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
+                          {formatReadsPerSec(row.readsPerSec)}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
+                          {row.fileCount.toLocaleString()}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span
+                              aria-hidden
+                              className={
+                                "inline-block h-1.5 w-1.5 rounded-full " +
+                                (isActive
+                                  ? "bg-emerald-500 animate-pulse"
+                                  : row.lastFileAt
+                                  ? "bg-muted-foreground/40"
+                                  : "bg-transparent")
+                              }
+                            />
+                            {row.lastFileAt ? formatRelative(row.lastFileAt) : "—"}
+                          </span>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </ScrollArea>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </CardContent>
         </Card>
@@ -492,47 +767,119 @@ export function SequencingStreamView({
 
       {activeRun ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Event log</CardTitle>
-            <CardDescription>
-              Append-only audit trail for this stream. The most recent 50 events are shown.
-            </CardDescription>
+          <CardHeader className="pb-2">
+            <button
+              type="button"
+              onClick={() => setShowRecentFiles((v) => !v)}
+              className="flex items-center gap-2 text-left -m-2 p-2 rounded hover:bg-muted/40 transition-colors"
+            >
+              {showRecentFiles ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+              <CardTitle className="text-base">Recent files</CardTitle>
+              <span className="text-xs text-muted-foreground">
+                Last {ingestedFiles.length} of {activeRun.totalReads > 0 ? "many" : "0"}
+              </span>
+            </button>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
-              <span><span className="font-mono text-green-600">FILE_INGESTED</span> &mdash; a new FASTQ was picked up</span>
-              <span><span className="font-mono">RUN_STARTED</span> &mdash; the stream was attached to this order</span>
-              <span><span className="font-mono">RUN_STOPPED</span> &mdash; the watcher was detached</span>
-              <span><span className="font-mono text-red-500">ERROR</span> &mdash; ingest failed; check the payload</span>
-            </div>
-            {events.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No events yet.</p>
-            ) : (
-              <ScrollArea className="max-h-72">
-                <ul className="space-y-1 text-xs font-mono">
-                  {events.map((e) => (
-                    <li key={e.id} className="flex gap-2">
-                      <span className="text-muted-foreground whitespace-nowrap">{formatRelative(e.ts)}</span>
-                      <span
-                        className={
-                          e.kind === "ERROR"
-                            ? "text-red-500"
-                            : e.kind === "FILE_INGESTED"
-                            ? "text-green-600"
-                            : ""
-                        }
-                      >
-                        {e.kind}
-                      </span>
-                      {isPayloadObject(e.payload) ? (
-                        <span className="text-muted-foreground truncate">{JSON.stringify(e.payload)}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </ScrollArea>
-            )}
-          </CardContent>
+          {showRecentFiles ? (
+            <CardContent>
+              {ingestedFiles.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No files ingested yet.</p>
+              ) : (
+                <ScrollArea className="max-h-72">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-muted-foreground border-b">
+                        <th className="py-1">When</th>
+                        <th className="py-1">Barcode</th>
+                        <th className="py-1">Sample</th>
+                        <th className="py-1">Size</th>
+                        <th className="py-1">File</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ingestedFiles.map((f, idx) => (
+                        <tr key={`${f.filePath}-${idx}`} className="border-b last:border-0">
+                          <td className="py-1 whitespace-nowrap">{formatRelative(f.ts)}</td>
+                          <td className="py-1 font-mono">{f.barcode}</td>
+                          <td className="py-1">
+                            {f.sampleId ? (sampleNameById.get(f.sampleId) ?? f.sampleId) : <span className="text-muted-foreground">unmapped</span>}
+                          </td>
+                          <td className="py-1">{formatBytes(f.size)}</td>
+                          <td className="py-1 font-mono text-xs break-all">{f.filePath}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ScrollArea>
+              )}
+            </CardContent>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {activeRun ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <button
+              type="button"
+              onClick={() => setShowAuditLog((v) => !v)}
+              className="flex items-center gap-2 text-left -m-2 p-2 rounded hover:bg-muted/40 transition-colors"
+            >
+              {showAuditLog ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+              <CardTitle className="text-base">Audit trail</CardTitle>
+              <span className="text-xs text-muted-foreground">Raw event log — debug only</span>
+            </button>
+          </CardHeader>
+          {showAuditLog ? (
+            <CardContent className="space-y-2">
+              <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                <span><span className="font-mono text-green-600">FILE_INGESTED</span> &mdash; a new FASTQ was picked up</span>
+                <span><span className="font-mono">RUN_STARTED</span> &mdash; the stream was attached to this order</span>
+                <span><span className="font-mono">RUN_STOPPED</span> &mdash; the watcher was detached</span>
+                <span><span className="font-mono text-red-500">ERROR</span> &mdash; ingest failed; check the payload</span>
+              </div>
+              {events.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No events yet.</p>
+              ) : (
+                <ScrollArea className="max-h-72 w-full">
+                  <ul className="space-y-1 text-xs font-mono w-full">
+                    {events.map((e) => (
+                      <li key={e.id} className="flex gap-2 w-full overflow-hidden">
+                        <span className="text-muted-foreground whitespace-nowrap shrink-0">
+                          {formatRelative(e.ts)}
+                        </span>
+                        <span
+                          className={
+                            "shrink-0 " +
+                            (e.kind === "ERROR"
+                              ? "text-red-500"
+                              : e.kind === "FILE_INGESTED"
+                              ? "text-green-600"
+                              : "")
+                          }
+                        >
+                          {e.kind}
+                        </span>
+                        {isPayloadObject(e.payload) ? (
+                          <span className="text-muted-foreground truncate min-w-0 flex-1">
+                            {JSON.stringify(e.payload)}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              )}
+            </CardContent>
+          ) : null}
         </Card>
       ) : null}
     </div>

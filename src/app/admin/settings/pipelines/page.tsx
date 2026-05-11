@@ -605,6 +605,28 @@ export default function PipelineSettingsPage() {
     return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
+  const formatSpeed = (bytesPerSec?: number | null) => {
+    if (typeof bytesPerSec !== "number" || !Number.isFinite(bytesPerSec) || bytesPerSec <= 0) {
+      return null;
+    }
+    return `${formatBytes(bytesPerSec)}/s`;
+  };
+
+  const formatDuration = (seconds?: number | null) => {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) {
+      return null;
+    }
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.round(seconds % 60);
+      return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    }
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  };
+
   const openPrivateInstallDialog = (
     target: PrivateInstallTarget,
     mode: "install" | "update"
@@ -1689,6 +1711,35 @@ export default function PipelineSettingsPage() {
                                     const databaseProgress = database.job?.progressPercent;
                                     const databaseBytes = database.job?.bytesDownloaded;
                                     const databaseTotal = database.job?.totalBytes;
+                                    const startedAtMs = database.job?.startedAt
+                                      ? new Date(database.job.startedAt).getTime()
+                                      : null;
+                                    const elapsedSec =
+                                      startedAtMs && !Number.isNaN(startedAtMs)
+                                        ? Math.max(0, (Date.now() - startedAtMs) / 1000)
+                                        : null;
+                                    const speedBytesPerSec =
+                                      typeof databaseBytes === "number" && elapsedSec && elapsedSec > 0
+                                        ? databaseBytes / elapsedSec
+                                        : null;
+                                    const remainingBytes =
+                                      typeof databaseBytes === "number" &&
+                                      typeof databaseTotal === "number" &&
+                                      databaseTotal > databaseBytes
+                                        ? databaseTotal - databaseBytes
+                                        : null;
+                                    const etaSec =
+                                      remainingBytes != null && speedBytesPerSec && speedBytesPerSec > 0
+                                        ? remainingBytes / speedBytesPerSec
+                                        : null;
+                                    const databaseProgressKnown = typeof databaseProgress === "number";
+                                    const databaseTargetPath =
+                                      database.job?.targetPath ||
+                                      database.configuredPath ||
+                                      database.expectedPath ||
+                                      database.path;
+                                    const databaseSourceUrl =
+                                      database.job?.sourceUrl || database.sourceUrl;
                                     const manualCommands = getManualDbDownloadCommands(database);
                                     return (
                                       <div key={database.id} className="mt-1 space-y-1">
@@ -1709,17 +1760,53 @@ export default function PipelineSettingsPage() {
                                           </p>
                                         )}
                                         {databaseRunning && (
-                                          <p className="text-xs text-muted-foreground">
-                                            Downloading: {databaseProgress != null ? `${databaseProgress}%` : "in progress"}
-                                            {typeof databaseBytes === "number"
-                                              ? ` (${formatBytes(databaseBytes)}`
-                                              : ""}
-                                            {typeof databaseBytes === "number" && typeof databaseTotal === "number"
-                                              ? ` / ${formatBytes(databaseTotal)})`
-                                              : typeof databaseBytes === "number"
-                                                ? ")"
-                                                : ""}
-                                          </p>
+                                          <div className="mt-1 space-y-1.5">
+                                            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                              <span>
+                                                {databaseProgressKnown
+                                                  ? `Downloading ${databaseProgress}%`
+                                                  : "Downloading..."}
+                                                {typeof databaseBytes === "number"
+                                                  ? typeof databaseTotal === "number"
+                                                    ? ` • ${formatBytes(databaseBytes)} of ${formatBytes(databaseTotal)}`
+                                                    : ` • ${formatBytes(databaseBytes)} so far`
+                                                  : ""}
+                                              </span>
+                                              {formatSpeed(speedBytesPerSec) && (
+                                                <span className="tabular-nums">
+                                                  {formatSpeed(speedBytesPerSec)}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                              <div
+                                                className={`h-full bg-primary transition-all ${databaseProgressKnown ? "" : "animate-pulse"}`}
+                                                style={{
+                                                  width: databaseProgressKnown
+                                                    ? `${Math.min(100, Math.max(0, databaseProgress as number))}%`
+                                                    : "100%",
+                                                }}
+                                              />
+                                            </div>
+                                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                                              {formatDuration(elapsedSec) && (
+                                                <span>Elapsed: {formatDuration(elapsedSec)}</span>
+                                              )}
+                                              {formatDuration(etaSec) && (
+                                                <span>ETA: {formatDuration(etaSec)}</span>
+                                              )}
+                                            </div>
+                                            {databaseTargetPath && (
+                                              <p className="text-[11px] text-muted-foreground break-all">
+                                                Saving to: {databaseTargetPath}
+                                              </p>
+                                            )}
+                                            {databaseSourceUrl && (
+                                              <p className="text-[11px] text-muted-foreground break-all">
+                                                Source: {databaseSourceUrl}
+                                              </p>
+                                            )}
+                                          </div>
                                         )}
                                         {databaseFailedState && (
                                           <p className={`text-xs ${databaseUnavailable ? "text-destructive" : "text-muted-foreground"}`}>

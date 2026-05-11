@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
     sample: {
       update: vi.fn(),
     },
+    streamIngestedFile: {
+      groupBy: vi.fn(),
+      findMany: vi.fn(),
+    },
   },
   fs: {
     stat: vi.fn(),
@@ -189,6 +193,8 @@ function resetWorkspaceMocks() {
   mocks.db.sequencingUpload.update.mockResolvedValue({});
   mocks.db.sequencingUpload.findUnique.mockResolvedValue(null);
   mocks.db.sample.update.mockResolvedValue({});
+  mocks.db.streamIngestedFile.groupBy.mockResolvedValue([]);
+  mocks.db.streamIngestedFile.findMany.mockResolvedValue([]);
   mocks.fs.stat.mockResolvedValue({
     size: 123,
     mtime: new Date("2026-03-24T09:00:00.000Z"),

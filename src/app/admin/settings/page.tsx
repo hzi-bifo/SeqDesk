@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock3,
   Copy,
+  Database,
   Download,
   FileText,
   HardDrive,
@@ -22,7 +23,16 @@ import {
   Send,
   Server,
   Settings2,
+  Trash2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface ToolVersions {
   nextflow?: string;
@@ -143,6 +153,15 @@ export default function SettingsPage() {
   const [accessLoaded, setAccessLoaded] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
+
+  const [seedStatus, setSeedStatus] = useState<{
+    seeded: boolean;
+    ordersCount: number;
+    dummyDataEnabled: boolean | null;
+  } | null>(null);
+  const [seedingDummy, setSeedingDummy] = useState(false);
+  const [wipingDummy, setWipingDummy] = useState(false);
+  const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
 
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
@@ -634,6 +653,96 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const fetchSeedStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/seed/dummy-data");
+      if (!res.ok) {
+        setSeedStatus(null);
+        return;
+      }
+      const data = (await res.json()) as {
+        seeded: boolean;
+        ordersCount: number;
+        dummyDataEnabled?: boolean | null;
+      };
+      setSeedStatus({
+        seeded: data.seeded,
+        ordersCount: data.ordersCount,
+        dummyDataEnabled: data.dummyDataEnabled ?? null,
+      });
+    } catch {
+      setSeedStatus(null);
+    }
+  }, []);
+
+  const seedDummyData = useCallback(async () => {
+    setSeedingDummy(true);
+    try {
+      const res = await fetch("/api/admin/seed/dummy-data", { method: "POST" });
+      const payload = (await res.json().catch(() => null)) as
+        | {
+            success?: boolean;
+            ordersCreated?: number;
+            samplesCreated?: number;
+            readsCreated?: number;
+            filesCreated?: number;
+            dataPath?: string;
+            platform?: {
+              instrumentModel?: string;
+              pairedEnd?: boolean;
+              fromConfiguredDevice?: boolean;
+            };
+            error?: string;
+          }
+        | null;
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to seed dummy data");
+      }
+      const platform = payload?.platform;
+      const platformLabel = platform?.instrumentModel
+        ? ` on ${platform.instrumentModel}${
+            platform.fromConfiguredDevice ? "" : " (default)"
+          }`
+        : "";
+      toast.success(
+        `Seeded ${payload?.ordersCreated ?? 0} orders, ${payload?.samplesCreated ?? 0} samples, ${payload?.readsCreated ?? 0} reads (${payload?.filesCreated ?? 0} FASTQ files)${platformLabel}`
+      );
+      await fetchSeedStatus();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to seed dummy data"
+      );
+    } finally {
+      setSeedingDummy(false);
+    }
+  }, [fetchSeedStatus]);
+
+  const wipeDummyData = useCallback(async () => {
+    setWipingDummy(true);
+    try {
+      const res = await fetch("/api/admin/seed/dummy-data", { method: "DELETE" });
+      const payload = (await res.json().catch(() => null)) as
+        | { success?: boolean; ordersDeleted?: number; error?: string }
+        | null;
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to wipe seeded data");
+      }
+      toast.success(
+        `Removed ${payload?.ordersDeleted ?? 0} seeded order${
+          payload?.ordersDeleted === 1 ? "" : "s"
+        } and the seeded study + files`
+      );
+      setWipeDialogOpen(false);
+      await fetchSeedStatus();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to wipe seeded data"
+      );
+    } finally {
+      setWipingDummy(false);
+    }
+  }, [fetchSeedStatus]);
+
   const startUpdatePolling = useCallback(() => {
     if (updatePollRef.current) return;
     updatePollRef.current = setInterval(() => {
@@ -794,6 +903,7 @@ export default function SettingsPage() {
         fetchConfigStatus(),
         fetchAccessSettings(),
         fetchTelemetrySettings(),
+        fetchSeedStatus(),
         checkForUpdates(true),
         fetchUpdateStatus(),
       ]);
@@ -804,6 +914,7 @@ export default function SettingsPage() {
     detectInstalledVersions,
     fetchAccessSettings,
     fetchConfigStatus,
+    fetchSeedStatus,
     fetchTelemetrySettings,
     fetchUpdateStatus,
   ]);
@@ -1320,6 +1431,65 @@ export default function SettingsPage() {
                 )}
                 Apply preset
               </Button>
+            </div>
+          </div>
+        </section>
+
+        <section className="bg-card rounded-xl border border-border overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-base font-semibold">Demo data</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Populate this installation with one realistic seeded study and two
+              orders (one submitted with synthetic FASTQ files on disk, one draft)
+              owned by your admin profile. Useful for demos, screenshots, and
+              smoke tests. The platform/instrument is picked from your configured
+              sequencer devices.
+            </p>
+          </div>
+
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-sm font-medium text-foreground">
+                    Load dummy data
+                  </p>
+                  {(seedingDummy || wipingDummy) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {seedStatus === null
+                    ? "Checking current state…"
+                    : seedStatus.seeded
+                      ? `${seedStatus.ordersCount} seeded order${
+                          seedStatus.ordersCount === 1 ? "" : "s"
+                        } currently loaded for your profile.`
+                      : "No seeded data present. Toggle on to create the example dataset."}
+                </p>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="text-xs text-muted-foreground">
+                  {seedStatus?.seeded ? "On" : "Off"}
+                </span>
+                <Switch
+                  checked={seedStatus?.seeded === true}
+                  onCheckedChange={(checked) => {
+                    if (seedStatus === null) return;
+                    if (checked && !seedStatus.seeded) {
+                      void seedDummyData();
+                    } else if (!checked && seedStatus.seeded) {
+                      setWipeDialogOpen(true);
+                    }
+                  }}
+                  disabled={
+                    seedingDummy || wipingDummy || seedStatus === null
+                  }
+                  aria-label="Load dummy data"
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -1849,6 +2019,42 @@ export default function SettingsPage() {
           </section>
         )}
       </div>
+
+      <Dialog open={wipeDialogOpen} onOpenChange={setWipeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Wipe seeded dummy data?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the {seedStatus?.ordersCount ?? 0} seeded
+              order{seedStatus?.ordersCount === 1 ? "" : "s"}, the seeded study,
+              all linked samples and reads, and the on-disk FASTQ folder created
+              for your admin profile. Other orders, studies, and files are not
+              touched.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setWipeDialogOpen(false)}
+              disabled={wipingDummy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void wipeDummyData()}
+              disabled={wipingDummy}
+            >
+              {wipingDummy ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Wipe seeded data
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
     </>
   );

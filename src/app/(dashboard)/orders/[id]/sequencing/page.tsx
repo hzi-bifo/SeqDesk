@@ -242,6 +242,14 @@ function formatFileSize(bytes?: number | null): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatBaseCount(bases: number): string {
+  if (!Number.isFinite(bases) || bases <= 0) return "0 bp";
+  if (bases < 1_000) return `${bases} bp`;
+  if (bases < 1_000_000) return `${(bases / 1_000).toFixed(1)} kb`;
+  if (bases < 1_000_000_000) return `${(bases / 1_000_000).toFixed(2)} Mb`;
+  return `${(bases / 1_000_000_000).toFixed(2)} Gb`;
+}
+
 function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("en-US", {
     month: "short",
@@ -2282,6 +2290,29 @@ export default function OrderSequencingPage({
                           <p className="text-xs text-muted-foreground mt-0.5 ml-4">No linked files</p>
                         </>
                       )}
+                      {sample.stream ? (
+                        <p
+                          className="text-xs text-muted-foreground mt-1 ml-4 inline-flex items-center gap-1.5"
+                          title={
+                            sample.stream.activeRunId
+                              ? `Stream ${sample.stream.activeRunId} is actively writing to this sample.`
+                              : "Stream-ingested chunks recorded for this sample. The stream is no longer active."
+                          }
+                        >
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "inline-block h-1.5 w-1.5 rounded-full",
+                              sample.stream.activeRunId
+                                ? "bg-emerald-500 animate-pulse"
+                                : "bg-muted-foreground/40",
+                            )}
+                          />
+                          Streaming &middot; {sample.stream.fileCount.toLocaleString()} file{sample.stream.fileCount === 1 ? "" : "s"} &middot;{" "}
+                          {sample.stream.totalReads.toLocaleString()} reads &middot;{" "}
+                          {formatBaseCount(sample.stream.totalBases)}
+                        </p>
+                      ) : null}
                     </div>
 
                     {/* QC / Reports */}

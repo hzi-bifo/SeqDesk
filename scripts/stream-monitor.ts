@@ -5,6 +5,86 @@ import { createWriteStream } from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
 import { parseBarcodeFromPath } from '../src/lib/sequencing/minion-paths';
+import { countFastqStats } from '../src/lib/sequencing/fastq-stats';
+
+/**
+ * Tiny FIFO semaphore. Caps concurrent ingest jobs across ALL streams so a
+ * busy run (or many streams) can't exhaust the DB pool / pegging CPU on
+ * decompressing several large FASTQs at once. Tunable via INGEST_CONCURRENCY
+ * env var (default 4 — fits comfortably under the default Prisma pool of 10).
+ */
+function makeSemaphore(maxConcurrent: number) {
+  let inUse = 0;
+  const waiters: Array<() => void> = [];
+  async function acquire(): Promise<void> {
+    if (inUse < maxConcurrent) {
+      inUse += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => waiters.push(resolve));
+    inUse += 1;
+  }
+  function release(): void {
+    inUse -= 1;
+    const next = waiters.shift();
+    if (next) next();
+  }
+  return {
+    async run<T>(fn: () => Promise<T>): Promise<T> {
+      await acquire();
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    },
+    snapshot: () => ({ inUse, queued: waiters.length, max: maxConcurrent }),
+  };
+}
+
+const INGEST_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.INGEST_CONCURRENCY ?? 4) || 4,
+);
+const ingestSemaphore = makeSemaphore(INGEST_CONCURRENCY);
+
+/**
+ * Defensive re-check that a file's size has been stable for `quietMs`. Chokidar
+ * already does this before emitting via `awaitWriteFinish`, but on slow shares
+ * or atomic-rename patterns the file can still be mid-flight when we read it.
+ * Polls every 500ms until two consecutive stats agree for at least `quietMs`,
+ * or returns null on timeout.
+ */
+async function waitForStable(
+  filePath: string,
+  opts: { quietMs?: number; timeoutMs?: number } = {},
+): Promise<{ size: number } | null> {
+  const quietMs = opts.quietMs ?? 1500;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const pollMs = Math.max(250, Math.floor(quietMs / 3));
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  let lastChangedAt = Date.now();
+  while (Date.now() < deadline) {
+    let size: number;
+    try {
+      const st = await fs.stat(filePath);
+      size = st.size;
+    } catch {
+      // File vanished mid-poll — treat as unstable, retry until timeout.
+      await new Promise((r) => setTimeout(r, pollMs));
+      continue;
+    }
+    if (size !== lastSize) {
+      lastSize = size;
+      lastChangedAt = Date.now();
+    } else if (Date.now() - lastChangedAt >= quietMs) {
+      return { size };
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return null;
+}
 
 // Stable identifier for THIS monitor process. Logged on every claim so that if two
 // monitors ever run against the same DB by accident, you can tell from the events
@@ -154,18 +234,79 @@ async function ingestFile(opts: {
     }
   }
 
+  // Defensive: wait until the file is size-stable before parsing. chokidar's
+  // awaitWriteFinish covers the normal case but on slow shares / atomic-rename
+  // patterns the file can still be growing when we get here.
+  const stable = await waitForStable(filePath, { quietMs: 1500, timeoutMs: 15_000 });
+  const stableSize = stable?.size ?? size;
+  if (!stable) {
+    await recordEvent(streamRunId, 'ERROR', {
+      message: 'file did not stabilize within timeout — parsing anyway',
+      filePath,
+      size,
+    });
+  }
+
+  // Count actual reads + bases (not just file count / byte count) so the UI can
+  // show operator-meaningful numbers. Fall back to size-based estimates if the
+  // FASTQ couldn't be parsed (malformed file, mid-write race, etc.).
+  const stats = await countFastqStats(filePath);
+  const reads = stats?.reads ?? 0;
+  const bases = stats?.bases ?? 0;
+
+  // Idempotent insert: the unique (streamRunId, filePath) index makes the create
+  // throw P2002 if this exact file is already recorded for this run. We use the
+  // throw to detect double-fire and skip the StreamRun totals increment so
+  // chokidar duplicates (rename, atomic-write, restart re-scan) don't double-count.
+  let alreadyIngested = false;
+  try {
+    await db.streamIngestedFile.create({
+      data: {
+        streamRunId,
+        sampleId: sample.id,
+        filePath,
+        barcode: parsed.barcode,
+        size: stableSize,
+        reads,
+        bases: BigInt(bases),
+      },
+    });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === 'P2002') {
+      alreadyIngested = true;
+    } else {
+      throw err;
+    }
+  }
+
+  if (alreadyIngested) {
+    await recordEvent(streamRunId, 'FILE_INGESTED', {
+      filePath,
+      barcode: parsed.barcode,
+      size: stableSize,
+      reads,
+      bases,
+      linkedSampleId: sample.id,
+      duplicate: true,
+    });
+    return;
+  }
+
   await db.streamRun.update({
     where: { id: streamRunId },
     data: {
-      totalReads: { increment: 1 },
-      totalBases: { increment: BigInt(size) },
+      totalReads: { increment: reads },
+      totalBases: { increment: BigInt(bases) },
     },
   });
 
   await recordEvent(streamRunId, 'FILE_INGESTED', {
     filePath,
     barcode: parsed.barcode,
-    size,
+    size: stableSize,
+    reads,
+    bases,
     linkedSampleId: sample.id,
   });
 }
@@ -193,14 +334,24 @@ async function attachWatcher(run: {
   const barcodeMap = parseBarcodeMap(run.barcodeMap);
   const watchGlob = path.join(run.outputDir, 'fastq_pass');
 
+  // Pull tunables from the per-installation config so ops can dial up polling
+  // and stability thresholds for slow shares without code changes.
+  const config = await getMinknowConfig();
+  const stabilityThreshold = Math.max(500, config.stabilityThresholdMs);
+
   const watcher = chokidar.watch(watchGlob, {
     persistent: true,
     ignoreInitial: false,
+    usePolling: config.usePolling,
+    // 1s polling interval is a sane default — only kicks in when usePolling=true.
+    interval: 1000,
+    binaryInterval: 1000,
     awaitWriteFinish: {
-      stabilityThreshold: 2000,
-      pollInterval: 500,
+      stabilityThreshold,
+      pollInterval: Math.min(500, Math.floor(stabilityThreshold / 4)),
     },
   });
+  log(`attached watcher for stream ${run.id} → ${watchGlob} (usePolling=${config.usePolling}, stability=${stabilityThreshold}ms)`);
 
   const tracker: RunningWatcher = {
     streamRunId: run.id,
@@ -226,13 +377,19 @@ async function attachWatcher(run: {
     tracker.seen.set(filePath, size);
 
     try {
-      await ingestFile({
-        streamRunId: run.id,
-        orderId: run.orderId,
-        filePath,
-        size,
-        barcodeMap,
-      });
+      // Gate every ingest through the global semaphore so a burst of new files
+      // (e.g. chokidar's initial-add storm on attach, or a busy multi-barcode
+      // run) can't oversaturate the DB pool / CPU. Queued work is processed
+      // FIFO; the semaphore.snapshot() shows live depth in the logs below.
+      await ingestSemaphore.run(() =>
+        ingestFile({
+          streamRunId: run.id,
+          orderId: run.orderId,
+          filePath,
+          size,
+          barcodeMap,
+        }),
+      );
     } catch (error) {
       logError(`ingest failed for ${filePath}`, error);
       await recordEvent(run.id, 'ERROR', {
@@ -248,8 +405,6 @@ async function attachWatcher(run: {
   watcher.on('error', (err) => {
     logError(`watcher error for stream ${run.id}`, err);
   });
-
-  log(`attached watcher for stream ${run.id} → ${watchGlob}`);
 }
 
 async function detachWatcher(streamRunId: string) {
@@ -324,6 +479,14 @@ async function syncWatchers() {
       where: { id: { in: active.map((r) => r.id) }, monitorId: MONITOR_ID },
       data: { lastSeenAt: new Date(), heartbeatAt: new Date() },
     });
+  }
+
+  // 4. Surface semaphore depth when it's non-trivial. Quiet during normal use,
+  //    noisy when the ingest queue actually backs up — which is exactly when
+  //    you want to see it.
+  const sem = ingestSemaphore.snapshot();
+  if (sem.queued > 0 || sem.inUse >= sem.max) {
+    log(`ingest semaphore: inUse=${sem.inUse}/${sem.max} queued=${sem.queued}`);
   }
 }
 

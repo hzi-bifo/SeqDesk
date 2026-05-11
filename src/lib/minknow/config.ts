@@ -7,6 +7,18 @@ export interface MinknowStreamConfig {
   tlsCaCertPath: string;
   outputRoot: string;
   pollIntervalMs: number;
+  /**
+   * Use polling instead of native filesystem events for the watcher. Required
+   * when MinKNOW writes to an NFS/SMB mount where inotify/FSEvents don't fire
+   * reliably. Costs CPU + I/O on every tick (default false = native events).
+   */
+  usePolling: boolean;
+  /**
+   * How long chokidar must observe a stable file size before emitting an
+   * add/change event. Higher values avoid reading partial writes but increase
+   * first-file latency. 2000ms is fine for local disk; 5000ms+ for slow shares.
+   */
+  stabilityThresholdMs: number;
 }
 
 export const DEFAULT_MINKNOW_CONFIG: MinknowStreamConfig = {
@@ -16,6 +28,8 @@ export const DEFAULT_MINKNOW_CONFIG: MinknowStreamConfig = {
   tlsCaCertPath: "",
   outputRoot: "",
   pollIntervalMs: 5000,
+  usePolling: false,
+  stabilityThresholdMs: 2000,
 };
 
 export function parseMinknowConfig(extraSettings: string | null | undefined): MinknowStreamConfig {

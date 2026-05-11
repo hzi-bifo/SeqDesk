@@ -65,7 +65,7 @@ export const WORKER_REGISTRY: WorkerSpec[] = [
       "Drips small FASTQ files into a watched directory every few seconds, mimicking a live MinKNOW run. Use to test the Stream view without a real MinION.",
     script: "scripts/stream-monitor.ts",
     args: ["--simulate", "--output-dir=/tmp/seqdesk-sim"],
-    envOverrides: { SIMULATE_INTERVAL_MS: "5000", SIMULATE_BARCODES: "barcode01,barcode02,barcode03" },
+    envOverrides: { SIMULATE_INTERVAL_MS: "15000", SIMULATE_BARCODES: "barcode01,barcode02,barcode03" },
     supportsPause: false,
     devOnly: true,
     configNote:

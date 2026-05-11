@@ -19,6 +19,31 @@ import {
   type DemoExperience,
   normalizeDemoExperience,
 } from "./types";
+import {
+  PLATFORM_ILLUMINA_MISEQ_AMPLICON,
+  PLATFORM_ILLUMINA_NEXTSEQ_WGS,
+  PLATFORM_ILLUMINA_NOVASEQ_WGS,
+  SAMPLE_GR_01,
+  SAMPLE_GR_02,
+  SAMPLE_GR_03,
+  SAMPLE_HS_01,
+  SAMPLE_HS_02,
+  SAMPLE_SR_01,
+  SAMPLE_SR_02,
+  STUDY_GUT_RECOVERY,
+  STUDY_SURFACE_RESISTOME,
+  type PlatformProfile,
+  type SampleTemplate,
+} from "@/lib/seed/templates";
+
+function orderPlatformFields(profile: PlatformProfile) {
+  return {
+    platform: profile.platform,
+    instrumentModel: profile.instrumentModel,
+    libraryStrategy: profile.libraryStrategy,
+    librarySource: profile.librarySource,
+  };
+}
 
 type DemoBootstrapResult = {
   created: boolean;
@@ -244,17 +269,42 @@ async function createDemoWorkspaceInternal(
       },
     });
 
+    const buildSampleCreate = (
+      template: SampleTemplate,
+      orderIndex: number,
+      sampleIndex: number,
+      extras?: {
+        studyId?: string;
+        reads?: { file1: string; file2: string };
+      }
+    ) => ({
+      sampleId: createSampleId(prefix, orderIndex, sampleIndex),
+      sampleAlias: template.sampleAlias,
+      sampleTitle: template.sampleTitle,
+      scientificName: template.scientificName,
+      taxId: template.taxId,
+      ...(Object.keys(template.checklistData).length > 0
+        ? { checklistData: JSON.stringify(template.checklistData) }
+        : {}),
+      customFields: JSON.stringify(template.customFields),
+      ...(extras?.studyId
+        ? { study: { connect: { id: extras.studyId } } }
+        : {}),
+      ...(extras?.reads
+        ? { reads: { create: extras.reads } }
+        : {}),
+    });
+
     const readyStudy = await tx.study.create({
       data: {
-        title: "Gut Recovery Cohort",
-        alias: `gut-recovery-${prefix.toLowerCase()}`,
-        description:
-          "Longitudinal metagenome study tracking recovery after treatment.",
-        checklistType: "Human Gut",
+        title: STUDY_GUT_RECOVERY.titleBase,
+        alias: `${STUDY_GUT_RECOVERY.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_GUT_RECOVERY.description,
+        checklistType: STUDY_GUT_RECOVERY.checklistType,
         studyMetadata: JSON.stringify(
           getStudyMetadata(
-            "Dr. Lena Hartmann",
-            "Longitudinal study following gut microbiome recovery after antibiotic treatment."
+            STUDY_GUT_RECOVERY.principalInvestigator,
+            STUDY_GUT_RECOVERY.abstract
           )
         ),
         readyForSubmission: true,
@@ -265,15 +315,14 @@ async function createDemoWorkspaceInternal(
 
     const pilotStudy = await tx.study.create({
       data: {
-        title: "Surface Resistome Pilot",
-        alias: `surface-pilot-${prefix.toLowerCase()}`,
-        description:
-          "Pilot study comparing resistome profiles from surface swab collections.",
-        checklistType: "Built Environment",
+        title: STUDY_SURFACE_RESISTOME.titleBase,
+        alias: `${STUDY_SURFACE_RESISTOME.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_SURFACE_RESISTOME.description,
+        checklistType: STUDY_SURFACE_RESISTOME.checklistType,
         studyMetadata: JSON.stringify(
           getStudyMetadata(
-            "Dr. Maya Nguyen",
-            "Pilot screen of resistome markers across public-touch surface samples."
+            STUDY_SURFACE_RESISTOME.principalInvestigator,
+            STUDY_SURFACE_RESISTOME.abstract
           )
         ),
         userId: researcher.id,
@@ -289,38 +338,15 @@ async function createDemoWorkspaceInternal(
         contactName: "Demo Researcher",
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
-        platform: "ILLUMINA",
-        instrumentModel: "MiSeq",
-        libraryStrategy: "AMPLICON",
-        librarySource: "METAGENOMIC",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON),
         customFields: JSON.stringify({
           _projects: "Screening batch\nValidation panel",
         }),
         userId: researcher.id,
         samples: {
           create: [
-            {
-              sampleId: createSampleId(prefix, 1, 1),
-              sampleAlias: "HS-01",
-              sampleTitle: "Host sample 01",
-              scientificName: "human gut metagenome",
-              taxId: "408170",
-              customFields: JSON.stringify({
-                sample_volume: "40",
-                sample_concentration: "18",
-              }),
-            },
-            {
-              sampleId: createSampleId(prefix, 1, 2),
-              sampleAlias: "HS-02",
-              sampleTitle: "Host sample 02",
-              scientificName: "human gut metagenome",
-              taxId: "408170",
-              customFields: JSON.stringify({
-                sample_volume: "45",
-                sample_concentration: "20",
-              }),
-            },
+            buildSampleCreate(SAMPLE_HS_01, 1, 1),
+            buildSampleCreate(SAMPLE_HS_02, 1, 2),
           ],
         },
       },
@@ -336,73 +362,16 @@ async function createDemoWorkspaceInternal(
         contactName: "Demo Researcher",
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
-        platform: "ILLUMINA",
-        instrumentModel: "NovaSeq 6000",
-        libraryStrategy: "WGS",
-        librarySource: "METAGENOMIC",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
         customFields: JSON.stringify({
           _projects: "Gut recovery cohort\nTimepoint atlas",
         }),
         userId: researcher.id,
         samples: {
           create: [
-            {
-              sampleId: createSampleId(prefix, 2, 1),
-              sampleAlias: "GR-01",
-              sampleTitle: "Gut recovery day 0",
-              scientificName: "human gut metagenome",
-              taxId: "408170",
-              checklistData: JSON.stringify({
-                collection_date: "2026-02-01",
-                geographic_location: "Germany:Lower Saxony:Braunschweig",
-                host_body_site: "stool",
-              }),
-              customFields: JSON.stringify({
-                sample_volume: "50",
-                sample_concentration: "24",
-              }),
-              study: {
-                connect: { id: readyStudy.id },
-              },
-            },
-            {
-              sampleId: createSampleId(prefix, 2, 2),
-              sampleAlias: "GR-02",
-              sampleTitle: "Gut recovery day 14",
-              scientificName: "human gut metagenome",
-              taxId: "408170",
-              checklistData: JSON.stringify({
-                collection_date: "2026-02-14",
-                geographic_location: "Germany:Lower Saxony:Braunschweig",
-                host_body_site: "stool",
-              }),
-              customFields: JSON.stringify({
-                sample_volume: "48",
-                sample_concentration: "22",
-              }),
-              study: {
-                connect: { id: readyStudy.id },
-              },
-            },
-            {
-              sampleId: createSampleId(prefix, 2, 3),
-              sampleAlias: "GR-03",
-              sampleTitle: "Gut recovery day 28",
-              scientificName: "human gut metagenome",
-              taxId: "408170",
-              checklistData: JSON.stringify({
-                collection_date: "2026-02-28",
-                geographic_location: "Germany:Lower Saxony:Braunschweig",
-                host_body_site: "stool",
-              }),
-              customFields: JSON.stringify({
-                sample_volume: "52",
-                sample_concentration: "25",
-              }),
-              study: {
-                connect: { id: readyStudy.id },
-              },
-            },
+            buildSampleCreate(SAMPLE_GR_01, 2, 1, { studyId: readyStudy.id }),
+            buildSampleCreate(SAMPLE_GR_02, 2, 2, { studyId: readyStudy.id }),
+            buildSampleCreate(SAMPLE_GR_03, 2, 3, { studyId: readyStudy.id }),
           ],
         },
       },
@@ -497,7 +466,11 @@ async function createDemoWorkspaceInternal(
     });
 
     // Create reads for submitted order samples with full pipeline output
-    const sampleAliases = ["GR-01", "GR-02", "GR-03"];
+    const sampleAliases = [
+      SAMPLE_GR_01.sampleAlias,
+      SAMPLE_GR_02.sampleAlias,
+      SAMPLE_GR_03.sampleAlias,
+    ];
     for (let i = 0; i < submittedOrder.samples.length; i++) {
       const s = submittedOrder.samples[i];
       const alias = sampleAliases[i] ?? s.sampleId;
@@ -526,63 +499,24 @@ async function createDemoWorkspaceInternal(
         contactName: "Demo Researcher",
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
-        platform: "ILLUMINA",
-        instrumentModel: "NextSeq 2000",
-        libraryStrategy: "WGS",
-        librarySource: "METAGENOMIC",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
         userId: researcher.id,
         samples: {
           create: [
-            {
-              sampleId: createSampleId(prefix, 3, 1),
-              sampleAlias: "SR-01",
-              sampleTitle: "Surface swab entry rail",
-              scientificName: "metagenome",
-              taxId: "256318",
-              checklistData: JSON.stringify({
-                collection_date: "2026-01-19",
-                geographic_location: "Germany:Lower Saxony:Braunschweig",
-                env_broad_scale: "built environment",
-              }),
-              customFields: JSON.stringify({
-                sample_volume: "35",
-                sample_concentration: "15",
-              }),
-              study: {
-                connect: { id: pilotStudy.id },
-              },
+            buildSampleCreate(SAMPLE_SR_01, 3, 1, {
+              studyId: pilotStudy.id,
               reads: {
-                create: {
-                  file1: `${demoRoot}/surface-resistome/SR-01_R1.fastq.gz`,
-                  file2: `${demoRoot}/surface-resistome/SR-01_R2.fastq.gz`,
-                },
+                file1: `${demoRoot}/surface-resistome/SR-01_R1.fastq.gz`,
+                file2: `${demoRoot}/surface-resistome/SR-01_R2.fastq.gz`,
               },
-            },
-            {
-              sampleId: createSampleId(prefix, 3, 2),
-              sampleAlias: "SR-02",
-              sampleTitle: "Surface swab door handle",
-              scientificName: "metagenome",
-              taxId: "256318",
-              checklistData: JSON.stringify({
-                collection_date: "2026-01-19",
-                geographic_location: "Germany:Lower Saxony:Braunschweig",
-                env_broad_scale: "built environment",
-              }),
-              customFields: JSON.stringify({
-                sample_volume: "38",
-                sample_concentration: "17",
-              }),
-              study: {
-                connect: { id: pilotStudy.id },
-              },
+            }),
+            buildSampleCreate(SAMPLE_SR_02, 3, 2, {
+              studyId: pilotStudy.id,
               reads: {
-                create: {
-                  file1: `${demoRoot}/surface-resistome/SR-02_R1.fastq.gz`,
-                  file2: `${demoRoot}/surface-resistome/SR-02_R2.fastq.gz`,
-                },
+                file1: `${demoRoot}/surface-resistome/SR-02_R1.fastq.gz`,
+                file2: `${demoRoot}/surface-resistome/SR-02_R2.fastq.gz`,
               },
-            },
+            }),
           ],
         },
       },
