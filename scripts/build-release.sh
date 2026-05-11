@@ -123,6 +123,29 @@ if [[ -d "${ROOT_DIR}/node_modules/bcryptjs" ]]; then
   cp -R "${ROOT_DIR}/node_modules/bcryptjs" "${RELEASE_DIR}/node_modules/"
 fi
 
+echo "Bundling worker scripts..."
+mkdir -p "${RELEASE_DIR}/scripts"
+node <<NODE
+const esbuild = require("${ROOT_DIR}/node_modules/esbuild");
+const entries = [
+  "${ROOT_DIR}/scripts/stream-monitor.ts",
+  "${ROOT_DIR}/scripts/pipeline-monitor.ts",
+];
+for (const entry of entries) {
+  const outfile = entry.replace("${ROOT_DIR}", "${RELEASE_DIR}").replace(/\.ts\$/, ".js");
+  esbuild.buildSync({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "cjs",
+    outfile,
+    external: ["@prisma/client", ".prisma/client", "fsevents"],
+    logLevel: "warning",
+  });
+}
+NODE
+
 echo "Copying Next.js static assets..."
 mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"

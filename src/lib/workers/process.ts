@@ -53,6 +53,21 @@ function resolveTsxBinary(): string {
 }
 
 /**
+ * Resolve the command + script path used to spawn a worker.
+ * Production releases ship a pre-bundled `.js` next to the `.ts` source;
+ * dev runs from source via `tsx`.
+ */
+function resolveSpawnTarget(script: string): { cmd: string; scriptPath: string } {
+  if (script.endsWith(".ts")) {
+    const jsPath = path.join(REPO_ROOT, script.replace(/\.ts$/, ".js"));
+    if (existsSync(jsPath)) {
+      return { cmd: process.execPath, scriptPath: jsPath };
+    }
+  }
+  return { cmd: resolveTsxBinary(), scriptPath: path.join(REPO_ROOT, script) };
+}
+
+/**
  * Spawn the configured script as a detached child, redirect stdout+stderr to a
  * log file, and create a tracking row in the DB. Returns the row.
  *
@@ -65,12 +80,12 @@ export async function startWorker(
 ): Promise<{ id: string; pid: number; logPath: string }> {
   await ensureLogDir();
 
-  const tsx = resolveTsxBinary();
-  const args = [path.join(REPO_ROOT, spec.script), ...(spec.args ?? [])];
+  const { cmd, scriptPath } = resolveSpawnTarget(spec.script);
+  const args = [scriptPath, ...(spec.args ?? [])];
 
   // Open the log file FIRST so we can wire stdio into it. Detached + ignored
   // stdin so the child outlives this Next.js request handler.
-  const child = spawn(tsx, args, {
+  const child = spawn(cmd, args, {
     cwd: REPO_ROOT,
     env: { ...process.env, ...(spec.envOverrides ?? {}) },
     detached: true,
@@ -96,7 +111,7 @@ export async function startWorker(
       reasonParts.push(e.message);
     } else {
       reasonParts.push(
-        `no PID assigned (cmd=${tsx} cwd=${REPO_ROOT}). tsx-exists=${existsSync(tsx)} script-exists=${existsSync(args[0])}`,
+        `no PID assigned (cmd=${cmd} cwd=${REPO_ROOT}). cmd-exists=${existsSync(cmd)} script-exists=${existsSync(scriptPath)}`,
       );
     }
     throw new Error(`Failed to spawn ${spec.name}: ${reasonParts.join(" ")}`);
@@ -105,7 +120,7 @@ export async function startWorker(
   const logPath = buildLogPath(spec.name, child.pid);
   const logStream = createWriteStream(logPath, { flags: "a" });
   logStream.write(`[${new Date().toISOString()}] [seqdesk] starting ${spec.name} pid=${child.pid} on ${os.hostname()}\n`);
-  logStream.write(`[${new Date().toISOString()}] [seqdesk] cmd: ${tsx} ${args.join(" ")}\n`);
+  logStream.write(`[${new Date().toISOString()}] [seqdesk] cmd: ${cmd} ${args.join(" ")}\n`);
   child.stdout.pipe(logStream);
   child.stderr.pipe(logStream);
 
