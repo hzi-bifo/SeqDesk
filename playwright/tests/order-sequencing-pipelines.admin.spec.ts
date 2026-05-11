@@ -288,8 +288,15 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       // Keep defaults, just change read count for verification
       await page.getByLabel("Read Count").fill("42");
 
+      // Wait for the page to have processed samples and computed readiness.
+      // Without this, the page can render the Run button before /api/admin/settings/pipelines
+      // returns and the pipeline-readiness logic settles, leaving the button stuck disabled.
+      await expect(
+        page.getByText("1 ready", { exact: true }),
+      ).toBeVisible({ timeout: 60000 });
+
       const runButton = page.getByRole("button", { name: /Run all ready samples/i });
-      await expect(runButton).toBeEnabled({ timeout: 90000 });
+      await expect(runButton).toBeEnabled({ timeout: 30000 });
       await runButton.click();
 
       const run = await waitForPipelineRunToComplete(
@@ -308,11 +315,25 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       await expect(runRow).toBeVisible({ timeout: 15000 });
       await expect(runRow).toContainText("Completed", { timeout: 15000 });
 
+      // Pipeline status flips to "completed" before the write-back finishes linking
+      // the generated FASTQs onto the sample. Poll the sequencing API directly so we
+      // navigate to the page only after both R1 and R2 are recorded — otherwise the
+      // page fetches once on load and shows stale "No reads linked".
+      await expect
+        .poll(
+          async () => {
+            const samples = await getOrderSequencingSamples(page, orderId as string);
+            return Boolean(samples[0]?.read?.file1 && samples[0]?.read?.file2);
+          },
+          { timeout: 60000, intervals: [1000, 2000, 3000] },
+        )
+        .toBe(true);
+
       await page.goto(`${orderPath}/sequencing`);
       await expect(page.getByRole("heading", { name: "Sequencing Data" })).toBeVisible();
       await expect(
         page.getByText("Paired FASTQ linked", { exact: true }),
-      ).toBeVisible({ timeout: 30000 });
+      ).toBeVisible({ timeout: 15000 });
     } finally {
       if (runId) {
         await deletePipelineRun(page, runId);
