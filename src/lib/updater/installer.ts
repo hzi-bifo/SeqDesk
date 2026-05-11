@@ -26,6 +26,29 @@ import {
   getDatabaseCompatibilityError,
   loadInstalledDatabaseConfig,
 } from './database-config';
+import { db } from '@/lib/db';
+
+type DataSnapshot = { orders: number; samples: number; studies: number; users: number };
+
+async function snapshotDataCounts(): Promise<DataSnapshot> {
+  const [orders, samples, studies, users] = await Promise.all([
+    db.order.count(),
+    db.sample.count(),
+    db.study.count(),
+    db.user.count(),
+  ]);
+  return { orders, samples, studies, users };
+}
+
+function describeDataLoss(before: DataSnapshot, after: DataSnapshot): string | null {
+  const lost: string[] = [];
+  for (const key of ['orders', 'samples', 'studies', 'users'] as const) {
+    if (after[key] < before[key]) {
+      lost.push(`${key} ${before[key]} → ${after[key]}`);
+    }
+  }
+  return lost.length > 0 ? lost.join(', ') : null;
+}
 
 const execAsync = promisify(exec);
 
@@ -123,9 +146,15 @@ export async function installUpdate(
     report('extracting', 85, 'Verifying update...');
     await verifyInstalledVersion(release.version);
 
-    // Step 6: Run migrations
+    // Step 6: Run migrations (snapshot row counts to guard against silent data loss)
     report('extracting', 90, 'Running database migrations...');
+    const before = await snapshotDataCounts();
     await runMigrations();
+    const after = await snapshotDataCounts();
+    const loss = describeDataLoss(before, after);
+    if (loss) {
+      throw new Error(`Aborting update: data loss detected after migrations (${loss}). Backup will be restored.`);
+    }
 
     // Step 7: Cleanup
     report('complete', 100, 'Update complete! Restarting...');
