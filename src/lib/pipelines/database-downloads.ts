@@ -15,6 +15,7 @@ export interface PipelineDatabaseDefinition {
   fileName: string;
   downloadUrl: string;
   configKey: string;
+  sha256?: string;
   install?: {
     type: 'metaxpath_db_bundle';
     paramsFileName: string;
@@ -35,16 +36,19 @@ export interface PipelineDatabaseDownloadJobStatus {
   pipelineId: string;
   databaseId: string;
   state: 'running' | 'success' | 'error';
+  phase?: 'downloading' | 'verifying' | 'installing';
   sourceUrl?: string;
   targetPath?: string;
   pid?: number;
   bytesDownloaded?: number;
   totalBytes?: number;
   progressPercent?: number | null;
+  limitRate?: string;
   startedAt?: string;
   finishedAt?: string;
   error?: string;
   logPath?: string;
+  cancelled?: boolean;
 }
 
 export interface PipelineDatabaseStatus {

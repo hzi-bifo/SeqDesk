@@ -15,12 +15,32 @@ import {
   updateDatabaseDownloadJobStatus,
   updateDatabaseDownloadRecord,
 } from '@/lib/pipelines/database-downloads';
-import { createWriteStream } from 'fs';
+import { createWriteStream, createReadStream } from 'fs';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import type { WriteStream } from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+
+const LIMIT_RATE_REGEX = /^\d+[KMG]?$/i;
+
+function normalizeLimitRate(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  if (!LIMIT_RATE_REGEX.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+async function computeFileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash('sha256');
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
 
 const execAsync = promisify(exec);
 
@@ -50,13 +70,13 @@ async function commandSupportsOption(command: string, option: string): Promise<b
 
 async function resolveDownloader(): Promise<{
   command: string;
-  args: (sourceUrl: string, targetPath: string) => string[];
+  args: (sourceUrl: string, targetPath: string, limitRate?: string) => string[];
 }> {
   if (await commandExists('curl')) {
     const supportsRetryAllErrors = await commandSupportsOption('curl', '--retry-all-errors');
     return {
       command: 'curl',
-      args: (sourceUrl: string, targetPath: string) => [
+      args: (sourceUrl: string, targetPath: string, limitRate?: string) => [
         '-L',
         '-C',
         '-',
@@ -72,6 +92,7 @@ async function resolveDownloader(): Promise<{
         '60',
         '--speed-limit',
         '1024',
+        ...(limitRate ? ['--limit-rate', limitRate] : []),
         '--output',
         targetPath,
         sourceUrl,
@@ -82,11 +103,12 @@ async function resolveDownloader(): Promise<{
   if (await commandExists('wget')) {
     return {
       command: 'wget',
-      args: (sourceUrl: string, targetPath: string) => [
+      args: (sourceUrl: string, targetPath: string, limitRate?: string) => [
         '-c',
         '--tries=8',
         '--waitretry=5',
         '--timeout=30',
+        ...(limitRate ? [`--limit-rate=${limitRate}`] : []),
         '-O',
         targetPath,
         sourceUrl,
@@ -190,7 +212,8 @@ async function installDatabaseIfNeeded(
   archivePath: string,
   database: NonNullable<ReturnType<typeof getPipelineDatabaseDefinition>>,
   databaseDirectory?: string,
-  logStream?: WriteStream
+  logStream?: WriteStream,
+  installDirOverride?: string
 ): Promise<{ runtimePath: string; sizeBytes: number }> {
   if (database.install?.type !== 'metaxpath_db_bundle') {
     return {
@@ -208,12 +231,14 @@ async function installDatabaseIfNeeded(
     );
   }
 
-  const installDir = buildPipelineDatabaseInstallDir(
-    pipelineRunDir,
-    pipelineId,
-    databaseId,
-    databaseDirectory
-  );
+  const installDir =
+    installDirOverride ||
+    buildPipelineDatabaseInstallDir(
+      pipelineRunDir,
+      pipelineId,
+      databaseId,
+      databaseDirectory
+    );
   await fs.mkdir(installDir, { recursive: true });
 
   const args = [
@@ -271,7 +296,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { pipelineId, databaseId, replace } = body || {};
+    const {
+      pipelineId,
+      databaseId,
+      replace,
+      targetPath: customTargetPath,
+      limitRate: rawLimitRate,
+    } = body || {};
+    const limitRate = normalizeLimitRate(rawLimitRate);
+    if (rawLimitRate && !limitRate) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid bandwidth limit. Use a number with optional K/M/G suffix (e.g. '10M', '512K').",
+        },
+        { status: 400 }
+      );
+    }
 
     if (!pipelineId || typeof pipelineId !== 'string') {
       return NextResponse.json({ error: 'Pipeline ID required' }, { status: 400 });
@@ -305,13 +346,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const targetPath = buildPipelineDatabaseTargetPath(
-      executionSettings.pipelineRunDir,
-      pipelineId,
-      databaseId,
-      database.fileName,
-      executionSettings.pipelineDatabaseDir
-    );
+    let targetPath: string;
+    let installDirOverride: string | undefined;
+    const trimmedCustomPath =
+      typeof customTargetPath === 'string' ? customTargetPath.trim() : '';
+    if (trimmedCustomPath.length > 0) {
+      if (!path.isAbsolute(trimmedCustomPath)) {
+        return NextResponse.json(
+          { error: 'Custom target path must be absolute (start with /)' },
+          { status: 400 }
+        );
+      }
+      if (trimmedCustomPath.endsWith('/')) {
+        return NextResponse.json(
+          { error: 'Custom target path must include the file name, not just a directory' },
+          { status: 400 }
+        );
+      }
+      targetPath = path.resolve(trimmedCustomPath);
+      installDirOverride = path.join(path.dirname(targetPath), 'installed');
+    } else {
+      targetPath = buildPipelineDatabaseTargetPath(
+        executionSettings.pipelineRunDir,
+        pipelineId,
+        databaseId,
+        database.fileName,
+        executionSettings.pipelineDatabaseDir
+      );
+    }
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
     if (replace === true) {
@@ -332,13 +394,39 @@ export async function POST(req: NextRequest) {
       localBytes >= totalBytes;
 
     if (hasCompleteExistingFile) {
+      if (database.sha256) {
+        await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+          state: 'running',
+          phase: 'verifying',
+          sourceUrl: database.downloadUrl,
+          targetPath,
+          bytesDownloaded: localBytes,
+          totalBytes,
+          progressPercent: 100,
+          startedAt: new Date().toISOString(),
+          error: undefined,
+        });
+        const actualHash = await computeFileSha256(targetPath);
+        if (actualHash.toLowerCase() !== database.sha256.toLowerCase()) {
+          const message = `Checksum mismatch: expected sha256 ${database.sha256}, got ${actualHash}. Re-run with "Replace existing" to download again.`;
+          await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+            state: 'error',
+            phase: undefined,
+            finishedAt: new Date().toISOString(),
+            error: message,
+          });
+          return NextResponse.json({ error: message }, { status: 422 });
+        }
+      }
       const installed = await installDatabaseIfNeeded(
         executionSettings.pipelineRunDir,
         pipelineId,
         databaseId,
         targetPath,
         database,
-        executionSettings.pipelineDatabaseDir
+        executionSettings.pipelineDatabaseDir,
+        undefined,
+        installDirOverride
       );
       await updateDatabaseDownloadRecord(pipelineId, databaseId, {
         version: database.version,
@@ -349,6 +437,7 @@ export async function POST(req: NextRequest) {
       await setPipelineDatabasePath(pipelineId, database.configKey, installed.runtimePath);
       await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
         state: 'success',
+        phase: undefined,
         sourceUrl: database.downloadUrl,
         targetPath,
         bytesDownloaded: localBytes,
@@ -384,32 +473,44 @@ export async function POST(req: NextRequest) {
     logStream.write(
       `[${new Date().toISOString()}] Starting database download for ${pipelineId}/${databaseId}\n`
     );
+    if (limitRate) {
+      logStream.write(
+        `[${new Date().toISOString()}] Bandwidth limit applied: ${limitRate}\n`
+      );
+    }
     logStream.write(
       `[${new Date().toISOString()}] Command: ${downloader.command} ${downloader
-        .args(database.downloadUrl, targetPath)
+        .args(database.downloadUrl, targetPath, limitRate)
         .join(' ')}\n`
     );
 
     const startedAt = new Date().toISOString();
     await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
       state: 'running',
+      phase: 'downloading',
       sourceUrl: database.downloadUrl,
       targetPath,
       bytesDownloaded: localBytes,
       totalBytes,
       progressPercent: calculateProgressPercent(localBytes, totalBytes),
+      limitRate,
       startedAt,
       finishedAt: undefined,
       error: undefined,
+      cancelled: false,
       logPath,
       pid: undefined,
     });
 
     try {
-      const child = spawn(downloader.command, downloader.args(database.downloadUrl, targetPath), {
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      const child = spawn(
+        downloader.command,
+        downloader.args(database.downloadUrl, targetPath, limitRate),
+        {
+          env: process.env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
 
       if (child.pid) {
         await updateDatabaseDownloadJobStatus(pipelineId, databaseId, { pid: child.pid });
@@ -449,8 +550,49 @@ export async function POST(req: NextRequest) {
         clearInterval(progressTimer);
         try {
           const finishedAt = new Date().toISOString();
+          const currentJob = await getDatabaseDownloadJobStatus(pipelineId, databaseId);
+          if (currentJob?.cancelled) {
+            logStream.write(
+              `[${new Date().toISOString()}] Download cancelled by user (exit code ${code}).\n`
+            );
+            logStream.end();
+            return;
+          }
           if (code === 0) {
             const bytesDownloaded = await getFileSize(targetPath);
+            if (database.sha256) {
+              await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+                phase: 'verifying',
+                bytesDownloaded,
+                totalBytes,
+                progressPercent: 100,
+              });
+              logStream.write(
+                `[${new Date().toISOString()}] Verifying sha256 checksum...\n`
+              );
+              const actualHash = await computeFileSha256(targetPath);
+              if (actualHash.toLowerCase() !== database.sha256.toLowerCase()) {
+                const message = `Checksum mismatch: expected sha256 ${database.sha256}, got ${actualHash}. The downloaded file may be corrupt; re-run with "Replace existing" to download again.`;
+                logStream.write(`[${new Date().toISOString()}] ${message}\n`);
+                await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+                  state: 'error',
+                  phase: undefined,
+                  finishedAt,
+                  bytesDownloaded,
+                  totalBytes,
+                  progressPercent: 100,
+                  error: message,
+                });
+                logStream.end();
+                return;
+              }
+              logStream.write(
+                `[${new Date().toISOString()}] Checksum OK (sha256 ${actualHash}).\n`
+              );
+            }
+            await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+              phase: 'installing',
+            });
             const installed = await installDatabaseIfNeeded(
               executionSettings.pipelineRunDir,
               pipelineId,
@@ -458,7 +600,8 @@ export async function POST(req: NextRequest) {
               targetPath,
               database,
               executionSettings.pipelineDatabaseDir,
-              logStream
+              logStream,
+              installDirOverride
             );
             await updateDatabaseDownloadRecord(pipelineId, databaseId, {
               version: database.version,
@@ -469,6 +612,7 @@ export async function POST(req: NextRequest) {
             await setPipelineDatabasePath(pipelineId, database.configKey, installed.runtimePath);
             await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
               state: 'success',
+              phase: undefined,
               finishedAt,
               bytesDownloaded,
               totalBytes,

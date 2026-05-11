@@ -171,16 +171,19 @@ interface PipelineDatabaseDownloadInfo {
   detail?: string;
   job?: {
     state: "running" | "success" | "error";
+    phase?: "downloading" | "verifying" | "installing";
     sourceUrl?: string;
     targetPath?: string;
     pid?: number;
     bytesDownloaded?: number;
     totalBytes?: number;
     progressPercent?: number | null;
+    limitRate?: string;
     startedAt?: string;
     finishedAt?: string;
     error?: string;
     logPath?: string;
+    cancelled?: boolean;
   } | null;
 }
 
@@ -537,6 +540,28 @@ export default function PipelineSettingsPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadingDatabase, setDownloadingDatabase] = useState<string | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
+  const [dbDownloadDialogOpen, setDbDownloadDialogOpen] = useState(false);
+  const [dbDownloadTarget, setDbDownloadTarget] = useState<{
+    pipelineId: string;
+    pipelineName: string;
+    database: PipelineDatabaseDownloadInfo;
+  } | null>(null);
+  const [dbDownloadCustomPath, setDbDownloadCustomPath] = useState("");
+  const [dbDownloadReplace, setDbDownloadReplace] = useState(false);
+  const [dbDownloadLimitRate, setDbDownloadLimitRate] = useState("");
+  const [dbDownloadDialogError, setDbDownloadDialogError] = useState<string | null>(null);
+  const [dbPreflight, setDbPreflight] = useState<{
+    loading: boolean;
+    expectedBytes: number | null;
+    freeBytes: number | null;
+    partialBytes: number;
+    remainingBytes: number | null;
+    sufficient: boolean | null;
+    hasSha256: boolean;
+    targetPath: string | null;
+    error?: string | null;
+  } | null>(null);
+  const [cancellingDatabase, setCancellingDatabase] = useState<string | null>(null);
   const [togglingPipeline, setTogglingPipeline] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
@@ -918,16 +943,26 @@ export default function PipelineSettingsPage() {
   const handleDownloadPipelineDatabase = async (
     pipelineId: string,
     databaseId: string,
-    replace = false
+    replace = false,
+    targetPath?: string,
+    limitRate?: string
   ) => {
     const key = `${pipelineId}:${databaseId}`;
     setDownloadingDatabase(key);
     setDatabaseError(null);
     try {
+      const trimmedTarget = typeof targetPath === "string" ? targetPath.trim() : "";
+      const trimmedLimit = typeof limitRate === "string" ? limitRate.trim() : "";
       const res = await fetch("/api/admin/settings/pipelines/download-db", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pipelineId, databaseId, replace }),
+        body: JSON.stringify({
+          pipelineId,
+          databaseId,
+          replace,
+          ...(trimmedTarget ? { targetPath: trimmedTarget } : {}),
+          ...(trimmedLimit ? { limitRate: trimmedLimit } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -941,6 +976,175 @@ export default function PipelineSettingsPage() {
     } finally {
       setDownloadingDatabase(null);
     }
+  };
+
+  const handleCancelDatabaseDownload = async (
+    pipelineId: string,
+    databaseId: string
+  ) => {
+    const key = `${pipelineId}:${databaseId}`;
+    setCancellingDatabase(key);
+    setDatabaseError(null);
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/download-db/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipelineId, databaseId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDatabaseError(data.error || "Cancel failed");
+        return;
+      }
+      mutate();
+    } catch (err) {
+      setDatabaseError("Cancel failed. Check console for details.");
+      console.error("Database cancel error:", err);
+    } finally {
+      setCancellingDatabase(null);
+    }
+  };
+
+  const fetchDbPreflight = async (
+    pipelineId: string,
+    databaseId: string,
+    targetPath: string
+  ) => {
+    setDbPreflight((prev) => ({
+      loading: true,
+      expectedBytes: prev?.expectedBytes ?? null,
+      freeBytes: prev?.freeBytes ?? null,
+      partialBytes: prev?.partialBytes ?? 0,
+      remainingBytes: prev?.remainingBytes ?? null,
+      sufficient: prev?.sufficient ?? null,
+      hasSha256: prev?.hasSha256 ?? false,
+      targetPath: prev?.targetPath ?? null,
+      error: prev?.error ?? null,
+    }));
+    try {
+      const res = await fetch("/api/admin/settings/pipelines/download-db/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pipelineId,
+          databaseId,
+          ...(targetPath.trim() ? { targetPath: targetPath.trim() } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDbPreflight({
+          loading: false,
+          expectedBytes: null,
+          freeBytes: null,
+          partialBytes: 0,
+          remainingBytes: null,
+          sufficient: null,
+          hasSha256: false,
+          targetPath: null,
+          error: data.error || "Preflight failed",
+        });
+        return;
+      }
+      setDbPreflight({
+        loading: false,
+        expectedBytes: typeof data.expectedBytes === "number" ? data.expectedBytes : null,
+        freeBytes: typeof data.freeBytes === "number" ? data.freeBytes : null,
+        partialBytes: typeof data.partialBytes === "number" ? data.partialBytes : 0,
+        remainingBytes: typeof data.remainingBytes === "number" ? data.remainingBytes : null,
+        sufficient: typeof data.sufficient === "boolean" ? data.sufficient : null,
+        hasSha256: Boolean(data.hasSha256),
+        targetPath: typeof data.targetPath === "string" ? data.targetPath : null,
+        error: data.error || null,
+      });
+    } catch (err) {
+      console.error("Preflight error:", err);
+      setDbPreflight({
+        loading: false,
+        expectedBytes: null,
+        freeBytes: null,
+        partialBytes: 0,
+        remainingBytes: null,
+        sufficient: null,
+        hasSha256: false,
+        targetPath: null,
+        error: "Preflight check failed",
+      });
+    }
+  };
+
+  const openDbDownloadDialog = (
+    pipeline: PipelineConfig,
+    database: PipelineDatabaseDownloadInfo
+  ) => {
+    setDbDownloadTarget({
+      pipelineId: pipeline.pipelineId,
+      pipelineName: pipeline.name,
+      database,
+    });
+    const initialPath =
+      database.configuredPath ||
+      database.path ||
+      database.expectedPath ||
+      "";
+    setDbDownloadCustomPath(initialPath);
+    setDbDownloadReplace(false);
+    setDbDownloadLimitRate("");
+    setDbDownloadDialogError(null);
+    setDbPreflight(null);
+    setDatabaseError(null);
+    setDbDownloadDialogOpen(true);
+    void fetchDbPreflight(pipeline.pipelineId, database.id, initialPath);
+  };
+
+  useEffect(() => {
+    if (!dbDownloadDialogOpen || !dbDownloadTarget) return;
+    const handle = setTimeout(() => {
+      void fetchDbPreflight(
+        dbDownloadTarget.pipelineId,
+        dbDownloadTarget.database.id,
+        dbDownloadCustomPath
+      );
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbDownloadCustomPath, dbDownloadDialogOpen, dbDownloadTarget?.pipelineId, dbDownloadTarget?.database.id]);
+
+  const handleConfirmDbDownload = async () => {
+    if (!dbDownloadTarget) return;
+    const trimmed = dbDownloadCustomPath.trim();
+    if (trimmed.length > 0) {
+      if (!trimmed.startsWith("/")) {
+        setDbDownloadDialogError(
+          "Target path must be absolute (start with '/')."
+        );
+        return;
+      }
+      if (trimmed.endsWith("/")) {
+        setDbDownloadDialogError(
+          "Target path must include the file name, not just a directory."
+        );
+        return;
+      }
+    }
+    const trimmedLimit = dbDownloadLimitRate.trim();
+    if (trimmedLimit.length > 0 && !/^\d+[KMG]?$/i.test(trimmedLimit)) {
+      setDbDownloadDialogError(
+        "Bandwidth limit must be a number with optional K/M/G suffix (e.g. '10M', '512K')."
+      );
+      return;
+    }
+    const defaultPath = dbDownloadTarget.database.expectedPath || "";
+    const customPath = trimmed && trimmed !== defaultPath ? trimmed : undefined;
+    setDbDownloadDialogOpen(false);
+    setDbDownloadDialogError(null);
+    await handleDownloadPipelineDatabase(
+      dbDownloadTarget.pipelineId,
+      dbDownloadTarget.database.id,
+      dbDownloadReplace,
+      customPath,
+      trimmedLimit || undefined
+    );
   };
 
   const openConfigDialog = (pipeline: PipelineConfig) => {
@@ -1763,9 +1967,13 @@ export default function PipelineSettingsPage() {
                                           <div className="mt-1 space-y-1.5">
                                             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                                               <span>
-                                                {databaseProgressKnown
-                                                  ? `Downloading ${databaseProgress}%`
-                                                  : "Downloading..."}
+                                                {database.job?.phase === "verifying"
+                                                  ? "Verifying checksum..."
+                                                  : database.job?.phase === "installing"
+                                                    ? "Installing database..."
+                                                    : databaseProgressKnown
+                                                      ? `Downloading ${databaseProgress}%`
+                                                      : "Downloading..."}
                                                 {typeof databaseBytes === "number"
                                                   ? typeof databaseTotal === "number"
                                                     ? ` • ${formatBytes(databaseBytes)} of ${formatBytes(databaseTotal)}`
@@ -1795,6 +2003,9 @@ export default function PipelineSettingsPage() {
                                               {formatDuration(etaSec) && (
                                                 <span>ETA: {formatDuration(etaSec)}</span>
                                               )}
+                                              {database.job?.limitRate && (
+                                                <span>Limit: {database.job.limitRate}/s</span>
+                                              )}
                                             </div>
                                             {databaseTargetPath && (
                                               <p className="text-[11px] text-muted-foreground break-all">
@@ -1806,6 +2017,31 @@ export default function PipelineSettingsPage() {
                                                 Source: {databaseSourceUrl}
                                               </p>
                                             )}
+                                            <div className="pt-1">
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs"
+                                                onClick={() =>
+                                                  handleCancelDatabaseDownload(
+                                                    pipeline.pipelineId,
+                                                    database.id
+                                                  )
+                                                }
+                                                disabled={
+                                                  cancellingDatabase ===
+                                                  `${pipeline.pipelineId}:${database.id}`
+                                                }
+                                              >
+                                                {cancellingDatabase ===
+                                                `${pipeline.pipelineId}:${database.id}` ? (
+                                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                ) : (
+                                                  <XCircle className="h-3 w-3 mr-1" />
+                                                )}
+                                                Cancel download
+                                              </Button>
+                                            </div>
                                           </div>
                                         )}
                                         {databaseFailedState && (
@@ -1855,11 +2091,7 @@ export default function PipelineSettingsPage() {
                                                   databaseDownloads.find((entry) => entry.status === "missing") ||
                                                   databaseDownloads[0];
                                                 if (database) {
-                                                  void handleDownloadPipelineDatabase(
-                                                    pipeline.pipelineId,
-                                                    database.id,
-                                                    database.status === "downloaded"
-                                                  );
+                                                  openDbDownloadDialog(pipeline, database);
                                                 }
                                                 return;
                                               }
@@ -1958,18 +2190,36 @@ export default function PipelineSettingsPage() {
                               const databaseBusy = downloadingDatabase === key || databaseRunning;
                               const databaseActionLabel =
                                 database.status === "downloaded" ? "Re-download DB" : "Download DB";
+                              if (databaseRunning) {
+                                return (
+                                  <Button
+                                    key={key}
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      handleCancelDatabaseDownload(
+                                        pipeline.pipelineId,
+                                        database.id
+                                      )
+                                    }
+                                    className="h-8"
+                                    disabled={cancellingDatabase === key}
+                                  >
+                                    {cancellingDatabase === key ? (
+                                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    ) : (
+                                      <XCircle className="h-4 w-4 mr-1" />
+                                    )}
+                                    Cancel DB download
+                                  </Button>
+                                );
+                              }
                               return (
                                 <Button
                                   key={key}
                                   variant="outline"
                                   size="sm"
-                                  onClick={() =>
-                                    handleDownloadPipelineDatabase(
-                                      pipeline.pipelineId,
-                                      database.id,
-                                      database.status === "downloaded"
-                                    )
-                                  }
+                                  onClick={() => openDbDownloadDialog(pipeline, database)}
                                   className="h-8"
                                   disabled={databaseBusy}
                                 >
@@ -1978,11 +2228,7 @@ export default function PipelineSettingsPage() {
                                   ) : (
                                     <Download className="h-4 w-4 mr-1" />
                                   )}
-                                  {databaseBusy
-                                    ? databaseRunning
-                                      ? "Downloading DB..."
-                                      : "Starting..."
-                                    : databaseActionLabel}
+                                  {databaseBusy ? "Starting..." : databaseActionLabel}
                                 </Button>
                               );
                             })}
@@ -2246,6 +2492,214 @@ export default function PipelineSettingsPage() {
           )}
         </section>
       </div>
+
+      <Dialog
+        open={dbDownloadDialogOpen}
+        onOpenChange={(open) => {
+          setDbDownloadDialogOpen(open);
+          if (!open) {
+            setDbDownloadDialogError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg w-[94vw]">
+          <DialogHeader>
+            <DialogTitle>
+              {dbDownloadTarget?.database.status === "downloaded"
+                ? `Re-download ${dbDownloadTarget?.database.label || "database"}`
+                : `Download ${dbDownloadTarget?.database.label || "database"}`}
+            </DialogTitle>
+            <DialogDescription>
+              {dbDownloadTarget
+                ? `Reference database for ${dbDownloadTarget.pipelineName}.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {dbDownloadTarget && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Source URL</Label>
+                <p className="break-all rounded-md border border-border/60 bg-muted/40 p-2 font-mono text-xs">
+                  {dbDownloadTarget.database.sourceUrl || "Unknown"}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="db-download-target-path">Target path</Label>
+                <Input
+                  id="db-download-target-path"
+                  value={dbDownloadCustomPath}
+                  onChange={(event) => setDbDownloadCustomPath(event.target.value)}
+                  placeholder={dbDownloadTarget.database.expectedPath || "/absolute/path/to/database/file"}
+                  className="bg-white font-mono text-xs"
+                />
+                <p className="text-[11px] text-muted-foreground break-all">
+                  Default: {dbDownloadTarget.database.expectedPath || "(set pipeline run directory first)"}
+                </p>
+                {dbDownloadTarget.database.configuredPath &&
+                  dbDownloadTarget.database.configuredPath !== dbDownloadTarget.database.expectedPath && (
+                    <p className="text-[11px] text-muted-foreground break-all">
+                      Currently configured: {dbDownloadTarget.database.configuredPath}
+                    </p>
+                  )}
+              </div>
+
+              <div className="rounded-md border border-border/60 bg-muted/30 p-2 text-xs">
+                {dbPreflight?.loading && !dbPreflight.expectedBytes ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Checking remote size and free disk space...
+                  </div>
+                ) : dbPreflight ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Expected download</span>
+                      <span className="tabular-nums">
+                        {typeof dbPreflight.expectedBytes === "number"
+                          ? formatBytes(dbPreflight.expectedBytes)
+                          : "Unknown (source did not report size)"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Free at target</span>
+                      <span
+                        className={`tabular-nums ${
+                          dbPreflight.sufficient === false ? "text-destructive font-medium" : ""
+                        }`}
+                      >
+                        {typeof dbPreflight.freeBytes === "number"
+                          ? formatBytes(dbPreflight.freeBytes)
+                          : "Unknown"}
+                      </span>
+                    </div>
+                    {dbPreflight.partialBytes > 0 && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">Partial file present</span>
+                        <span className="tabular-nums">
+                          {formatBytes(dbPreflight.partialBytes)}
+                          {typeof dbPreflight.expectedBytes === "number"
+                            ? ` of ${formatBytes(dbPreflight.expectedBytes)}`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
+                    {dbPreflight.sufficient === false && (
+                      <p className="mt-1 text-destructive">
+                        Not enough free disk space at the target path. Free up space or pick a different target.
+                      </p>
+                    )}
+                    {dbPreflight.hasSha256 && (
+                      <p className="mt-1 text-muted-foreground">
+                        sha256 checksum will be verified after download.
+                      </p>
+                    )}
+                    {dbPreflight.error && (
+                      <p className="mt-1 text-muted-foreground">{dbPreflight.error}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground">Preflight info will appear here.</div>
+                )}
+              </div>
+
+              {dbPreflight && dbPreflight.partialBytes > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs">
+                  <p className="font-medium text-amber-900">Partial download detected</p>
+                  <p className="mt-1 text-amber-800">
+                    {formatBytes(dbPreflight.partialBytes)}
+                    {typeof dbPreflight.expectedBytes === "number"
+                      ? ` of ${formatBytes(dbPreflight.expectedBytes)}`
+                      : ""}{" "}
+                    is already on disk. By default the download will resume from where it left off.
+                  </p>
+                  <div className="mt-2 flex items-start gap-2">
+                    <Checkbox
+                      id="db-download-replace"
+                      checked={dbDownloadReplace}
+                      onCheckedChange={(checked) => setDbDownloadReplace(checked === true)}
+                    />
+                    <Label htmlFor="db-download-replace" className="text-xs leading-snug text-amber-900">
+                      Start over (delete the partial file and re-download from scratch)
+                    </Label>
+                  </div>
+                </div>
+              )}
+
+              {dbDownloadTarget.database.status === "downloaded" &&
+                (!dbPreflight || dbPreflight.partialBytes === 0) && (
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="db-download-replace"
+                      checked={dbDownloadReplace}
+                      onCheckedChange={(checked) => setDbDownloadReplace(checked === true)}
+                    />
+                    <Label htmlFor="db-download-replace" className="text-xs leading-snug">
+                      Replace existing file (deletes the file at the target path before downloading)
+                    </Label>
+                  </div>
+                )}
+
+              <div className="space-y-2">
+                <Label htmlFor="db-download-limit-rate">Bandwidth limit (optional)</Label>
+                <Input
+                  id="db-download-limit-rate"
+                  value={dbDownloadLimitRate}
+                  onChange={(event) => setDbDownloadLimitRate(event.target.value)}
+                  placeholder="e.g. 10M for 10 MB/s, 512K for 512 KB/s"
+                  className="bg-white text-xs"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Leave empty for full speed. Accepts a number with optional K, M, or G suffix.
+                </p>
+              </div>
+
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <div>
+                  Status:{" "}
+                  {dbDownloadTarget.database.status === "downloaded"
+                    ? `Downloaded${
+                        dbDownloadTarget.database.version
+                          ? ` (v${dbDownloadTarget.database.version})`
+                          : ""
+                      }`
+                    : "Not downloaded"}
+                </div>
+                {typeof dbDownloadTarget.database.sizeBytes === "number" && (
+                  <div>Size on disk: {formatBytes(dbDownloadTarget.database.sizeBytes)}</div>
+                )}
+                {dbDownloadTarget.database.lastUpdated && (
+                  <div>Last updated: {formatStoreDate(dbDownloadTarget.database.lastUpdated)}</div>
+                )}
+              </div>
+
+              {dbDownloadDialogError && (
+                <p className="text-sm text-destructive">{dbDownloadDialogError}</p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDbDownloadDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmDbDownload}
+              disabled={dbPreflight?.sufficient === false}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {dbPreflight && dbPreflight.partialBytes > 0 && !dbDownloadReplace
+                ? "Resume download"
+                : dbDownloadTarget?.database.status === "downloaded"
+                  ? "Re-download"
+                  : "Download"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={githubInstallDialogOpen}
