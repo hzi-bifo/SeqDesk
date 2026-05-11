@@ -376,6 +376,11 @@ run_privileged() {
 }
 
 run_as_postgres() {
+    if [ "${OS:-}" = "macos" ]; then
+        "$@"
+        return $?
+    fi
+
     if is_root_user; then
         if command_exists runuser; then
             runuser -u postgres -- "$@"
@@ -464,6 +469,14 @@ print_postgres_setup_instructions() {
         echo ""
         echo "  Manual fallback:"
         case "$OS:$DISTRO" in
+            macos:macos)
+                if command_exists brew; then
+                    echo "  brew install postgresql@16"
+                    echo "  brew services start postgresql@16"
+                else
+                    echo "  Install PostgreSQL 15+ and start the server."
+                fi
+                ;;
             linux:debian)
                 echo "  sudo apt-get update"
                 echo "  sudo apt-get install -y postgresql postgresql-contrib"
@@ -484,7 +497,11 @@ print_postgres_setup_instructions() {
                 echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
                 ;;
         esac
-        echo "  sudo -u postgres psql <<'SQL'"
+        if [ "$OS" = "macos" ]; then
+            echo "  psql -d postgres <<'SQL'"
+        else
+            echo "  sudo -u postgres psql <<'SQL'"
+        fi
         echo "  CREATE ROLE seqdesk LOGIN PASSWORD 'replace-with-password-from-DATABASE_URL';"
         echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
         echo "  SQL"
@@ -728,6 +745,13 @@ sudo_postgres_ready() {
 }
 
 install_postgres_packages_if_possible() {
+    if [ "${OS:-}" = "macos" ]; then
+        if command_exists brew && ! command_exists psql; then
+            run_with_spinner_warn "Install PostgreSQL packages" brew install postgresql@16 || brew install postgresql || true
+        fi
+        return 0
+    fi
+
     if ! can_run_privileged; then
         return 1
     fi
@@ -750,6 +774,39 @@ install_postgres_packages_if_possible() {
 }
 
 start_postgres_if_possible() {
+    if [ "${OS:-}" = "macos" ]; then
+        if command_exists brew; then
+            for formula in postgresql@16 postgresql@15 postgresql@14 postgresql; do
+                if brew list "$formula" >/dev/null 2>&1; then
+                    brew services start "$formula" >/dev/null 2>&1 || true
+                    if sudo_postgres_ready; then
+                        return 0
+                    fi
+                fi
+            done
+        fi
+
+        local pgdata
+        for pgdata in \
+            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@16" \
+            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@15" \
+            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@14" \
+            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql" \
+            "/usr/local/var/postgresql@16" \
+            "/usr/local/var/postgresql@15" \
+            "/usr/local/var/postgresql@14" \
+            "/usr/local/var/postgresql"; do
+            if [ -d "$pgdata" ] && command_exists pg_ctl; then
+                pg_ctl -D "$pgdata" start >/dev/null 2>&1 || true
+                if sudo_postgres_ready; then
+                    return 0
+                fi
+            fi
+        done
+
+        return 1
+    fi
+
     if ! can_run_privileged; then
         return 1
     fi

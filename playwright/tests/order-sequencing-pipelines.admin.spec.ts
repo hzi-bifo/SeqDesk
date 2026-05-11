@@ -193,6 +193,13 @@ type SequencingReadSummary = {
   pipelineRunNumber: string | null;
   file1: string | null;
   file2: string | null;
+  checksum1?: string | null;
+  checksum2?: string | null;
+  readCount1?: number | null;
+  readCount2?: number | null;
+  filesMissing?: boolean | null;
+  isSimulated?: boolean | null;
+  dataClass?: string | null;
 };
 
 type SequencingSample = {
@@ -325,10 +332,7 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
         .poll(
           async () => {
             const samples = await getOrderSequencingSamples(page, orderId as string);
-            const read = samples[0]?.read as
-              | { file1?: string | null; file2?: string | null; filesMissing?: boolean | null }
-              | null
-              | undefined;
+            const read = samples[0]?.read;
             return Boolean(
               read?.file1 && read?.file2 && read?.filesMissing !== true,
             );
@@ -336,6 +340,21 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
           { timeout: 90000, intervals: [1000, 2000, 3000] },
         )
         .toBe(true);
+
+      // End-to-end correctness: the readCount=42 we set in the UI must have flowed
+      // through the run config, into Nextflow's invocation, into the generated FASTQs,
+      // and back onto the Read record. Same for the pipeline tagging the simulated
+      // reads and linking the write-back to the run we just created.
+      const samplesAfterRun = await getOrderSequencingSamples(page, orderId as string);
+      const read = samplesAfterRun[0]?.read;
+      expect(read?.readCount1).toBe(42);
+      expect(read?.readCount2).toBe(42);
+      expect(read?.checksum1).toMatch(/^[a-f0-9]{32}$/);
+      expect(read?.checksum2).toMatch(/^[a-f0-9]{32}$/);
+      expect(read?.isSimulated).toBe(true);
+      expect(read?.dataClass).toBe("cleaned");
+      expect(read?.pipelineRunId).toBe(run.id);
+      expect(read?.pipelineRunNumber).toBe(run.runNumber);
 
       // Lightweight UI sanity check — just confirm the page loads after write-back.
       await page.goto(`${orderPath}/sequencing`);
