@@ -60,20 +60,24 @@ download_file() {
   local output_path="$2"
   local token="$3"
 
+  # Accept: application/octet-stream is required for GitHub's
+  # api.github.com/.../releases/assets/<id> endpoint to return the binary
+  # rather than a JSON metadata object. It's harmless on static tarball
+  # servers, which ignore the Accept header for opaque file downloads.
   if command_exists curl; then
     if [[ -n "$token" ]]; then
-      curl -fsSL -H "Authorization: Bearer ${token}" "$url" -o "$output_path"
+      curl -fsSL -H "Authorization: Bearer ${token}" -H "Accept: application/octet-stream" "$url" -o "$output_path"
     else
-      curl -fsSL "$url" -o "$output_path"
+      curl -fsSL -H "Accept: application/octet-stream" "$url" -o "$output_path"
     fi
     return 0
   fi
 
   if command_exists wget; then
     if [[ -n "$token" ]]; then
-      wget --header="Authorization: Bearer ${token}" -qO "$output_path" "$url"
+      wget --header="Authorization: Bearer ${token}" --header="Accept: application/octet-stream" -qO "$output_path" "$url"
     else
-      wget -qO "$output_path" "$url"
+      wget --header="Accept: application/octet-stream" -qO "$output_path" "$url"
     fi
     return 0
   fi
