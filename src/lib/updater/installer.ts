@@ -84,7 +84,7 @@ async function checkDiskSpace(): Promise<{ free: number; required: number; suffi
       const { stdout } = await runUpdateCommand(
         `df -k "${INSTALL_DIR}" | tail -1 | awk '{print $4}'`
       );
-      const freeKB = parseInt(stdout.trim(), 10);
+      const freeKB = parseInt(String(stdout).trim(), 10);
       const freeBytes = freeKB * 1024;
       return {
         free: freeBytes,
