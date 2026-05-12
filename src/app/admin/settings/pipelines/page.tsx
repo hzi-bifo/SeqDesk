@@ -978,6 +978,49 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  const [linkingDatabase, setLinkingDatabase] = useState(false);
+
+  const handleLinkExistingDatabase = async () => {
+    if (!dbDownloadTarget) return;
+    const trimmed = dbDownloadCustomPath.trim();
+    if (trimmed.length === 0) {
+      setDbDownloadDialogError("Enter the absolute path to the existing file.");
+      return;
+    }
+    if (!trimmed.startsWith("/")) {
+      setDbDownloadDialogError("Path must be absolute (start with '/').");
+      return;
+    }
+    setLinkingDatabase(true);
+    setDbDownloadDialogError(null);
+    try {
+      const res = await fetch(
+        "/api/admin/settings/pipelines/download-db/link-existing",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pipelineId: dbDownloadTarget.pipelineId,
+            databaseId: dbDownloadTarget.database.id,
+            path: trimmed,
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDbDownloadDialogError(data.error || "Failed to link existing file");
+        return;
+      }
+      setDbDownloadDialogOpen(false);
+      mutate();
+    } catch (err) {
+      console.error("Link existing DB error:", err);
+      setDbDownloadDialogError("Failed to link existing file. Check console for details.");
+    } finally {
+      setLinkingDatabase(false);
+    }
+  };
+
   const handleCancelDatabaseDownload = async (
     pipelineId: string,
     databaseId: string
@@ -2679,16 +2722,28 @@ export default function PipelineSettingsPage() {
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
               variant="outline"
               onClick={() => setDbDownloadDialogOpen(false)}
+              disabled={linkingDatabase}
             >
               Cancel
             </Button>
             <Button
+              variant="outline"
+              onClick={handleLinkExistingDatabase}
+              disabled={linkingDatabase || dbDownloadCustomPath.trim().length === 0}
+              title="Skip the download and point the pipeline at an existing file on disk"
+            >
+              {linkingDatabase ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : null}
+              Use existing file
+            </Button>
+            <Button
               onClick={handleConfirmDbDownload}
-              disabled={dbPreflight?.sufficient === false}
+              disabled={dbPreflight?.sufficient === false || linkingDatabase}
             >
               <Download className="h-4 w-4 mr-2" />
               {dbPreflight && dbPreflight.partialBytes > 0 && !dbDownloadReplace
