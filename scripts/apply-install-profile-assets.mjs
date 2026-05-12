@@ -6,10 +6,11 @@ import { applyProfileAssets, isRecord, toOptionalString } from "./lib/install-pr
 
 function usage() {
   console.log(`Usage:
-  node scripts/apply-install-profile-assets.mjs --profile-config <file>
+  node scripts/apply-install-profile-assets.mjs --profile-config <file> [--json]
 
 Options:
   --profile-config <file>  Resolved install profile JSON
+  --json                   Print machine-readable JSON
   -h, --help              Show this help
 `);
 }
@@ -17,6 +18,7 @@ Options:
 function parseArgs(argv) {
   const args = {
     profileConfig: process.env.SEQDESK_INSTALL_PROFILE_CONFIG || "",
+    json: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -28,6 +30,10 @@ function parseArgs(argv) {
     if (arg === "--profile-config" || arg === "--profile_config") {
       args.profileConfig = argv[index + 1] || "";
       index += 1;
+      continue;
+    }
+    if (arg === "--json") {
+      args.json = true;
       continue;
     }
     throw new Error(`Unknown option: ${arg}`);
@@ -47,6 +53,47 @@ function readJsonFile(filePath) {
     throw new Error(`${resolved} must contain a JSON object`);
   }
   return { resolved, parsed };
+}
+
+function summarizeProfile(profile) {
+  const id = toOptionalString(profile.id);
+  const profileInfo = isRecord(profile.profile) ? profile.profile : {};
+  const name = toOptionalString(profileInfo.name) || toOptionalString(profile.name);
+  const version = toOptionalString(profile.version);
+  return {
+    ...(id ? { id } : {}),
+    ...(name ? { name } : {}),
+    ...(version ? { version } : {}),
+  };
+}
+
+function sanitizeSummaryValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSummaryValue(item));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const sanitized = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (
+      [
+        "authorization",
+        "downloadUrl",
+        "password",
+        "profileCode",
+        "secret",
+        "sourceUrl",
+        "sourceUrlOverride",
+        "token",
+      ].includes(key)
+    ) {
+      continue;
+    }
+    sanitized[key] = sanitizeSummaryValue(item);
+  }
+  return sanitized;
 }
 
 function loadDatabaseConfigFromConfig() {
@@ -83,8 +130,23 @@ async function main() {
       prisma,
       profile: parsed,
       rootDir: process.cwd(),
-      logger: console,
+      logger: args.json ? { warn: console.warn } : console,
     });
+    if (args.json) {
+      console.log(
+        JSON.stringify(
+          {
+            success: true,
+            profile: summarizeProfile(parsed),
+            profileConfig: resolved,
+            assets: sanitizeSummaryValue(result),
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
     console.log(`Applied install profile assets from ${resolved}`);
     console.log(
       `Profile assets: databases=${result.databases.downloaded || 0}, seedFixtures=${result.seedData.seeded || 0}`

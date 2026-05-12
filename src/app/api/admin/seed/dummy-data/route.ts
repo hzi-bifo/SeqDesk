@@ -17,6 +17,7 @@ import {
   DummySeedAlreadyExistsError,
   runDummySeed,
 } from "@/lib/seed/run-seed";
+import { updateAdminActivityJob } from "@/lib/admin/activity";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -29,7 +30,7 @@ interface ResolvedContext {
 
 async function resolveContext(): Promise<
   | { ok: true; context: ResolvedContext }
-  | { ok: false; status: number; body: { error: string } }
+  | { ok: false; status: number; body: { error: string; dataBasePath?: string } }
 > {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "FACILITY_ADMIN") {
@@ -64,7 +65,10 @@ async function resolveContext(): Promise<
       return {
         ok: false,
         status: 400,
-        body: { error: "Data base path is not a directory" },
+        body: {
+          error: `Data base path is not a directory: ${resolvedBase}`,
+          dataBasePath: resolvedBase,
+        },
       };
     }
     await fs.access(resolvedBase, fs.constants.W_OK);
@@ -72,7 +76,10 @@ async function resolveContext(): Promise<
     return {
       ok: false,
       status: 400,
-      body: { error: "Data base path is not writable" },
+      body: {
+        error: `Data base path is not writable by the SeqDesk server process: ${resolvedBase}`,
+        dataBasePath: resolvedBase,
+      },
     };
   }
 
@@ -126,13 +133,33 @@ export async function POST() {
     return NextResponse.json(ctx.body, { status: ctx.status });
   }
   const { resolvedBase, userId, userEmail, userDisplayName } = ctx.context;
+  const jobId = `seed:dummy-data:${userId}`;
 
   try {
+    await updateAdminActivityJob(jobId, {
+      type: "dummy-seed",
+      label: "Load dummy data",
+      state: "running",
+      phase: "seeding",
+      targetPath: resolvedBase,
+      error: undefined,
+      finishedAt: undefined,
+    });
     const result = await runDummySeed({
       ownerUserId: userId,
       resolvedBase,
       ownerEmail: userEmail,
       ownerDisplayName: userDisplayName,
+    });
+    await updateAdminActivityJob(jobId, {
+      type: "dummy-seed",
+      label: "Load dummy data",
+      state: "success",
+      phase: "complete",
+      targetPath: result.dataPath,
+      progressPercent: 100,
+      finishedAt: new Date().toISOString(),
+      error: undefined,
     });
 
     return NextResponse.json({
@@ -146,6 +173,15 @@ export async function POST() {
     });
   } catch (error) {
     if (error instanceof DummySeedAlreadyExistsError) {
+      await updateAdminActivityJob(jobId, {
+        type: "dummy-seed",
+        label: "Load dummy data",
+        state: "error",
+        phase: "seeding",
+        targetPath: resolvedBase,
+        error: "Dummy seed data already exists for this admin. Wipe it first to re-seed.",
+        finishedAt: new Date().toISOString(),
+      }).catch(() => {});
       return NextResponse.json(
         {
           error:
@@ -156,6 +192,15 @@ export async function POST() {
       );
     }
     console.error("[Seed Dummy Data] Failed:", error);
+    await updateAdminActivityJob(jobId, {
+      type: "dummy-seed",
+      label: "Load dummy data",
+      state: "error",
+      phase: "seeding",
+      targetPath: resolvedBase,
+      error: error instanceof Error ? error.message : "Failed to seed dummy data",
+      finishedAt: new Date().toISOString(),
+    }).catch(() => {});
     return NextResponse.json(
       { error: "Failed to seed dummy data" },
       { status: 500 }

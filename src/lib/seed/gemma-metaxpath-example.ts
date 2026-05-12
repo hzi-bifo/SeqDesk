@@ -17,6 +17,10 @@ interface SeedLogger {
   warn?: (...args: unknown[]) => void;
 }
 
+interface SeedActivity {
+  update?: (update: Record<string, unknown>) => Promise<void> | void;
+}
+
 interface ApplyProfileSeedDataResult {
   skipped?: boolean;
   seeded: number;
@@ -105,10 +109,12 @@ export async function seedGemmaMetaxPathExampleDataset({
   prisma = db,
   rootDir = process.cwd(),
   logger = console,
+  activity,
 }: {
   prisma?: PrismaLike;
   rootDir?: string;
   logger?: SeedLogger;
+  activity?: SeedActivity;
 } = {}): Promise<ApplyProfileSeedDataResult> {
   const module = (await import(
     "../../../scripts/lib/install-profile-assets.mjs"
@@ -118,6 +124,7 @@ export async function seedGemmaMetaxPathExampleDataset({
       profile: ReturnType<typeof getGemmaMetaxPathExampleProfile>;
       rootDir?: string;
       logger?: SeedLogger;
+      activity?: SeedActivity;
     }) => Promise<ApplyProfileSeedDataResult>;
   };
 
@@ -126,5 +133,6 @@ export async function seedGemmaMetaxPathExampleDataset({
     profile: getGemmaMetaxPathExampleProfile(),
     rootDir,
     logger,
+    activity,
   });
 }

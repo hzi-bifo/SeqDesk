@@ -173,6 +173,8 @@ export default function SettingsPage() {
   } | null>(null);
   const [gemmaSeedStatus, setGemmaSeedStatus] =
     useState<GemmaMetaxPathSeedStatus | null>(null);
+  const [seedStatusError, setSeedStatusError] = useState<string | null>(null);
+  const [gemmaSeedStatusError, setGemmaSeedStatusError] = useState<string | null>(null);
   const [seedingDummy, setSeedingDummy] = useState(false);
   const [seedingGemma, setSeedingGemma] = useState(false);
   const [wipingDummy, setWipingDummy] = useState(false);
@@ -672,7 +674,10 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/admin/seed/dummy-data");
       if (!res.ok) {
-        setSeedStatus(null);
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string; dataBasePath?: string }
+          | null;
+        setSeedStatusError(payload?.error || "Failed to check dummy data state");
         return;
       }
       const data = (await res.json()) as {
@@ -680,13 +685,16 @@ export default function SettingsPage() {
         ordersCount: number;
         dummyDataEnabled?: boolean | null;
       };
+      setSeedStatusError(null);
       setSeedStatus({
         seeded: data.seeded,
         ordersCount: data.ordersCount,
         dummyDataEnabled: data.dummyDataEnabled ?? null,
       });
-    } catch {
-      setSeedStatus(null);
+    } catch (error) {
+      setSeedStatusError(
+        error instanceof Error ? error.message : "Failed to check dummy data state"
+      );
     }
   }, []);
 
@@ -696,12 +704,20 @@ export default function SettingsPage() {
         "/api/admin/seed/example-datasets/gemma-metaxpath"
       );
       if (!res.ok) {
-        setGemmaSeedStatus(null);
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string; dataBasePath?: string }
+          | null;
+        setGemmaSeedStatusError(
+          payload?.error || "Failed to check Gemma dataset state"
+        );
         return;
       }
+      setGemmaSeedStatusError(null);
       setGemmaSeedStatus((await res.json()) as GemmaMetaxPathSeedStatus);
-    } catch {
-      setGemmaSeedStatus(null);
+    } catch (error) {
+      setGemmaSeedStatusError(
+        error instanceof Error ? error.message : "Failed to check Gemma dataset state"
+      );
     }
   }, []);
 
@@ -757,6 +773,7 @@ export default function SettingsPage() {
       const payload = (await res.json().catch(() => null)) as
         | (GemmaMetaxPathSeedStatus & {
             success?: boolean;
+            started?: boolean;
             seededFixtures?: number;
             error?: string;
           })
@@ -764,9 +781,13 @@ export default function SettingsPage() {
       if (!res.ok) {
         throw new Error(payload?.error || "Failed to seed Gemma dataset");
       }
-      toast.success(
-        `Gemma MetaxPath dataset loaded: ${payload?.samplesCount ?? 0} samples, ${payload?.readsCount ?? 0} read sets`
-      );
+      if (payload?.started) {
+        toast.success("Gemma MetaxPath dataset load started");
+      } else {
+        toast.success(
+          `Gemma MetaxPath dataset loaded: ${payload?.samplesCount ?? 0} samples, ${payload?.readsCount ?? 0} read sets`
+        );
+      }
       await fetchGemmaSeedStatus();
     } catch (error) {
       toast.error(
@@ -1526,7 +1547,9 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {seedStatus === null
+                  {seedStatusError
+                    ? seedStatusError
+                    : seedStatus === null
                     ? "Checking current state…"
                     : seedStatus.seeded
                       ? `${seedStatus.ordersCount} seeded order${
@@ -1534,6 +1557,11 @@ export default function SettingsPage() {
                         } currently loaded for your profile.`
                       : "No seeded data present. Toggle on to create the example dataset."}
                 </p>
+                {seedStatusError && (
+                  <p className="mt-1 text-xs text-destructive">
+                    Configure a writable sequencing data path before loading dummy data.
+                  </p>
+                )}
               </div>
 
               <div className="flex shrink-0 items-center gap-3">
@@ -1551,7 +1579,7 @@ export default function SettingsPage() {
                     }
                   }}
                   disabled={
-                    seedingDummy || wipingDummy || seedStatus === null
+                    seedingDummy || wipingDummy || seedStatus === null || Boolean(seedStatusError)
                   }
                   aria-label="Load dummy data"
                 />
@@ -1570,12 +1598,19 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {gemmaSeedStatus === null
+                  {gemmaSeedStatusError
+                    ? gemmaSeedStatusError
+                    : gemmaSeedStatus === null
                     ? "Checking current state..."
                     : gemmaSeedStatus.seeded
                       ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples loaded in order ${gemmaSeedStatus.orderNumber}.`
                       : "Downloads the verified 580 MB hosted bundle and creates the linked study, submitted order, samples, and cleaned FASTQ read links for MetaxPath."}
                 </p>
+                {gemmaSeedStatusError && (
+                  <p className="mt-1 text-xs text-destructive">
+                    Configure a writable sequencing data path before loading this dataset.
+                  </p>
+                )}
                 {gemmaSeedStatus?.seeded && gemmaSeedStatus.orderId && (
                   <Link
                     href={`/orders/${gemmaSeedStatus.orderId}/pipelines`}
@@ -1591,7 +1626,7 @@ export default function SettingsPage() {
                 size="sm"
                 className="shrink-0"
                 onClick={() => void seedGemmaMetaxPathData()}
-                disabled={seedingGemma || gemmaSeedStatus === null}
+                disabled={seedingGemma || gemmaSeedStatus === null || Boolean(gemmaSeedStatusError)}
               >
                 {seedingGemma ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

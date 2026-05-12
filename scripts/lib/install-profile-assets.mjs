@@ -2,7 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { gzipSync } from "zlib";
 
 const SITE_SETTINGS_ID = "singleton";
@@ -117,6 +117,28 @@ export function buildProfilePipelineDatabaseInstallDir({
   );
 }
 
+function buildProfileDatabaseRequest({
+  pipelineId,
+  databaseId,
+  required = true,
+  mode,
+  configKey,
+  databasePath,
+  sourceUrlOverride,
+  sha256,
+}) {
+  return {
+    pipelineId,
+    databaseId,
+    required,
+    mode: mode === "skip" || mode === "overwrite" ? mode : "ensure",
+    ...(configKey ? { configKey } : {}),
+    ...(databasePath ? { path: databasePath } : {}),
+    ...(sourceUrlOverride ? { sourceUrlOverride } : {}),
+    ...(sha256 ? { sha256 } : {}),
+  };
+}
+
 export function loadPipelineDatabaseDefinitions(rootDir = process.cwd()) {
   const definitionPath = path.join(rootDir, "data", "pipeline-databases.json");
   const parsed = JSON.parse(fs.readFileSync(definitionPath, "utf8"));
@@ -125,13 +147,21 @@ export function loadPipelineDatabaseDefinitions(rootDir = process.cwd()) {
 
 export function resolveProfileDatabaseRequests(profile, definitions = {}) {
   const pipelines = toRecord(profile.pipelines);
-  const databases = toRecord(pipelines.databases);
-  const autoDownload = toOptionalBoolean(databases.autoDownload) === true;
+  const databasesValue = pipelines.databases;
+  const databases = toRecord(databasesValue);
+  const rawDownloads = Array.isArray(databasesValue)
+    ? databasesValue
+    : Array.isArray(databases.downloads)
+      ? databases.downloads
+      : [];
+  const autoDownload =
+    Array.isArray(databasesValue) && rawDownloads.length > 0
+      ? true
+      : toOptionalBoolean(databases.autoDownload) === true;
   if (!autoDownload) {
     return { autoDownload: false, requests: [] };
   }
 
-  const rawDownloads = Array.isArray(databases.downloads) ? databases.downloads : [];
   const requests = [];
 
   if (rawDownloads.length > 0) {
@@ -140,11 +170,17 @@ export function resolveProfileDatabaseRequests(profile, definitions = {}) {
       const pipelineId = toOptionalString(item.pipelineId);
       const databaseId = toOptionalString(item.databaseId);
       if (!pipelineId || !databaseId) continue;
-      requests.push({
+      const mode = toOptionalString(item.mode)?.toLowerCase();
+      requests.push(buildProfileDatabaseRequest({
         pipelineId,
         databaseId,
         required: toOptionalBoolean(item.required) !== false,
-      });
+        mode,
+        configKey: toOptionalString(item.configKey),
+        databasePath: toOptionalString(item.path),
+        sourceUrlOverride: toOptionalString(item.sourceUrlOverride),
+        sha256: toOptionalString(item.sha256),
+      }));
     }
   } else if (Array.isArray(pipelines.enable)) {
     for (const pipelineId of pipelines.enable) {
@@ -155,11 +191,11 @@ export function resolveProfileDatabaseRequests(profile, definitions = {}) {
         : [];
       for (const database of databaseDefinitions) {
         if (database?.id) {
-          requests.push({
+          requests.push(buildProfileDatabaseRequest({
             pipelineId: normalizedPipelineId,
             databaseId: database.id,
             required: true,
-          });
+          }));
         }
       }
     }
@@ -373,6 +409,57 @@ function runLoggedCommand(logPath, command, args, options = {}) {
   }
 }
 
+async function runLoggedCommandAsync(logPath, command, args, options = {}, onProgress) {
+  appendLog(logPath, `Command: ${command} ${args.join(" ")}`);
+  await new Promise((resolve, reject) => {
+    const fd = fs.openSync(logPath, "a");
+    let settled = false;
+    let progressTimer = null;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (progressTimer) clearInterval(progressTimer);
+      if (onProgress) {
+        Promise.resolve(onProgress()).catch(() => {
+          // Best-effort final progress update only.
+        });
+      }
+      fs.closeSync(fd);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ["ignore", fd, fd],
+    });
+    progressTimer = onProgress
+      ? setInterval(() => {
+          Promise.resolve(onProgress()).catch(() => {
+            // Best-effort progress reporting only.
+          });
+        }, 3000)
+      : null;
+
+    child.on("error", (error) => {
+      finish(error);
+    });
+    child.on("close", (code, signal) => {
+      if (signal) {
+        finish(new Error(`${command} exited with signal ${signal}`));
+        return;
+      }
+      if (code !== 0) {
+        finish(new Error(`${command} exited with code ${code ?? "unknown"}`));
+        return;
+      }
+      finish();
+    });
+  });
+}
+
 async function downloadDatabaseArchive({ database, targetPath, logPath }) {
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   const totalBytes = await getRemoteContentLength(database.downloadUrl);
@@ -391,18 +478,84 @@ async function downloadDatabaseArchive({ database, targetPath, logPath }) {
   };
 }
 
-async function downloadFileArchive({ sourceUrl, targetPath, logPath }) {
+async function removeFileIfExists(filePath) {
+  try {
+    await fsp.rm(filePath, { force: true });
+  } catch {
+    // Best effort. A failed cleanup should not hide the underlying install result.
+  }
+}
+
+async function verifyExistingDatabasePath(targetPath, label) {
+  const sizeBytes = await getFileSize(targetPath);
+  if (sizeBytes <= 0) {
+    throw new Error(`${label} does not exist or is empty: ${targetPath}`);
+  }
+  return {
+    runtimePath: targetPath,
+    sizeBytes,
+  };
+}
+
+async function verifyOptionalSha256(filePath, expectedSha256, label) {
+  const expected = normalizeExpectedSha256(expectedSha256);
+  if (!expected) return;
+  const stats = await fsp.stat(filePath);
+  if (!stats.isFile()) {
+    throw new Error(`${label} SHA256 verification requires a file path: ${filePath}`);
+  }
+  const actual = await calculateSha256(filePath);
+  if (actual !== expected) {
+    throw new Error(`${label} SHA256 mismatch: expected ${expected}, got ${actual}`);
+  }
+}
+
+async function downloadFileArchive({ sourceUrl, targetPath, logPath, activity }) {
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   const totalBytes = await getRemoteContentLength(sourceUrl);
   const localBytes = await getFileSize(targetPath);
 
   if (localBytes > 0 && typeof totalBytes === "number" && localBytes >= totalBytes) {
     appendLog(logPath, `Archive already present: ${targetPath}`);
+    await activity?.update?.({
+      phase: "downloading",
+      targetPath,
+      bytesDownloaded: localBytes,
+      totalBytes,
+      progressPercent: 100,
+      logPath,
+    });
     return { bytesDownloaded: localBytes, totalBytes };
   }
 
   const downloader = resolveDownloader();
-  runLoggedCommand(logPath, downloader.command, downloader.args(sourceUrl, targetPath));
+  await activity?.update?.({
+    phase: "downloading",
+    targetPath,
+    bytesDownloaded: localBytes,
+    totalBytes,
+    logPath,
+  });
+  await runLoggedCommandAsync(
+    logPath,
+    downloader.command,
+    downloader.args(sourceUrl, targetPath),
+    {},
+    async () => {
+      const bytesDownloaded = await getFileSize(targetPath);
+      await activity?.update?.({
+        phase: "downloading",
+        targetPath,
+        bytesDownloaded,
+        totalBytes,
+        logPath,
+        progressPercent:
+          typeof totalBytes === "number" && totalBytes > 0
+            ? Math.max(0, Math.min(100, Math.round((bytesDownloaded / totalBytes) * 1000) / 10))
+            : undefined,
+      });
+    }
+  );
   return {
     bytesDownloaded: await getFileSize(targetPath),
     totalBytes,
@@ -467,6 +620,7 @@ async function extractVerifiedFastqBundle({
   dataBasePath,
   rootDir,
   logger = console,
+  activity,
 }) {
   const sourceUrl = toOptionalString(source.url);
   if (!sourceUrl) {
@@ -496,8 +650,16 @@ async function extractVerifiedFastqBundle({
     appendLog(logPath, `Archive already present with expected SHA256: ${archivePath}`);
     download = { bytesDownloaded: existingBytes, totalBytes: existingBytes };
   } else {
-    download = await downloadFileArchive({ sourceUrl, targetPath: archivePath, logPath });
+    download = await downloadFileArchive({ sourceUrl, targetPath: archivePath, logPath, activity });
   }
+  await activity?.update?.({
+    phase: "verifying",
+    targetPath: archivePath,
+    bytesDownloaded: await getFileSize(archivePath),
+    totalBytes: download.totalBytes,
+    progressPercent: download.totalBytes ? 100 : undefined,
+    logPath,
+  });
   const actualSha256 = await calculateSha256(archivePath);
   if (actualSha256 !== expectedSha256) {
     throw new Error(
@@ -510,6 +672,11 @@ async function extractVerifiedFastqBundle({
 
   const extractDir = path.join(dataBasePath, "fixtures", profileId, fixtureId);
   await fsp.mkdir(extractDir, { recursive: true });
+  await activity?.update?.({
+    phase: "extracting",
+    targetPath: extractDir,
+    logPath,
+  });
   runLoggedCommand(logPath, "tar", ["-xzf", archivePath, "-C", extractDir]);
 
   return {
@@ -624,6 +791,7 @@ export async function applyProfilePipelineDatabases({
   const settings = await resolveProfilePipelineAssetSettings(prisma, profile);
   let downloaded = 0;
   let failed = 0;
+  const results = [];
 
   for (const request of requests) {
     const database = (definitions[request.pipelineId] || []).find(
@@ -631,6 +799,32 @@ export async function applyProfilePipelineDatabases({
     );
     if (!database) {
       const message = `Database ${request.databaseId} is not defined for pipeline ${request.pipelineId}`;
+      results.push({
+        pipelineId: request.pipelineId,
+        databaseId: request.databaseId,
+        mode: request.mode || "ensure",
+        status: "error",
+        error: message,
+      });
+      if (request.required) throw new Error(message);
+      logger.warn?.(message);
+      continue;
+    }
+
+    const resolvedDatabase = {
+      ...database,
+      downloadUrl: request.sourceUrlOverride || database.downloadUrl,
+    };
+    const configKey = request.configKey || database.configKey;
+    if (!configKey) {
+      const message = `Database ${request.databaseId} for pipeline ${request.pipelineId} does not define a config key`;
+      results.push({
+        pipelineId: request.pipelineId,
+        databaseId: request.databaseId,
+        mode: request.mode || "ensure",
+        status: "error",
+        error: message,
+      });
       if (request.required) throw new Error(message);
       logger.warn?.(message);
       continue;
@@ -641,15 +835,18 @@ export async function applyProfilePipelineDatabases({
       databaseDirectory: settings.databaseDirectory,
       pipelineId: request.pipelineId,
       databaseId: request.databaseId,
-      fileName: database.fileName,
+      fileName: resolvedDatabase.fileName,
     });
     const logPath = await createDatabaseDownloadLogPath(rootDir, request.pipelineId, request.databaseId);
     const startedAt = new Date().toISOString();
+    const mode = request.mode || "ensure";
+    const statusTargetPath = mode === "skip" && request.path ? request.path : targetPath;
 
     await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
       state: "running",
-      sourceUrl: database.downloadUrl,
-      targetPath,
+      mode,
+      sourceUrl: resolvedDatabase.downloadUrl,
+      targetPath: statusTargetPath,
       startedAt,
       finishedAt: undefined,
       error: undefined,
@@ -657,35 +854,55 @@ export async function applyProfilePipelineDatabases({
     });
 
     try {
-      logger.log?.(`Downloading database ${request.pipelineId}/${request.databaseId}`);
-      const download = await downloadDatabaseArchive({ database, targetPath, logPath });
-      const installed = await installDatabaseIfNeeded({
-        rootDir,
-        pipelineRunDir: settings.pipelineRunDir,
-        databaseDirectory: settings.databaseDirectory,
-        pipelineId: request.pipelineId,
-        databaseId: request.databaseId,
-        database,
-        archivePath: targetPath,
-        logPath,
-      });
+      let download = { bytesDownloaded: 0, totalBytes: undefined };
+      let installed;
+      if (mode === "skip") {
+        if (!request.path) {
+          throw new Error(
+            `Database ${request.pipelineId}/${request.databaseId} uses mode=skip but no path was provided`
+          );
+        }
+        appendLog(logPath, `Using existing database path without download: ${request.path}`);
+        installed = await verifyExistingDatabasePath(request.path, `${request.pipelineId}/${request.databaseId}`);
+        await verifyOptionalSha256(request.path, request.sha256, `${request.pipelineId}/${request.databaseId}`);
+      } else {
+        if (mode === "overwrite") {
+          await removeFileIfExists(targetPath);
+          appendLog(logPath, `Removed existing archive before overwrite download: ${targetPath}`);
+        }
+        logger.log?.(`Downloading database ${request.pipelineId}/${request.databaseId}`);
+        download = await downloadDatabaseArchive({ database: resolvedDatabase, targetPath, logPath });
+        await verifyOptionalSha256(targetPath, request.sha256, `${request.pipelineId}/${request.databaseId}`);
+        installed = await installDatabaseIfNeeded({
+          rootDir,
+          pipelineRunDir: settings.pipelineRunDir,
+          databaseDirectory: settings.databaseDirectory,
+          pipelineId: request.pipelineId,
+          databaseId: request.databaseId,
+          database: resolvedDatabase,
+          archivePath: targetPath,
+          logPath,
+        });
+      }
 
       await setPipelineDatabaseConfig(
         prisma,
         request.pipelineId,
-        database.configKey,
+        configKey,
         installed.runtimePath
       );
       await writeDatabaseDownloadRecord(rootDir, request.pipelineId, request.databaseId, {
-        version: database.version,
+        version: resolvedDatabase.version,
+        mode,
         path: installed.runtimePath,
-        sourceUrl: database.downloadUrl,
+        sourceUrl: resolvedDatabase.downloadUrl,
         sizeBytes: installed.sizeBytes,
       });
       await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
         state: "success",
-        sourceUrl: database.downloadUrl,
-        targetPath,
+        mode,
+        sourceUrl: resolvedDatabase.downloadUrl,
+        targetPath: statusTargetPath,
         bytesDownloaded: download.bytesDownloaded,
         totalBytes: download.totalBytes,
         progressPercent: 100,
@@ -694,17 +911,40 @@ export async function applyProfilePipelineDatabases({
         error: undefined,
         logPath,
       });
+      results.push({
+        pipelineId: request.pipelineId,
+        databaseId: request.databaseId,
+        mode,
+        status: "success",
+        path: installed.runtimePath,
+        sourceUrl: resolvedDatabase.downloadUrl,
+        sizeBytes: installed.sizeBytes,
+        bytesDownloaded: download.bytesDownloaded,
+        totalBytes: download.totalBytes,
+        logPath,
+      });
       downloaded += 1;
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
         state: "error",
-        sourceUrl: database.downloadUrl,
-        targetPath,
+        mode,
+        sourceUrl: resolvedDatabase.downloadUrl,
+        targetPath: statusTargetPath,
         startedAt,
         finishedAt: new Date().toISOString(),
         error: message,
+        logPath,
+      });
+      results.push({
+        pipelineId: request.pipelineId,
+        databaseId: request.databaseId,
+        mode,
+        status: "error",
+        error: message,
+        sourceUrl: resolvedDatabase.downloadUrl,
+        targetPath: statusTargetPath,
         logPath,
       });
       if (request.required) throw error;
@@ -712,7 +952,7 @@ export async function applyProfilePipelineDatabases({
     }
   }
 
-  return { skipped: false, downloaded, failed };
+  return { skipped: false, downloaded, failed, results };
 }
 
 function buildFastq(sampleId, index) {
@@ -992,6 +1232,7 @@ async function seedDownloadedFastqBundleFixture({
   dataBasePath,
   rootDir,
   logger = console,
+  activity,
 }) {
   const profileId = normalizeProfileId(profile);
   const fixtureId = normalizeFixtureId(fixture);
@@ -1016,8 +1257,14 @@ async function seedDownloadedFastqBundleFixture({
     dataBasePath,
     rootDir,
     logger,
+    activity,
   });
   const manifest = await readFastqBundleManifest(extracted.extractDir, fixtureId);
+  await activity?.update?.({
+    phase: "seeding",
+    targetPath: extracted.extractDir,
+    logPath: extracted.logPath,
+  });
 
   const [admin, researcher] = await Promise.all([
     ensureUser(prisma, "FACILITY_ADMIN", {
@@ -1148,6 +1395,7 @@ async function seedDownloadedFastqBundleFixture({
     wroteFastqFiles: true,
     sourceUrl: extracted.sourceUrl,
     archivePath: extracted.archivePath,
+    logPath: extracted.logPath,
     sha256: extracted.sha256,
   };
 }
@@ -1159,6 +1407,7 @@ async function seedOrderPipelineSmokeFixture({
   dataBasePath,
   rootDir,
   logger = console,
+  activity,
 }) {
   const source = toRecord(fixture.source);
   if (source.type === "downloadedFastqBundle") {
@@ -1169,6 +1418,7 @@ async function seedOrderPipelineSmokeFixture({
       dataBasePath,
       rootDir,
       logger,
+      activity,
     });
   }
 
@@ -1296,6 +1546,7 @@ export async function applyProfileSeedData({
   profile,
   rootDir = process.cwd(),
   logger = console,
+  activity,
 }) {
   const seedData = toRecord(profile.seedData);
   if (toOptionalBoolean(seedData.enabled) !== true) {
@@ -1318,6 +1569,7 @@ export async function applyProfileSeedData({
           dataBasePath,
           rootDir,
           logger,
+          activity,
         })
       );
     } catch (error) {

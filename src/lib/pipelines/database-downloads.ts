@@ -45,6 +45,7 @@ export interface PipelineDatabaseDownloadJobStatus {
   progressPercent?: number | null;
   limitRate?: string;
   startedAt?: string;
+  updatedAt?: string;
   finishedAt?: string;
   error?: string;
   logPath?: string;
@@ -260,6 +261,15 @@ export async function getDatabaseDownloadJobStatus(
   return index[getRecordKey(pipelineId, databaseId)] || null;
 }
 
+export async function getAllDatabaseDownloadJobStatuses(): Promise<
+  PipelineDatabaseDownloadJobStatus[]
+> {
+  const index = await readDownloadStatusIndex();
+  return Object.values(index).filter(
+    (job): job is PipelineDatabaseDownloadJobStatus => Boolean(job)
+  );
+}
+
 export async function updateDatabaseDownloadJobStatus(
   pipelineId: string,
   databaseId: string,
@@ -268,12 +278,14 @@ export async function updateDatabaseDownloadJobStatus(
   const key = getRecordKey(pipelineId, databaseId);
   const index = await readDownloadStatusIndex();
   const existing = index[key];
+  const now = new Date().toISOString();
   const merged: PipelineDatabaseDownloadJobStatus = {
     pipelineId,
     databaseId,
     state: existing?.state || 'running',
     ...existing,
     ...update,
+    updatedAt: update.updatedAt || now,
   };
   index[key] = merged;
   await writeDownloadStatusIndex(index);

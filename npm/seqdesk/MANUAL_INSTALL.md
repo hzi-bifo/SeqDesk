@@ -144,7 +144,48 @@ The current dummy profile telemetry interval is one hour. For a faster manual
 test, temporarily use the CI forced-heartbeat script from a repo checkout or
 wait for the interval.
 
-## 7. Cleanup
+## 7. Apply Hosted Profile Assets To An Existing Install
+
+Use this when SeqDesk is already installed and you only need to apply hosted
+profile assets such as pipeline reference databases or example datasets.
+
+```bash
+export DEV_SETUP_CODE="paste-profile-access-code-here"
+
+seqdesk assets apply --dir /net/broker/devphil/seqdesk \
+  --profile dev \
+  --profile-code "$DEV_SETUP_CODE"
+```
+
+For machine-readable output:
+
+```bash
+seqdesk assets apply --dir /net/broker/devphil/seqdesk \
+  --profile dev \
+  --profile-code "$DEV_SETUP_CODE" \
+  --json
+```
+
+Manual fallback using the installed app script:
+
+```bash
+curl -fsSL -H "Authorization: Bearer $DEV_SETUP_CODE" \
+  https://www.seqdesk.com/api/install-profiles/dev/resolve \
+  -o /tmp/seqdesk-dev-profile.json
+
+cd /net/broker/devphil/seqdesk
+node scripts/apply-install-profile-assets.mjs \
+  --profile-config /tmp/seqdesk-dev-profile.json
+```
+
+For the development profile, the MetaxPath database bundle is large. Check disk
+space before running the asset command.
+
+```bash
+df -h /net/broker/devphil /net/broker/devphil/pipeline /net/broker/devphil/seqdesk_data
+```
+
+## 8. Cleanup
 
 Stop the app process, then remove the install directory and test database:
 

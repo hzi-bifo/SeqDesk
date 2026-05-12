@@ -5,10 +5,12 @@
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 const { version } = require("../package.json");
 
 const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.com/install.sh";
+const DEFAULT_PROFILE_REGISTRY_URL = "https://www.seqdesk.com/api/install-profiles";
 const args = process.argv.slice(2);
 
 if (process.platform === "win32") {
@@ -30,6 +32,19 @@ Options:
   --timeout-ms       Timeout for PostgreSQL and HTTP checks. Defaults to 5000.
   --json             Print machine-readable JSON.
   --help, -h         Show this help.
+`;
+
+const ASSETS_USAGE = `Usage:
+  seqdesk assets apply [--dir /path/to/seqdesk] (--profile <id> --profile-code <code> | --profile-config <file>)
+
+Options:
+  --dir, -d                    Installed SeqDesk directory. Defaults to the current directory.
+  --profile <id>               Hosted install profile id, for example dev.
+  --profile-code, --key <code> Hosted profile access code.
+  --profile-config <file>      Already-resolved install profile JSON.
+  --profile-registry-url <url> Hosted profile registry URL. Defaults to https://www.seqdesk.com/api/install-profiles.
+  --json                       Print machine-readable JSON from the installed asset script.
+  --help, -h                   Show this help.
 `;
 
 function isPlainObject(value) {
@@ -145,6 +160,139 @@ function parseDoctorArgs(argv) {
   }
 
   options.dir = path.resolve(options.dir);
+  return options;
+}
+
+function profileCodeEnvName(profileId) {
+  return `${profileId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_SETUP_CODE`;
+}
+
+function safeProfileFileName(profileId) {
+  const normalized = profileId.replace(/[^a-z0-9_-]/gi, "-").replace(/^-+|-+$/g, "");
+  return `${normalized || "profile"}-install-profile.json`;
+}
+
+function parseAssetsArgs(argv) {
+  const options = {
+    dir: process.cwd(),
+    profile: "",
+    profileCode: "",
+    profileConfig: "",
+    profileRegistryUrl: process.env.SEQDESK_PROFILE_REGISTRY_URL || DEFAULT_PROFILE_REGISTRY_URL,
+    json: false,
+    help: false,
+  };
+
+  const subcommand = argv[0];
+  if (subcommand === "--help" || subcommand === "-h") {
+    options.help = true;
+    return options;
+  }
+  if (subcommand !== "apply") {
+    throw new Error(subcommand ? `Unknown assets command: ${subcommand}` : "Missing assets command: apply");
+  }
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index];
+
+    if (token === "--help" || token === "-h") {
+      options.help = true;
+      continue;
+    }
+
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+
+    if (token === "--dir" || token === "-d") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a directory path`);
+      }
+      options.dir = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--dir=")) {
+      options.dir = token.slice("--dir=".length);
+      continue;
+    }
+
+    if (token === "--profile") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--profile requires an id");
+      }
+      options.profile = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--profile=")) {
+      options.profile = token.slice("--profile=".length);
+      continue;
+    }
+
+    if (token === "--profile-code" || token === "--key") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a code`);
+      }
+      options.profileCode = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--profile-code=")) {
+      options.profileCode = token.slice("--profile-code=".length);
+      continue;
+    }
+
+    if (token.startsWith("--key=")) {
+      options.profileCode = token.slice("--key=".length);
+      continue;
+    }
+
+    if (token === "--profile-config") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--profile-config requires a file path");
+      }
+      options.profileConfig = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--profile-config=")) {
+      options.profileConfig = token.slice("--profile-config=".length);
+      continue;
+    }
+
+    if (token === "--profile-registry-url") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--profile-registry-url requires a URL");
+      }
+      options.profileRegistryUrl = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--profile-registry-url=")) {
+      options.profileRegistryUrl = token.slice("--profile-registry-url=".length);
+      continue;
+    }
+
+    throw new Error(`Unknown assets option: ${token}`);
+  }
+
+  options.dir = path.resolve(options.dir);
+  options.profile = options.profile.trim();
+  options.profileCode = options.profileCode.trim();
+  options.profileConfig = options.profileConfig ? path.resolve(options.profileConfig) : "";
+  options.profileRegistryUrl = options.profileRegistryUrl.trim() || DEFAULT_PROFILE_REGISTRY_URL;
   return options;
 }
 
@@ -560,6 +708,174 @@ async function runDoctor(argv) {
   return result.summary.fail > 0 ? 1 : 0;
 }
 
+function resolveProfileCode(profileId, explicitCode) {
+  return firstString(
+    explicitCode,
+    process.env[profileCodeEnvName(profileId)],
+    process.env.SEQDESK_PROFILE_CODE,
+    process.env.SEQDESK_KEY
+  );
+}
+
+function validateAssetInstallDir(installDir) {
+  if (!dirExists(installDir)) {
+    throw new Error(`Install directory does not exist: ${installDir}`);
+  }
+  if (!fileExists(path.join(installDir, "package.json"))) {
+    throw new Error(`Install directory is missing package.json: ${installDir}`);
+  }
+  const assetScript = path.join(installDir, "scripts", "apply-install-profile-assets.mjs");
+  if (!fileExists(assetScript)) {
+    throw new Error(`Install directory is missing scripts/apply-install-profile-assets.mjs: ${installDir}`);
+  }
+  return assetScript;
+}
+
+function makeTempProfileFile(profileId, payload) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-profile-assets-"));
+  const profilePath = path.join(tempDir, safeProfileFileName(profileId));
+  fs.writeFileSync(profilePath, JSON.stringify(payload, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  return {
+    path: profilePath,
+    cleanup() {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function resolveHostedProfile(options) {
+  const profileCode = resolveProfileCode(options.profile, options.profileCode);
+  if (!options.profile) {
+    throw new Error("--profile is required when --profile-config is not used");
+  }
+  if (!profileCode) {
+    throw new Error(
+      `--profile-code is required for profile '${options.profile}' (or set SEQDESK_PROFILE_CODE, SEQDESK_KEY, or ${profileCodeEnvName(options.profile)})`
+    );
+  }
+
+  let profileUrl;
+  try {
+    profileUrl = new URL(
+      `${options.profileRegistryUrl.replace(/\/+$/, "")}/${encodeURIComponent(options.profile)}/resolve`
+    );
+  } catch (error) {
+    throw new Error(`Invalid --profile-registry-url: ${error.message}`);
+  }
+
+  let response;
+  try {
+    response = await fetch(profileUrl, {
+      redirect: "follow",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${profileCode}`,
+        "user-agent": `seqdesk/${version} assets`,
+      },
+    });
+  } catch (error) {
+    throw new Error(`Could not resolve hosted install profile '${options.profile}': ${error.message}`);
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const json = JSON.parse(text);
+      if (json?.error) message += `: ${json.error}`;
+    } catch {
+      // Keep the HTTP-only message. The response may be HTML from an upstream proxy.
+    }
+    throw new Error(`Could not resolve hosted install profile '${options.profile}': ${message}`);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Hosted install profile '${options.profile}' returned invalid JSON: ${error.message}`);
+  }
+  if (!isPlainObject(payload)) {
+    throw new Error(`Hosted install profile '${options.profile}' did not return a JSON object`);
+  }
+
+  return makeTempProfileFile(options.profile, payload);
+}
+
+function runInstalledAssetScript({ installDir, scriptPath, profileConfig, json }) {
+  return new Promise((resolve, reject) => {
+    const childArgs = [scriptPath, "--profile-config", profileConfig];
+    if (json) childArgs.push("--json");
+
+    const child = spawn(process.execPath, childArgs, {
+      cwd: installDir,
+      env,
+      stdio: "inherit",
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start installed asset script: ${error.message}`));
+    });
+
+    child.on("close", (code, signal) => {
+      if (signal) {
+        reject(new Error(`Installed asset script exited with signal ${signal}`));
+        return;
+      }
+      resolve(code ?? 1);
+    });
+  });
+}
+
+async function runAssets(argv) {
+  let options;
+  try {
+    options = parseAssetsArgs(argv);
+  } catch (error) {
+    console.error(`[seqdesk] ${error.message}`);
+    console.error("");
+    console.error(ASSETS_USAGE.trim());
+    return 2;
+  }
+
+  if (options.help) {
+    console.log(ASSETS_USAGE.trim());
+    return 0;
+  }
+
+  let tempProfile = null;
+  try {
+    const scriptPath = validateAssetInstallDir(options.dir);
+    let profileConfig = options.profileConfig;
+    if (profileConfig) {
+      if (!fileExists(profileConfig)) {
+        throw new Error(`Profile config file does not exist: ${profileConfig}`);
+      }
+    } else {
+      if (!options.json) {
+        console.error(`[seqdesk] Resolving hosted install profile '${options.profile}'`);
+      }
+      tempProfile = await resolveHostedProfile(options);
+      profileConfig = tempProfile.path;
+    }
+
+    return await runInstalledAssetScript({
+      installDir: options.dir,
+      scriptPath,
+      profileConfig,
+      json: options.json,
+    });
+  } catch (error) {
+    console.error(`[seqdesk] ${error.message}`);
+    return 1;
+  } finally {
+    tempProfile?.cleanup();
+  }
+}
+
 async function downloadInstaller() {
   let response;
   try {
@@ -627,6 +943,11 @@ function runInstaller(script) {
 async function main() {
   if (args[0] === "doctor") {
     const exitCode = await runDoctor(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (args[0] === "assets") {
+    const exitCode = await runAssets(args.slice(1));
     process.exit(exitCode);
   }
 

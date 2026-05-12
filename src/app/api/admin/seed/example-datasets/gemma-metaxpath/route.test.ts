@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   getGemmaMetaxPathExampleStatus: vi.fn(),
   seedGemmaMetaxPathExampleDataset: vi.fn(),
   resolveDataBasePathFromStoredValue: vi.fn(),
+  getAdminActivityJob: vi.fn(),
+  readRedactedLogTail: vi.fn(),
+  updateAdminActivityJob: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -27,8 +30,15 @@ vi.mock("@/lib/files/data-base-path", () => ({
 }));
 
 vi.mock("@/lib/seed/gemma-metaxpath-example", () => ({
+  GEMMA_METAXPATH_EXAMPLE_FIXTURE_ID: "gemma-nanopore-metaxpath-5sample",
   getGemmaMetaxPathExampleStatus: mocks.getGemmaMetaxPathExampleStatus,
   seedGemmaMetaxPathExampleDataset: mocks.seedGemmaMetaxPathExampleDataset,
+}));
+
+vi.mock("@/lib/admin/activity", () => ({
+  getAdminActivityJob: mocks.getAdminActivityJob,
+  readRedactedLogTail: mocks.readRedactedLogTail,
+  updateAdminActivityJob: mocks.updateAdminActivityJob,
 }));
 
 import { GET, POST } from "./route";
@@ -66,6 +76,9 @@ describe("Gemma MetaxPath example dataset seed API", () => {
       })
     );
     mocks.getGemmaMetaxPathExampleStatus.mockResolvedValue(seededStatus);
+    mocks.getAdminActivityJob.mockResolvedValue(null);
+    mocks.readRedactedLogTail.mockResolvedValue([]);
+    mocks.updateAdminActivityJob.mockResolvedValue({});
     mocks.seedGemmaMetaxPathExampleDataset.mockResolvedValue({
       skipped: false,
       seeded: 1,
@@ -96,19 +109,25 @@ describe("Gemma MetaxPath example dataset seed API", () => {
     expect(res.status).toBe(401);
   });
 
-  it("seeds the dataset and returns the refreshed status", async () => {
+  it("starts the dataset seed as a tracked background activity", async () => {
     const res = await POST();
     const body = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(mocks.seedGemmaMetaxPathExampleDataset).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(202);
     expect(body).toMatchObject({
       success: true,
-      seededFixtures: 1,
-      orderNumber: "DEV-GEMMA-ONT-001",
-      samplesCount: 5,
-      readsCount: 5,
+      started: true,
+      jobId: "seed:example-dataset:gemma-metaxpath",
     });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.seedGemmaMetaxPathExampleDataset).toHaveBeenCalledTimes(1);
+    expect(mocks.updateAdminActivityJob).toHaveBeenCalledWith(
+      "seed:example-dataset:gemma-metaxpath",
+      expect.objectContaining({
+        state: "success",
+        phase: "complete",
+      })
+    );
   });
 
   it("rejects seeding when the data base path is missing", async () => {
@@ -124,7 +143,7 @@ describe("Gemma MetaxPath example dataset seed API", () => {
     expect(mocks.seedGemmaMetaxPathExampleDataset).not.toHaveBeenCalled();
   });
 
-  it("surfaces seeding failures", async () => {
+  it("records seeding failures in the tracked activity", async () => {
     mocks.seedGemmaMetaxPathExampleDataset.mockRejectedValue(
       new Error("Fixture SHA256 mismatch")
     );
@@ -132,7 +151,15 @@ describe("Gemma MetaxPath example dataset seed API", () => {
     const res = await POST();
     const body = await res.json();
 
-    expect(res.status).toBe(500);
-    expect(body.error).toBe("Fixture SHA256 mismatch");
+    expect(res.status).toBe(202);
+    expect(body.started).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.updateAdminActivityJob).toHaveBeenCalledWith(
+      "seed:example-dataset:gemma-metaxpath",
+      expect.objectContaining({
+        state: "error",
+        error: "Fixture SHA256 mismatch",
+      })
+    );
   });
 });

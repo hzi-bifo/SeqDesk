@@ -67,6 +67,79 @@ async function createDownloadedFastqBundle(options?: { corruptSha?: boolean }) {
   };
 }
 
+async function createMetaxDbInstallRoot() {
+  const rootDir = path.join(tempDir, `install-root-${Date.now()}`);
+  const archiveSource = path.join(tempDir, "source", "metaxpath_db_bundle.tar");
+  await fs.mkdir(path.dirname(archiveSource), { recursive: true });
+  await fs.writeFile(archiveSource, "test archive");
+  await fs.mkdir(path.join(rootDir, "data"), { recursive: true });
+  await fs.writeFile(
+    path.join(rootDir, "data", "pipeline-databases.json"),
+    JSON.stringify({
+      metaxpath: [
+        {
+          id: "db-bundle",
+          label: "MetaxPath Database Bundle",
+          description: "Test bundle",
+          version: "test",
+          fileName: "metaxpath_db_bundle.tar",
+          downloadUrl: `file://${archiveSource}`,
+          configKey: "paramsFile",
+          install: {
+            type: "metaxpath_db_bundle",
+            paramsFileName: "metaxpath.downloaded.params.yaml",
+          },
+        },
+      ],
+    })
+  );
+
+  const installerPath = path.join(
+    rootDir,
+    "pipelines",
+    "metaxpath",
+    "workflow",
+    "scripts",
+    "install_db_bundle.sh"
+  );
+  await fs.mkdir(path.dirname(installerPath), { recursive: true });
+  await fs.writeFile(
+    installerPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "dest=\"\"",
+      "while [ $# -gt 0 ]; do",
+      "  case \"$1\" in",
+      "    --dest) dest=\"$2\"; shift 2 ;;",
+      "    *) shift ;;",
+      "  esac",
+      "done",
+      "mkdir -p \"$dest\"",
+      "printf 'params: test\\n' > \"$dest/metaxpath.downloaded.params.yaml\"",
+      "",
+    ].join("\n")
+  );
+
+  return { rootDir, archiveSource };
+}
+
+function makeDatabasePrisma(databaseRoot: string, pipelineConfigUpsert = vi.fn().mockResolvedValue({})) {
+  return {
+    siteSettings: {
+      findUnique: vi.fn().mockResolvedValue({
+        dataBasePath: tempDir,
+        extraSettings: JSON.stringify({ pipelineExecution: { pipelineRunDir: tempDir } }),
+      }),
+    },
+    pipelineConfig: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: pipelineConfigUpsert,
+    },
+    databaseRoot,
+  };
+}
+
 describe("install profile asset script helpers", () => {
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-profile-assets-"));
@@ -255,6 +328,208 @@ describe("install profile asset script helpers", () => {
     );
   });
 
+  it("accepts the SeqDesk.com admin array shape for database requests", async () => {
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                configKey: "paramsFile",
+                mode: "ensure",
+                path: "/shared/dbs/metaxpath/params.yaml",
+                sourceUrlOverride: "https://mirror.example.org/metaxpath_db_bundle.tar",
+                sha256: "a".repeat(64),
+              },
+            ],
+          },
+        },
+        {}
+      )
+    ).toEqual({
+      autoDownload: true,
+      requests: [
+        {
+          pipelineId: "metaxpath",
+          databaseId: "db-bundle",
+          required: true,
+          mode: "ensure",
+          configKey: "paramsFile",
+          path: "/shared/dbs/metaxpath/params.yaml",
+          sourceUrlOverride: "https://mirror.example.org/metaxpath_db_bundle.tar",
+          sha256: "a".repeat(64),
+        },
+      ],
+    });
+  });
+
+  it("applies a SeqDesk.com admin array database request", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+    const databaseRoot = path.join(tempDir, "array-profile-dbs");
+    const pipelineConfigUpsert = vi.fn().mockResolvedValue({});
+    const prisma = makeDatabasePrisma(databaseRoot, pipelineConfigUpsert);
+
+    const result = await applyProfilePipelineDatabases({
+      prisma,
+      profile: {
+        pipelines: {
+          databaseDirectory: databaseRoot,
+          databases: [
+            {
+              pipelineId: "metaxpath",
+              databaseId: "db-bundle",
+              configKey: "paramsFile",
+              mode: "ensure",
+            },
+          ],
+        },
+      },
+      rootDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const paramsPath = path.join(
+      databaseRoot,
+      "metaxpath",
+      "db-bundle",
+      "installed",
+      "metaxpath.downloaded.params.yaml"
+    );
+    await expect(fs.stat(paramsPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    expect(result).toMatchObject({ skipped: false, downloaded: 1, failed: 0 });
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        databaseId: "db-bundle",
+        mode: "ensure",
+        status: "success",
+        path: paramsPath,
+      }),
+    ]);
+    expect(pipelineConfigUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { pipelineId: "metaxpath" },
+        create: expect.objectContaining({
+          enabled: true,
+          config: JSON.stringify({ paramsFile: paramsPath }),
+        }),
+        update: {
+          config: JSON.stringify({ paramsFile: paramsPath }),
+        },
+      })
+    );
+  });
+
+  it("links an existing database path when mode is skip", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+    const databaseRoot = path.join(tempDir, "skip-profile-dbs");
+    const existingParamsPath = path.join(tempDir, "existing", "metaxpath.downloaded.params.yaml");
+    await fs.mkdir(path.dirname(existingParamsPath), { recursive: true });
+    await fs.writeFile(existingParamsPath, "params: existing\n");
+    const pipelineConfigUpsert = vi.fn().mockResolvedValue({});
+    const prisma = makeDatabasePrisma(databaseRoot, pipelineConfigUpsert);
+
+    const result = await applyProfilePipelineDatabases({
+      prisma,
+      profile: {
+        pipelines: {
+          databaseDirectory: databaseRoot,
+          databases: [
+            {
+              pipelineId: "metaxpath",
+              databaseId: "db-bundle",
+              configKey: "paramsFile",
+              mode: "skip",
+              path: existingParamsPath,
+            },
+          ],
+        },
+      },
+      rootDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ skipped: false, downloaded: 1, failed: 0 });
+    expect(pipelineConfigUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { pipelineId: "metaxpath" },
+        create: expect.objectContaining({
+          config: JSON.stringify({ paramsFile: existingParamsPath }),
+        }),
+        update: {
+          config: JSON.stringify({ paramsFile: existingParamsPath }),
+        },
+      })
+    );
+  });
+
+  it("requires a path when database mode is skip", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+    const prisma = makeDatabasePrisma(path.join(tempDir, "skip-missing-dbs"));
+
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma,
+        profile: {
+          pipelines: {
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                mode: "skip",
+              },
+            ],
+          },
+        },
+        rootDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("uses mode=skip but no path was provided");
+  });
+
+  it("overwrites a stale database archive when mode is overwrite", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+    const databaseRoot = path.join(tempDir, "overwrite-profile-dbs");
+    const archivePath = path.join(
+      databaseRoot,
+      "metaxpath",
+      "db-bundle",
+      "metaxpath_db_bundle.tar"
+    );
+    await fs.mkdir(path.dirname(archivePath), { recursive: true });
+    await fs.writeFile(archivePath, "stale archive");
+
+    const result = await applyProfilePipelineDatabases({
+      prisma: makeDatabasePrisma(databaseRoot),
+      profile: {
+        pipelines: {
+          databaseDirectory: databaseRoot,
+          databases: [
+            {
+              pipelineId: "metaxpath",
+              databaseId: "db-bundle",
+              mode: "overwrite",
+            },
+          ],
+        },
+      },
+      rootDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    await expect(fs.readFile(archivePath, "utf8")).resolves.toBe("test archive");
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        databaseId: "db-bundle",
+        mode: "overwrite",
+        status: "success",
+      }),
+    ]);
+  });
+
   it("resolves explicit database requests and enabled-pipeline defaults", () => {
     expect(
       resolveProfileDatabaseRequests(
@@ -270,7 +545,9 @@ describe("install profile asset script helpers", () => {
       )
     ).toEqual({
       autoDownload: true,
-      requests: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+      requests: [
+        { pipelineId: "metaxpath", databaseId: "db-bundle", required: true, mode: "ensure" },
+      ],
     });
 
     expect(
@@ -287,7 +564,9 @@ describe("install profile asset script helpers", () => {
       )
     ).toEqual({
       autoDownload: true,
-      requests: [{ pipelineId: "metaxpath", databaseId: "db-bundle", required: true }],
+      requests: [
+        { pipelineId: "metaxpath", databaseId: "db-bundle", required: true, mode: "ensure" },
+      ],
     });
   });
 

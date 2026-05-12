@@ -7,6 +7,7 @@ import {
   buildPipelineDatabaseInstallDir,
   calculateProgressPercent,
   createDatabaseDownloadLogPath,
+  getAllDatabaseDownloadJobStatuses,
   getDatabaseDownloadJobStatus,
   getDatabaseDownloadLogDir,
   getPipelineDatabaseDefinition,
@@ -136,6 +137,37 @@ describe("database-downloads", () => {
     });
   });
 
+  it("lists all database job statuses from the status index", async () => {
+    vi.mocked(fs.promises.readFile).mockImplementation(async (target) => {
+      if (target.toString() === statusPath) {
+        return JSON.stringify({
+          "mag:gtdb": {
+            pipelineId: "mag",
+            databaseId: "gtdb",
+            state: "running",
+          },
+          "metaxpath:db-bundle": {
+            pipelineId: "metaxpath",
+            databaseId: "db-bundle",
+            state: "error",
+            error: "Download failed",
+          },
+        });
+      }
+      throw new Error("not expected");
+    });
+
+    await expect(getAllDatabaseDownloadJobStatuses()).resolves.toEqual([
+      { pipelineId: "mag", databaseId: "gtdb", state: "running" },
+      {
+        pipelineId: "metaxpath",
+        databaseId: "db-bundle",
+        state: "error",
+        error: "Download failed",
+      },
+    ]);
+  });
+
   it("updates database job status by merging defaults", async () => {
     vi.mocked(fs.promises.readFile).mockImplementation(async (target) => {
       if (target.toString() === statusPath) return JSON.stringify({});
@@ -146,26 +178,16 @@ describe("database-downloads", () => {
 
     const status = await updateDatabaseDownloadJobStatus("mag", "gtdb", { state: "success", totalBytes: 100 });
 
-    expect(status).toEqual({
+    expect(status).toMatchObject({
       pipelineId: "mag",
       databaseId: "gtdb",
       state: "success",
       totalBytes: 100,
     });
+    expect(status.updatedAt).toBeDefined();
     expect(fs.promises.writeFile).toHaveBeenCalledWith(
       statusPath,
-      JSON.stringify(
-        {
-          "mag:gtdb": {
-            pipelineId: "mag",
-            databaseId: "gtdb",
-            state: "success",
-            totalBytes: 100,
-          },
-        },
-        null,
-        2
-      )
+      expect.stringContaining('"updatedAt"')
     );
   });
 

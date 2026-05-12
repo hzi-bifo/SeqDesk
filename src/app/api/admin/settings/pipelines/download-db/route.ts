@@ -33,6 +33,26 @@ function normalizeLimitRate(raw: unknown): string | undefined {
   return trimmed;
 }
 
+function buildDownloadExitError(args: {
+  command: string;
+  code: number | null;
+  bytesDownloaded: number;
+  totalBytes?: number;
+  label: string;
+  logPath: string;
+}): string {
+  const { command, code, bytesDownloaded, totalBytes, label, logPath } = args;
+  if (code === 18) {
+    return typeof totalBytes === 'number' && totalBytes > 0
+      ? `${command} stopped with code 18 while downloading ${label}: partial transfer ${bytesDownloaded}/${totalBytes} bytes. Re-run to resume. Log: ${logPath}`
+      : `${command} stopped with code 18 while downloading ${label}: partial transfer. Re-run to resume. Log: ${logPath}`;
+  }
+  if (code === null) {
+    return `${command} stopped before reporting an exit code while downloading ${label}. Check the server log: ${logPath}`;
+  }
+  return `${command} failed with exit code ${code} while downloading ${label}. Check network access, permissions for the target directory, and the server log: ${logPath}`;
+}
+
 async function computeFileSha256(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256');
   const stream = createReadStream(filePath);
@@ -534,11 +554,13 @@ export async function POST(req: NextRequest) {
 
       child.on('error', async (error) => {
         clearInterval(progressTimer);
+        const message = `Failed to run ${downloader.command} for ${database.label || databaseId}: ${error.message}. Log: ${logPath}`;
+        logStream.write(`[${new Date().toISOString()}] ${message}\n`);
         try {
           await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
             state: 'error',
             finishedAt: new Date().toISOString(),
-            error: error.message,
+            error: message,
           });
         } catch {
           // If persisting status fails, we still close the log stream.
@@ -622,12 +644,15 @@ export async function POST(req: NextRequest) {
           } else {
             const bytesDownloaded = await getFileSize(targetPath);
             const progressPercent = calculateProgressPercent(bytesDownloaded, totalBytes);
-            const error =
-              code === 18
-                ? typeof totalBytes === 'number' && totalBytes > 0
-                  ? `Download exited with code 18 (partial transfer ${bytesDownloaded}/${totalBytes} bytes). Re-run to resume.`
-                  : 'Download exited with code 18 (partial transfer). Re-run to resume.'
-                : `Download exited with code ${code}`;
+            const error = buildDownloadExitError({
+              command: downloader.command,
+              code,
+              bytesDownloaded,
+              totalBytes,
+              label: database.label || databaseId,
+              logPath,
+            });
+            logStream.write(`[${new Date().toISOString()}] ${error}\n`);
             await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
               state: 'error',
               finishedAt,

@@ -26,6 +26,17 @@ seqdesk doctor --dir /opt/seqdesk --url http://127.0.0.1:3000
 seqdesk doctor --dir /opt/seqdesk --json
 ```
 
+Apply hosted profile assets to an existing install:
+
+```bash
+seqdesk assets apply --dir /opt/seqdesk \
+  --profile dev \
+  --profile-code "$DEV_SETUP_CODE"
+```
+
+This reuses the installed app and applies profile-declared pipeline database
+assets and seed fixtures without reinstalling SeqDesk.
+
 For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 
 ## Notes
@@ -45,6 +56,10 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 - `seqdesk doctor` runs locally and does not download the installer. It checks
   install files, PostgreSQL reachability, runtime config, auth providers, and
   setup status when the app URL is known.
+- `seqdesk assets apply` runs locally against an existing install. It resolves
+  hosted install profiles into a temporary file, calls the installed
+  `scripts/apply-install-profile-assets.mjs` script, and removes the temporary
+  profile file after the command exits.
 - Successful installs print a matching `seqdesk doctor` command. Pass
   `--run-doctor` to run it automatically when the CLI is available.
 
