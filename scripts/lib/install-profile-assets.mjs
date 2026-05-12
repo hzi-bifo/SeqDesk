@@ -54,11 +54,32 @@ function normalizeProfileId(profile) {
 }
 
 function normalizeFixtureId(fixture) {
-  return (toOptionalString(fixture.id) || "smoke").replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
+  return (toOptionalString(fixture.id) || "fixture").replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
 }
 
 function uppercaseToken(value) {
   return value.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toUpperCase();
+}
+
+function toOptionalNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function toOptionalNonNegativeInt(value) {
+  const parsed = toOptionalNumber(value);
+  if (parsed === undefined) return undefined;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function toJsonObject(value) {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return {};
+  return parseJsonObject(value);
 }
 
 export function buildProfilePipelineDatabaseRoot(pipelineRunDir, databaseDirectory) {
@@ -844,6 +865,7 @@ async function readFastqBundleManifest(extractDir, fixtureId) {
     throw new Error(`Fixture ${fixtureId} manifest must list at least one sample`);
   }
   return {
+    dataset: toRecord(manifest.dataset),
     order: toRecord(manifest.order),
     study: toRecord(manifest.study),
     samples,
@@ -859,12 +881,26 @@ async function upsertDownloadedFastqSample({
   baseRelativeDir,
   marker,
 }) {
-  const relativeBundlePath = normalizeFixtureRelativePath(sample.file1, "sample.file1");
-  const relativeReadPath = path.posix.join(baseRelativeDir, relativeBundlePath);
-  const absoluteReadPath = path.join(dataBasePath, relativeReadPath);
-  const fileSize = await getFileSize(absoluteReadPath);
-  if (fileSize <= 0) {
-    throw new Error(`Fixture FASTQ file is missing or empty: ${absoluteReadPath}`);
+  const relativeBundlePath1 = normalizeFixtureRelativePath(sample.file1, "sample.file1");
+  const relativeReadPath1 = path.posix.join(baseRelativeDir, relativeBundlePath1);
+  const absoluteReadPath1 = path.join(dataBasePath, relativeReadPath1);
+  const fileSize1 = await getFileSize(absoluteReadPath1);
+  if (fileSize1 <= 0) {
+    throw new Error(`Fixture FASTQ file is missing or empty: ${absoluteReadPath1}`);
+  }
+
+  const relativeBundlePath2 = toOptionalString(sample.file2)
+    ? normalizeFixtureRelativePath(sample.file2, "sample.file2")
+    : null;
+  const relativeReadPath2 = relativeBundlePath2
+    ? path.posix.join(baseRelativeDir, relativeBundlePath2)
+    : null;
+  if (relativeReadPath2) {
+    const absoluteReadPath2 = path.join(dataBasePath, relativeReadPath2);
+    const fileSize2 = await getFileSize(absoluteReadPath2);
+    if (fileSize2 <= 0) {
+      throw new Error(`Fixture FASTQ file is missing or empty: ${absoluteReadPath2}`);
+    }
   }
 
   const existing = await prisma.sample.findFirst({
@@ -872,24 +908,29 @@ async function upsertDownloadedFastqSample({
     include: { reads: true },
   });
 
+  const checklistData = {
+    collection_date: "2026-01-01",
+    geographic_location: "Germany:Lower Saxony:Braunschweig",
+    env_broad_scale: "laboratory environment",
+    ...toJsonObject(sample.checklistData),
+  };
+  const customFields = {
+    internal_sample_code: toOptionalString(sample.sampleAlias) || sample.sampleId,
+    material_body_site: toOptionalString(sample.materialBodySite) || "control",
+    ...toJsonObject(sample.customFields),
+    _installProfileFixture: marker,
+  };
   const sampleData = {
     sampleAlias: toOptionalString(sample.sampleAlias) || sample.sampleId,
     sampleTitle: toOptionalString(sample.sampleTitle) || sample.sampleId,
+    sampleDescription: toOptionalString(sample.sampleDescription) || null,
     scientificName: toOptionalString(sample.scientificName) || "metagenome",
     taxId: toOptionalString(sample.taxId) || "256318",
     studyId: study.id,
     facilityStatus: "SEQUENCED",
     facilityStatusUpdatedAt: new Date(),
-    checklistData: JSON.stringify({
-      collection_date: "2026-01-01",
-      geographic_location: "Germany:Lower Saxony:Braunschweig",
-      env_broad_scale: "laboratory environment",
-    }),
-    customFields: JSON.stringify({
-      internal_sample_code: toOptionalString(sample.sampleAlias) || sample.sampleId,
-      material_body_site: toOptionalString(sample.materialBodySite) || "control",
-      _installProfileFixture: marker,
-    }),
+    checklistData: JSON.stringify(checklistData),
+    customFields: JSON.stringify(customFields),
   };
 
   const sampleRecord = existing
@@ -908,24 +949,23 @@ async function upsertDownloadedFastqSample({
       });
 
   const existingRead =
-    sampleRecord.reads.find((read) => read.file1 === relativeReadPath) || sampleRecord.reads[0];
+    sampleRecord.reads.find((read) => read.file1 === relativeReadPath1) || sampleRecord.reads[0];
   const readData = {
-    file1: relativeReadPath,
-    file2: null,
-    checksum1: existingRead?.checksum1 ?? null,
-    checksum2: null,
-    readCount1:
-      typeof sample.readCount1 === "number" && Number.isFinite(sample.readCount1)
-        ? Math.max(0, Math.trunc(sample.readCount1))
-        : null,
-    readCount2: null,
-    avgQuality1:
-      typeof sample.avgQuality1 === "number" && Number.isFinite(sample.avgQuality1)
-        ? sample.avgQuality1
-        : null,
-    avgQuality2: null,
+    file1: relativeReadPath1,
+    file2: relativeReadPath2,
+    checksum1: toOptionalString(sample.checksum1) || existingRead?.checksum1 || null,
+    checksum2: toOptionalString(sample.checksum2) || existingRead?.checksum2 || null,
+    readCount1: toOptionalNonNegativeInt(sample.readCount1) ?? null,
+    readCount2: toOptionalNonNegativeInt(sample.readCount2) ?? null,
+    avgQuality1: toOptionalNumber(sample.avgQuality1) ?? null,
+    avgQuality2: toOptionalNumber(sample.avgQuality2) ?? null,
     pipelineRunId: existingRead?.pipelineRunId ?? null,
     pipelineSources: existingRead?.pipelineSources ?? null,
+    dataClass: toOptionalString(sample.dataClass) || "cleaned",
+    dataClassSource: toOptionalString(sample.dataClassSource) || "profile_fixture_manifest",
+    classificationNote:
+      toOptionalString(sample.classificationNote) ||
+      "Profile fixture read declared as cleaned input data.",
   };
 
   if (existingRead) {
@@ -956,11 +996,12 @@ async function seedDownloadedFastqBundleFixture({
   const profileId = normalizeProfileId(profile);
   const fixtureId = normalizeFixtureId(fixture);
   const profileToken = uppercaseToken(profileId);
+  const fixtureKind = toOptionalString(fixture.kind) || "orderPipelineSmoke";
   const source = toRecord(fixture.source);
   const marker = {
     profileId,
     fixtureId,
-    kind: "orderPipelineSmoke",
+    kind: fixtureKind,
     source: "downloadedFastqBundle",
   };
 
@@ -998,21 +1039,34 @@ async function seedDownloadedFastqBundleFixture({
   const existingStudy = await prisma.study.findFirst({
     where: { userId: researcher.id, alias: studyAlias },
   });
+  const principalInvestigator =
+    toOptionalString(manifest.study.principalInvestigator) ||
+    toOptionalString(manifest.study.principal_investigator) ||
+    "SeqDesk Profile Fixture";
+  const studyAbstract =
+    toOptionalString(manifest.study.abstract) ||
+    toOptionalString(manifest.study.study_abstract) ||
+    "Profile-seeded data for validating profile-driven pipeline setup.";
+  const studyMetadata = {
+    principal_investigator: principalInvestigator,
+    study_abstract: studyAbstract,
+    ...toJsonObject(manifest.study.metadata),
+    ...toJsonObject(manifest.study.studyMetadata),
+    _installProfileFixture: marker,
+  };
   const studyData = {
     title:
       toOptionalString(manifest.study.title) ||
       toOptionalString(manifest.order.name) ||
-      "CI runner FASTQ checksum smoke study",
+      "SeqDesk profile fixture study",
     alias: studyAlias,
     description:
       toOptionalString(manifest.study.description) ||
-      "Profile-seeded smoke study for FASTQ checksum pipeline validation.",
-    checklistType: "Miscellaneous natural or artificial environment",
-    studyMetadata: JSON.stringify({
-      principal_investigator: "SeqDesk Profile Smoke",
-      study_abstract: "Operational smoke data for validating profile-driven pipeline setup.",
-      _installProfileFixture: marker,
-    }),
+      "Profile-seeded study for a bundled example dataset.",
+    checklistType:
+      toOptionalString(manifest.study.checklistType) ||
+      "Miscellaneous natural or artificial environment",
+    studyMetadata: JSON.stringify(studyMetadata),
     userId: researcher.id,
   };
   const study = existingStudy
@@ -1023,31 +1077,39 @@ async function seedDownloadedFastqBundleFixture({
     toOptionalString(fixture.orderNumber) ||
     toOptionalString(manifest.order.orderNumber) ||
     `${profileToken}-SMOKE-001`;
+  const sequencingTech = {
+    technologyId: "ont-minion-mk1d",
+    technologyName: "MinION Mk1D",
+    platformName: "Oxford Nanopore",
+    deviceId: "ont-minion-mk1d",
+    ...toJsonObject(manifest.order.sequencingTech),
+  };
   const customFields = {
-    run_type: "metagenomics",
-    _sequencing_tech: {
-      technologyId: "ont-minion-mk1d",
-      technologyName: "MinION Mk1D",
-      platformName: "Oxford Nanopore",
-      deviceId: "ont-minion-mk1d",
-    },
+    run_type: toOptionalString(manifest.order.runType) || "metagenomics",
+    _sequencing_tech: sequencingTech,
+    ...toJsonObject(manifest.order.customFields),
     _installProfileFixture: marker,
   };
   const existingOrder = await prisma.order.findUnique({
     where: { orderNumber },
   });
   const orderData = {
-    name: toOptionalString(manifest.order.name) || "CI runner FASTQ checksum smoke order",
-    status: "SUBMITTED",
+    name: toOptionalString(manifest.order.name) || "SeqDesk profile fixture order",
+    status: toOptionalString(manifest.order.status) || "SUBMITTED",
     statusUpdatedAt: new Date(),
     numberOfSamples: manifest.samples.length,
-    contactName: `${researcher.firstName} ${researcher.lastName}`.trim(),
-    contactEmail: researcher.email,
-    billingAddress: "SeqDesk profile smoke fixture",
-    platform: "Nanopore",
-    instrumentModel: "MinION Mk1D",
-    libraryStrategy: "WGS",
-    librarySource: "METAGENOMIC",
+    contactName:
+      toOptionalString(manifest.order.contactName) ||
+      `${researcher.firstName} ${researcher.lastName}`.trim(),
+    contactEmail: toOptionalString(manifest.order.contactEmail) || researcher.email,
+    contactPhone: toOptionalString(manifest.order.contactPhone) || null,
+    billingAddress:
+      toOptionalString(manifest.order.billingAddress) || "SeqDesk profile fixture",
+    platform: toOptionalString(manifest.order.platform) || "Nanopore",
+    instrumentModel: toOptionalString(manifest.order.instrumentModel) || "MinION Mk1D",
+    libraryStrategy: toOptionalString(manifest.order.libraryStrategy) || "WGS",
+    librarySource: toOptionalString(manifest.order.librarySource) || "METAGENOMIC",
+    librarySelection: toOptionalString(manifest.order.librarySelection) || null,
     customFields: JSON.stringify(customFields),
     userId: researcher.id,
   };
@@ -1246,7 +1308,7 @@ export async function applyProfileSeedData({
 
   for (const rawFixture of fixtures) {
     const fixture = toRecord(rawFixture);
-    if (fixture.kind !== "orderPipelineSmoke") continue;
+    if (!["orderPipelineSmoke", "exampleDataset"].includes(fixture.kind)) continue;
     try {
       results.push(
         await seedOrderPipelineSmokeFixture({

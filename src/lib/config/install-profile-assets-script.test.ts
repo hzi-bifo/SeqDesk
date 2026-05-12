@@ -465,6 +465,153 @@ describe("install profile asset script helpers", () => {
     ).rejects.toThrow();
   });
 
+  it("seeds metadata-driven example dataset fixtures from downloaded bundles", async () => {
+    const sourceDir = path.join(tempDir, "example-bundle-source");
+    const readsDir = path.join(sourceDir, "reads");
+    await fs.mkdir(readsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceDir, "manifest.json"),
+      JSON.stringify(
+        {
+          study: {
+            title: "Gemma Nanopore MetaxPath example study",
+            alias: "gemma-nanopore-metaxpath",
+            description: "Cleaned ONT MinION Mk1D reads for MetaxPath validation.",
+            checklistType: "Miscellaneous natural or artificial environment",
+            metadata: {
+              principal_investigator: "HZI-BIFO",
+              study_abstract: "Development example dataset for MetaxPath.",
+            },
+          },
+          order: {
+            name: "Gemma Nanopore MetaxPath example order",
+            platform: "Nanopore",
+            instrumentModel: "ONT MinION Mk1D",
+            libraryStrategy: "WGS",
+            librarySource: "METAGENOMIC",
+            customFields: {
+              dataset_url: "https://research.example/gemma.tar.gz",
+            },
+          },
+          samples: [
+            {
+              sampleId: "S10",
+              sampleAlias: "GEMMA-S10",
+              sampleTitle: "Gemma S10 cleaned Nanopore reads",
+              sampleDescription: "Human-decontaminated Nanopore reads.",
+              materialBodySite: "human-decontaminated control",
+              file1: "reads/GEMMA_ONT_MINION_MK1D_20260429_FLO-MIN106_barcode10.fastq",
+              readCount1: 51644,
+              dataClass: "cleaned",
+              dataClassSource: "provider_human_decontaminated",
+            },
+          ],
+        },
+        null,
+        2
+      )
+    );
+    await fs.writeFile(
+      path.join(readsDir, "GEMMA_ONT_MINION_MK1D_20260429_FLO-MIN106_barcode10.fastq"),
+      "@r1\nACGT\n+\nIIII\n"
+    );
+    const archivePath = path.join(tempDir, "gemma-example-bundle.tar.gz");
+    execFileSync("tar", ["-czf", archivePath, "-C", sourceDir, "."], { stdio: "ignore" });
+    const archive = await fs.readFile(archivePath);
+    const sha256 = createHash("sha256").update(archive).digest("hex");
+
+    const readCreate = vi.fn().mockResolvedValue({});
+    const sampleCreate = vi.fn().mockResolvedValueOnce({ id: "sample-1", reads: [] });
+    const studyCreate = vi.fn().mockResolvedValue({ id: "study-1" });
+    const orderCreate = vi.fn().mockResolvedValue({
+      id: "order-1",
+      orderNumber: "DEV-GEMMA-ONT-001",
+    });
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: tempDir,
+          extraSettings: JSON.stringify({ pipelineExecution: {} }),
+        }),
+      },
+      user: {
+        findFirst: vi.fn(async ({ where }: { where: { role: string } }) => ({
+          id: where.role === "FACILITY_ADMIN" ? "admin-1" : "researcher-1",
+          email: where.role === "FACILITY_ADMIN" ? "admin@example.com" : "user@example.com",
+          firstName: where.role === "FACILITY_ADMIN" ? "Admin" : "Researcher",
+          lastName: "User",
+          role: where.role,
+        })),
+        create: vi.fn(),
+      },
+      study: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: studyCreate,
+        update: vi.fn(),
+      },
+      order: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: orderCreate,
+        update: vi.fn(),
+      },
+      sample: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: sampleCreate,
+        update: vi.fn(),
+      },
+      read: {
+        create: readCreate,
+        update: vi.fn(),
+      },
+    };
+
+    const result = await applyProfileSeedData({
+      prisma,
+      profile: {
+        id: "dev",
+        site: { dataBasePath: tempDir },
+        seedData: {
+          enabled: true,
+          fixtures: [
+            {
+              id: "gemma-nanopore-metaxpath-5sample",
+              kind: "exampleDataset",
+              orderNumber: "DEV-GEMMA-ONT-001",
+              source: {
+                type: "downloadedFastqBundle",
+                url: `file://${archivePath}`,
+                sha256,
+              },
+            },
+          ],
+        },
+      },
+      rootDir: tempDir,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result.seeded).toBe(1);
+    expect(studyCreate.mock.calls[0][0].data).toMatchObject({
+      title: "Gemma Nanopore MetaxPath example study",
+      alias: "gemma-nanopore-metaxpath",
+      description: "Cleaned ONT MinION Mk1D reads for MetaxPath validation.",
+    });
+    expect(orderCreate.mock.calls[0][0].data).toMatchObject({
+      orderNumber: "DEV-GEMMA-ONT-001",
+      name: "Gemma Nanopore MetaxPath example order",
+      platform: "Nanopore",
+      instrumentModel: "ONT MinION Mk1D",
+      numberOfSamples: 1,
+    });
+    expect(readCreate.mock.calls[0][0].data).toMatchObject({
+      file1:
+        "fixtures/dev/gemma-nanopore-metaxpath-5sample/reads/GEMMA_ONT_MINION_MK1D_20260429_FLO-MIN106_barcode10.fastq",
+      readCount1: 51644,
+      dataClass: "cleaned",
+      dataClassSource: "provider_human_decontaminated",
+    });
+  });
+
   it("fails a required downloaded FASTQ fixture when the SHA256 does not match", async () => {
     const bundle = await createDownloadedFastqBundle({ corruptSha: true });
     await expect(
