@@ -72,6 +72,13 @@ function fail(message) {
   process.exit(1);
 }
 
+function clipOutput(value, maxChars = 20_000) {
+  if (!value) return "";
+  const text = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, 4_000)}\n... output truncated ...\n${text.slice(-maxChars + 4_000)}`;
+}
+
 const runtime = loadRuntimeConfig(process.cwd());
 const envDatabaseUrl = trimToString(process.env.DATABASE_URL);
 const envDirectUrl = trimToString(process.env.DIRECT_URL);
@@ -135,9 +142,17 @@ const args =
       ? []
       : ["prisma"];
 
+const prismaArgs = fs.existsSync(prismaBin) ? args : args.slice(1);
+const isMigrateDeploy =
+  prismaArgs.length === 2 && prismaArgs[0] === "migrate" && prismaArgs[1] === "deploy";
+const quietMigrateDeploy =
+  isMigrateDeploy && process.env.SEQDESK_PRISMA_VERBOSE !== "1";
+
 const result = spawnSync(command, args, {
-  stdio: "inherit",
+  stdio: quietMigrateDeploy ? ["ignore", "pipe", "pipe"] : "inherit",
   env: process.env,
+  encoding: quietMigrateDeploy ? "utf8" : undefined,
+  maxBuffer: 128 * 1024 * 1024,
 });
 
 if (result.error) {
@@ -146,6 +161,20 @@ if (result.error) {
 }
 
 if (typeof result.status === "number") {
+  if (quietMigrateDeploy) {
+    if (result.status === 0) {
+      console.log("Prisma migrate deploy completed.");
+    } else {
+      const stdout = clipOutput(result.stdout);
+      const stderr = clipOutput(result.stderr);
+      if (stdout) {
+        console.error(`Prisma stdout:\n${stdout}`);
+      }
+      if (stderr) {
+        console.error(`Prisma stderr:\n${stderr}`);
+      }
+    }
+  }
   process.exit(result.status);
 }
 

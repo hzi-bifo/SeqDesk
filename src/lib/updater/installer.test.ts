@@ -8,6 +8,8 @@ type ExecError = Error & { code?: string; stdout?: string; stderr?: string };
 type ExecResponse = { stdout?: string; stderr?: string; error?: ExecError };
 type ExecCallback = (error: ExecError | null, stdout?: string, stderr?: string) => void;
 
+const UPDATE_COMMAND_MAX_BUFFER = 128 * 1024 * 1024;
+
 const mocks = vi.hoisted(() => ({
   execMock: vi.fn(),
   platformMock: vi.fn(),
@@ -223,7 +225,10 @@ function configureInstallerShell(options: {
     }
 
     if (command === "node scripts/run-prisma.mjs migrate deploy") {
-      expect(execOptions).toEqual({ cwd: tempDir });
+      expect(execOptions).toEqual({
+        cwd: tempDir,
+        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
+      });
       return { stdout: "" };
     }
 
@@ -477,6 +482,21 @@ describe("installer", () => {
     );
 
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an expanded command output buffer for updater shell steps", async () => {
+    configureInstallerShell();
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease());
+
+    expect(execMock).toHaveBeenCalled();
+    for (const call of execMock.mock.calls) {
+      const options = typeof call[1] === "function" ? undefined : call[1];
+      expect(options).toEqual(
+        expect.objectContaining({ maxBuffer: UPDATE_COMMAND_MAX_BUFFER })
+      );
+    }
   });
 
   it("fails checksum verification when the downloaded archive does not match", async () => {

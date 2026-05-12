@@ -12,7 +12,7 @@
  * 7. Restart application
  */
 
-import { exec } from 'child_process';
+import { exec, type ExecOptions } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import { createReadStream } from 'fs';
@@ -52,6 +52,15 @@ function describeDataLoss(before: DataSnapshot, after: DataSnapshot): string | n
 
 const execAsync = promisify(exec);
 
+const UPDATE_COMMAND_MAX_BUFFER = 128 * 1024 * 1024;
+
+function runUpdateCommand(command: string, options: ExecOptions = {}) {
+  return execAsync(command, {
+    maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
+    ...options,
+  });
+}
+
 // Minimum required disk space in bytes (150MB)
 const MIN_DISK_SPACE = 150 * 1024 * 1024;
 
@@ -72,7 +81,9 @@ const SAFE_RELEASE_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 async function checkDiskSpace(): Promise<{ free: number; required: number; sufficient: boolean }> {
   try {
     if (os.platform() === 'darwin' || os.platform() === 'linux') {
-      const { stdout } = await execAsync(`df -k "${INSTALL_DIR}" | tail -1 | awk '{print $4}'`);
+      const { stdout } = await runUpdateCommand(
+        `df -k "${INSTALL_DIR}" | tail -1 | awk '{print $4}'`
+      );
       const freeKB = parseInt(stdout.trim(), 10);
       const freeBytes = freeKB * 1024;
       return {
@@ -232,7 +243,7 @@ async function downloadRelease(release: ReleaseInfo): Promise<string> {
   await fs.mkdir(TEMP_DIR, { recursive: true });
 
   // Download using curl (more reliable than fetch for large files)
-  await execAsync(`curl -fsSL "${parseDownloadUrl(release.downloadUrl).href}" -o "${tarballPath}"`);
+  await runUpdateCommand(`curl -fsSL "${parseDownloadUrl(release.downloadUrl).href}" -o "${tarballPath}"`);
 
   return tarballPath;
 }
@@ -272,7 +283,7 @@ async function hashFile(filePath: string, algorithm: string): Promise<string> {
 async function extractRelease(tarballPath: string): Promise<void> {
   const extractDir = path.join(TEMP_DIR, 'extracted');
   await fs.mkdir(extractDir, { recursive: true });
-  await execAsync(`tar -xzf "${tarballPath}" -C "${extractDir}" --strip-components=1`);
+  await runUpdateCommand(`tar -xzf "${tarballPath}" -C "${extractDir}" --strip-components=1`);
 }
 
 /**
@@ -331,7 +342,7 @@ async function applyUpdate(): Promise<void> {
   }
 
   // Copy new files
-  await execAsync(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
+  await runUpdateCommand(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
 
   // Restore preserved files
   for (const [file, content] of Object.entries(preserved)) {
@@ -356,7 +367,7 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
  * Run database migrations
  */
 async function runMigrations(): Promise<void> {
-  await execAsync('node scripts/run-prisma.mjs migrate deploy', { cwd: INSTALL_DIR });
+  await runUpdateCommand('node scripts/run-prisma.mjs migrate deploy', { cwd: INSTALL_DIR });
 }
 
 /**
@@ -409,7 +420,7 @@ async function restartApplication(): Promise<void> {
   // This depends on how the app is run
   // For PM2:
   try {
-    await execAsync('pm2 restart seqdesk');
+    await runUpdateCommand('pm2 restart seqdesk');
     return;
   } catch {
     // Not running under PM2
@@ -417,7 +428,7 @@ async function restartApplication(): Promise<void> {
 
   // For systemd user service (no sudo required):
   try {
-    await execAsync('systemctl --user restart seqdesk');
+    await runUpdateCommand('systemctl --user restart seqdesk');
     return;
   } catch {
     // Not running as a user service
@@ -426,7 +437,7 @@ async function restartApplication(): Promise<void> {
   // For systemd system service.
   // Use non-interactive sudo to avoid hanging on password prompts during updates.
   try {
-    await execAsync('sudo -n systemctl restart seqdesk');
+    await runUpdateCommand('sudo -n systemctl restart seqdesk');
     return;
   } catch {
     // Not running under systemd or sudo requires a password
