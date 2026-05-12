@@ -15,6 +15,7 @@
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
+#   SEQDESK_BIND_HOST=0.0.0.0      - Optional standalone server bind host
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
 #   SEQDESK_DATABASE_URL=postgresql://... - Optional database URL
@@ -67,6 +68,7 @@ SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
+SEQDESK_BIND_HOST="${SEQDESK_BIND_HOST:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
@@ -1058,6 +1060,10 @@ if [[ -n "${1:-}" ]]; then
   export PORT="$1"
 fi
 
+# Next production server reads HOSTNAME as the bind address. Shells often populate
+# HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
+export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
+
 if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
   CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
 const fs = require("fs");
@@ -2035,6 +2041,9 @@ if [ -n "$INSTALLED_VERSION" ]; then
     echo "Installed version: v$INSTALLED_VERSION"
 fi
 echo "App directory: $SEQDESK_DIR"
+echo "Browser URL: ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}}"
+echo "Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}"
+echo "Bind host: ${SEQDESK_BIND_HOST:-0.0.0.0}"
 if [ -n "$EXISTING_BACKUP_PATH" ]; then
     echo "Previous install backup: $EXISTING_BACKUP_PATH"
 fi
@@ -2062,7 +2071,8 @@ echo ""
 echo -e "  ${BLUE}cd $SEQDESK_DIR${NC}"
 echo -e "  ${BLUE}./start.sh${NC}"
 echo ""
-echo "Then open http://localhost:${SEQDESK_PORT:-8000} in your browser."
+echo "Then open ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}} in your browser."
+echo "Use the local health URL for curl/doctor checks only when the browser URL is a proxied HTTPS hostname."
 echo ""
 echo "For live source development:"
 echo -e "  ${BLUE}PORT=${SEQDESK_PORT:-8000} npm run dev${NC}"

@@ -233,6 +233,11 @@ cd "$(dirname "$0")"
 if [[ -n "${1:-}" ]]; then
   export PORT="$1"
 fi
+
+# Next standalone reads HOSTNAME as the bind address. Shells often populate
+# HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
+export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
+
 if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
   CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
 const fs = require("fs");

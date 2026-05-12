@@ -18,6 +18,7 @@
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PIPELINE_DATABASE_DIR=/data/pipeline-dbs - Optional pipeline DB directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
+#   SEQDESK_BIND_HOST=0.0.0.0      - Optional standalone server bind host
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
 #   SEQDESK_DATABASE_URL=postgresql://... - Optional database URL
@@ -87,6 +88,7 @@ SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
+SEQDESK_BIND_HOST="${SEQDESK_BIND_HOST:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
@@ -203,8 +205,28 @@ shell_quote() {
     printf '%q' "$1"
 }
 
+app_port() {
+    printf '%s' "${SEQDESK_PORT:-8000}"
+}
+
+local_app_url() {
+    printf 'http://127.0.0.1:%s' "$(app_port)"
+}
+
+browser_app_url() {
+    if [ -n "${SEQDESK_NEXTAUTH_URL:-}" ]; then
+        printf '%s' "$SEQDESK_NEXTAUTH_URL"
+    else
+        local_app_url
+    fi
+}
+
+bind_host() {
+    printf '%s' "${SEQDESK_BIND_HOST:-0.0.0.0}"
+}
+
 doctor_url() {
-    printf 'http://127.0.0.1:%s' "${SEQDESK_PORT:-8000}"
+    local_app_url
 }
 
 print_doctor_command() {
@@ -3681,7 +3703,9 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure existing install"
 fi
 print_kv "Directory" "$SEQDESK_DIR"
-print_kv "URL" "http://localhost:${SEQDESK_PORT:-8000}"
+print_kv "Browser URL" "$(browser_app_url)"
+print_kv "Local health URL" "$(local_app_url)"
+print_kv "Bind host" "$(bind_host)"
 print_kv "Node.js" "v$NODE_VERSION"
 if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then
     CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}' || true)
@@ -3774,4 +3798,5 @@ print_header "Next steps"
 
 echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
 echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
+echo "  3. Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
 echo ""

@@ -7,6 +7,10 @@ const installDist = fs.readFileSync(
   path.join(repoRoot, "scripts/install-dist.sh"),
   "utf8"
 );
+const sourceInstaller = fs.readFileSync(
+  path.join(repoRoot, "scripts/install.sh"),
+  "utf8"
+);
 const buildRelease = fs.readFileSync(
   path.join(repoRoot, "scripts/build-release.sh"),
   "utf8"
@@ -83,6 +87,21 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
     expect(buildRelease).toContain("scripts/setup-conda-env.sh");
     expect(buildRelease).toContain("data/pipeline-databases.json");
+  });
+
+  it("separates browser and local health-check URLs in installer output", () => {
+    expect(installDist).toContain('print_kv "Browser URL" "$(browser_app_url)"');
+    expect(installDist).toContain('print_kv "Local health URL" "$(local_app_url)"');
+    expect(installDist).toContain('print_kv "Bind host" "$(bind_host)"');
+    expect(installDist).toContain("Use the Browser URL for login. Use the Local health URL for curl/doctor checks.");
+    expect(sourceInstaller).toContain("Browser URL: ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}}");
+    expect(sourceInstaller).toContain("Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}");
+  });
+
+  it("binds standalone releases to all interfaces unless explicitly overridden", () => {
+    expect(buildRelease).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"');
+    expect(sourceInstaller).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"');
+    expect(installDist).toContain("SEQDESK_BIND_HOST=0.0.0.0");
   });
 
   it("keeps the profile applicator scoped to settings upserts", () => {
