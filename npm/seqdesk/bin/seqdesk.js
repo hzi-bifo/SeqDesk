@@ -941,6 +941,22 @@ function runInstaller(script) {
 }
 
 async function main() {
+  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+    console.log(`seqdesk ${version}`);
+    console.log("");
+    console.log("Usage:");
+    console.log("  seqdesk [installer options]");
+    console.log("  seqdesk doctor [options]");
+    console.log("  seqdesk assets apply [options]");
+    console.log("  seqdesk --version");
+    return;
+  }
+
+  if (args[0] === "--version" || args[0] === "-v") {
+    console.log(version);
+    return;
+  }
+
   if (args[0] === "doctor") {
     const exitCode = await runDoctor(args.slice(1));
     process.exit(exitCode);

@@ -174,6 +174,14 @@ fi
 
 echo "Verifying release does not bundle writable database state..."
 rm -f "${RELEASE_DIR}/prisma/"*.db "${RELEASE_DIR}/prisma/"*.db-* 2>/dev/null || true
+if [[ -d "${RELEASE_DIR}/pipelines" ]]; then
+  rm -f \
+    "${RELEASE_DIR}/pipelines/.pipeline-download-status.json" \
+    "${RELEASE_DIR}/pipelines/.pipeline-downloads.json" \
+    "${RELEASE_DIR}/pipelines/.admin-activity-status.json" \
+    2>/dev/null || true
+  rm -rf "${RELEASE_DIR}/pipelines/.pipeline-download-logs" 2>/dev/null || true
+fi
 
 if [[ -f "${ROOT_DIR}/scripts/install-wizard.mjs" ]]; then
   mkdir -p "${RELEASE_DIR}/scripts"

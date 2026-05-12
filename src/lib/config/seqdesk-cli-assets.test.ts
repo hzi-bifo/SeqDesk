@@ -54,6 +54,19 @@ describe("seqdesk assets apply CLI", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("prints the launcher version without invoking the installer", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(repoRoot, "npm", "seqdesk", "package.json"), "utf8")
+    ) as { version: string };
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "--version",
+    ]);
+
+    expect(stdout.trim()).toBe(packageJson.version);
+  });
+
   it("prints assets apply help", async () => {
     const { stdout } = await execFileAsync(process.execPath, [
       cliPath,

@@ -89,6 +89,13 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain("data/pipeline-databases.json");
   });
 
+  it("strips local pipeline download and activity state from release tarballs", () => {
+    expect(buildRelease).toContain(".pipeline-download-status.json");
+    expect(buildRelease).toContain(".pipeline-downloads.json");
+    expect(buildRelease).toContain(".admin-activity-status.json");
+    expect(buildRelease).toContain(".pipeline-download-logs");
+  });
+
   it("separates browser and local health-check URLs in installer output", () => {
     expect(installDist).toContain('print_kv "Browser URL" "$(browser_app_url)"');
     expect(installDist).toContain('print_kv "Local health URL" "$(local_app_url)"');
