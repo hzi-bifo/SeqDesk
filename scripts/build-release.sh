@@ -103,9 +103,32 @@ mkdir -p "$RELEASE_DIR"
 echo "Copying standalone output..."
 cp -R "${ROOT_DIR}/.next/standalone/." "$RELEASE_DIR/"
 
-# Remove bundled release artifacts if file tracing pulled them in
-rm -rf "${RELEASE_DIR}"/seqdesk-*/
-rm -f "${RELEASE_DIR}"/seqdesk-*.tar.gz
+echo "Pruning build/test/runtime artifacts from standalone output..."
+# Next file tracing is intentionally conservative around dynamic fs/path usage and
+# can pull local development artifacts into .next/standalone. Keep runtime assets
+# explicit below and strip generated state before creating a public release.
+rm -rf \
+  "${RELEASE_DIR}"/seqdesk-*/ \
+  "${RELEASE_DIR}/.git" \
+  "${RELEASE_DIR}/.next/cache" \
+  "${RELEASE_DIR}/.nextflow" \
+  "${RELEASE_DIR}/coverage" \
+  "${RELEASE_DIR}/docs" \
+  "${RELEASE_DIR}/logs" \
+  "${RELEASE_DIR}/pipeline_runs" \
+  "${RELEASE_DIR}/playwright" \
+  "${RELEASE_DIR}/playwright-report" \
+  "${RELEASE_DIR}/src" \
+  "${RELEASE_DIR}/test-results" \
+  "${RELEASE_DIR}/work" \
+  2>/dev/null || true
+rm -f \
+  "${RELEASE_DIR}"/seqdesk-*.tar.gz \
+  "${RELEASE_DIR}"/*.db \
+  "${RELEASE_DIR}"/*.db-* \
+  "${RELEASE_DIR}/tsconfig.tsbuildinfo" \
+  2>/dev/null || true
+find "${RELEASE_DIR}/.next/server" -name '*.nft.json' -type f -delete 2>/dev/null || true
 
 rm -f "${RELEASE_DIR}/seqdesk.config.json"
 

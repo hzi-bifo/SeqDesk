@@ -94,6 +94,10 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain(".pipeline-downloads.json");
     expect(buildRelease).toContain(".admin-activity-status.json");
     expect(buildRelease).toContain(".pipeline-download-logs");
+    expect(buildRelease).toContain(".nextflow");
+    expect(buildRelease).toContain("pipeline_runs");
+    expect(buildRelease).toContain("playwright-report");
+    expect(buildRelease).toContain("find \"${RELEASE_DIR}/.next/server\" -name '*.nft.json'");
   });
 
   it("separates browser and local health-check URLs in installer output", () => {
