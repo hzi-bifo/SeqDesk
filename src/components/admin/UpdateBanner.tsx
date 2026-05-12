@@ -77,33 +77,29 @@ export function UpdateBanner() {
   }
 
   return (
-    <div className="bg-foreground text-background px-4 py-2">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <ArrowUpCircle className="h-5 w-5" />
-          <span className="text-sm">
-            {restartPending ? (
-              <strong>SeqDesk {updateInfo.latest?.version}</strong>
-            ) : (
-              <strong>SeqDesk {updateInfo.latest?.version}</strong>
-            )}{" "}
+    <div className="bg-background border-b px-4 py-1.5">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <ArrowUpCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-sm text-muted-foreground truncate">
+            <span className="font-medium text-foreground">
+              SeqDesk {updateInfo.latest?.version}
+            </span>{" "}
             {restartPending ? "installed. Restart pending." : "is available."}
             {!restartPending && updateInfo.latest?.releaseNotes && (
-              <span className="ml-1 opacity-90">
-                {updateInfo.latest.releaseNotes}
-              </span>
+              <span className="ml-1">{updateInfo.latest.releaseNotes}</span>
             )}
           </span>
           <Link
             href="/admin/settings"
-            className="ml-2 text-sm font-medium underline hover:no-underline"
+            className="ml-1 text-sm font-medium text-primary hover:underline shrink-0"
           >
             {restartPending ? "View status" : "Update now"}
           </Link>
         </div>
         <button
           onClick={handleDismiss}
-          className="p-1 hover:bg-white/10 rounded"
+          className="p-1 hover:bg-muted rounded text-muted-foreground shrink-0"
           aria-label="Dismiss"
         >
           <X className="h-4 w-4" />
