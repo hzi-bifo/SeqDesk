@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useContext, useMemo } from "react";
+import Link from "next/link";
+import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { useHelpText } from "@/lib/useHelpText";
 import { SidebarContext } from "./SidebarContext";
 
 interface AdminActivityJob {
   id: string;
+  type?: "pipeline-db-download" | "dummy-seed" | "example-dataset";
   label: string;
   state: "running" | "success" | "error";
   phase?: string;
@@ -14,12 +16,42 @@ interface AdminActivityJob {
   progressPercent?: number | null;
   speedBytesPerSecond?: number | null;
   etaSeconds?: number | null;
+  startedAt?: string;
   updatedAt?: string;
+  finishedAt?: string;
   targetPath?: string;
   error?: string;
   logAvailable?: boolean;
   logExcerpt?: string[];
 }
+
+interface WorkerLatest {
+  id: string;
+  name: string;
+  pid: number;
+  startedAt: string;
+  stoppedAt: string | null;
+  status: string;
+  exitCode: number | null;
+  logPath: string;
+  lastErrorMsg: string | null;
+  startedByEmail: string | null;
+}
+
+interface WorkerCard {
+  name: string;
+  label: string;
+  paused: boolean;
+  latest: WorkerLatest | null;
+}
+
+interface WorkerLogResponse {
+  lines: string[];
+  logPath?: string;
+  message?: string;
+}
+
+const STALE_RUNNING_MS = 2 * 60 * 60 * 1000;
 
 function formatBytes(value?: number | null): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -80,13 +112,157 @@ function formatActivitySummary(job: AdminActivityJob): string {
   return parts.join(" · ");
 }
 
+function formatRelative(ts: string): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function getActivityTimestamp(job: AdminActivityJob): string | undefined {
+  return job.updatedAt || job.finishedAt || job.startedAt;
+}
+
+function isStaleRunningActivity(job: AdminActivityJob): boolean {
+  if (job.state !== "running") return false;
+  const timestamp = getActivityTimestamp(job);
+  if (!timestamp) return false;
+  const parsed = new Date(timestamp).getTime();
+  return Number.isFinite(parsed) && Date.now() - parsed > STALE_RUNNING_MS;
+}
+
+function canHideActivity(job: AdminActivityJob): boolean {
+  return job.state === "error" || isStaleRunningActivity(job);
+}
+
+function parsePipelineDatabaseActivityId(id: string) {
+  const [, prefix, pipelineId, databaseId] = id.match(/^(pipeline-db):([^:]+):(.+)$/) || [];
+  return prefix && pipelineId && databaseId ? { pipelineId, databaseId } : null;
+}
+
+function getWorkerStatus(worker: WorkerCard): string {
+  const status = worker.latest?.status ?? "STOPPED";
+  if (worker.paused && (status === "RUNNING" || status === "STOPPING")) {
+    return "PAUSED";
+  }
+  return status;
+}
+
+function formatWorkerStatus(status: string): string {
+  switch (status) {
+    case "RUNNING":
+      return "Running";
+    case "STOPPING":
+      return "Stopping";
+    case "ERROR":
+      return "Error";
+    case "ZOMBIE":
+      return "Zombie";
+    case "PAUSED":
+      return "Paused";
+    default:
+      return status.charAt(0) + status.slice(1).toLowerCase();
+  }
+}
+
+function shouldShowWorker(worker: WorkerCard): boolean {
+  return ["RUNNING", "STOPPING", "ERROR", "ZOMBIE", "PAUSED"].includes(getWorkerStatus(worker));
+}
+
+function workerBadgeClass(status: string): string {
+  if (status === "ERROR" || status === "ZOMBIE") {
+    return "border-red-200 bg-red-100 text-red-700";
+  }
+  if (status === "PAUSED" || status === "STOPPING") {
+    return "border-amber-200 bg-amber-100 text-amber-800";
+  }
+  if (status === "RUNNING") {
+    return "border-emerald-200 bg-emerald-100 text-emerald-800";
+  }
+  return "border-border bg-muted text-muted-foreground";
+}
+
 export function Footer() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [activityJobs, setActivityJobs] = useState<AdminActivityJob[]>([]);
+  const [workers, setWorkers] = useState<WorkerCard[]>([]);
+  const [workerLogs, setWorkerLogs] = useState<Record<string, WorkerLogResponse>>({});
+  const [openWorkerLogs, setOpenWorkerLogs] = useState<Record<string, boolean>>({});
+  const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
   const collapsed = sidebarContext?.collapsed ?? false;
+
+  const refreshActivity = useCallback(async () => {
+    const response = await fetch("/api/admin/activity", { cache: "no-store" });
+    if (!response.ok) {
+      setActivityJobs([]);
+      return;
+    }
+    const payload = (await response.json()) as { jobs?: AdminActivityJob[] };
+    setActivityJobs(Array.isArray(payload.jobs) ? payload.jobs : []);
+  }, []);
+
+  const refreshWorkerLog = useCallback(async (name: string) => {
+    try {
+      const response = await fetch(
+        `/api/admin/workers/${encodeURIComponent(name)}/logs?tail=100`,
+        { cache: "no-store" }
+      );
+      if (!response.ok) return;
+      const payload = (await response.json()) as WorkerLogResponse;
+      setWorkerLogs((prev) => ({ ...prev, [name]: payload }));
+    } catch (error) {
+      console.error(`Failed to load worker log for ${name}`, error);
+    }
+  }, []);
+
+  const hideActivity = async (job: AdminActivityJob) => {
+    setBusyActivityId(job.id);
+    try {
+      const response = await fetch(
+        `/api/admin/activity/jobs/${encodeURIComponent(job.id)}/hide`,
+        { method: "POST" }
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        jobs?: AdminActivityJob[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      setActivityJobs(Array.isArray(payload.jobs) ? payload.jobs : []);
+    } catch (error) {
+      console.error("Failed to hide admin activity", error);
+      await refreshActivity().catch(() => undefined);
+    } finally {
+      setBusyActivityId(null);
+    }
+  };
+
+  const cancelDatabaseDownload = async (job: AdminActivityJob) => {
+    const ids = parsePipelineDatabaseActivityId(job.id);
+    if (!ids) return;
+    setBusyActivityId(job.id);
+    try {
+      const response = await fetch("/api/admin/settings/pipelines/download-db/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ids),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      await refreshActivity();
+    } catch (error) {
+      console.error("Failed to cancel database download", error);
+    } finally {
+      setBusyActivityId(null);
+    }
+  };
 
   useEffect(() => {
     setCurrentTime(new Date());
@@ -103,14 +279,9 @@ export function Footer() {
     async function loadActivity() {
       try {
         const response = await fetch("/api/admin/activity", { cache: "no-store" });
-        if (!response.ok) {
-          if (!cancelled) setActivityJobs([]);
-          return;
-        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = (await response.json()) as { jobs?: AdminActivityJob[] };
-        if (!cancelled) {
-          setActivityJobs(Array.isArray(payload.jobs) ? payload.jobs : []);
-        }
+        if (!cancelled) setActivityJobs(Array.isArray(payload.jobs) ? payload.jobs : []);
       } catch {
         if (!cancelled) setActivityJobs([]);
       }
@@ -124,6 +295,28 @@ export function Footer() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkers() {
+      try {
+        const response = await fetch("/api/admin/workers", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = (await response.json()) as { workers?: WorkerCard[] };
+        if (!cancelled) setWorkers(Array.isArray(payload.workers) ? payload.workers : []);
+      } catch {
+        if (!cancelled) setWorkers([]);
+      }
+    }
+
+    void loadWorkers();
+    const timer = setInterval(() => void loadWorkers(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
   const visibleJobs = useMemo(
     () =>
       activityJobs.filter(
@@ -131,7 +324,18 @@ export function Footer() {
       ),
     [activityJobs]
   );
+  const visibleWorkers = useMemo(() => workers.filter(shouldShowWorker), [workers]);
   const primaryJob = visibleJobs[0] || null;
+  const primaryWorker = primaryJob ? null : visibleWorkers[0] || null;
+  const primarySummary = primaryJob
+    ? formatActivitySummary(primaryJob)
+    : primaryWorker
+      ? `Background workers: ${primaryWorker.label} · ${formatWorkerStatus(getWorkerStatus(primaryWorker))}`
+      : null;
+  const primaryIsError =
+    primaryJob?.state === "error" ||
+    Boolean(primaryWorker && ["ERROR", "ZOMBIE"].includes(getWorkerStatus(primaryWorker)));
+  const hasDetails = visibleJobs.length > 0 || visibleWorkers.length > 0;
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-US", {
@@ -168,20 +372,20 @@ export function Footer() {
               <span>Help tips {showHelpText ? "on" : "off"}</span>
             </button>
           )}
-          {primaryJob && (
+          {primarySummary && (
             <div className="flex min-w-0 items-center gap-2">
               <span
                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                  primaryJob.state === "error" ? "bg-destructive" : "bg-[#00BD7D]"
+                  primaryIsError ? "bg-destructive" : "bg-[#00BD7D]"
                 }`}
               />
               <span
                 className={`max-w-[52vw] truncate ${
-                  primaryJob.state === "error" ? "text-destructive" : "text-foreground"
+                  primaryIsError ? "text-destructive" : "text-foreground"
                 }`}
-                title={formatActivitySummary(primaryJob)}
+                title={primarySummary}
               >
-                {formatActivitySummary(primaryJob)}
+                {primarySummary}
               </span>
               <button
                 type="button"
@@ -192,10 +396,10 @@ export function Footer() {
               </button>
             </div>
           )}
-          {detailsOpen && visibleJobs.length > 0 && (
-            <div className="absolute bottom-7 left-0 z-50 w-[min(760px,calc(100vw-2rem))] rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+          {detailsOpen && hasDetails && (
+            <div className="absolute bottom-7 left-0 z-50 max-h-[70vh] w-[min(860px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-medium text-foreground">Admin activity</span>
+                <span className="font-medium text-foreground">Admin status</span>
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground"
@@ -204,24 +408,154 @@ export function Footer() {
                   Close
                 </button>
               </div>
-              <div className="space-y-2">
-                {visibleJobs.slice(0, 4).map((job) => (
-                  <div key={job.id} className="rounded border border-border/70 p-2">
-                    <p className={job.state === "error" ? "text-destructive" : "text-foreground"}>
-                      {formatActivitySummary(job)}
-                    </p>
-                    {job.targetPath && (
-                      <p className="mt-1 break-all text-muted-foreground">
-                        Target: {job.targetPath}
-                      </p>
-                    )}
-                    {job.logExcerpt && job.logExcerpt.length > 0 && (
-                      <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
-                        {job.logExcerpt.join("\n")}
-                      </pre>
-                    )}
+              <div className="space-y-3">
+                <section>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="font-medium text-foreground">Admin activity</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {visibleJobs.length} active
+                    </span>
                   </div>
-                ))}
+                  {visibleJobs.length > 0 ? (
+                    <div className="space-y-2">
+                      {visibleJobs.slice(0, 4).map((job) => {
+                        const isBusy = busyActivityId === job.id;
+                        const canCancel =
+                          job.type === "pipeline-db-download" &&
+                          job.state === "running" &&
+                          Boolean(parsePipelineDatabaseActivityId(job.id));
+                        return (
+                          <div key={job.id} className="rounded border border-border/70 p-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <p
+                                className={
+                                  job.state === "error" ? "text-destructive" : "text-foreground"
+                                }
+                              >
+                                {formatActivitySummary(job)}
+                              </p>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {canCancel && (
+                                  <button
+                                    type="button"
+                                    className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                    disabled={isBusy}
+                                    onClick={() => void cancelDatabaseDownload(job)}
+                                  >
+                                    {isBusy ? "Cancelling" : "Cancel"}
+                                  </button>
+                                )}
+                                {canHideActivity(job) && (
+                                  <button
+                                    type="button"
+                                    className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                    disabled={isBusy}
+                                    onClick={() => void hideActivity(job)}
+                                  >
+                                    {isBusy ? "Hiding" : "Hide"}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {job.targetPath && (
+                              <p className="mt-1 break-all text-muted-foreground">
+                                Target: {job.targetPath}
+                              </p>
+                            )}
+                            {job.logExcerpt && job.logExcerpt.length > 0 && (
+                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
+                                {job.logExcerpt.join("\n")}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
+                      No running or failed admin activity.
+                    </p>
+                  )}
+                </section>
+
+                <section className="border-t border-border/70 pt-3">
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
+                    <span className="font-medium text-foreground">Background workers</span>
+                    <Link
+                      href="/admin/background-workers"
+                      className="shrink-0 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      Open full page
+                    </Link>
+                  </div>
+                  {visibleWorkers.length > 0 ? (
+                    <div className="space-y-2">
+                      {visibleWorkers.map((worker) => {
+                        const status = getWorkerStatus(worker);
+                        const logOpen = Boolean(openWorkerLogs[worker.name]);
+                        const log = workerLogs[worker.name];
+                        return (
+                          <div key={worker.name} className="rounded border border-border/70 p-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-foreground">{worker.label}</span>
+                                  <span
+                                    className={`rounded border px-1.5 py-0.5 text-[11px] ${workerBadgeClass(
+                                      status
+                                    )}`}
+                                  >
+                                    {formatWorkerStatus(status)}
+                                  </span>
+                                </div>
+                                {worker.latest ? (
+                                  <p className="mt-1 text-muted-foreground">
+                                    pid {worker.latest.pid} · started{" "}
+                                    {formatRelative(worker.latest.startedAt)}
+                                    {worker.latest.startedByEmail
+                                      ? ` by ${worker.latest.startedByEmail}`
+                                      : ""}
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-muted-foreground">No process row recorded.</p>
+                                )}
+                                {worker.latest?.lastErrorMsg && (
+                                  <p className="mt-1 break-all text-destructive">
+                                    {worker.latest.lastErrorMsg}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                onClick={() => {
+                                  setOpenWorkerLogs((prev) => ({
+                                    ...prev,
+                                    [worker.name]: !prev[worker.name],
+                                  }));
+                                  if (!logOpen) void refreshWorkerLog(worker.name);
+                                }}
+                              >
+                                {logOpen ? "Hide log" : "Show log"}
+                              </button>
+                            </div>
+                            {logOpen && (
+                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
+                                {log?.lines?.length
+                                  ? log.lines.join("\n")
+                                  : log?.message || "(no log output yet)"}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
+                      No running workers need attention.
+                    </p>
+                  )}
+                </section>
               </div>
             </div>
           )}

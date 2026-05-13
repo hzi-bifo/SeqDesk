@@ -39,6 +39,17 @@ export interface AdminActivityJob {
 }
 
 type ActivityIndex = Record<string, AdminActivityJob | undefined>;
+type HiddenActivityIndex = Record<string, HiddenActivityMarker | undefined>;
+
+interface HiddenActivityMarker {
+  hiddenAt: string;
+  jobUpdatedAt: string;
+}
+
+interface ActivityStore {
+  jobs: ActivityIndex;
+  hidden: HiddenActivityIndex;
+}
 
 function getActivityFilePath(): string {
   return path.join(getPipelinesDir(), ACTIVITY_FILE);
@@ -101,26 +112,64 @@ function normalizeJob(value: unknown, fallbackId: string): AdminActivityJob | nu
   };
 }
 
-async function readActivityIndex(): Promise<ActivityIndex> {
+function normalizeHiddenMarker(value: unknown): HiddenActivityMarker | null {
+  if (!isRecord(value)) return null;
+  const hiddenAt = optionalString(value.hiddenAt);
+  const jobUpdatedAt = optionalString(value.jobUpdatedAt);
+  if (!hiddenAt || !jobUpdatedAt) return null;
+  return { hiddenAt, jobUpdatedAt };
+}
+
+function getActivityMarkerTimestamp(job: AdminActivityJob): string {
+  return job.updatedAt || job.finishedAt || job.startedAt || "no-timestamp";
+}
+
+function isActivityHidden(job: AdminActivityJob, hidden: HiddenActivityIndex): boolean {
+  return hidden[job.id]?.jobUpdatedAt === getActivityMarkerTimestamp(job);
+}
+
+function normalizeActivityIndex(source: Record<string, unknown>): ActivityIndex {
+  const index: ActivityIndex = {};
+  for (const [id, value] of Object.entries(source)) {
+    const job = normalizeJob(value, id);
+    if (job) index[id] = job;
+  }
+  return index;
+}
+
+function normalizeHiddenIndex(source: Record<string, unknown>): HiddenActivityIndex {
+  const hidden: HiddenActivityIndex = {};
+  for (const [id, value] of Object.entries(source)) {
+    const marker = normalizeHiddenMarker(value);
+    if (marker) hidden[id] = marker;
+  }
+  return hidden;
+}
+
+async function readActivityStore(): Promise<ActivityStore> {
   try {
     const raw = await fs.readFile(getActivityFilePath(), "utf8");
     const parsed = JSON.parse(raw);
-    if (!isRecord(parsed)) return {};
-    const index: ActivityIndex = {};
-    for (const [id, value] of Object.entries(parsed)) {
-      const job = normalizeJob(value, id);
-      if (job) index[id] = job;
-    }
-    return index;
+    if (!isRecord(parsed)) return { jobs: {}, hidden: {} };
+    const jobsSource = isRecord(parsed.jobs) ? parsed.jobs : parsed;
+    const hiddenSource = isRecord(parsed.hidden) ? parsed.hidden : {};
+    return {
+      jobs: normalizeActivityIndex(jobsSource),
+      hidden: normalizeHiddenIndex(hiddenSource),
+    };
   } catch {
-    return {};
+    return { jobs: {}, hidden: {} };
   }
 }
 
-async function writeActivityIndex(index: ActivityIndex): Promise<void> {
+async function readActivityIndex(): Promise<ActivityIndex> {
+  return (await readActivityStore()).jobs;
+}
+
+async function writeActivityStore(store: ActivityStore): Promise<void> {
   const filePath = getActivityFilePath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(index, null, 2));
+  await fs.writeFile(filePath, JSON.stringify(store, null, 2));
 }
 
 function shouldKeepJob(job: AdminActivityJob, now = Date.now()): boolean {
@@ -138,8 +187,8 @@ export async function updateAdminActivityJob(
     label: string;
   }
 ): Promise<AdminActivityJob> {
-  const index = await readActivityIndex();
-  const existing = index[id];
+  const store = await readActivityStore();
+  const existing = store.jobs[id];
   const now = new Date().toISOString();
   const job: AdminActivityJob = {
     id,
@@ -149,11 +198,11 @@ export async function updateAdminActivityJob(
     updatedAt: now,
     startedAt: update.startedAt || existing?.startedAt || now,
   };
-  index[id] = job;
-  const compacted = Object.fromEntries(
-    Object.entries(index).filter(([, value]) => value && shouldKeepJob(value))
+  store.jobs[id] = job;
+  store.jobs = Object.fromEntries(
+    Object.entries(store.jobs).filter(([, value]) => value && shouldKeepJob(value))
   ) as ActivityIndex;
-  await writeActivityIndex(compacted);
+  await writeActivityStore(store);
   return job;
 }
 
@@ -254,20 +303,22 @@ function databaseJobToActivity(job: PipelineDatabaseDownloadJobStatus): AdminAct
 }
 
 export async function listAdminActivityJobs(): Promise<AdminActivityJob[]> {
-  const [storedIndex, dbJobs] = await Promise.all([
-    readActivityIndex(),
+  const [store, dbJobs] = await Promise.all([
+    readActivityStore(),
     getAllDatabaseDownloadJobStatuses(),
   ]);
 
-  const storedJobs = Object.values(storedIndex)
+  const storedJobs = Object.values(store.jobs)
     .filter((job): job is AdminActivityJob => Boolean(job))
-    .filter((job) => shouldKeepJob(job));
+    .filter((job) => shouldKeepJob(job))
+    .filter((job) => !isActivityHidden(job, store.hidden));
 
   const databaseJobs = await Promise.all(
     dbJobs
       .filter((job) => shouldKeepJob(databaseJobToActivity(job)))
       .map(async (job) => {
         const activity = databaseJobToActivity(job);
+        if (isActivityHidden(activity, store.hidden)) return null;
         if (activity.state === "error" && job.logPath) {
           activity.logExcerpt = await readRedactedLogTail(job.logPath);
         }
@@ -275,7 +326,10 @@ export async function listAdminActivityJobs(): Promise<AdminActivityJob[]> {
       })
   );
 
-  return [...databaseJobs, ...storedJobs].sort((a, b) => {
+  return [
+    ...databaseJobs.filter((job): job is AdminActivityJob => Boolean(job)),
+    ...storedJobs,
+  ].sort((a, b) => {
     const aRunning = a.state === "running" ? 1 : 0;
     const bRunning = b.state === "running" ? 1 : 0;
     if (aRunning !== bRunning) return bRunning - aRunning;
@@ -283,6 +337,33 @@ export async function listAdminActivityJobs(): Promise<AdminActivityJob[]> {
     const bTime = new Date(b.updatedAt || b.finishedAt || b.startedAt || 0).getTime();
     return bTime - aTime;
   });
+}
+
+export async function hideAdminActivityJob(id: string): Promise<boolean> {
+  const [store, dbJobs] = await Promise.all([
+    readActivityStore(),
+    getAllDatabaseDownloadJobStatuses(),
+  ]);
+
+  const storedJobs = Object.values(store.jobs)
+    .filter((job): job is AdminActivityJob => Boolean(job))
+    .filter((job) => shouldKeepJob(job));
+
+  const databaseJobs = dbJobs
+    .map(databaseJobToActivity)
+    .filter((job) => shouldKeepJob(job));
+
+  const job = [...databaseJobs, ...storedJobs].find(
+    (candidate) => candidate.id === id && !isActivityHidden(candidate, store.hidden)
+  );
+  if (!job) return false;
+
+  store.hidden[id] = {
+    hiddenAt: new Date().toISOString(),
+    jobUpdatedAt: getActivityMarkerTimestamp(job),
+  };
+  await writeActivityStore(store);
+  return true;
 }
 
 export async function getAdminActivityJob(id: string): Promise<AdminActivityJob | null> {
