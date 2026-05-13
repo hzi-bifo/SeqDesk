@@ -375,6 +375,21 @@ describe("PUT /api/studies/[id] - additional edge cases", () => {
     );
   });
 
+  it("stores blank checklistType updates as null", async () => {
+    const req = new NextRequest(BASE_URL, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ checklistType: "   " }),
+    });
+    const response = await PUT(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.db.study.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ checklistType: null }),
+      })
+    );
+  });
+
   it("updates readyForSubmission to true and sets readyAt", async () => {
     const req = new NextRequest(BASE_URL, {
       method: "PUT",

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildStudyOverviewFlowSections,
   sampleHasStudyOverviewMetadata,
+  STUDY_OVERVIEW_ENVIRONMENT_TYPE_SECTION_ID,
   STUDY_OVERVIEW_SAMPLE_METADATA_SECTION_ID,
 } from "./overview-flow";
 
@@ -33,6 +34,40 @@ describe("sampleHasStudyOverviewMetadata", () => {
 });
 
 describe("buildStudyOverviewFlowSections", () => {
+  function buildSectionsForChecklist(checklistType: string | null | undefined) {
+    return buildStudyOverviewFlowSections({
+      fields: [],
+      study: {
+        title: "Study",
+        description: "Desc",
+        alias: "alias-1",
+        checklistType,
+        studyMetadata: null,
+        readyForSubmission: false,
+        submitted: false,
+        samples: [],
+      },
+      includeAssociatedSamples: false,
+      includeEnvironmentType: true,
+      includeSampleMetadata: false,
+    });
+  }
+
+  it.each([
+    [null, "empty"],
+    ["", "empty"],
+    ["   ", "empty"],
+    ["soil", "complete"],
+    ["Human Gut", "partial"],
+  ] as const)("marks environment type %p as %s", (checklistType, expectedStatus) => {
+    const sections = buildSectionsForChecklist(checklistType);
+    const environmentSection = sections.find(
+      (section) => section.id === STUDY_OVERVIEW_ENVIRONMENT_TYPE_SECTION_ID
+    );
+
+    expect(environmentSection?.status).toBe(expectedStatus);
+  });
+
   it("marks sample metadata complete only when metadata values are present", () => {
     const sections = buildStudyOverviewFlowSections({
       fields: [],

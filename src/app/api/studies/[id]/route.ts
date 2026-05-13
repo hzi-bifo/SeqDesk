@@ -453,7 +453,10 @@ export async function PUT(
     if (typeof title === "string") updateData.title = title.trim() || undefined;
     if (description !== undefined) updateData.description = typeof description === "string" ? description.trim() || null : null;
     if (alias !== undefined) updateData.alias = typeof alias === "string" ? alias.trim() || null : null;
-    if (checklistType !== undefined) updateData.checklistType = checklistType;
+    if (checklistType !== undefined) {
+      updateData.checklistType =
+        typeof checklistType === "string" ? checklistType.trim() || null : null;
+    }
     if (studyMetadata !== undefined) {
       if (isFacilityAdmin) {
         updateData.studyMetadata =

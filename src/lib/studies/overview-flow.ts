@@ -1,5 +1,6 @@
 import type { FormFieldDefinition } from "@/types/form-config";
 import type { OrderProgressCompletionStatus } from "@/lib/orders/progress-status";
+import { getStudyChecklistTypeStatus } from "@/lib/studies/checklist-types";
 
 export const STUDY_OVERVIEW_ASSOCIATED_SAMPLES_SECTION_ID = "samples";
 export const STUDY_OVERVIEW_STUDY_DETAILS_SECTION_ID = "details";
@@ -140,7 +141,7 @@ export function buildStudyOverviewFlowSections(options: {
     sections.push({
       id: STUDY_OVERVIEW_ENVIRONMENT_TYPE_SECTION_ID,
       label: "Environment Type",
-      status: hasProgressValue(study.checklistType) ? "complete" : "empty",
+      status: getStudyChecklistTypeStatus(study.checklistType),
     });
   }
 

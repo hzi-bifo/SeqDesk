@@ -56,6 +56,10 @@ import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRender
 import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
+import {
+  isStudyChecklistTypeId,
+  normalizeStudyChecklistType,
+} from "@/lib/studies/checklist-types";
 import { toast } from "sonner";
 
 // Per-sample field definition
@@ -893,7 +897,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
         setTitle(study.title);
         setDescription(study.description || "");
-        setChecklistType(study.checklistType || "");
+        setChecklistType(normalizeStudyChecklistType(study.checklistType));
 
         let parsedMetadata: Record<string, unknown> = {};
         if (study.studyMetadata) {
@@ -957,14 +961,18 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   // Fetch MIxS template when checklist type changes
   useEffect(() => {
-    if (!checklistType || !formConfig?.modules.mixs) {
+    if (!isStudyChecklistTypeId(checklistType) || !formConfig?.modules.mixs) {
       setMixsTemplate(null);
       setSelectedMixsFields(new Set());
       return;
     }
 
     const checklist = CHECKLIST_TYPES.find(c => c.id === checklistType);
-    if (!checklist) return;
+    if (!checklist) {
+      setMixsTemplate(null);
+      setSelectedMixsFields(new Set());
+      return;
+    }
 
     const fetchMixsTemplate = async () => {
       setLoadingMixs(true);
@@ -1266,7 +1274,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   };
 
   const isTitleValid = title.trim().length > 0;
-  const isChecklistValid = !formConfig?.modules.mixs || checklistType !== "";
+  const isChecklistValid =
+    !formConfig?.modules.mixs || isStudyChecklistTypeId(checklistType);
   const isSamplesValid = !formConfig?.modules.sampleAssociation || selectedSampleIds.length > 0;
 
   const getBorderClass = (field: string, isValid: boolean) => {
@@ -1285,7 +1294,10 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     }
     if (currentStepId === "environment") {
       markTouched("checklistType");
-      if (!checklistType) { setError("Please select an environment type"); return; }
+      if (!isStudyChecklistTypeId(checklistType)) {
+        setError("Please select an environment type");
+        return;
+      }
     }
     if (currentStepId === "samples") {
       markTouched("samples");
@@ -1498,7 +1510,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
       setError("Study title is required");
       return { canProceed: false, warnings: [] };
     }
-    if (formConfig?.modules.mixs && !checklistType) {
+    if (formConfig?.modules.mixs && !isStudyChecklistTypeId(checklistType)) {
       setError("Please select a MIxS checklist type");
       return { canProceed: false, warnings: [] };
     }
@@ -2039,7 +2051,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
               </div>
             </div>
 
-            {checklistType && (
+            {isStudyChecklistTypeId(checklistType) && (
               <div className="border-t pt-6">
                 <div className="mb-4">
                   <h3 className="text-sm font-medium">Metadata Fields</h3>
