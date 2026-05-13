@@ -1820,104 +1820,6 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-4 space-y-4">
-            <div className="rounded-lg border bg-white px-4 py-3">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <KeyRound className="h-4 w-4 text-muted-foreground" />
-                    <p className="text-sm font-medium">Hosted install profile</p>
-                    {loadingInstallProfileStatus && (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                    )}
-                    {currentInstallProfile?.id && (
-                      <Badge variant="outline">{currentInstallProfile.id}</Badge>
-                    )}
-                    {currentInstallProfile?.version && (
-                      <Badge variant="secondary">v{currentInstallProfile.version}</Badge>
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {installProfileStatusError
-                      ? installProfileStatusError
-                      : !installProfileLoaded
-                        ? "Checking hosted profile state..."
-                        : currentInstallProfile?.id
-                          ? `Reload ${currentInstallProfile.name || currentInstallProfile.id} from the hosted profile registry to reapply profile-managed settings.`
-                          : "No hosted install profile is recorded for this installation."}
-                  </p>
-                  {currentInstallProfile?.appliedAt && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Last applied: {formatDate(currentInstallProfile.appliedAt)}
-                      {currentInstallProfile.source
-                        ? ` from ${currentInstallProfile.source}`
-                        : ""}
-                    </p>
-                  )}
-                  {installProfileStatus?.profileRegistryUrl && (
-                    <p className="mt-1 text-xs text-muted-foreground break-all">
-                      Registry:{" "}
-                      <span className="font-mono">
-                        {installProfileStatus.profileRegistryUrl}
-                      </span>
-                    </p>
-                  )}
-                  {profileReloadResult?.success === false && profileReloadResult.error && (
-                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                      <p className="font-medium">Profile reload failed</p>
-                      <p className="mt-1">{profileReloadResult.error}</p>
-                    </div>
-                  )}
-                  {profileReloadResult?.success && (
-                    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-                      <p className="font-medium">Hosted profile applied</p>
-                      <p className="mt-1 text-xs text-emerald-800">
-                        Settings script completed
-                        {profileReloadResult.includeAssets
-                          ? " and assets were applied."
-                          : "."}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="bg-white"
-                    onClick={() => void fetchInstallProfileStatus(true)}
-                    disabled={loadingInstallProfileStatus || reloadingHostedProfile}
-                  >
-                    {loadingInstallProfileStatus ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                    )}
-                    Refresh profile
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setProfileReloadResult(null);
-                      setProfileReloadDialogOpen(true);
-                    }}
-                    disabled={
-                      !currentInstallProfile?.id ||
-                      loadingInstallProfileStatus ||
-                      reloadingHostedProfile
-                    }
-                  >
-                    {reloadingHostedProfile ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                    )}
-                    Reload hosted profile
-                  </Button>
-                </div>
-              </div>
-            </div>
-
             {updateStatus && updateStatus.status !== "idle" && (
               <div
                 className={`border rounded-lg p-4 ${
@@ -2183,9 +2085,9 @@ export default function SettingsPage() {
         <section className="bg-card rounded-xl border border-border overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold">Configuration Status</h2>
+              <h2 className="text-base font-semibold">Configuration Sources</h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Effective values and their value source
+                Hosted profile, config file, and effective values
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2209,10 +2111,15 @@ export default function SettingsPage() {
                 variant="outline"
                 size="sm"
                 className="bg-white"
-                onClick={() => void fetchConfigStatus(true)}
-                disabled={loadingConfig}
+                onClick={() => {
+                  void Promise.all([
+                    fetchInstallProfileStatus(true),
+                    fetchConfigStatus(true),
+                  ]);
+                }}
+                disabled={loadingConfig || loadingInstallProfileStatus}
               >
-                {loadingConfig ? (
+                {loadingConfig || loadingInstallProfileStatus ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4 mr-2" />
@@ -2222,7 +2129,120 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="p-4">
+          <div className="p-4 space-y-4">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+              <p className="font-medium">How SeqDesk resolves settings</p>
+              <p className="mt-1 text-blue-800">
+                Hosted profiles are managed baselines. Effective config is resolved as{" "}
+                <span className="font-mono">ENV &gt; FILE &gt; DATABASE &gt; DEFAULT</span>,
+                so environment variables and{" "}
+                <span className="font-mono">seqdesk.config.json</span> override
+                database/profile-managed values.
+              </p>
+              <p className="mt-1 text-xs text-blue-800">
+                Reloading a hosted profile reapplies profile-managed forms, modules,
+                and pipeline settings, but it does not replace env/file-backed overrides.
+              </p>
+            </div>
+
+            <div className="rounded-lg border bg-white px-4 py-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KeyRound className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Hosted install profile</p>
+                    {loadingInstallProfileStatus && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                    {currentInstallProfile?.id && (
+                      <Badge variant="outline">{currentInstallProfile.id}</Badge>
+                    )}
+                    {currentInstallProfile?.version && (
+                      <Badge variant="secondary">v{currentInstallProfile.version}</Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {installProfileStatusError
+                      ? installProfileStatusError
+                      : !installProfileLoaded
+                        ? "Checking hosted profile state..."
+                        : currentInstallProfile?.id
+                          ? `Reload ${currentInstallProfile.name || currentInstallProfile.id} from the hosted profile registry to reapply profile-managed settings.`
+                          : "No hosted install profile is recorded for this installation."}
+                  </p>
+                  {currentInstallProfile?.appliedAt && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last applied: {formatDate(currentInstallProfile.appliedAt)}
+                      {currentInstallProfile.source
+                        ? ` from ${currentInstallProfile.source}`
+                        : ""}
+                    </p>
+                  )}
+                  {installProfileStatus?.profileRegistryUrl && (
+                    <p className="mt-1 text-xs text-muted-foreground break-all">
+                      Registry:{" "}
+                      <span className="font-mono">
+                        {installProfileStatus.profileRegistryUrl}
+                      </span>
+                    </p>
+                  )}
+                  {profileReloadResult?.success === false && profileReloadResult.error && (
+                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      <p className="font-medium">Profile reload failed</p>
+                      <p className="mt-1">{profileReloadResult.error}</p>
+                    </div>
+                  )}
+                  {profileReloadResult?.success && (
+                    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                      <p className="font-medium">Hosted profile applied</p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        Settings script completed
+                        {profileReloadResult.includeAssets
+                          ? " and assets were applied."
+                          : "."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-white"
+                    onClick={() => void fetchInstallProfileStatus(true)}
+                    disabled={loadingInstallProfileStatus || reloadingHostedProfile}
+                  >
+                    {loadingInstallProfileStatus ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Refresh profile
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setProfileReloadResult(null);
+                      setProfileReloadDialogOpen(true);
+                    }}
+                    disabled={
+                      !currentInstallProfile?.id ||
+                      loadingInstallProfileStatus ||
+                      reloadingHostedProfile
+                    }
+                  >
+                    {reloadingHostedProfile ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Reload hosted profile
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {configStatus ? (
               <div className="space-y-4">
                 <div className="grid gap-2 text-sm sm:grid-cols-2">
