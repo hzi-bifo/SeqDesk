@@ -155,6 +155,37 @@ flag drops MinKNOW-shaped FASTQs into a target directory at a configurable caden
 (`SIMULATE_INTERVAL_MS`, `SIMULATE_BARCODES`) so the full pipeline can be exercised without
 a real device.
 
+### Headless pipeline runtime smoke test
+
+On a Linux dev server with SeqDesk running, use the runtime E2E smoke test to
+verify pipeline execution without opening a browser. The test logs in through
+the API, chooses an order, runs the lightweight `simulate-reads` order pipeline
+once locally and once through SLURM, then checks the generated run scripts,
+Nextflow config, queue IDs, logs, and output files.
+
+```bash
+SEQDESK_RUNTIME_E2E_BASE_URL="https://your-seqdesk.example.org" \
+SEQDESK_RUNTIME_E2E_EMAIL="admin@example.com" \
+SEQDESK_RUNTIME_E2E_PASSWORD="admin-password" \
+npm run pipeline:e2e:runtime -- --ensure-dummy-data
+```
+
+If `--order-id` is omitted, the script prefers the admin-owned dummy orders
+created by **Admin → Settings → Load dummy data**. With `--ensure-dummy-data`,
+it calls the same seed endpoint automatically when those orders are missing.
+
+Useful variants:
+
+```bash
+npm run pipeline:e2e:runtime -- --skip-slurm --ensure-dummy-data
+npm run pipeline:e2e:runtime -- --skip-local --ensure-dummy-data
+npm run pipeline:e2e:runtime -- --include-default-policy --expect-default-mode slurm
+npm run pipeline:e2e:runtime -- --order-id <order-id>
+```
+
+The full local + SLURM run requires `sbatch`, `squeue`, and `sacct` on the host.
+Use `--skip-slurm` for a local-only check on machines without SLURM.
+
 ## Live Test Dashboard
 
 SeqDesk includes a local test dashboard that groups tests by section and shows live pass/fail/running state while the suite executes.
