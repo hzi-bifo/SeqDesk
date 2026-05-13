@@ -1003,6 +1003,9 @@ export default function StudyDetailPage({
     ? Math.round((samplesWithMetadata / totalSamples) * 100)
     : 0;
   const publishingStatus = getPublishingStatus(study);
+  const enaCredentialsMissing =
+    enaCheck.status === "error" &&
+    (enaCheck.message?.toLowerCase().includes("credentials") ?? false);
   const ownerDisplayName = study.user.firstName && study.user.lastName
     ? `${study.user.firstName} ${study.user.lastName}`
     : study.user.email;
@@ -2008,6 +2011,19 @@ export default function StudyDetailPage({
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Checking ENA...
                           </Button>
+                        ) : enaCredentialsMissing ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#FFBA00] hover:bg-[#FFBA00]/20"
+                            title="Set the Webin username and password in Admin > Data Upload > ENA Configuration"
+                            asChild
+                          >
+                            <Link href="/admin/ena#ena-username">
+                              <AlertCircle className="h-4 w-4 mr-2" />
+                              Set ENA credentials
+                            </Link>
+                          </Button>
                         ) : enaCheck.status === "error" ? (
                           <Button
                             size="sm"
@@ -2061,6 +2077,27 @@ export default function StudyDetailPage({
                       )}
                     </div>
                   </div>
+                )}
+
+                {enaCredentialsMissing && (
+                  <Link
+                    href="/admin/ena#ena-username"
+                    className="flex items-start justify-between gap-3 rounded-lg border border-[#FFBA00]/30 bg-[#FFBA00]/10 px-4 py-3 text-sm text-[#8A6400] transition-colors hover:bg-[#FFBA00]/15"
+                  >
+                    <span className="flex min-w-0 items-start gap-2">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">ENA credentials missing</span>
+                        <span className="block text-xs">
+                          Set the Webin username and password in Admin &gt; Data Upload &gt; ENA Configuration.
+                        </span>
+                      </span>
+                    </span>
+                    <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+                      Open settings
+                      <ChevronRight className="h-3 w-3" />
+                    </span>
+                  </Link>
                 )}
 
 
