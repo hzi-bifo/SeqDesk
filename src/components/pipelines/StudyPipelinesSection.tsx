@@ -1999,7 +1999,9 @@ export function StudyPipelinesSection({
                             ))}
                           </div>
                         ) : (
-                          <CheckCircle2 className="h-4 w-4 text-[#00BD7D]" />
+                          <span className="text-xs font-medium text-[#00BD7D]">
+                            No issues
+                          </span>
                         )}
                       </td>
                       {showAssemblyColumn && (
