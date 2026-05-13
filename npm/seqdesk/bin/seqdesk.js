@@ -47,6 +47,19 @@ Options:
   --help, -h                   Show this help.
 `;
 
+const PIPELINE_USAGE = `Usage:
+  seqdesk pipeline list --dir /path/to/seqdesk [--catalog study|order|all] [--enabled] [--json]
+  seqdesk pipeline run <pipelineId> --dir /path/to/seqdesk (--study <id>|--order <id>) [--samples id,id] [--config-file file|--config-json json] [--execution default|local|slurm] [--watch] [--json] [--user-email email]
+  seqdesk pipeline status <runId> --dir /path/to/seqdesk [--watch] [--json]
+  seqdesk pipeline sync <runId> --dir /path/to/seqdesk [--json]
+  seqdesk pipeline logs <runId> --dir /path/to/seqdesk [--type output|error] [--tail 200] [--json]
+  seqdesk pipeline outputs <runId> --dir /path/to/seqdesk [--json]
+  seqdesk pipeline debug <runId> --dir /path/to/seqdesk [--format text|json] [--out file]
+  seqdesk pipeline cancel <runId> --dir /path/to/seqdesk [--json]
+
+Local shell access to the installed directory is treated as operator access.
+`;
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -293,6 +306,45 @@ function parseAssetsArgs(argv) {
   options.profileCode = options.profileCode.trim();
   options.profileConfig = options.profileConfig ? path.resolve(options.profileConfig) : "";
   options.profileRegistryUrl = options.profileRegistryUrl.trim() || DEFAULT_PROFILE_REGISTRY_URL;
+  return options;
+}
+
+function parsePipelineLauncherArgs(argv) {
+  const options = {
+    dir: process.cwd(),
+    help: false,
+  };
+
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
+    options.help = true;
+    return options;
+  }
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+
+    if (token === "--help" || token === "-h") {
+      options.help = true;
+      continue;
+    }
+
+    if (token === "--dir" || token === "-d") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a directory path`);
+      }
+      options.dir = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--dir=")) {
+      options.dir = token.slice("--dir=".length);
+      continue;
+    }
+  }
+
+  options.dir = path.resolve(options.dir);
   return options;
 }
 
@@ -830,6 +882,38 @@ function runInstalledAssetScript({ installDir, scriptPath, profileConfig, json }
   });
 }
 
+function runInstalledPipelineScript({ installDir, argv }) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(installDir, "scripts", "pipeline-cli.js");
+    if (!fileExists(scriptPath)) {
+      reject(
+        new Error(
+          `Installed pipeline CLI not found at ${scriptPath}. Update the SeqDesk install before using pipeline commands.`
+        )
+      );
+      return;
+    }
+
+    const child = spawn(process.execPath, [scriptPath, ...argv], {
+      cwd: installDir,
+      env,
+      stdio: "inherit",
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start installed pipeline CLI: ${error.message}`));
+    });
+
+    child.on("close", (code, signal) => {
+      if (signal) {
+        reject(new Error(`Installed pipeline CLI exited with signal ${signal}`));
+        return;
+      }
+      resolve(code ?? 1);
+    });
+  });
+}
+
 async function runAssets(argv) {
   let options;
   try {
@@ -873,6 +957,33 @@ async function runAssets(argv) {
     return 1;
   } finally {
     tempProfile?.cleanup();
+  }
+}
+
+async function runPipeline(argv) {
+  let options;
+  try {
+    options = parsePipelineLauncherArgs(argv);
+  } catch (error) {
+    console.error(`[seqdesk] ${error.message}`);
+    console.error("");
+    console.error(PIPELINE_USAGE.trim());
+    return 2;
+  }
+
+  if (options.help) {
+    console.log(PIPELINE_USAGE.trim());
+    return 0;
+  }
+
+  try {
+    return await runInstalledPipelineScript({
+      installDir: options.dir,
+      argv,
+    });
+  } catch (error) {
+    console.error(`[seqdesk] ${error.message}`);
+    return 1;
   }
 }
 
@@ -948,6 +1059,7 @@ async function main() {
     console.log("  seqdesk [installer options]");
     console.log("  seqdesk doctor [options]");
     console.log("  seqdesk assets apply [options]");
+    console.log("  seqdesk pipeline <command> [options]");
     console.log("  seqdesk --version");
     return;
   }
@@ -964,6 +1076,11 @@ async function main() {
 
   if (args[0] === "assets") {
     const exitCode = await runAssets(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (args[0] === "pipeline") {
+    const exitCode = await runPipeline(args.slice(1));
     process.exit(exitCode);
   }
 

@@ -409,6 +409,52 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(body.details).toContain("Missing input files");
   });
 
+  it("blocks stale MetaxPath packages before preparing the run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      pipelineId: "metaxpath",
+    });
+    mocks.getPackage.mockReturnValue({
+      id: "metaxpath",
+      basePath: "/tmp/packages/metaxpath",
+      manifest: {
+        package: {
+          id: "metaxpath",
+          name: "MetaxPath",
+          version: "0.1.0",
+          description: "Stale MetaxPath package",
+        },
+        execution: {
+          type: "nextflow",
+          pipeline: "./workflow",
+          version: "Nextflow",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBe("MetaxPath package compatibility check failed");
+    expect(body.details).toEqual(expect.arrayContaining([
+      expect.stringContaining("older than required 0.1.1"),
+    ]));
+    expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "run-1" },
+        data: expect.objectContaining({
+          status: "failed",
+          statusSource: "launcher",
+          errorTail: expect.stringContaining("MetaxPath package 0.1.0 is not compatible"),
+        }),
+      })
+    );
+  });
+
   it("returns 400 when pipelineRunDir is not configured", async () => {
     mocks.getExecutionSettings.mockResolvedValue({
       ...defaultExecutionSettings,

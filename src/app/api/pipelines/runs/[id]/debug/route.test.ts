@@ -38,6 +38,7 @@ vi.mock("@/lib/demo/server", () => ({
 
 vi.mock("child_process", () => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock("util", () => ({

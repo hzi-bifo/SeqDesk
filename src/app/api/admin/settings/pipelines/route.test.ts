@@ -233,12 +233,18 @@ describe("GET /api/admin/settings/pipelines", () => {
 
       if (pipelineId === "metaxpath") {
         return {
+          package: {
+            id: "metaxpath",
+            name: "MetaXpath",
+            version: "0.1.1",
+            description: "ONT metagenomics",
+          },
           execution: {
             pipeline: `${process.cwd()}/package.json`,
             version: "1.0.0",
           },
           targets: {
-            supported: ["order"],
+            supported: ["study"],
           },
           inputs: [
             {
@@ -577,6 +583,44 @@ describe("GET /api/admin/settings/pipelines", () => {
           }),
         ]),
       })
+    );
+  });
+
+  it("reports stale MetaXpath packages as not ready", async () => {
+    mocks.getAllPipelineIds.mockReturnValue(["metaxpath"]);
+    mocks.getPackageManifest.mockReturnValue({
+      package: {
+        id: "metaxpath",
+        name: "MetaXpath",
+        version: "0.1.0",
+        description: "ONT metagenomics",
+      },
+      execution: {
+        pipeline: `${process.cwd()}/package.json`,
+        version: "1.0.0",
+      },
+      targets: {
+        supported: ["order"],
+      },
+      inputs: [],
+      outputs: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.pipelines[0].readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "metaxpath-compatibility",
+          status: "missing",
+          action: "sync",
+          detail: expect.stringContaining("older than required 0.1.1"),
+        }),
+      ])
     );
   });
 });

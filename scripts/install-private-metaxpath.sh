@@ -20,6 +20,7 @@ Environment variables:
   METAXPATH_PACKAGE_URL                  Default for --url
   METAXPATH_PACKAGE_TOKEN                Default for --token
   METAXPATH_PACKAGE_SHA256               Default for --sha256
+  METAXPATH_MIN_PACKAGE_VERSION          Minimum accepted package version (default: 0.1.1)
   SEQDESK_DIR                            Default for --dir
 
 Examples:
@@ -134,6 +135,7 @@ is_metaxpath_manifest() {
 PACKAGE_URL="${METAXPATH_PACKAGE_URL:-}"
 PACKAGE_TOKEN="${METAXPATH_PACKAGE_TOKEN:-}"
 PACKAGE_SHA256="${METAXPATH_PACKAGE_SHA256:-}"
+MIN_METAXPATH_PACKAGE_VERSION="${METAXPATH_MIN_PACKAGE_VERSION:-0.1.1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEQDESK_DIR_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SEQDESK_DIR="${SEQDESK_DIR:-${SEQDESK_DIR_DEFAULT}}"
@@ -220,6 +222,86 @@ PACKAGE_ROOT="$(find_package_root "$EXTRACT_DIR" || true)"
 if ! is_metaxpath_manifest "${PACKAGE_ROOT}/manifest.json"; then
   error "manifest.json is not for metaxpath"
 fi
+
+node - "$PACKAGE_ROOT" "$MIN_METAXPATH_PACKAGE_VERSION" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const packageRoot = process.argv[2];
+const minVersion = process.argv[3] || '0.1.1';
+
+function fail(message) {
+  console.error(`[metaxpath-install] ERROR: ${message}`);
+  process.exit(1);
+}
+
+function parseVersion(value) {
+  const match = String(value || '').trim().match(/^v?(\d+(?:\.\d+){0,2})/i);
+  if (!match) return null;
+  return match[1].split('.').map((part) => Number.parseInt(part, 10));
+}
+
+function compareVersions(left, right) {
+  const leftParts = parseVersion(left);
+  const rightParts = parseVersion(right);
+  if (!leftParts || !rightParts) return null;
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] || 0;
+    const rightValue = rightParts[index] || 0;
+    if (leftValue > rightValue) return 1;
+    if (leftValue < rightValue) return -1;
+  }
+  return 0;
+}
+
+const manifestPath = path.join(packageRoot, 'manifest.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+let registry = null;
+try {
+  registry = JSON.parse(fs.readFileSync(path.join(packageRoot, 'registry.json'), 'utf8'));
+} catch {
+  registry = null;
+}
+const version = manifest?.package?.version || 'unknown';
+const comparison = compareVersions(version, minVersion);
+
+if (comparison === null || comparison < 0) {
+  fail(`MetaxPath package version ${version} is older than required ${minVersion}. Update the hosted install profile to a MetaxPath-Nextflow ${minVersion}+ artifact.`);
+}
+
+const workflowCandidates = [
+  path.join(packageRoot, 'workflow', 'main.nf'),
+  path.join(packageRoot, 'main.nf'),
+];
+const staleWorkflow = workflowCandidates.find((candidate) => {
+  try {
+    return fs.readFileSync(candidate, 'utf8').includes('--chunk-breadth');
+  } catch {
+    return false;
+  }
+});
+
+if (staleWorkflow) {
+  fail(`MetaxPath workflow contains removed Metax CLI flag --chunk-breadth: ${staleWorkflow}. Update the hosted install profile to a MetaxPath-Nextflow ${minVersion}+ artifact.`);
+}
+
+const declaredTargets = Array.isArray(manifest?.targets?.supported)
+  ? manifest.targets.supported
+  : [];
+const registryScopes = Array.isArray(registry?.input?.supportedScopes)
+  ? registry.input.supportedScopes
+  : [];
+const supportsStudy =
+  declaredTargets.includes('study') ||
+  registryScopes.includes('study') ||
+  registryScopes.includes('samples') ||
+  registryScopes.includes('sample');
+
+if (!supportsStudy) {
+  fail(`MetaxPath package does not declare study target support. Update the hosted install profile to a MetaxPath-Nextflow ${minVersion}+ study-scoped package.`);
+}
+NODE
 
 mkdir -p "$PIPELINES_DIR"
 STAGE_DIR="${PIPELINES_DIR}/metaxpath.__tmp-$(date +%s)"

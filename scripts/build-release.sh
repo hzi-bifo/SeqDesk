@@ -153,6 +153,7 @@ const esbuild = require("${ROOT_DIR}/node_modules/esbuild");
 const entries = [
   "${ROOT_DIR}/scripts/stream-monitor.ts",
   "${ROOT_DIR}/scripts/pipeline-monitor.ts",
+  "${ROOT_DIR}/scripts/pipeline-cli.ts",
 ];
 for (const entry of entries) {
   const outfile = entry.replace("${ROOT_DIR}", "${RELEASE_DIR}").replace(/\.ts\$/, ".js");

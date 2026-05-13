@@ -60,6 +60,7 @@ vi.mock("@/lib/pipelines/run-completion", () => ({
 
 vi.mock("child_process", () => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock("util", () => ({

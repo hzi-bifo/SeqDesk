@@ -13,6 +13,10 @@ import { resolvePipelineExecutionPolicy } from '@/lib/pipelines/execution-policy
 import { getPackage, getPackageManifest, type PackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
 import {
+  checkMetaxPathPackageCompatibility,
+  METAXPATH_MIN_COMPATIBLE_VERSION,
+} from '@/lib/pipelines/metaxpath-compatibility';
+import {
   deriveManifestTargets,
   derivePipelineCapabilities,
   derivePipelineCatalogs,
@@ -178,6 +182,23 @@ async function buildPipelineReadiness(args: {
       label: 'Workflow source',
       status: 'ready',
       detail: `Nextflow will use ${args.manifest.execution.pipeline}.`,
+    });
+  }
+
+  if (args.pipelineId === 'metaxpath' && pkg && args.manifest) {
+    const compatibility = await checkMetaxPathPackageCompatibility({
+      basePath: pkg.basePath,
+      manifest: args.manifest,
+      registry: pkg.registry,
+    });
+    items.push({
+      id: 'metaxpath-compatibility',
+      label: 'MetaxPath package version',
+      status: compatibility.compatible ? 'ready' : 'missing',
+      detail: compatibility.compatible
+        ? `Installed package ${compatibility.version} is compatible.`
+        : `${compatibility.issues.join(' ')} Sync MetaxPath-Nextflow ${METAXPATH_MIN_COMPATIBLE_VERSION} or newer.`,
+      action: compatibility.compatible ? undefined : 'sync',
     });
   }
 

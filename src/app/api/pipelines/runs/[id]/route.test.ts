@@ -45,6 +45,7 @@ vi.mock("@/lib/pipelines", () => ({
 
 vi.mock("child_process", () => ({
   spawn: mocks.spawn,
+  execFile: vi.fn(),
 }));
 
 vi.mock("fs/promises", () => ({

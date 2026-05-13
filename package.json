@@ -18,6 +18,7 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "pipeline:validate": "tsx scripts/validate-pipeline-package.ts",
+    "pipeline:cli": "tsx scripts/pipeline-cli.ts",
     "pipeline:monitor": "tsx scripts/pipeline-monitor.ts",
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once",
     "stream:monitor": "tsx scripts/stream-monitor.ts",
