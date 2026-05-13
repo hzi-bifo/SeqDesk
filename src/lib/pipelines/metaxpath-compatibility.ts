@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { LoadedPackage, PackageManifest } from './package-loader';
-import { deriveManifestTargets } from './package-contracts';
+import { deriveManifestTargets, type PackageTargetType } from './package-contracts';
 
 export const METAXPATH_MIN_COMPATIBLE_VERSION = '0.1.1';
 export const METAXPATH_STALE_CHUNK_BREADTH_FLAG = '--chunk-breadth';
@@ -12,6 +12,10 @@ export interface MetaxPathCompatibilityResult {
   minimumVersion: string;
   issues: string[];
   workflowPath?: string;
+}
+
+export interface MetaxPathCompatibilityOptions {
+  requiredTarget?: PackageTargetType;
 }
 
 type MetaxPathPackageForCompatibility = {
@@ -72,7 +76,8 @@ async function readWorkflowMain(workflowPath?: string): Promise<string | null> {
 }
 
 export async function checkMetaxPathPackageCompatibility(
-  pkg: MetaxPathPackageForCompatibility | LoadedPackage
+  pkg: MetaxPathPackageForCompatibility | LoadedPackage,
+  options: MetaxPathCompatibilityOptions = {}
 ): Promise<MetaxPathCompatibilityResult> {
   const version = pkg.manifest.package.version || 'unknown';
   const issues: string[] = [];
@@ -93,9 +98,12 @@ export async function checkMetaxPathPackageCompatibility(
   }
 
   const supportedTargets = deriveManifestTargets(pkg.manifest, pkg.registry);
-  if (!supportedTargets.includes('study')) {
+  if (
+    options.requiredTarget &&
+    !supportedTargets.includes(options.requiredTarget)
+  ) {
     issues.push(
-      'Installed MetaxPath package does not declare study target support.'
+      `Installed MetaxPath package does not declare ${options.requiredTarget} target support.`
     );
   }
 

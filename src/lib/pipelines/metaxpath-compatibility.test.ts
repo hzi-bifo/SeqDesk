@@ -141,7 +141,7 @@ describe('metaxpath compatibility', () => {
     expect(result.issues).toEqual([]);
   });
 
-  it('blocks packages that only declare order target support', async () => {
+  it('allows packages that declare order support when starting order runs', async () => {
     await fs.writeFile(
       path.join(tempDir, 'workflow', 'main.nf'),
       'metax profile \\\n  -b 0 \\\n',
@@ -150,7 +150,26 @@ describe('metaxpath compatibility', () => {
     const pkg = makePackage(tempDir, '0.1.1');
     pkg.registry.input.supportedScopes = ['order'];
 
-    const result = await checkMetaxPathPackageCompatibility(pkg);
+    const result = await checkMetaxPathPackageCompatibility(pkg, {
+      requiredTarget: 'order',
+    });
+
+    expect(result.compatible).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('blocks packages that do not declare the requested run target', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'workflow', 'main.nf'),
+      'metax profile \\\n  -b 0 \\\n',
+      'utf8'
+    );
+    const pkg = makePackage(tempDir, '0.1.1');
+    pkg.registry.input.supportedScopes = ['order'];
+
+    const result = await checkMetaxPathPackageCompatibility(pkg, {
+      requiredTarget: 'study',
+    });
 
     expect(result.compatible).toBe(false);
     expect(result.issues).toEqual([

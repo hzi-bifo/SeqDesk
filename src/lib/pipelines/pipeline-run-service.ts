@@ -653,7 +653,13 @@ export async function startPipelineRunForOperator({
   }
 
   if (pipelineId === 'metaxpath') {
-    const compatibility = await checkMetaxPathPackageCompatibility(pkg);
+    const requiredTarget =
+      run.targetType === 'study' || run.targetType === 'order'
+        ? run.targetType
+        : undefined;
+    const compatibility = await checkMetaxPathPackageCompatibility(pkg, {
+      requiredTarget,
+    });
     if (!compatibility.compatible) {
       const message = buildMetaxPathCompatibilityMessage(compatibility);
       await db.pipelineRun.update({
