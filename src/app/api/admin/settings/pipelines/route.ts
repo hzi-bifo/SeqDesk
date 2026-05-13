@@ -196,6 +196,9 @@ async function buildPipelineReadiness(args: {
 
   if (args.pipelineId === 'metaxpath') {
     const paramsFile = args.resolvedConfig.paramsFile;
+    const configuredParamsFile = hasNonEmptyString(paramsFile)
+      ? paramsFile.trim()
+      : null;
     const paramsFileExists = hasNonEmptyString(paramsFile)
       ? await pathExists(paramsFile)
       : false;
@@ -204,8 +207,10 @@ async function buildPipelineReadiness(args: {
       label: 'MetaxPath params file',
       status: paramsFileExists ? 'ready' : 'missing',
       detail: paramsFileExists
-        ? 'SeqDesk will pass the installed DB params file to Nextflow.'
-        : 'Install the MetaxPath DB bundle so metaxpath.downloaded.params.yaml is configured.',
+        ? `SeqDesk will pass ${configuredParamsFile} to Nextflow.`
+        : configuredParamsFile
+          ? `Configured params file does not exist: ${configuredParamsFile}`
+          : 'Install the MetaxPath DB bundle so metaxpath.downloaded.params.yaml is configured.',
       action: paramsFileExists ? undefined : 'download-db',
     });
   }

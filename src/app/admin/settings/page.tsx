@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
@@ -18,6 +19,7 @@ import {
   Download,
   FileText,
   HardDrive,
+  KeyRound,
   Loader2,
   RefreshCw,
   Send,
@@ -113,6 +115,37 @@ interface GemmaMetaxPathSeedStatus {
   sha256: string;
 }
 
+interface InstallProfileSummary {
+  id?: string;
+  name?: string;
+  version?: string;
+  minSeqDeskVersion?: string;
+  appliedAt?: string;
+  source?: string;
+}
+
+interface InstallProfileReloadStatus {
+  profile: InstallProfileSummary | null;
+  profileRegistryUrl: string;
+  profileCodeEnvName: string | null;
+  profileCodeEnvAvailable: boolean;
+}
+
+interface ScriptRunSummary {
+  script: string;
+  stdout: string;
+  stderr: string;
+}
+
+interface InstallProfileReloadResult {
+  success?: boolean;
+  profile?: InstallProfileSummary;
+  includeAssets?: boolean;
+  settings?: ScriptRunSummary;
+  assets?: ScriptRunSummary;
+  error?: string;
+}
+
 function formatDate(value?: string | Date | null): string {
   if (!value) return "-";
   const parsed = value instanceof Date ? value : new Date(value);
@@ -154,6 +187,20 @@ export default function SettingsPage() {
   const [updateStatus, setUpdateStatus] = useState<UpdateProgress | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateLoaded, setUpdateLoaded] = useState(false);
+  const [installProfileStatus, setInstallProfileStatus] =
+    useState<InstallProfileReloadStatus | null>(null);
+  const [loadingInstallProfileStatus, setLoadingInstallProfileStatus] =
+    useState(false);
+  const [installProfileLoaded, setInstallProfileLoaded] = useState(false);
+  const [installProfileStatusError, setInstallProfileStatusError] =
+    useState<string | null>(null);
+  const [profileReloadDialogOpen, setProfileReloadDialogOpen] = useState(false);
+  const [profileAccessCode, setProfileAccessCode] = useState("");
+  const [reloadProfileIncludeAssets, setReloadProfileIncludeAssets] =
+    useState(false);
+  const [reloadingHostedProfile, setReloadingHostedProfile] = useState(false);
+  const [profileReloadResult, setProfileReloadResult] =
+    useState<InstallProfileReloadResult | null>(null);
   const [orderNotesEnabled, setOrderNotesEnabled] = useState(true);
   const [telemetrySettings, setTelemetrySettings] =
     useState<TelemetrySettingsResponse | null>(null);
@@ -206,6 +253,12 @@ export default function SettingsPage() {
     telemetrySettings !== null &&
     telemetrySettings.enabled !== true &&
     telemetrySettings.promptDismissed !== true;
+  const currentInstallProfile = installProfileStatus?.profile || null;
+  const installProfileEnvHint = installProfileStatus?.profileCodeEnvName || null;
+  const canSubmitProfileReload = Boolean(currentInstallProfile?.id) && (
+    installProfileStatus?.profileCodeEnvAvailable === true ||
+    profileAccessCode.trim().length > 0
+  );
 
   const toolsMissingCount = useMemo(() => {
     if (!versionsLoaded) return null;
@@ -363,6 +416,34 @@ export default function SettingsPage() {
     } finally {
       setConfigLoaded(true);
       setLoadingConfig(false);
+    }
+  }, []);
+
+  const fetchInstallProfileStatus = useCallback(async (showToast = false) => {
+    setLoadingInstallProfileStatus(true);
+    try {
+      const res = await fetch("/api/admin/install-profile/reload");
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Failed to load hosted profile status");
+      }
+
+      const data = (await res.json()) as InstallProfileReloadStatus;
+      setInstallProfileStatus(data);
+      setInstallProfileStatusError(null);
+    } catch (error) {
+      console.error("Failed to load hosted profile status:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to load hosted profile status";
+      setInstallProfileStatusError(message);
+      if (showToast) {
+        toast.error(message);
+      }
+    } finally {
+      setInstallProfileLoaded(true);
+      setLoadingInstallProfileStatus(false);
     }
   }, []);
 
@@ -824,6 +905,65 @@ export default function SettingsPage() {
     }
   }, [fetchSeedStatus]);
 
+  const reloadHostedProfile = useCallback(async () => {
+    if (!currentInstallProfile?.id || !canSubmitProfileReload) return;
+
+    setReloadingHostedProfile(true);
+    setProfileReloadResult(null);
+    try {
+      const res = await fetch("/api/admin/install-profile/reload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          includeAssets: reloadProfileIncludeAssets,
+          profileCode: profileAccessCode.trim() || undefined,
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | InstallProfileReloadResult
+        | null;
+      if (!res.ok || payload?.success === false) {
+        throw new Error(payload?.error || "Failed to reload hosted profile");
+      }
+
+      setProfileReloadResult(payload);
+      setProfileAccessCode("");
+      setProfileReloadDialogOpen(false);
+      toast.success(
+        `Hosted profile ${payload?.profile?.id || currentInstallProfile.id} applied`
+      );
+      await Promise.all([
+        fetchInstallProfileStatus(),
+        fetchConfigStatus(),
+        fetchAccessSettings(),
+        fetchSeedStatus(),
+        fetchGemmaSeedStatus(),
+        detectInstalledVersions(),
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to reload hosted profile";
+      console.error("Failed to reload hosted profile:", error);
+      setProfileReloadResult({ success: false, error: message });
+      toast.error(message);
+    } finally {
+      setReloadingHostedProfile(false);
+    }
+  }, [
+    canSubmitProfileReload,
+    currentInstallProfile?.id,
+    detectInstalledVersions,
+    fetchAccessSettings,
+    fetchConfigStatus,
+    fetchGemmaSeedStatus,
+    fetchInstallProfileStatus,
+    fetchSeedStatus,
+    profileAccessCode,
+    reloadProfileIncludeAssets,
+  ]);
+
   const startUpdatePolling = useCallback(() => {
     if (updatePollRef.current) return;
     updatePollRef.current = setInterval(() => {
@@ -868,6 +1008,7 @@ export default function SettingsPage() {
     await Promise.all([
       detectInstalledVersions(true),
       fetchConfigStatus(true),
+      fetchInstallProfileStatus(true),
       fetchAccessSettings(true),
       fetchTelemetrySettings(true),
       fetchSeedStatus(),
@@ -882,6 +1023,7 @@ export default function SettingsPage() {
     detectInstalledVersions,
     fetchAccessSettings,
     fetchConfigStatus,
+    fetchInstallProfileStatus,
     fetchGemmaSeedStatus,
     fetchTelemetrySettings,
     fetchUpdateStatus,
@@ -939,6 +1081,15 @@ export default function SettingsPage() {
             lastError: telemetrySettings.lastError,
           }
         : null,
+      installProfile: {
+        loaded: installProfileLoaded,
+        profile: installProfileStatus?.profile ?? null,
+        registryUrl: installProfileStatus?.profileRegistryUrl ?? null,
+        profileCodeEnvName: installProfileStatus?.profileCodeEnvName ?? null,
+        profileCodeEnvAvailable:
+          installProfileStatus?.profileCodeEnvAvailable ?? false,
+        error: installProfileStatusError,
+      },
       updateProgress: updateStatus,
     };
 
@@ -968,6 +1119,9 @@ export default function SettingsPage() {
     configStatus,
     detectedVersions,
     healthItems,
+    installProfileLoaded,
+    installProfileStatus,
+    installProfileStatusError,
     latestVersion,
     orderNotesEnabled,
     restartPending,
@@ -986,6 +1140,7 @@ export default function SettingsPage() {
       await Promise.all([
         detectInstalledVersions(),
         fetchConfigStatus(),
+        fetchInstallProfileStatus(),
         fetchAccessSettings(),
         fetchTelemetrySettings(),
         fetchSeedStatus(),
@@ -1000,6 +1155,7 @@ export default function SettingsPage() {
     detectInstalledVersions,
     fetchAccessSettings,
     fetchConfigStatus,
+    fetchInstallProfileStatus,
     fetchGemmaSeedStatus,
     fetchSeedStatus,
     fetchTelemetrySettings,
@@ -1613,10 +1769,10 @@ export default function SettingsPage() {
                 )}
                 {gemmaSeedStatus?.seeded && gemmaSeedStatus.orderId && (
                   <Link
-                    href={`/orders/${gemmaSeedStatus.orderId}/pipelines`}
+                    href={`/orders/${gemmaSeedStatus.orderId}/sequencing?view=analysis`}
                     className="mt-2 inline-block text-xs font-medium text-primary hover:underline"
                   >
-                    Open order pipelines
+                    Open order analysis
                   </Link>
                 )}
               </div>
@@ -1664,6 +1820,104 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-4 space-y-4">
+            <div className="rounded-lg border bg-white px-4 py-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KeyRound className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Hosted install profile</p>
+                    {loadingInstallProfileStatus && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                    {currentInstallProfile?.id && (
+                      <Badge variant="outline">{currentInstallProfile.id}</Badge>
+                    )}
+                    {currentInstallProfile?.version && (
+                      <Badge variant="secondary">v{currentInstallProfile.version}</Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {installProfileStatusError
+                      ? installProfileStatusError
+                      : !installProfileLoaded
+                        ? "Checking hosted profile state..."
+                        : currentInstallProfile?.id
+                          ? `Reload ${currentInstallProfile.name || currentInstallProfile.id} from the hosted profile registry to reapply profile-managed settings.`
+                          : "No hosted install profile is recorded for this installation."}
+                  </p>
+                  {currentInstallProfile?.appliedAt && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last applied: {formatDate(currentInstallProfile.appliedAt)}
+                      {currentInstallProfile.source
+                        ? ` from ${currentInstallProfile.source}`
+                        : ""}
+                    </p>
+                  )}
+                  {installProfileStatus?.profileRegistryUrl && (
+                    <p className="mt-1 text-xs text-muted-foreground break-all">
+                      Registry:{" "}
+                      <span className="font-mono">
+                        {installProfileStatus.profileRegistryUrl}
+                      </span>
+                    </p>
+                  )}
+                  {profileReloadResult?.success === false && profileReloadResult.error && (
+                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      <p className="font-medium">Profile reload failed</p>
+                      <p className="mt-1">{profileReloadResult.error}</p>
+                    </div>
+                  )}
+                  {profileReloadResult?.success && (
+                    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                      <p className="font-medium">Hosted profile applied</p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        Settings script completed
+                        {profileReloadResult.includeAssets
+                          ? " and assets were applied."
+                          : "."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-white"
+                    onClick={() => void fetchInstallProfileStatus(true)}
+                    disabled={loadingInstallProfileStatus || reloadingHostedProfile}
+                  >
+                    {loadingInstallProfileStatus ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Refresh profile
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setProfileReloadResult(null);
+                      setProfileReloadDialogOpen(true);
+                    }}
+                    disabled={
+                      !currentInstallProfile?.id ||
+                      loadingInstallProfileStatus ||
+                      reloadingHostedProfile
+                    }
+                  >
+                    {reloadingHostedProfile ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Reload hosted profile
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {updateStatus && updateStatus.status !== "idle" && (
               <div
                 className={`border rounded-lg p-4 ${
@@ -2164,6 +2418,102 @@ export default function SettingsPage() {
           </section>
         )}
       </div>
+
+      <Dialog
+        open={profileReloadDialogOpen}
+        onOpenChange={(open) => {
+          if (reloadingHostedProfile) return;
+          setProfileReloadDialogOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reload hosted install profile?</DialogTitle>
+            <DialogDescription>
+              This fetches the hosted profile for{" "}
+              <span className="font-mono">
+                {currentInstallProfile?.id || "this installation"}
+              </span>{" "}
+              and reapplies profile-managed settings, form presets, and pipeline
+              enablement. Existing orders, samples, users, and sequencing files are not
+              deleted.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p className="font-medium">Profile settings will be overwritten</p>
+              <p className="mt-1">
+                Values controlled by the hosted profile will be set back to the
+                currently published profile. Local edits outside that profile remain
+                operator-managed.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="profile-access-code" className="text-sm font-medium">
+                Profile access code
+              </label>
+              <Input
+                id="profile-access-code"
+                type="password"
+                value={profileAccessCode}
+                onChange={(event) => setProfileAccessCode(event.target.value)}
+                placeholder={
+                  installProfileStatus?.profileCodeEnvAvailable && installProfileEnvHint
+                    ? `Optional; server can use ${installProfileEnvHint}`
+                    : "Enter hosted profile setup code"
+                }
+                disabled={reloadingHostedProfile}
+              />
+              <p className="text-xs text-muted-foreground">
+                {installProfileEnvHint
+                  ? installProfileStatus?.profileCodeEnvAvailable
+                    ? `The server environment already provides ${installProfileEnvHint}.`
+                    : `Leave empty only if ${installProfileEnvHint}, SEQDESK_PROFILE_CODE, or SEQDESK_KEY is set on the server.`
+                  : "No recorded profile id was found, so SeqDesk cannot infer a profile-specific setup-code variable."}
+              </p>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-3 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Apply profile assets</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Also apply database assets and seed fixtures from the profile. This can
+                  download large files or reuse configured local paths.
+                </p>
+              </div>
+              <Switch
+                checked={reloadProfileIncludeAssets}
+                onCheckedChange={setReloadProfileIncludeAssets}
+                disabled={reloadingHostedProfile}
+                aria-label="Apply hosted profile assets"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setProfileReloadDialogOpen(false)}
+              disabled={reloadingHostedProfile}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void reloadHostedProfile()}
+              disabled={!canSubmitProfileReload || reloadingHostedProfile}
+            >
+              {reloadingHostedProfile ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2" />
+              )}
+              Apply hosted profile
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={wipeDialogOpen} onOpenChange={setWipeDialogOpen}>
         <DialogContent>

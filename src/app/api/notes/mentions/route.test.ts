@@ -149,7 +149,12 @@ describe("GET /api/notes/mentions", () => {
         expect.objectContaining({ type: "file", id: "reads/SAMPLE-001_R1.fastq.gz" }),
         expect.objectContaining({ type: "assembly", id: "assembly-1", label: "Assembly A" }),
         expect.objectContaining({ type: "bin", id: "bin-1", label: "Bin A" }),
-        expect.objectContaining({ type: "pipeline-run", id: "run-1", label: "FASTQC-001" }),
+        expect.objectContaining({
+          type: "pipeline-run",
+          id: "run-1",
+          label: "FASTQC-001",
+          href: "/orders/order-1/sequencing?pipeline=fastqc",
+        }),
         expect.objectContaining({ type: "sequencing-artifact", id: "artifact-1", label: "multiqc.html" }),
         expect.objectContaining({ type: "pipeline-artifact", id: "pipeline-artifact-1", label: "FastQC report" }),
       ])

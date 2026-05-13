@@ -573,6 +573,7 @@ describe("GET /api/admin/settings/pipelines", () => {
           expect.objectContaining({
             id: "params-file",
             status: "ready",
+            detail: expect.stringContaining(`${process.cwd()}/package.json`),
           }),
         ]),
       })

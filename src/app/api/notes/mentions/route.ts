@@ -64,6 +64,13 @@ function formatSampleDetail(
   return compactDetail(idDetail, titleDetail, formatTaxon(sample.scientificName, sample.taxId), context);
 }
 
+function getOrderPipelineHref(orderId: string, pipelineId?: string | null): string {
+  const baseHref = `/orders/${orderId}/sequencing`;
+  return pipelineId
+    ? `${baseHref}?pipeline=${encodeURIComponent(pipelineId)}`
+    : `${baseHref}?view=analysis`;
+}
+
 function matchesQuery(item: NoteMentionItem, query: string): boolean {
   if (!query) return true;
   const haystack = [item.label, item.detail, item.type].filter(Boolean).join(" ").toLowerCase();
@@ -300,7 +307,7 @@ async function getOrderMentionItems(orderId: string, session: NotesMentionSessio
       label: run.runNumber,
       detail: compactDetail(run.pipelineId, run.status),
       group: "pipeline-runs",
-      href: run.orderId ? `/orders/${run.orderId}/pipelines` : run.studyId ? `/studies/${run.studyId}?tab=pipelines` : null,
+      href: run.orderId ? getOrderPipelineHref(run.orderId, run.pipelineId) : run.studyId ? `/studies/${run.studyId}?tab=pipelines` : null,
     });
   }
 
@@ -505,7 +512,7 @@ async function getStudyMentionItems(studyId: string, session: NotesMentionSessio
       label: run.runNumber,
       detail: compactDetail(run.pipelineId, run.status),
       group: "pipeline-runs",
-      href: run.studyId ? `/studies/${run.studyId}?tab=pipelines` : run.orderId ? `/orders/${run.orderId}/pipelines` : null,
+      href: run.studyId ? `/studies/${run.studyId}?tab=pipelines` : run.orderId ? getOrderPipelineHref(run.orderId, run.pipelineId) : null,
     });
   }
 

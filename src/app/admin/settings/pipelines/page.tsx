@@ -396,6 +396,22 @@ function isSameConfigValue(a: unknown, b: unknown) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function isUnsetConfigValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
+function formatConfigValue(value: unknown): string {
+  if (isUnsetConfigValue(value)) return "Not set";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -1379,6 +1395,22 @@ export default function PipelineSettingsPage() {
   const configEntries = selectedPipeline
     ? Object.entries(selectedPipeline.configSchema.properties)
     : [];
+  const selectedSchemaKeys = new Set(configEntries.map(([key]) => key));
+  const selectedDatabaseDownloads = selectedPipeline?.databaseDownloads || [];
+  const storedConfigEntries = selectedPipeline
+    ? Object.entries(localConfig).filter(([, value]) => !isUnsetConfigValue(value))
+    : [];
+  const unsetConfigEntries = configEntries.filter(([key]) =>
+    isUnsetConfigValue(localConfig[key])
+  );
+  const extraStoredConfigEntries = storedConfigEntries.filter(
+    ([key]) => !selectedSchemaKeys.has(key)
+  );
+  const showResolvedSettings =
+    selectedPipeline &&
+    (selectedDatabaseDownloads.length > 0 ||
+      storedConfigEntries.length > 0 ||
+      configEntries.length > 0);
   const metadataHints = selectedPipeline
     ? getPipelineMetadataHints(selectedPipeline.pipelineId)
     : [];
@@ -3215,6 +3247,133 @@ export default function PipelineSettingsPage() {
                   </div>
                 </div>
               </div>
+
+              {showResolvedSettings && (
+                <div className="rounded-lg border border-border bg-background p-3 mb-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">Resolved settings</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Values currently stored for this pipeline, including install-profile database settings.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-xs font-normal">
+                      {storedConfigEntries.length} set / {configEntries.length} editable
+                    </Badge>
+                  </div>
+
+                  {selectedDatabaseDownloads.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Database assets
+                      </p>
+                      {selectedDatabaseDownloads.map((database) => {
+                        const localConfiguredPath =
+                          typeof localConfig[database.configKey] === "string"
+                            ? String(localConfig[database.configKey]).trim()
+                            : "";
+                        const configuredPath =
+                          localConfiguredPath || database.configuredPath || "";
+                        const detectedPath = database.path || "";
+                        return (
+                          <div
+                            key={database.id}
+                            className="rounded-md border border-border/70 bg-muted/20 p-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium">{database.label}</p>
+                                <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                                  {database.configKey}
+                                </p>
+                              </div>
+                              <Badge
+                                variant={
+                                  database.status === "downloaded" ? "outline" : "secondary"
+                                }
+                                className="text-xs"
+                              >
+                                {database.status === "downloaded" ? "Ready" : "Missing"}
+                              </Badge>
+                            </div>
+                            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                              <div>
+                                <p className="text-muted-foreground">Configured path</p>
+                                <p className="font-mono break-all">
+                                  {configuredPath || "Not set"}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground">Detected path</p>
+                                <p className="font-mono break-all">
+                                  {detectedPath || "Not found"}
+                                </p>
+                              </div>
+                              {database.expectedPath && (
+                                <div className="sm:col-span-2">
+                                  <p className="text-muted-foreground">Default download path</p>
+                                  <p className="font-mono break-all">
+                                    {database.expectedPath}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            {database.detail && (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {database.detail}
+                              </p>
+                            )}
+                            {selectedPipeline.pipelineId === "metaxpath" &&
+                              database.configKey === "paramsFile" && (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  This params file is the source for MetaxPath database paths such as metaxDmpDir.
+                                </p>
+                              )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {extraStoredConfigEntries.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Stored outside editable fields
+                      </p>
+                      <div className="mt-2 grid gap-2">
+                        {extraStoredConfigEntries.map(([key, value]) => (
+                          <div
+                            key={key}
+                            className="rounded-md border border-border/70 bg-muted/20 p-2"
+                          >
+                            <p className="text-xs font-mono text-muted-foreground">
+                              {key}
+                            </p>
+                            <p className="text-xs font-mono break-all mt-1">
+                              {formatConfigValue(value)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {unsetConfigEntries.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Unset editable fields
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {unsetConfigEntries.map(([key]) => (
+                          <Badge key={key} variant="secondary" className="font-mono text-[11px]">
+                            {key}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {metadataHints.length > 0 && (
                 <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 mb-4">
