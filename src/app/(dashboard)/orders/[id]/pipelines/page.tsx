@@ -51,6 +51,7 @@ import {
 import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
+type ExecutionModeRequest = "default" | "local" | "slurm";
 
 function getApiErrorMessage(
   payload: { error?: unknown; details?: unknown } | null,
@@ -91,6 +92,10 @@ type AdminPipeline = {
     properties: Record<string, PipelineConfigProperty>;
   };
   defaultConfig: Record<string, unknown>;
+  executionPolicy?: {
+    mode: "local" | "slurm";
+    source: "global" | "pipeline" | "run";
+  };
   input: {
     supportedScopes: string[];
     perSample: {
@@ -196,6 +201,7 @@ export default function OrderPipelinesPage({
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const [selectedSamples, setSelectedSamples] = useState<Set<string>>(new Set());
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
@@ -258,6 +264,7 @@ export default function OrderPipelinesPage({
   useEffect(() => {
     if (!selectedPipeline) return;
     setLocalConfig({ ...(selectedPipeline.config || selectedPipeline.defaultConfig || {}) });
+    setExecutionMode(selectedPipeline.executionPolicy?.mode || "default");
   }, [selectedPipeline]);
 
   const readinessIssues = getReadinessIssues(
@@ -329,6 +336,7 @@ export default function OrderPipelinesPage({
           orderId: id,
           sampleIds: Array.from(selectedSamples),
           config: localConfig,
+          executionMode,
         }),
       });
 
@@ -728,6 +736,34 @@ export default function OrderPipelinesPage({
                       </div>
                     </div>
                   )}
+
+                  {selectedPipeline ? (
+                    <div className="space-y-2">
+                      <label
+                        htmlFor="order-pipeline-execution-mode"
+                        className="text-sm font-medium"
+                      >
+                        Execution Target
+                      </label>
+                      <select
+                        id="order-pipeline-execution-mode"
+                        value={executionMode}
+                        onChange={(event) =>
+                          setExecutionMode(event.target.value as ExecutionModeRequest)
+                        }
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="default">
+                          Default ({selectedPipeline.executionPolicy?.mode === "slurm" ? "SLURM" : "Local"})
+                        </option>
+                        <option value="local">Local</option>
+                        <option value="slurm">SLURM</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        Policy source: {selectedPipeline.executionPolicy?.source || "global"}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <Button
                     className="w-full"

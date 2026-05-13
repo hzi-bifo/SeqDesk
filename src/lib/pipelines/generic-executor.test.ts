@@ -264,6 +264,8 @@ describe("generic-executor", () => {
     expect(nextflowConfig).toContain("standard {}");
     expect(nextflowConfig).toContain("conda {");
     expect(nextflowConfig).toContain("conda.enabled = true");
+    expect(nextflowConfig).not.toContain("executor = 'slurm'");
+    expect(script).not.toContain("#SBATCH");
 
     const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
     expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");

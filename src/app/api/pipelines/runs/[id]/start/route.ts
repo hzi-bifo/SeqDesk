@@ -7,7 +7,6 @@ import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
-import type { ExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
   detectRuntimePlatform,
   isMacOsArmRuntime,
@@ -21,6 +20,12 @@ import {
   getPipelineRunConfigIssues,
   normalizePipelineRunConfig,
 } from '@/lib/pipelines/simulate-reads-config';
+import {
+  buildExecutionProfileJson,
+  normalizeRunExecutionOverride,
+  parseRunExecutionProfileRequest,
+  resolvePipelineExecutionPolicy,
+} from '@/lib/pipelines/execution-policy';
 import { summarizePipelineFailure } from '@/lib/pipelines/run-log-summary';
 import { isDemoSession } from '@/lib/demo/server';
 import { spawn, exec } from 'child_process';
@@ -56,38 +61,10 @@ function resolveEffectiveProfile(
   return parts.join(',');
 }
 
-function splitSbatchOptions(value: string): string[] {
-  const tokens = value.match(/(?:[^\s"'\\]+|"[^"]*"|'[^']*')+/g);
-  if (!tokens) return [];
-
-  return tokens.map((token) => {
-    if (
-      (token.startsWith('"') && token.endsWith('"')) ||
-      (token.startsWith("'") && token.endsWith("'"))
-    ) {
-      return token.slice(1, -1);
-    }
-    return token;
-  });
-}
-
 function buildSbatchSubmitArgs(
-  scriptPath: string,
-  executionSettings: ExecutionSettings
+  scriptPath: string
 ): string[] {
-  const args = ['--parsable'];
-  const queue = executionSettings.slurmQueue?.trim();
-  if (queue) {
-    args.push('-p', queue);
-  }
-
-  const options = executionSettings.slurmOptions?.trim();
-  if (options) {
-    args.push(...splitSbatchOptions(options));
-  }
-
-  args.push(scriptPath);
-  return args;
+  return ['--parsable', scriptPath];
 }
 
 async function finalizeLocalRun(
@@ -163,6 +140,26 @@ export async function POST(
     }
 
     const { id } = await params;
+    let startBody: Record<string, unknown> = {};
+    try {
+      const parsed = await request.json();
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        startBody = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Empty body is allowed.
+    }
+    if (
+      startBody.executionMode !== undefined &&
+      !['default', 'local', 'slurm'].includes(
+        String(startBody.executionMode).trim().toLowerCase()
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'executionMode must be one of: default, local, slurm' },
+        { status: 400 }
+      );
+    }
 
     // Get the run
     const run = await db.pipelineRun.findUnique({
@@ -284,22 +281,17 @@ export async function POST(
         );
       }
     } else {
-      try {
-        const body = await request.json();
-        if (Array.isArray(body?.sampleIds)) {
-          if (
-            body.sampleIds.length === 0 ||
-            body.sampleIds.some((id: unknown) => typeof id !== 'string')
-          ) {
-            return NextResponse.json(
-              { error: 'Run sample selection is invalid' },
-              { status: 400 }
-            );
-          }
-          selectedSampleIds = body.sampleIds;
+      if (Array.isArray(startBody.sampleIds)) {
+        if (
+          startBody.sampleIds.length === 0 ||
+          startBody.sampleIds.some((id: unknown) => typeof id !== 'string')
+        ) {
+          return NextResponse.json(
+            { error: 'Run sample selection is invalid' },
+            { status: 400 }
+          );
         }
-      } catch {
-        // No body provided, ignore
+        selectedSampleIds = startBody.sampleIds;
       }
     }
 
@@ -324,12 +316,25 @@ export async function POST(
 
     // Get execution settings
     const executionSettings = await getExecutionSettings();
+    const storedExecutionRequest =
+      parseRunExecutionProfileRequest(run.executionProfile) ||
+      normalizeRunExecutionOverride({ executionMode: run.executionMode });
+    const requestExecutionOverride = normalizeRunExecutionOverride(startBody);
+    const executionPolicy = resolvePipelineExecutionPolicy({
+      pipelineId: run.pipelineId,
+      settings: executionSettings,
+      runOverride: requestExecutionOverride || storedExecutionRequest,
+    });
+    const effectiveExecutionSettings = executionPolicy.settings;
+    const executionProfileJson = buildExecutionProfileJson(executionPolicy);
 
     // Log settings for debugging
     console.log('[Start Pipeline] Execution settings:', {
-      condaPath: executionSettings.condaPath,
-      pipelineRunDir: executionSettings.pipelineRunDir,
-      useSlurm: executionSettings.useSlurm,
+      condaPath: effectiveExecutionSettings.condaPath,
+      pipelineRunDir: effectiveExecutionSettings.pipelineRunDir,
+      useSlurm: effectiveExecutionSettings.useSlurm,
+      executionMode: executionPolicy.mode,
+      executionSource: executionPolicy.source,
     });
 
     const resolvedDataBasePath = await getResolvedDataBasePath();
@@ -342,7 +347,7 @@ export async function POST(
     }
 
     // Validate pipelineRunDir
-    if (!executionSettings.pipelineRunDir || executionSettings.pipelineRunDir === '/') {
+    if (!effectiveExecutionSettings.pipelineRunDir || effectiveExecutionSettings.pipelineRunDir === '/') {
       return NextResponse.json(
         { error: 'Pipeline run directory not configured properly. Set it in Admin > Infrastructure.' },
         { status: 400 }
@@ -350,7 +355,7 @@ export async function POST(
     }
 
     // Warn if conda path is not configured (nextflow won't be found)
-    if (!executionSettings.condaPath) {
+    if (!effectiveExecutionSettings.condaPath) {
       console.warn('[Start Pipeline] WARNING: condaPath is not configured - nextflow may not be found');
     }
 
@@ -365,20 +370,20 @@ export async function POST(
       );
     }
 
-    const effectiveProfile = resolveEffectiveProfile(executionSettings.nextflowProfile);
+    const effectiveProfile = resolveEffectiveProfile(effectiveExecutionSettings.nextflowProfile);
     const profileParts = effectiveProfile
       ? effectiveProfile.split(',').map((p) => p.trim()).filter(Boolean)
       : [];
 
-    const runtimePlatform = await detectRuntimePlatform(executionSettings.condaPath);
+    const runtimePlatform = await detectRuntimePlatform(effectiveExecutionSettings.condaPath);
     const runtimeDetails = `${runtimePlatform.raw} (${runtimePlatform.source})`;
 
     const localCondaCompatibilityMessage =
       !isSubmgPipeline
         ? getLocalCondaCompatibilityBlockMessage({
             manifest: pkg.manifest,
-            runtimeMode: executionSettings.runtimeMode,
-            useSlurm: executionSettings.useSlurm,
+            runtimeMode: effectiveExecutionSettings.runtimeMode,
+            useSlurm: effectiveExecutionSettings.useSlurm,
             runtimePlatform,
           })
         : null;
@@ -396,7 +401,7 @@ export async function POST(
       });
       return NextResponse.json({ error: localCondaCompatibilityMessage }, { status: 400 });
     }
-    if (executionSettings.useSlurm && isMacOsArmRuntime(runtimePlatform)) {
+    if (effectiveExecutionSettings.useSlurm && isMacOsArmRuntime(runtimePlatform)) {
       console.warn(
         `[Start Pipeline] macOS ARM controller detected (${runtimeDetails}), but proceeding because SLURM is enabled.`
       );
@@ -406,8 +411,8 @@ export async function POST(
     // Nextflow uses locally installed tools (e.g. fastqc from Homebrew)
     const skipConda = !isSubmgPipeline && shouldSkipCondaOnMacArm({
       manifest: pkg.manifest,
-      runtimeMode: executionSettings.runtimeMode,
-      useSlurm: executionSettings.useSlurm,
+      runtimeMode: effectiveExecutionSettings.runtimeMode,
+      useSlurm: effectiveExecutionSettings.useSlurm,
       runtimePlatform,
     });
     if (skipConda) {
@@ -435,9 +440,9 @@ export async function POST(
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    const condaBin = await resolveCondaBin(executionSettings.condaPath);
+    const condaBin = await resolveCondaBin(effectiveExecutionSettings.condaPath);
     const nextflowAvailable = await commandExists('nextflow');
-    if (!condaBin && !nextflowAvailable && !executionSettings.useSlurm && !isSubmgPipeline) {
+    if (!condaBin && !nextflowAvailable && !effectiveExecutionSettings.useSlurm && !isSubmgPipeline) {
       const message =
         'Neither conda nor nextflow were found. Configure a conda path, or install nextflow on the host.';
       await db.pipelineRun.update({
@@ -452,30 +457,40 @@ export async function POST(
       });
       return NextResponse.json({ error: message }, { status: 400 });
     }
-    if (!condaBin && nextflowAvailable && !executionSettings.useSlurm && !isSubmgPipeline) {
+    if (!condaBin && nextflowAvailable && !effectiveExecutionSettings.useSlurm && !isSubmgPipeline) {
       console.warn(
         '[Start Pipeline] Conda not found, but nextflow is available directly. Proceeding without conda bootstrap.'
       );
     }
-    if (!condaBin && executionSettings.useSlurm) {
+    if (!condaBin && effectiveExecutionSettings.useSlurm) {
       console.warn(
         '[Start Pipeline] Conda not found on the web host. Proceeding because SLURM is enabled.'
       );
     }
 
     const normalizedConfigJson = JSON.stringify(config);
+    const pendingRunUpdate: Record<string, unknown> = {
+      config: normalizedConfigJson,
+      executionMode: executionPolicy.mode,
+      executionProfile: executionProfileJson,
+    };
+    if (selectedSampleIds && !run.inputSampleIds) {
+      pendingRunUpdate.inputSampleIds = JSON.stringify(selectedSampleIds);
+    }
+
     if (selectedSampleIds && !run.inputSampleIds) {
       await db.pipelineRun.update({
         where: { id: run.id },
-        data: {
-          inputSampleIds: JSON.stringify(selectedSampleIds),
-          config: normalizedConfigJson,
-        },
+        data: pendingRunUpdate,
       });
-    } else if (run.config !== normalizedConfigJson) {
+    } else if (
+      run.config !== normalizedConfigJson ||
+      run.executionMode !== executionPolicy.mode ||
+      run.executionProfile !== executionProfileJson
+    ) {
       await db.pipelineRun.update({
         where: { id: run.id },
-        data: { config: normalizedConfigJson },
+        data: pendingRunUpdate,
       });
     }
 
@@ -487,7 +502,7 @@ export async function POST(
           sampleIds: selectedSampleIds,
           config,
           executionSettings: {
-            ...executionSettings,
+            ...effectiveExecutionSettings,
             dataBasePath: resolvedDataBasePath.dataBasePath,
             nextflowProfile: effectiveProfile,
           },
@@ -501,7 +516,7 @@ export async function POST(
             : target,
           config,
           executionSettings: {
-            ...executionSettings,
+            ...effectiveExecutionSettings,
             dataBasePath: resolvedDataBasePath.dataBasePath,
             nextflowProfile: effectiveProfile,
             skipConda,
@@ -557,7 +572,7 @@ export async function POST(
         return NextResponse.json({ error: message }, { status: 500 });
       }
 
-      if (executionSettings.useSlurm) {
+      if (effectiveExecutionSettings.useSlurm) {
         // Verify sbatch is available
         const sbatchAvailable = await commandExists('sbatch');
         if (!sbatchAvailable) {
@@ -577,7 +592,7 @@ export async function POST(
 
         // Submit to SLURM
         try {
-          const sbatchArgs = buildSbatchSubmitArgs(scriptPath, executionSettings);
+          const sbatchArgs = buildSbatchSubmitArgs(scriptPath);
           const sbatchProcess = spawn('sbatch', sbatchArgs, {
             cwd: prepResult.runFolder,
           });
@@ -639,6 +654,7 @@ export async function POST(
             status: 'queued',
             jobId,
             runFolder: prepResult.runFolder,
+            executionMode: executionPolicy.mode,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'SLURM submission failed';
@@ -696,6 +712,7 @@ export async function POST(
             status: 'running',
             pid: childProcess.pid,
             runFolder: prepResult.runFolder,
+            executionMode: executionPolicy.mode,
             message: 'Pipeline started in background. Check the Analysis dashboard for status.',
           });
         } catch (error) {
@@ -723,6 +740,7 @@ export async function POST(
       success: true,
       runId: run.id,
       runFolder: prepResult.runFolder,
+      executionMode: executionPolicy.mode,
     });
   } catch (error) {
     console.error('[Start Pipeline Run API] Error:', error);

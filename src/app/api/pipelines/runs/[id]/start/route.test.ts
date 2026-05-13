@@ -59,6 +59,23 @@ vi.mock("@/lib/pipelines/package-loader", () => ({
 }));
 
 vi.mock("@/lib/pipelines/execution-settings", () => ({
+  DEFAULT_EXECUTION_SETTINGS: {
+    useSlurm: false,
+    slurmQueue: "cpu",
+    slurmCores: 4,
+    slurmMemory: "64GB",
+    slurmTimeLimit: 12,
+    slurmOptions: "",
+    pipelineOverrides: {},
+    runtimeMode: "conda",
+    condaPath: "",
+    condaEnv: "seqdesk-pipelines",
+    nextflowProfile: "",
+    pipelineRunDir: "/data/pipeline_runs",
+    pipelineDatabaseDir: "",
+    weblogUrl: "",
+    weblogSecret: "",
+  },
   getExecutionSettings: mocks.getExecutionSettings,
 }));
 
@@ -152,7 +169,11 @@ const defaultExecutionSettings = {
   nextflowProfile: "",
   runtimeMode: "local",
   slurmQueue: "",
+  slurmCores: 4,
+  slurmMemory: "64GB",
+  slurmTimeLimit: 12,
   slurmOptions: "",
+  pipelineOverrides: {},
 };
 
 const defaultPkg = {
@@ -238,6 +259,19 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.error).toContain("demo");
+  });
+
+  it("rejects invalid executionMode in start request", async () => {
+    const response = await POST(
+      makeRequest({ executionMode: "cluster" }),
+      { params: baseParams }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "executionMode must be one of: default, local, slurm",
+    });
+    expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns 404 when run not found", async () => {
@@ -484,6 +518,163 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(body.success).toBe(true);
     expect(body.status).toBe("queued");
     expect(body.jobId).toBe("98765");
+    expect(body.executionMode).toBe("slurm");
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "sbatch",
+      ["--parsable", "/tmp/runs/run-1/run.sh"],
+      { cwd: "/tmp/runs/run-1" }
+    );
+  });
+
+  it("does not check sbatch when a run override selects local execution", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      executionMode: "local",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("running");
+    expect(body.executionMode).toBe("local");
+    expect(mocks.exec).not.toHaveBeenCalledWith(
+      expect.stringContaining("command -v sbatch"),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mocks.spawn).toHaveBeenCalledWith("bash", ["/tmp/runs/run-1/run.sh"], {
+      cwd: "/tmp/runs/run-1",
+      detached: true,
+      stdio: "ignore",
+    });
+  });
+
+  it("uses a per-pipeline MAG override to submit to SLURM", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: false,
+      pipelineOverrides: {
+        mag: {
+          mode: "slurm",
+          slurm: {
+            queue: "bigmem",
+            cores: 24,
+            memory: "256GB",
+            timeLimit: 48,
+          },
+        },
+      },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      pipelineId: "mag",
+      targetType: "study",
+      orderId: null,
+      studyId: "study-1",
+      order: null,
+      study: { samples: [{ id: "s1", reads: [] }] },
+    });
+    mocks.getPackage.mockReturnValue({
+      manifest: { name: "mag", condaCompatibility: {} },
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "24680\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("queued");
+    expect(body.executionMode).toBe("slurm");
+    expect(mocks.prepareGenericRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: "mag",
+        executionSettings: expect.objectContaining({
+          useSlurm: true,
+          slurmQueue: "bigmem",
+          slurmCores: 24,
+          slurmMemory: "256GB",
+          slurmTimeLimit: 48,
+        }),
+      })
+    );
+  });
+
+  it("lets a stored per-run SLURM request beat global local mode", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      executionProfile: JSON.stringify({
+        request: {
+          executionMode: "slurm",
+          slurm: {
+            queue: "dev",
+            cores: 6,
+          },
+        },
+      }),
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "13579\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("queued");
+    expect(body.jobId).toBe("13579");
+    expect(mocks.prepareGenericRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionSettings: expect.objectContaining({
+          useSlurm: true,
+          slurmQueue: "dev",
+          slurmCores: 6,
+        }),
+      })
+    );
   });
 
   it("returns 500 when sbatch fails with non-zero exit", async () => {
@@ -563,10 +754,10 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // finalizeLocalRun should have been called with exit code 1
     const updateCalls = mocks.db.pipelineRun.update.mock.calls;
     const failedUpdate = updateCalls.find(
-      (call: { 0: { data: { status: string } } }) => call[0].data.status === "failed"
+      (call) => call[0]?.data?.status === "failed"
     );
     expect(failedUpdate).toBeDefined();
-    expect(failedUpdate[0].data.errorTail).toContain("exited with code 1");
+    expect(failedUpdate?.[0].data.errorTail).toContain("exited with code 1");
   });
 
   it("local execution: process error event triggers finalizeLocalRun", async () => {
@@ -585,7 +776,7 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
 
     const updateCalls = mocks.db.pipelineRun.update.mock.calls;
     const failedUpdate = updateCalls.find(
-      (call: { 0: { data: { status: string } } }) => call[0].data.status === "failed"
+      (call) => call[0]?.data?.status === "failed"
     );
     expect(failedUpdate).toBeDefined();
   });
@@ -656,11 +847,11 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
 
     const updateCalls = mocks.db.pipelineRun.update.mock.calls;
     const completedUpdate = updateCalls.find(
-      (call: { 0: { data: { status: string } } }) => call[0].data.status === "completed"
+      (call) => call[0]?.data?.status === "completed"
     );
     expect(completedUpdate).toBeDefined();
-    expect(completedUpdate[0].data.progress).toBe(100);
-    expect(completedUpdate[0].data.currentStep).toBe("Completed");
+    expect(completedUpdate?.[0].data.progress).toBe(100);
+    expect(completedUpdate?.[0].data.currentStep).toBe("Completed");
     expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith("run-1", "fastqc");
   });
 
@@ -762,11 +953,10 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // Should have called update to persist the sampleIds
     const updateCalls = mocks.db.pipelineRun.update.mock.calls;
     const sampleUpdate = updateCalls.find(
-      (call: { 0: { data: { inputSampleIds?: string } } }) =>
-        call[0].data.inputSampleIds !== undefined
+      (call) => call[0]?.data?.inputSampleIds !== undefined
     );
     expect(sampleUpdate).toBeDefined();
-    expect(JSON.parse(sampleUpdate[0].data.inputSampleIds)).toEqual(["s1", "s2"]);
+    expect(JSON.parse(sampleUpdate?.[0].data.inputSampleIds)).toEqual(["s1", "s2"]);
   });
 
   it("returns 400 when conda compatibility blocks the run", async () => {

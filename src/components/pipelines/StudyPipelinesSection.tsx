@@ -72,6 +72,7 @@ import {
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 const AUTO_ASSEMBLY_SELECTION = "__auto__";
+type ExecutionModeRequest = "default" | "local" | "slurm";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,6 +156,10 @@ interface Pipeline {
     >;
   };
   defaultConfig: Record<string, unknown>;
+  executionPolicy?: {
+    mode: "local" | "slurm";
+    source: "global" | "pipeline" | "run";
+  };
   input?: {
     perSample?: {
       reads?: boolean;
@@ -871,6 +876,7 @@ export function StudyPipelinesSection({
   // --- Pipeline selection state ---
   const [selectedPipelineIdState, setSelectedPipelineId] = useState<string | null>(null);
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -1102,6 +1108,7 @@ export function StudyPipelinesSection({
   useEffect(() => {
     if (!selectedPipeline) return;
     setLocalConfig({ ...(selectedPipeline.config || selectedPipeline.defaultConfig || {}) });
+    setExecutionMode(selectedPipeline.executionPolicy?.mode || "default");
   }, [selectedPipeline]);
 
   useEffect(() => {
@@ -1205,6 +1212,7 @@ export function StudyPipelinesSection({
           studyId,
           sampleIds: Array.from(eligibleSampleIds),
           config: localConfig,
+          ...(isFacilityAdmin ? { executionMode } : {}),
         }),
       });
 
@@ -1691,6 +1699,42 @@ export function StudyPipelinesSection({
       })()}
 
       {/* Section 3: Settings */}
+      {isFacilityAdmin && selectedPipeline && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="study-pipeline-execution-mode">
+                Execution Target
+              </Label>
+              <Select
+                value={executionMode}
+                onValueChange={(value) =>
+                  setExecutionMode(value as ExecutionModeRequest)
+                }
+              >
+                <SelectTrigger
+                  id="study-pipeline-execution-mode"
+                  aria-label="Execution target"
+                  className="h-8 w-[170px] text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">
+                    Default ({selectedPipeline.executionPolicy?.mode === "slurm" ? "SLURM" : "Local"})
+                  </SelectItem>
+                  <SelectItem value="local">Local</SelectItem>
+                  <SelectItem value="slurm">SLURM</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="pb-2 text-xs text-muted-foreground">
+              Policy source: {selectedPipeline.executionPolicy?.source || "global"}
+            </p>
+          </div>
+        </div>
+      )}
+
       {selectedPipeline?.configSchema?.properties &&
         Object.entries(selectedPipeline.configSchema.properties).some(
           ([, s]) => s.enum || s.type === "boolean" || s.type === "number"

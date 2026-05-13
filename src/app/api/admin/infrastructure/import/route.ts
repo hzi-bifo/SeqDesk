@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   DEFAULT_EXECUTION_SETTINGS,
+  normalizePipelineExecutionOverrides,
+  type PipelineExecutionOverride,
   type ExecutionSettings,
 } from "@/lib/pipelines/execution-settings";
 
@@ -29,6 +31,7 @@ interface InfrastructureImportValues {
   nextflowProfile?: string;
   weblogUrl?: string;
   weblogSecret?: string;
+  pipelineOverrides?: Record<string, PipelineExecutionOverride>;
   port?: number;
 }
 
@@ -104,6 +107,105 @@ function toOptionalInt(value: unknown): number | undefined {
   return undefined;
 }
 
+function normalizeExecutionMode(value: unknown): string | undefined {
+  const mode = toOptionalString(value)?.toLowerCase();
+  if (mode === "inherit" || mode === "local" || mode === "slurm") {
+    return mode;
+  }
+  return undefined;
+}
+
+function parsePipelineExecutionOverride(value: unknown): JsonRecord | undefined {
+  const source = toRecord(value);
+  if (!source) {
+    return undefined;
+  }
+
+  const slurm = toRecord(source.slurm);
+  const nextSlurm: JsonRecord = {};
+  const mode = normalizeExecutionMode(source.mode);
+  const queue = toOptionalString(firstDefined(source.slurmQueue, slurm?.queue));
+  const cores = toOptionalInt(firstDefined(source.slurmCores, slurm?.cores));
+  const memory = toOptionalString(firstDefined(source.slurmMemory, slurm?.memory));
+  const timeLimit = toOptionalInt(firstDefined(source.slurmTimeLimit, slurm?.timeLimit));
+  const options = toOptionalString(
+    firstDefined(
+      source.slurmOptions,
+      source.clusterOptions,
+      slurm?.options,
+      slurm?.clusterOptions
+    )
+  );
+  const nextflowProfile = toOptionalString(source.nextflowProfile);
+
+  if (queue) nextSlurm.queue = queue;
+  if (cores !== undefined && cores > 0) nextSlurm.cores = cores;
+  if (memory) nextSlurm.memory = memory;
+  if (timeLimit !== undefined && timeLimit > 0) nextSlurm.timeLimit = timeLimit;
+  if (options !== undefined) nextSlurm.options = options;
+
+  const override: JsonRecord = {};
+  if (mode) override.mode = mode;
+  if (Object.keys(nextSlurm).length > 0) override.slurm = nextSlurm;
+  if (nextflowProfile) override.nextflowProfile = nextflowProfile;
+
+  return Object.keys(override).length > 0 ? override : undefined;
+}
+
+function parsePipelineExecutionOverrides(config: unknown): Record<string, PipelineExecutionOverride> {
+  const root = toRecord(config);
+  const pipelines = toRecord(root?.pipelines);
+  const execution = toRecord(pipelines?.execution);
+  const rawOverrides: Record<string, unknown> = {};
+  const candidateMaps = [
+    toRecord(pipelines?.pipelineOverrides),
+    toRecord(pipelines?.executionOverrides),
+    toRecord(execution?.pipelineOverrides),
+    toRecord(execution?.overrides),
+  ];
+
+  for (const candidate of candidateMaps) {
+    if (!candidate) continue;
+    for (const [pipelineId, rawOverride] of Object.entries(candidate)) {
+      const id = pipelineId.trim();
+      const override = parsePipelineExecutionOverride(rawOverride);
+      if (id && override) {
+        rawOverrides[id] = {
+          ...(toRecord(rawOverrides[id]) || {}),
+          ...override,
+          slurm: {
+            ...(toRecord(toRecord(rawOverrides[id])?.slurm) || {}),
+            ...(toRecord(override.slurm) || {}),
+          },
+        };
+      }
+    }
+  }
+
+  if (pipelines) {
+    for (const [pipelineId, rawPipelineConfig] of Object.entries(pipelines)) {
+      const id = pipelineId.trim();
+      const pipelineConfig = toRecord(rawPipelineConfig);
+      if (!id || !pipelineConfig) continue;
+      const override =
+        parsePipelineExecutionOverride(pipelineConfig.execution) ||
+        parsePipelineExecutionOverride(pipelineConfig.runtime);
+      if (override) {
+        rawOverrides[id] = {
+          ...(toRecord(rawOverrides[id]) || {}),
+          ...override,
+          slurm: {
+            ...(toRecord(toRecord(rawOverrides[id])?.slurm) || {}),
+            ...(toRecord(override.slurm) || {}),
+          },
+        };
+      }
+    }
+  }
+
+  return normalizePipelineExecutionOverrides(rawOverrides);
+}
+
 function hasFormConfigKeys(config: unknown): boolean {
   const root = toRecord(config);
   if (!root) {
@@ -151,6 +253,7 @@ function parseImportValues(config: unknown): InfrastructureImportValues {
   const slurm = toRecord(execution?.slurm);
   const runtime = toRecord(root.runtime);
   const app = toRecord(root.app);
+  const pipelineOverrides = parsePipelineExecutionOverrides(root);
 
   const executionMode = toOptionalString(execution?.mode)?.toLowerCase();
   const explicitUseSlurm = toOptionalBoolean(
@@ -233,6 +336,8 @@ function parseImportValues(config: unknown): InfrastructureImportValues {
     weblogSecret: toOptionalString(
       firstDefined(root.weblogSecret, execution?.weblogSecret, runtime?.weblogSecret)
     ),
+    pipelineOverrides:
+      Object.keys(pipelineOverrides).length > 0 ? pipelineOverrides : undefined,
     port: port !== undefined && port > 0 ? port : undefined,
   };
 
@@ -381,8 +486,14 @@ export async function POST(request: NextRequest) {
           ? DEFAULT_EXECUTION_SETTINGS.pipelineRunDir
           : values.pipelineRunDir;
     }
+    if (values.pipelineOverrides !== undefined) {
+      nextExecution.pipelineOverrides = {
+        ...(currentExecution.pipelineOverrides || {}),
+        ...values.pipelineOverrides,
+      };
+    }
 
-    const applied: Record<string, string | number | boolean> = {};
+    const applied: Record<string, unknown> = {};
     if (values.dataBasePath !== undefined) applied.dataBasePath = values.dataBasePath;
     if (values.pipelineRunDir !== undefined) {
       applied.pipelineRunDir = nextExecution.pipelineRunDir;
@@ -401,6 +512,9 @@ export async function POST(request: NextRequest) {
     if (values.slurmOptions !== undefined) applied.slurmOptions = values.slurmOptions;
     if (values.nextflowProfile !== undefined) {
       applied.nextflowProfile = values.nextflowProfile;
+    }
+    if (values.pipelineOverrides !== undefined) {
+      applied.pipelineOverrides = values.pipelineOverrides;
     }
     if (values.port !== undefined) applied.port = values.port;
 

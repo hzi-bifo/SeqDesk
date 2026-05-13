@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -22,6 +22,22 @@ import {
 } from "lucide-react";
 import { InfrastructureSetupStatus } from "@/components/admin/infrastructure/InfrastructureSetupStatus";
 
+type PipelineOverrideMode = "inherit" | "local" | "slurm";
+
+interface SlurmOverrideSettings {
+  queue?: string;
+  cores?: number;
+  memory?: string;
+  timeLimit?: number;
+  options?: string;
+}
+
+interface PipelineExecutionOverride {
+  mode?: PipelineOverrideMode;
+  slurm?: SlurmOverrideSettings;
+  nextflowProfile?: string;
+}
+
 interface ExecutionSettings {
   useSlurm: boolean;
   slurmQueue: string;
@@ -29,6 +45,7 @@ interface ExecutionSettings {
   slurmMemory: string;
   slurmTimeLimit: number;
   slurmOptions: string;
+  pipelineOverrides: Record<string, PipelineExecutionOverride>;
   runtimeMode: "conda";
   condaPath: string;
   condaEnv: string;
@@ -38,10 +55,39 @@ interface ExecutionSettings {
   weblogSecret: string;
 }
 
+interface PipelineSummary {
+  pipelineId: string;
+  name: string;
+  category?: string;
+  enabled: boolean;
+  download?: {
+    status?: string;
+  };
+  readiness?: {
+    items?: Array<{
+      id: string;
+      status: "ready" | "warning" | "missing";
+    }>;
+  };
+  executionPolicy?: {
+    mode: "local" | "slurm";
+    source: "global" | "pipeline" | "run";
+  };
+}
+
 interface TestResult {
   success: boolean;
   message: string;
   testing?: boolean;
+}
+
+function isInstalledPipeline(pipeline: PipelineSummary): boolean {
+  if (pipeline.download?.status === "downloaded") return true;
+  return (
+    pipeline.readiness?.items?.some(
+      (item) => item.id === "package" && item.status === "ready"
+    ) || false
+  );
 }
 
 export default function PipelineRuntimePage() {
@@ -54,6 +100,7 @@ export default function PipelineRuntimePage() {
     success: boolean;
     message: string;
   } | null>(null);
+  const [installedPipelines, setInstalledPipelines] = useState<PipelineSummary[]>([]);
 
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [execSettings, setExecSettings] = useState<ExecutionSettings>({
@@ -63,6 +110,7 @@ export default function PipelineRuntimePage() {
     slurmMemory: "64GB",
     slurmTimeLimit: 12,
     slurmOptions: "",
+    pipelineOverrides: {},
     runtimeMode: "conda",
     condaPath: "",
     condaEnv: "seqdesk-pipelines",
@@ -71,10 +119,6 @@ export default function PipelineRuntimePage() {
     weblogUrl: "",
     weblogSecret: "",
   });
-
-  useEffect(() => {
-    void fetchSettings();
-  }, []);
 
   const parseIntOrFallback = (value: string, fallback: number) => {
     const parsed = Number.parseInt(value, 10);
@@ -90,15 +134,79 @@ export default function PipelineRuntimePage() {
     });
   };
 
-  const fetchSettings = async () => {
+  const updatePipelineOverride = (
+    pipelineId: string,
+    updater: (current: PipelineExecutionOverride) => PipelineExecutionOverride
+  ) => {
+    setExecSettings((prev) => {
+      const current = prev.pipelineOverrides[pipelineId] || { mode: "inherit" };
+      const nextOverride = updater(current);
+      const nextOverrides = { ...prev.pipelineOverrides };
+      const mode = nextOverride.mode || "inherit";
+      const slurm = nextOverride.slurm || {};
+      const hasSlurm = Object.values(slurm).some(
+        (value) => value !== undefined && value !== ""
+      );
+      const hasProfile = Boolean(nextOverride.nextflowProfile?.trim());
+
+      if (mode === "inherit" && !hasSlurm && !hasProfile) {
+        delete nextOverrides[pipelineId];
+      } else {
+        nextOverrides[pipelineId] = {
+          ...nextOverride,
+          mode,
+          ...(hasSlurm ? { slurm } : {}),
+          ...(hasProfile
+            ? { nextflowProfile: nextOverride.nextflowProfile?.trim() }
+            : {}),
+        };
+      }
+
+      return {
+        ...prev,
+        pipelineOverrides: nextOverrides,
+      };
+    });
+  };
+
+  const updatePipelineSlurmOverride = (
+    pipelineId: string,
+    field: keyof SlurmOverrideSettings,
+    value: string | number | undefined
+  ) => {
+    updatePipelineOverride(pipelineId, (current) => ({
+      ...current,
+      slurm: {
+        ...(current.slurm || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/settings/pipelines/execution");
-      if (!res.ok) {
+      const [settingsRes, pipelinesRes] = await Promise.all([
+        fetch("/api/admin/settings/pipelines/execution"),
+        fetch("/api/admin/settings/pipelines"),
+      ]);
+      if (!settingsRes.ok) {
         throw new Error("Failed to load settings");
       }
-      const data = await res.json();
+      const data = await settingsRes.json();
       if (data?.settings) {
-        setExecSettings(data.settings);
+        setExecSettings((prev) => ({
+          ...prev,
+          ...data.settings,
+          pipelineOverrides: data.settings.pipelineOverrides || {},
+        }));
+      }
+      if (pipelinesRes.ok) {
+        const pipelinesData = await pipelinesRes.json();
+        setInstalledPipelines(
+          Array.isArray(pipelinesData?.pipelines)
+            ? pipelinesData.pipelines.filter(isInstalledPipeline)
+            : []
+        );
       }
     } catch (error) {
       console.error("Failed to load pipeline execution settings:", error);
@@ -106,7 +214,11 @@ export default function PipelineRuntimePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchSettings();
+  }, [fetchSettings]);
 
   const testSettingValue = async (setting: string, value?: string) => {
     setTestResults((prev) => ({
@@ -622,6 +734,185 @@ export default function PipelineRuntimePage() {
                     }
                     placeholder="e.g. slurm,conda"
                   />
+                </div>
+
+                <div className="space-y-3 pb-4 border-b">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-medium">Per-Pipeline Defaults</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Global target: {execSettings.useSlurm ? "SLURM" : "Local"}
+                      </p>
+                    </div>
+                    <Badge variant="outline">
+                      {installedPipelines.length} installed
+                    </Badge>
+                  </div>
+
+                  {installedPipelines.length === 0 ? (
+                    <div className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
+                      No pipeline packages are installed.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border">
+                      <table className="min-w-[980px] w-full text-sm">
+                        <thead className="border-b bg-muted/50 text-xs text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium">Pipeline</th>
+                            <th className="px-3 py-2 text-left font-medium">Target</th>
+                            <th className="px-3 py-2 text-left font-medium">Queue</th>
+                            <th className="px-3 py-2 text-left font-medium">Cores</th>
+                            <th className="px-3 py-2 text-left font-medium">Memory</th>
+                            <th className="px-3 py-2 text-left font-medium">Hours</th>
+                            <th className="px-3 py-2 text-left font-medium">Options</th>
+                            <th className="px-3 py-2 text-left font-medium">Profile</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {installedPipelines.map((pipeline) => {
+                            const override =
+                              execSettings.pipelineOverrides[pipeline.pipelineId] || {};
+                            const mode = override.mode || "inherit";
+                            const slurm = override.slurm || {};
+                            const slurmFieldsDisabled = mode === "local";
+
+                            return (
+                              <tr key={pipeline.pipelineId}>
+                                <td className="px-3 py-2 align-top">
+                                  <div className="font-medium">{pipeline.name}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {pipeline.pipelineId}
+                                    {pipeline.category ? ` · ${pipeline.category}` : ""}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <select
+                                    value={mode}
+                                    onChange={(event) =>
+                                      updatePipelineOverride(
+                                        pipeline.pipelineId,
+                                        (current) => ({
+                                          ...current,
+                                          mode: event.target.value as PipelineOverrideMode,
+                                        })
+                                      )
+                                    }
+                                    className="h-9 w-[128px] rounded-md border bg-background px-2 text-sm"
+                                    aria-label={`Execution target for ${pipeline.name}`}
+                                  >
+                                    <option value="inherit">
+                                      Inherit ({execSettings.useSlurm ? "SLURM" : "Local"})
+                                    </option>
+                                    <option value="local">Local</option>
+                                    <option value="slurm">SLURM</option>
+                                  </select>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    value={slurm.queue || ""}
+                                    disabled={slurmFieldsDisabled}
+                                    onChange={(event) =>
+                                      updatePipelineSlurmOverride(
+                                        pipeline.pipelineId,
+                                        "queue",
+                                        event.target.value
+                                      )
+                                    }
+                                    placeholder={execSettings.slurmQueue}
+                                    className="h-9 w-[110px]"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={slurm.cores ?? ""}
+                                    disabled={slurmFieldsDisabled}
+                                    onChange={(event) =>
+                                      updatePipelineSlurmOverride(
+                                        pipeline.pipelineId,
+                                        "cores",
+                                        event.target.value
+                                          ? parseIntOrFallback(event.target.value, execSettings.slurmCores)
+                                          : undefined
+                                      )
+                                    }
+                                    placeholder={String(execSettings.slurmCores)}
+                                    className="h-9 w-[84px]"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    value={slurm.memory || ""}
+                                    disabled={slurmFieldsDisabled}
+                                    onChange={(event) =>
+                                      updatePipelineSlurmOverride(
+                                        pipeline.pipelineId,
+                                        "memory",
+                                        event.target.value
+                                      )
+                                    }
+                                    placeholder={execSettings.slurmMemory}
+                                    className="h-9 w-[100px]"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={slurm.timeLimit ?? ""}
+                                    disabled={slurmFieldsDisabled}
+                                    onChange={(event) =>
+                                      updatePipelineSlurmOverride(
+                                        pipeline.pipelineId,
+                                        "timeLimit",
+                                        event.target.value
+                                          ? parseIntOrFallback(event.target.value, execSettings.slurmTimeLimit)
+                                          : undefined
+                                      )
+                                    }
+                                    placeholder={String(execSettings.slurmTimeLimit)}
+                                    className="h-9 w-[84px]"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    value={slurm.options || ""}
+                                    disabled={slurmFieldsDisabled}
+                                    onChange={(event) =>
+                                      updatePipelineSlurmOverride(
+                                        pipeline.pipelineId,
+                                        "options",
+                                        event.target.value
+                                      )
+                                    }
+                                    placeholder={execSettings.slurmOptions || "--account=lab"}
+                                    className="h-9 w-[160px]"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <Input
+                                    value={override.nextflowProfile || ""}
+                                    onChange={(event) =>
+                                      updatePipelineOverride(
+                                        pipeline.pipelineId,
+                                        (current) => ({
+                                          ...current,
+                                          nextflowProfile: event.target.value,
+                                        })
+                                      )
+                                    }
+                                    placeholder={execSettings.nextflowProfile || "conda"}
+                                    className="h-9 w-[130px]"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4">

@@ -21,9 +21,10 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
     slurmQueue: "cpu",
     slurmCores: 4,
     slurmMemory: "64GB",
-    slurmTimeLimit: 12,
-    slurmOptions: "",
-    runtimeMode: "conda",
+	    slurmTimeLimit: 12,
+	    slurmOptions: "",
+	    pipelineOverrides: {},
+	    runtimeMode: "conda",
     condaPath: "",
     condaEnv: "seqdesk-pipelines",
     nextflowProfile: "",
@@ -32,9 +33,11 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
     weblogUrl: "",
     weblogSecret: "",
   },
-  getExecutionSettings: mocks.getExecutionSettings,
-  saveExecutionSettings: mocks.saveExecutionSettings,
-}));
+	  getExecutionSettings: mocks.getExecutionSettings,
+	  normalizePipelineExecutionOverrides: (value: unknown) =>
+	    value && typeof value === "object" && !Array.isArray(value) ? value : {},
+	  saveExecutionSettings: mocks.saveExecutionSettings,
+	}));
 
 import { GET, POST } from "./route";
 
@@ -77,7 +80,7 @@ describe("POST /api/admin/settings/pipelines/execution", () => {
     mocks.saveExecutionSettings.mockResolvedValue(undefined);
   });
 
-  it("saves valid execution settings", async () => {
+	  it("saves valid execution settings", async () => {
     const request = new NextRequest(
       "http://localhost/api/admin/settings/pipelines/execution",
       {
@@ -98,8 +101,50 @@ describe("POST /api/admin/settings/pipelines/execution", () => {
     expect(body.success).toBe(true);
     expect(body.settings.useSlurm).toBe(true);
     expect(body.settings.slurmQueue).toBe("gpu");
-    expect(mocks.saveExecutionSettings).toHaveBeenCalledTimes(1);
-  });
+	    expect(mocks.saveExecutionSettings).toHaveBeenCalledTimes(1);
+	  });
+
+	  it("saves per-pipeline execution overrides", async () => {
+	    const request = new NextRequest(
+	      "http://localhost/api/admin/settings/pipelines/execution",
+	      {
+	        method: "POST",
+	        headers: { "content-type": "application/json" },
+	        body: JSON.stringify({
+	          useSlurm: false,
+	          pipelineRunDir: "/data/runs",
+	          pipelineOverrides: {
+	            mag: {
+	              mode: "slurm",
+	              slurm: {
+	                queue: "bigmem",
+	                cores: 24,
+	              },
+	            },
+	          },
+	        }),
+	      }
+	    );
+
+	    const response = await POST(request);
+	    const body = await response.json();
+
+	    expect(response.status).toBe(200);
+	    expect(body.settings.pipelineOverrides.mag.mode).toBe("slurm");
+	    expect(mocks.saveExecutionSettings).toHaveBeenCalledWith(
+	      expect.objectContaining({
+	        pipelineOverrides: {
+	          mag: {
+	            mode: "slurm",
+	            slurm: {
+	              queue: "bigmem",
+	              cores: 24,
+	            },
+	          },
+	        },
+	      })
+	    );
+	  });
 
   it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue({

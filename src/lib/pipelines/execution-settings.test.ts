@@ -73,6 +73,22 @@ describe("execution-settings", () => {
           slurmCores: 16,
           runtimeMode: "docker",
           condaPath: "/opt/conda",
+          pipelineOverrides: {
+            mag: {
+              mode: "slurm",
+              slurm: {
+                queue: "bigmem",
+                cores: "24",
+              },
+              nextflowProfile: "slurm",
+            },
+            fastqc: {
+              mode: "bad",
+              slurm: {
+                cores: 0,
+              },
+            },
+          },
         },
       }),
     });
@@ -84,6 +100,16 @@ describe("execution-settings", () => {
     expect(result.condaPath).toBe("/opt/conda");
     expect(result.runtimeMode).toBe("conda");
     expect(result.pipelineRunDir).toBe(DEFAULT_EXECUTION_SETTINGS.pipelineRunDir);
+    expect(result.pipelineOverrides).toEqual({
+      mag: {
+        mode: "slurm",
+        slurm: {
+          queue: "bigmem",
+          cores: 24,
+        },
+        nextflowProfile: "slurm",
+      },
+    });
   });
 
   it("prefers file/env execution config over database settings", async () => {
@@ -97,6 +123,15 @@ describe("execution-settings", () => {
               path: "/opt/homebrew/Caskroom/miniconda/base",
               environment: "seqdesk-pipelines",
             },
+            pipelineOverrides: {
+              metaxpath: {
+                mode: "slurm",
+                slurm: {
+                  queue: "long",
+                  memory: "128GB",
+                },
+              },
+            },
           },
         },
       },
@@ -105,6 +140,7 @@ describe("execution-settings", () => {
         "pipelines.execution.runDirectory": "file",
         "pipelines.execution.conda.path": "file",
         "pipelines.execution.conda.environment": "file",
+        "pipelines.execution.pipelineOverrides": "file",
       },
       loadedAt: new Date("2026-03-13T00:00:00Z"),
     });
@@ -124,6 +160,15 @@ describe("execution-settings", () => {
     expect(result.pipelineRunDir).toBe(TEST_RUN_DIRECTORY);
     expect(result.condaPath).toBe("/opt/homebrew/Caskroom/miniconda/base");
     expect(result.condaEnv).toBe("seqdesk-pipelines");
+    expect(result.pipelineOverrides).toEqual({
+      metaxpath: {
+        mode: "slurm",
+        slurm: {
+          queue: "long",
+          memory: "128GB",
+        },
+      },
+    });
   });
 
   it("saveExecutionSettings creates pipelineExecution payload when none exists", async () => {
@@ -153,6 +198,15 @@ describe("execution-settings", () => {
   it("saveExecutionSettings preserves unrelated extra settings", async () => {
     const executionSettings = makeSettings({
       weblogUrl: "https://example.test/webhook",
+      pipelineOverrides: {
+        mag: {
+          mode: "slurm",
+          slurm: {
+            queue: "bigmem",
+            cores: 16,
+          },
+        },
+      },
     });
 
     mocks.db.siteSettings.findUnique.mockResolvedValue({

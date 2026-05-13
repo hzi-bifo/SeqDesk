@@ -9,6 +9,7 @@ import {
   resolvePipelineEnabled,
 } from '@/lib/pipelines/enablement';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
+import { resolvePipelineExecutionPolicy } from '@/lib/pipelines/execution-policy';
 import { getPackage, getPackageManifest, type PackageManifest } from '@/lib/pipelines/package-loader';
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
 import {
@@ -332,6 +333,10 @@ export async function GET(request: NextRequest) {
         resolvedConfig,
         databaseDownloads,
       });
+      const executionPolicy = resolvePipelineExecutionPolicy({
+        pipelineId,
+        settings: executionSettings,
+      });
 
       return {
         pipelineId,
@@ -352,6 +357,12 @@ export async function GET(request: NextRequest) {
         visibility: definition.visibility,
         requires: definition.requires,
         outputs: definition.outputs,
+        executionPolicy: {
+          mode: executionPolicy.mode,
+          source: executionPolicy.source,
+          slurm: executionPolicy.profile.slurm || null,
+          nextflowProfile: executionPolicy.profile.nextflowProfile,
+        },
         download: downloadStatus,
         databaseDownloads,
         readiness,

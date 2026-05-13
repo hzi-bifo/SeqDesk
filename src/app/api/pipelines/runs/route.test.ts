@@ -241,6 +241,25 @@ describe("POST /api/pipelines/runs", () => {
     });
   });
 
+  it("rejects invalid executionMode", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "simulate-reads",
+          orderId: "order-1",
+          executionMode: "cluster",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "executionMode must be one of: default, local, slurm",
+    });
+    expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
+  });
+
   it("rejects disabled pipelines before creating a run", async () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       extraSettings: JSON.stringify({
@@ -417,5 +436,58 @@ describe("POST /api/pipelines/runs", () => {
         targetType: "order",
       },
     });
+  });
+
+  it("persists a per-run SLURM execution request", async () => {
+    mocks.db.pipelineRun.create.mockResolvedValueOnce({
+      id: "run-slurm",
+      runNumber: "SIMULATE-READS-124",
+      status: "pending",
+      pipelineId: "simulate-reads",
+      studyId: null,
+      orderId: "order-1",
+      targetType: "order",
+      executionMode: "slurm",
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "simulate-reads",
+          orderId: "order-1",
+          executionMode: "slurm",
+          slurm: {
+            queue: "dev",
+            cores: 4,
+            memory: "16GB",
+            timeLimit: 2,
+            options: "--account=seqdesk",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        executionMode: "slurm",
+        executionProfile: JSON.stringify({
+          request: {
+            executionMode: "slurm",
+            slurm: {
+              queue: "dev",
+              cores: 4,
+              memory: "16GB",
+              timeLimit: 2,
+              options: "--account=seqdesk",
+            },
+          },
+        }),
+      }),
+    });
+
+    const body = await response.json();
+    expect(body.run.executionMode).toBe("slurm");
   });
 });

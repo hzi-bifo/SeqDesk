@@ -139,6 +139,23 @@ vi.mock("@/lib/pipelines", () => ({
 }));
 
 vi.mock("@/lib/pipelines/execution-settings", () => ({
+  DEFAULT_EXECUTION_SETTINGS: {
+    useSlurm: false,
+    slurmQueue: "cpu",
+    slurmCores: 4,
+    slurmMemory: "64GB",
+    slurmTimeLimit: 12,
+    slurmOptions: "",
+    pipelineOverrides: {},
+    runtimeMode: "conda",
+    condaPath: "",
+    condaEnv: "seqdesk-pipelines",
+    nextflowProfile: "",
+    pipelineRunDir: "/data/pipeline_runs",
+    pipelineDatabaseDir: "",
+    weblogUrl: "",
+    weblogSecret: "",
+  },
   getExecutionSettings: mocks.getExecutionSettings,
 }));
 
@@ -329,6 +346,48 @@ describe("GET /api/admin/settings/pipelines", () => {
     expect(payload.pipelines).toEqual([
       expect.objectContaining({ pipelineId: "mag" }),
     ]);
+  });
+
+  it("includes resolved execution policy for pipeline overrides", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      pipelineRunDir: "/tmp/seqdesk-runs",
+      useSlurm: false,
+      slurmQueue: "cpu",
+      slurmCores: 4,
+      slurmMemory: "64GB",
+      slurmTimeLimit: 12,
+      slurmOptions: "",
+      nextflowProfile: "",
+      pipelineOverrides: {
+        mag: {
+          mode: "slurm",
+          slurm: {
+            queue: "bigmem",
+            cores: 24,
+          },
+        },
+      },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines?catalog=study")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.pipelines[0]).toEqual(
+      expect.objectContaining({
+        pipelineId: "mag",
+        executionPolicy: expect.objectContaining({
+          mode: "slurm",
+          source: "pipeline",
+          slurm: expect.objectContaining({
+            queue: "bigmem",
+            cores: 24,
+          }),
+        }),
+      })
+    );
   });
 
   it("returns empty pipelines when getAllPipelineIds returns empty array", async () => {

@@ -203,6 +203,68 @@ describe("POST /api/admin/infrastructure/import", () => {
     expect(body.applied.condaPath).toBe("/opt/conda");
   });
 
+  it("imports per-pipeline execution overrides from hosted profile JSON", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          pipelines: {
+            execution: {
+              mode: "local",
+              pipelineOverrides: {
+                mag: {
+                  mode: "slurm",
+                  slurm: {
+                    queue: "bigmem",
+                    cores: "24",
+                    memory: "256GB",
+                    timeLimit: 48,
+                    options: "--account=seqdesk",
+                  },
+                  nextflowProfile: "slurm",
+                },
+              },
+            },
+            metaxpath: {
+              runtime: {
+                mode: "slurm",
+                slurmQueue: "long",
+                slurmCores: 12,
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied.pipelineOverrides).toEqual({
+      mag: {
+        mode: "slurm",
+        slurm: {
+          queue: "bigmem",
+          cores: 24,
+          memory: "256GB",
+          timeLimit: 48,
+          options: "--account=seqdesk",
+        },
+        nextflowProfile: "slurm",
+      },
+      metaxpath: {
+        mode: "slurm",
+        slurm: {
+          queue: "long",
+          cores: 12,
+        },
+      },
+    });
+
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    const extraSettings = JSON.parse(upsertCall.update.extraSettings);
+    expect(extraSettings.pipelineExecution.pipelineOverrides.mag.mode).toBe("slurm");
+    expect(extraSettings.pipelineExecution.pipelineOverrides.metaxpath.slurm.queue).toBe("long");
+  });
+
   it("dry run with port includes warning about restart", async () => {
     const response = await POST(
       makeRequest({

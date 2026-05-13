@@ -432,6 +432,8 @@ model PipelineRun {
   // Execution details
   runFolder   String? // Path to run directory
   queueJobId  String? // SLURM job ID or task queue ID
+  executionMode String? // resolved execution target: local, slurm
+  executionProfile String? // JSON snapshot of non-secret execution policy used for this run
   progress    Int? // 0-100
   currentStep String? // "Running MEGAHIT..."
 

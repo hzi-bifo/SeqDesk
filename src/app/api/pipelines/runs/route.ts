@@ -11,6 +11,10 @@ import {
   getPipelineRunConfigIssues,
   normalizePipelineRunConfig,
 } from '@/lib/pipelines/simulate-reads-config';
+import {
+  normalizeRunExecutionOverride,
+  serializeRunExecutionRequest,
+} from '@/lib/pipelines/execution-policy';
 import { isDemoSession } from '@/lib/demo/server';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
@@ -160,6 +164,17 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { pipelineId, studyId, orderId, sampleIds, config } = body;
     let requestedSampleIds: string[] | undefined;
+    const executionRequest = normalizeRunExecutionOverride(body);
+
+    if (
+      body.executionMode !== undefined &&
+      !['default', 'local', 'slurm'].includes(String(body.executionMode).trim().toLowerCase())
+    ) {
+      return NextResponse.json(
+        { error: 'executionMode must be one of: default, local, slurm' },
+        { status: 400 }
+      );
+    }
 
     if (sampleIds !== undefined) {
       if (!Array.isArray(sampleIds) || sampleIds.some((id: unknown) => typeof id !== 'string')) {
@@ -343,6 +358,12 @@ export async function POST(request: NextRequest) {
             ? JSON.stringify(normalizedConfig)
             : null,
         inputSampleIds,
+        executionMode:
+          executionRequest?.executionMode === 'local' ||
+          executionRequest?.executionMode === 'slurm'
+            ? executionRequest.executionMode
+            : null,
+        executionProfile: serializeRunExecutionRequest(executionRequest),
       },
     });
 
@@ -360,6 +381,7 @@ export async function POST(request: NextRequest) {
         studyId: run.studyId,
         orderId: run.orderId,
         targetType: run.targetType,
+        executionMode: run.executionMode,
       },
     });
   } catch (error) {

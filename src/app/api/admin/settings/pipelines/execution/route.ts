@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import {
   DEFAULT_EXECUTION_SETTINGS,
   getExecutionSettings,
+  normalizePipelineExecutionOverrides,
   saveExecutionSettings,
   type ExecutionSettings,
 } from '@/lib/pipelines/execution-settings';
@@ -67,6 +68,7 @@ export async function POST(request: NextRequest) {
       slurmMemory: normalizeString(body.slurmMemory, DEFAULT_EXECUTION_SETTINGS.slurmMemory),
       slurmTimeLimit: body.slurmTimeLimit ?? DEFAULT_EXECUTION_SETTINGS.slurmTimeLimit,
       slurmOptions: normalizeString(body.slurmOptions, DEFAULT_EXECUTION_SETTINGS.slurmOptions),
+      pipelineOverrides: normalizePipelineExecutionOverrides(body.pipelineOverrides),
       runtimeMode: 'conda',
       condaPath: normalizeString(body.condaPath, DEFAULT_EXECUTION_SETTINGS.condaPath),
       condaEnv: normalizeString(body.condaEnv, DEFAULT_EXECUTION_SETTINGS.condaEnv),

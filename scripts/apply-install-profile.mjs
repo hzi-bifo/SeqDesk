@@ -268,6 +268,93 @@ function normalizeStringArray(value) {
   );
 }
 
+function normalizeExecutionMode(value) {
+  const mode = toOptionalString(value)?.toLowerCase();
+  if (mode === "inherit" || mode === "local" || mode === "slurm") return mode;
+  return undefined;
+}
+
+function buildPipelineExecutionOverride(value) {
+  const source = toRecord(value);
+  if (Object.keys(source).length === 0) return undefined;
+
+  const slurm = toRecord(source.slurm);
+  const nextSlurm = {};
+  const mode = normalizeExecutionMode(source.mode);
+  const queue = toOptionalString(source.slurmQueue || slurm.queue);
+  const cores = toOptionalInt(source.slurmCores ?? slurm.cores);
+  const memory = toOptionalString(source.slurmMemory || slurm.memory);
+  const timeLimit = toOptionalInt(source.slurmTimeLimit ?? slurm.timeLimit);
+  const options = toOptionalString(
+    source.slurmOptions || source.clusterOptions || slurm.options || slurm.clusterOptions
+  );
+  const nextflowProfile = toOptionalString(source.nextflowProfile);
+
+  if (queue) nextSlurm.queue = queue;
+  if (cores !== undefined) nextSlurm.cores = cores;
+  if (memory) nextSlurm.memory = memory;
+  if (timeLimit !== undefined) nextSlurm.timeLimit = timeLimit;
+  if (options !== undefined) nextSlurm.options = options;
+
+  const override = {};
+  if (mode) override.mode = mode;
+  if (Object.keys(nextSlurm).length > 0) override.slurm = nextSlurm;
+  if (nextflowProfile) override.nextflowProfile = nextflowProfile;
+
+  return Object.keys(override).length > 0 ? override : undefined;
+}
+
+function buildPipelineExecutionOverrides(pipelines, execution) {
+  const merged = {};
+  const candidates = [
+    toRecord(pipelines.pipelineOverrides),
+    toRecord(pipelines.executionOverrides),
+    toRecord(execution.pipelineOverrides),
+    toRecord(execution.overrides),
+  ];
+
+  for (const candidate of candidates) {
+    for (const [pipelineId, rawOverride] of Object.entries(candidate)) {
+      const id = pipelineId.trim();
+      const override = buildPipelineExecutionOverride(rawOverride);
+      if (id && override) {
+        merged[id] = {
+          ...(isRecord(merged[id]) ? merged[id] : {}),
+          ...override,
+          slurm: {
+            ...toRecord(merged[id]?.slurm),
+            ...toRecord(override.slurm),
+          },
+        };
+      }
+    }
+  }
+
+  const pipelineIds = new Set([
+    ...Object.keys(pipelines),
+    ...discoverInstalledPipelineIds(),
+  ]);
+
+  for (const pipelineId of pipelineIds) {
+    const pipelineConfig = toRecord(pipelines[pipelineId]);
+    const override =
+      buildPipelineExecutionOverride(pipelineConfig.execution) ||
+      buildPipelineExecutionOverride(pipelineConfig.runtime);
+    if (override) {
+      merged[pipelineId] = {
+        ...(isRecord(merged[pipelineId]) ? merged[pipelineId] : {}),
+        ...override,
+        slurm: {
+          ...toRecord(merged[pipelineId]?.slurm),
+          ...toRecord(override.slurm),
+        },
+      };
+    }
+  }
+
+  return merged;
+}
+
 function discoverInstalledPipelineIds() {
   const candidates = [
     path.join(process.cwd(), "pipelines"),
@@ -510,7 +597,12 @@ async function applySiteProfile(prisma, profile) {
     extra[INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY] = enablePipelineIds;
   }
   const execution = toRecord(pipelines.execution);
-  if (Object.keys(execution).length > 0 || databaseDirectory) {
+  const pipelineOverrides = buildPipelineExecutionOverrides(pipelines, execution);
+  if (
+    Object.keys(execution).length > 0 ||
+    databaseDirectory ||
+    Object.keys(pipelineOverrides).length > 0
+  ) {
     const slurm = toRecord(execution.slurm);
     const conda = toRecord(execution.conda);
     const currentExecution = isRecord(extra.pipelineExecution) ? extra.pipelineExecution : {};
@@ -550,6 +642,12 @@ async function applySiteProfile(prisma, profile) {
     if (weblogUrl !== undefined) nextExecution.weblogUrl = weblogUrl;
     if (weblogSecret !== undefined) nextExecution.weblogSecret = weblogSecret;
     if (databaseDirectory) nextExecution.pipelineDatabaseDir = databaseDirectory;
+    if (Object.keys(pipelineOverrides).length > 0) {
+      nextExecution.pipelineOverrides = {
+        ...toRecord(currentExecution.pipelineOverrides),
+        ...pipelineOverrides,
+      };
+    }
 
     extra.pipelineExecution = nextExecution;
   }

@@ -229,7 +229,7 @@ export default function InfrastructureOverviewPage() {
               <div className="flex-1 space-y-2">
                 <h2 className="text-base font-semibold">Pipeline Runtime</h2>
                 <p className="text-sm text-muted-foreground">
-                  Configure scheduler, conda path, run directory, and webhook diagnostics for Nextflow runs.
+                  Configure scheduler, per-pipeline SLURM defaults, conda path, run directory, and webhook diagnostics for Nextflow runs.
                 </p>
                 <Button asChild variant="outline" size="sm" className="bg-white">
                   <Link href="/admin/pipeline-runtime">

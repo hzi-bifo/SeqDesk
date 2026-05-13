@@ -9,6 +9,7 @@ export interface ExecutionSettings {
   slurmMemory: string;
   slurmTimeLimit: number;
   slurmOptions: string;
+  pipelineOverrides: Record<string, PipelineExecutionOverride>;
   runtimeMode: "conda";
   condaPath: string;
   condaEnv: string;
@@ -21,6 +22,20 @@ export interface ExecutionSettings {
   skipConda?: boolean;
 }
 
+export interface SlurmSettings {
+  queue: string;
+  cores: number;
+  memory: string;
+  timeLimit: number;
+  options: string;
+}
+
+export interface PipelineExecutionOverride {
+  mode?: "inherit" | "local" | "slurm";
+  slurm?: Partial<SlurmSettings>;
+  nextflowProfile?: string;
+}
+
 export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   useSlurm: false,
   slurmQueue: "cpu",
@@ -28,6 +43,7 @@ export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   slurmMemory: "64GB",
   slurmTimeLimit: 12,
   slurmOptions: "",
+  pipelineOverrides: {},
   runtimeMode: "conda",
   condaPath: "",
   condaEnv: "seqdesk-pipelines",
@@ -58,6 +74,9 @@ function getConfigExecutionOverrides(
   resolvedConfig: ResolvedConfig
 ): Partial<ExecutionSettings> {
   const execution = resolvedConfig.config.pipelines?.execution;
+  const pipelineOverrides = normalizePipelineExecutionOverrides(
+    execution?.pipelineOverrides
+  );
   const configuredMode = getConfiguredValue(
     resolvedConfig,
     "pipelines.execution.mode",
@@ -105,6 +124,8 @@ function getConfigExecutionOverrides(
       "pipelines.execution.slurm.options",
       execution?.slurm?.options
     ),
+    pipelineOverrides:
+      Object.keys(pipelineOverrides).length > 0 ? pipelineOverrides : undefined,
     condaPath: getConfiguredValue(
       resolvedConfig,
       "pipelines.execution.conda.path",
@@ -134,6 +155,83 @@ function omitUndefinedValues<T extends Record<string, unknown>>(value: T): Parti
   ) as Partial<T>;
 }
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeMode(value: unknown): PipelineExecutionOverride["mode"] | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "inherit" || normalized === "local" || normalized === "slurm") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function normalizeString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizePositiveInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    return normalized > 0 ? normalized : undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+export function normalizePipelineExecutionOverrides(
+  value: unknown
+): Record<string, PipelineExecutionOverride> {
+  const source = toRecord(value);
+  if (!source) return {};
+
+  const normalized: Record<string, PipelineExecutionOverride> = {};
+  for (const [pipelineId, rawOverride] of Object.entries(source)) {
+    const id = pipelineId.trim();
+    const override = toRecord(rawOverride);
+    if (!id || !override) continue;
+
+    const mode = normalizeMode(override.mode);
+    const slurmSource = toRecord(override.slurm);
+    const slurm: Partial<SlurmSettings> = {};
+    const queue = normalizeString(slurmSource?.queue ?? override.slurmQueue);
+    const cores = normalizePositiveInt(slurmSource?.cores ?? override.slurmCores);
+    const memory = normalizeString(slurmSource?.memory ?? override.slurmMemory);
+    const timeLimit = normalizePositiveInt(slurmSource?.timeLimit ?? override.slurmTimeLimit);
+    const options = normalizeString(
+      slurmSource?.options ?? override.slurmOptions ?? override.clusterOptions
+    );
+
+    if (queue) slurm.queue = queue;
+    if (cores !== undefined) slurm.cores = cores;
+    if (memory) slurm.memory = memory;
+    if (timeLimit !== undefined) slurm.timeLimit = timeLimit;
+    if (options !== undefined) slurm.options = options;
+
+    const nextflowProfile = normalizeString(override.nextflowProfile);
+    const nextOverride: PipelineExecutionOverride = {};
+    if (mode) nextOverride.mode = mode;
+    if (Object.keys(slurm).length > 0) nextOverride.slurm = slurm;
+    if (nextflowProfile) nextOverride.nextflowProfile = nextflowProfile;
+
+    if (Object.keys(nextOverride).length > 0) {
+      normalized[id] = nextOverride;
+    }
+  }
+
+  return normalized;
+}
+
 export async function getExecutionSettings(): Promise<ExecutionSettings> {
   const configOverrides = omitUndefinedValues(getConfigExecutionOverrides(loadConfig()));
   const settings = await db.siteSettings.findUnique({
@@ -142,11 +240,15 @@ export async function getExecutionSettings(): Promise<ExecutionSettings> {
   });
 
   if (!settings?.extraSettings) {
-    return {
+    const merged: ExecutionSettings = {
       ...DEFAULT_EXECUTION_SETTINGS,
       ...configOverrides,
       runtimeMode: "conda",
     };
+    merged.pipelineOverrides = normalizePipelineExecutionOverrides(
+      merged.pipelineOverrides
+    );
+    return merged;
   }
 
   try {
@@ -157,14 +259,21 @@ export async function getExecutionSettings(): Promise<ExecutionSettings> {
       ...configOverrides,
     } as ExecutionSettings;
 
+    merged.pipelineOverrides = normalizePipelineExecutionOverrides(
+      merged.pipelineOverrides
+    );
     merged.runtimeMode = "conda";
     return merged;
   } catch {
-    return {
+    const merged: ExecutionSettings = {
       ...DEFAULT_EXECUTION_SETTINGS,
       ...configOverrides,
       runtimeMode: "conda",
     };
+    merged.pipelineOverrides = normalizePipelineExecutionOverrides(
+      merged.pipelineOverrides
+    );
+    return merged;
   }
 }
 
@@ -185,7 +294,12 @@ export async function saveExecutionSettings(
     }
   }
 
-  extra.pipelineExecution = executionSettings;
+  extra.pipelineExecution = {
+    ...executionSettings,
+    pipelineOverrides: normalizePipelineExecutionOverrides(
+      executionSettings.pipelineOverrides
+    ),
+  };
 
   await db.siteSettings.upsert({
     where: { id: "singleton" },

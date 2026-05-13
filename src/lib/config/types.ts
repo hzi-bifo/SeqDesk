@@ -32,6 +32,18 @@ export interface SlurmConfig {
   options?: string;
 }
 
+export interface PipelineExecutionOverrideConfig {
+  mode?: 'inherit' | 'local' | 'slurm';
+  slurm?: Partial<SlurmConfig>;
+  slurmQueue?: string;
+  slurmCores?: number;
+  slurmMemory?: string;
+  slurmTimeLimit?: number;
+  slurmOptions?: string;
+  clusterOptions?: string;
+  nextflowProfile?: string;
+}
+
 export interface PipelineExecutionConfig {
   /** Execution mode: local, slurm, or kubernetes */
   mode?: 'local' | 'slurm' | 'kubernetes';
@@ -39,6 +51,8 @@ export interface PipelineExecutionConfig {
   runDirectory?: string;
   conda?: CondaConfig;
   slurm?: SlurmConfig;
+  /** Optional per-pipeline execution defaults */
+  pipelineOverrides?: Record<string, PipelineExecutionOverrideConfig>;
 }
 
 export interface MagPipelineConfig {
