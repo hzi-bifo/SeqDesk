@@ -40,7 +40,7 @@ samplesheet:
 
     - name: platform
       source: order.platform
-      description: Sequencing platform
+      description: Platform string derived from sequencing technology metadata
       required: true
       transform:
         type: map_value

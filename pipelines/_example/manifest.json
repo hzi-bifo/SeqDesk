@@ -17,6 +17,11 @@
     ],
     "readme": "README.md"
   },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": ["paired"],
+    "platformFamilies": ["illumina"]
+  },
   "inputs": [
     {
       "id": "paired_reads",

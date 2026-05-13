@@ -1,5 +1,6 @@
 import * as path from "path";
 import {
+  buildSequencingTechSelection,
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
   PLATFORM_ILLUMINA_NOVASEQ_WGS,
   PLATFORM_ONT_MINION_AMPLICON,
@@ -12,6 +13,7 @@ import {
   type PlatformProfile,
   type SampleTemplate,
 } from "./templates";
+import type { SequencingTechSelection } from "@/types/sequencing-technology";
 
 export const SEED_DUMMY_MARKER = "admin-dummy";
 export const SEED_DUMMY_ORDER_PREFIX = "SEED-DUMMY";
@@ -49,7 +51,8 @@ export interface DummyOrderSpec {
   name: string;
   status: "DRAFT" | "SUBMITTED";
   numberOfSamples: number;
-  platform: string;
+  platform?: string | null;
+  sequencingTechSelection: SequencingTechSelection;
   instrumentModel: string;
   libraryStrategy: string;
   librarySource: string;
@@ -187,7 +190,8 @@ export function buildDummySeedDataset(
       name: `Gut recovery metagenome cohort (seeded, ${primaryPlatform.instrumentModel})`,
       status: "SUBMITTED",
       numberOfSamples: submittedSamples.length,
-      platform: primaryPlatform.platform,
+      platform: null,
+      sequencingTechSelection: buildSequencingTechSelection(primaryPlatform),
       instrumentModel: primaryPlatform.instrumentModel,
       libraryStrategy: primaryPlatform.libraryStrategy,
       librarySource: primaryPlatform.librarySource,
@@ -199,7 +203,8 @@ export function buildDummySeedDataset(
       name: `Draft host-associated screening batch (seeded, ${draftPlatform.instrumentModel})`,
       status: "DRAFT",
       numberOfSamples: draftSamples.length,
-      platform: draftPlatform.platform,
+      platform: null,
+      sequencingTechSelection: buildSequencingTechSelection(draftPlatform),
       instrumentModel: draftPlatform.instrumentModel,
       libraryStrategy: draftPlatform.libraryStrategy,
       librarySource: draftPlatform.librarySource,

@@ -94,6 +94,9 @@ export function derivePlatformFromSequencingTechSelection(
   if (hasNonEmptyString(selection.technologyName)) {
     return selection.technologyName.trim();
   }
+  if (hasNonEmptyString(selection.platformFamily)) {
+    return selection.platformFamily.trim();
+  }
   if (hasNonEmptyString(selection.technologyId)) {
     return selection.technologyId.trim();
   }
@@ -103,10 +106,15 @@ export function derivePlatformFromSequencingTechSelection(
 export function resolveOrderPlatform(order: OrderLike): string | null {
   if (!order) return null;
 
+  const selection = resolveOrderSequencingTechnology(order);
+  const platformFromSelection = derivePlatformFromSequencingTechSelection(selection);
+  if (platformFromSelection) {
+    return platformFromSelection;
+  }
+
   if (hasNonEmptyString(order.platform)) {
     return order.platform.trim();
   }
 
-  const selection = resolveOrderSequencingTechnology(order);
-  return derivePlatformFromSequencingTechSelection(selection);
+  return null;
 }

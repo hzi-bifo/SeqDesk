@@ -20,6 +20,7 @@ import {
   normalizeDemoExperience,
 } from "./types";
 import {
+  buildSequencingTechSelection,
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
   PLATFORM_ILLUMINA_NEXTSEQ_WGS,
   PLATFORM_ILLUMINA_NOVASEQ_WGS,
@@ -38,11 +39,21 @@ import {
 
 function orderPlatformFields(profile: PlatformProfile) {
   return {
-    platform: profile.platform,
+    platform: null,
     instrumentModel: profile.instrumentModel,
     libraryStrategy: profile.libraryStrategy,
     librarySource: profile.librarySource,
   };
+}
+
+function orderCustomFields(
+  profile: PlatformProfile,
+  fields: Record<string, unknown> = {}
+) {
+  return JSON.stringify({
+    _sequencing_tech: buildSequencingTechSelection(profile),
+    ...fields,
+  });
 }
 
 type DemoBootstrapResult = {
@@ -339,7 +350,7 @@ async function createDemoWorkspaceInternal(
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         ...orderPlatformFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON),
-        customFields: JSON.stringify({
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON, {
           _projects: "Screening batch\nValidation panel",
         }),
         userId: researcher.id,
@@ -363,7 +374,7 @@ async function createDemoWorkspaceInternal(
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
-        customFields: JSON.stringify({
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
           _projects: "Gut recovery cohort\nTimepoint atlas",
         }),
         userId: researcher.id,
@@ -500,6 +511,7 @@ async function createDemoWorkspaceInternal(
         contactEmail: researcherEmail,
         billingAddress: "SeqDesk Demo Workspace",
         ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
         userId: researcher.id,
         samples: {
           create: [

@@ -878,9 +878,21 @@ describe("install profile asset script helpers", () => {
     expect(orderCreate.mock.calls[0][0].data).toMatchObject({
       orderNumber: "DEV-GEMMA-ONT-001",
       name: "Gemma Nanopore MetaxPath example order",
-      platform: "Nanopore",
+      platform: null,
       instrumentModel: "ONT MinION Mk1D",
       numberOfSamples: 1,
+    });
+    expect(JSON.parse(orderCreate.mock.calls[0][0].data.customFields)).toMatchObject({
+      _sequencing_tech: {
+        technologyId: "ont-minion",
+        technologyName: "MinION",
+        platformFamily: "oxford-nanopore",
+        readLengthClass: "long",
+        supportedReadLayouts: ["single"],
+        deviceId: "ont-minion-mk1d",
+        deviceName: "MinION Mk1D",
+      },
+      dataset_url: "https://research.example/gemma.tar.gz",
     });
     expect(readCreate.mock.calls[0][0].data).toMatchObject({
       file1:

@@ -341,29 +341,6 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         systemKey: "name",
         perSample: false,
       },
-      // Order-level field: Sequencing Platform
-      {
-        id: "system_platform",
-        type: "select",
-        label: "Sequencing Platform",
-        name: "platform",
-        required: true,
-        visible: true,
-        helpText: "The sequencing platform/technology used",
-        options: [
-          { value: "ILLUMINA", label: "Illumina (HiSeq, MiSeq, NovaSeq, NextSeq)" },
-          { value: "OXFORD_NANOPORE", label: "Oxford Nanopore (MinION, GridION, PromethION)" },
-          { value: "PACBIO_SMRT", label: "PacBio SMRT (Sequel, Revio)" },
-          { value: "ION_TORRENT", label: "Ion Torrent" },
-          { value: "BGI", label: "BGI/MGI" },
-          { value: "OTHER", label: "Other" },
-        ],
-        order: 0,
-        groupId: "group_sequencing",
-        isSystem: true,
-        systemKey: "platform",
-        perSample: false,
-      },
       // Order-level field: Sequencing Technology Selector
       {
         id: "field_seqtech_default",
@@ -373,7 +350,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         required: false,
         visible: true,
         helpText: "Select the sequencing technology for your samples",
-        order: 1,
+        order: 0,
         groupId: "group_sequencing",
         moduleSource: "sequencing-tech",
         perSample: false,
@@ -534,7 +511,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
       },
     ],
     version: 1,
-    moduleDefaultsVersion: 1,
+    moduleDefaultsVersion: 4,
   };
 
   await prisma.orderFormConfig.upsert({

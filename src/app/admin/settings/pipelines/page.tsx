@@ -365,16 +365,16 @@ function getPipelineMetadataHints(pipelineId: string): MetadataHint[] {
     return [
       {
         id: "mag-platform",
-        label: "Sequencing platform",
+        label: "Sequencing technology",
         required: true,
         description:
-          'Required for MAG pre-check. Value comes from the system "Sequencing Platform" field or is derived from a "Sequencing Technologies" selection.',
+          "Required for MAG pre-check. Value comes from the sequencing technology selector and registry compatibility metadata.",
       },
       {
         id: "mag-short-read",
         label: "Short-read compatibility",
         description:
-          "By default MAG validates short-read platforms. If you set an explicit 'Allow For Sequencing Technologies' list, those technology IDs are allowed to run even when platform mapping is long-read.",
+          "MAG validates short-read paired technologies. An explicit allow list narrows compatible technology IDs but cannot enable long-read or single-read technologies.",
       },
     ];
   }

@@ -6,11 +6,17 @@ import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import {
   resolveOrderPlatform,
+  resolveOrderSequencingTechnology,
   resolveOrderSequencingTechnologyId,
 } from '@/lib/pipelines/order-platform';
+import { parseTechConfig } from '@/lib/sequencing-tech/config';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
 import type { Prisma } from '@prisma/client';
+import type {
+  SequencingTechnology,
+  SequencingTechSelection,
+} from '@/types/sequencing-technology';
 
 export interface MetadataIssue {
   field: string;
@@ -62,6 +68,7 @@ const MAG_SHORT_READ_PLATFORM_OPTIONS = [
 const MAG_SHORT_READ_PLATFORM_MAPPING: Record<string, string> = {
   // Standard form values (from prisma/seed.mjs)
   'illumina': 'ILLUMINA',
+  'mgi': 'DNBSEQ',
   'ion_torrent': 'ION_TORRENT',
   'bgi': 'BGISEQ',
   'bgiseq': 'BGISEQ',
@@ -154,6 +161,84 @@ function parsePipelineRuntimeConfig(
   } catch {
     return { ...DEFAULT_PIPELINE_RUNTIME_CONFIG };
   }
+}
+
+function parseExtraSettings(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore invalid settings; callers fall back to legacy string matching.
+  }
+  return {};
+}
+
+function buildSequencingTechnologyMap(rawExtraSettings: string | null | undefined) {
+  const extraSettings = parseExtraSettings(rawExtraSettings);
+  const config = parseTechConfig(extraSettings.sequencingTechConfig ?? null);
+  return new Map(config.technologies.map((technology) => [technology.id, technology]));
+}
+
+function selectionHasCompatibilityMetadata(
+  selection: SequencingTechSelection
+): boolean {
+  return Boolean(
+    selection.platformFamily ||
+      selection.readLengthClass ||
+      (Array.isArray(selection.supportedReadLayouts) &&
+        selection.supportedReadLayouts.length > 0)
+  );
+}
+
+function selectionToTechnology(
+  selection: SequencingTechSelection
+): SequencingTechnology | null {
+  if (!selectionHasCompatibilityMetadata(selection)) return null;
+  return {
+    id: selection.technologyId,
+    name: selection.technologyName || selection.technologyId,
+    manufacturer: '',
+    shortDescription: '',
+    specs: [],
+    platformFamily: selection.platformFamily,
+    readLengthClass: selection.readLengthClass,
+    supportedReadLayouts: selection.supportedReadLayouts,
+    pros: [],
+    cons: [],
+    bestFor: [],
+    available: true,
+    order: 0,
+  };
+}
+
+function resolveOrderSequencingTechnologyMetadata(
+  order: { customFields?: string | Record<string, unknown> | null },
+  technologyById: Map<string, SequencingTechnology>
+): SequencingTechnology | null {
+  const selection = resolveOrderSequencingTechnology(order);
+  if (!selection) return null;
+  return technologyById.get(selection.technologyId) ?? selectionToTechnology(selection);
+}
+
+function formatTechnologyLabel(technology: SequencingTechnology): string {
+  return technology.name && technology.name !== technology.id
+    ? `${technology.name} (${technology.id})`
+    : technology.id;
+}
+
+function isMagCompatibleTechnology(technology: SequencingTechnology): boolean | null {
+  const readLengthClass = technology.readLengthClass ?? 'unknown';
+  const readLayouts = technology.supportedReadLayouts ?? [];
+  if (readLengthClass === 'unknown' && readLayouts.length === 0) {
+    return null;
+  }
+  const supportsShortReads =
+    readLengthClass === 'short' || readLengthClass === 'both';
+  const supportsPairedReads = readLayouts.includes('paired');
+  return supportsShortReads && supportsPairedReads;
 }
 
 function isLongReadPlatform(value: string): boolean {
@@ -417,6 +502,17 @@ export async function validatePipelineMetadata(
 
   const restrictedTechnologyIds = new Set(runtimeConfig.allowedSequencingTechnologies);
   const technologyRestrictionActive = restrictedTechnologyIds.size > 0;
+  const technologyById =
+    pipelineId === 'mag'
+      ? buildSequencingTechnologyMap(
+          (
+            await db.siteSettings.findUnique({
+              where: { id: 'singleton' },
+              select: { extraSettings: true },
+            })
+          )?.extraSettings ?? null
+        )
+      : new Map<string, SequencingTechnology>();
 
   if (technologyRestrictionActive) {
     const disallowedTechnologyIds = new Set<string>();
@@ -584,6 +680,7 @@ export async function validatePipelineMetadata(
   const missingPlatformSamples = new Set<string>();
   const longReadPlatforms = new Set<string>();
   const unsupportedPlatforms = new Set<string>();
+  const incompatibleTechnologies = new Set<string>();
   const firstOrderId = Array.from(orders.keys())[0];
 
   for (const { order, sampleIds: sampleLabels } of orders.values()) {
@@ -600,6 +697,17 @@ export async function validatePipelineMetadata(
       metadata.platform = resolvedPlatform;
       metadata.instrumentModel = order.instrumentModel || undefined;
       metadata.libraryStrategy = order.libraryStrategy || undefined;
+    }
+
+    if (pipelineId === 'mag') {
+      const technology = resolveOrderSequencingTechnologyMetadata(order, technologyById);
+      if (technology) {
+        const compatible = isMagCompatibleTechnology(technology);
+        if (compatible === false) {
+          incompatibleTechnologies.add(formatTechnologyLabel(technology));
+          continue;
+        }
+      }
     }
 
     const mappedPlatform = mapPlatformForPipeline(resolvedPlatform, pipelineId);
@@ -622,7 +730,7 @@ export async function validatePipelineMetadata(
       issues.push({
         field: 'platform',
         message:
-          'Sequencing platform is required for this pipeline (set the system "Sequencing Platform" field or select a technology in "Sequencing Technologies").',
+          'Sequencing technology is required for this pipeline (select a technology in the sequencing technology selector).',
         severity: 'error',
         fixUrl: firstOrderId
           ? `/orders/${firstOrderId}/edit`
@@ -650,14 +758,25 @@ export async function validatePipelineMetadata(
       }
 
       if (
-        !technologyRestrictionActive &&
-        (!hasAnyMappedPlatform || longReadPlatforms.size > 0 || unsupportedPlatforms.size > 0)
+        !hasAnyMappedPlatform ||
+        longReadPlatforms.size > 0 ||
+        unsupportedPlatforms.size > 0 ||
+        incompatibleTechnologies.size > 0
       ) {
         const longReadList = Array.from(longReadPlatforms);
         const unsupportedList = Array.from(unsupportedPlatforms);
+        const incompatibleList = Array.from(incompatibleTechnologies);
         let message = '';
 
-        if (longReadList.length > 0) {
+        if (incompatibleList.length > 0) {
+          message = `Sequencing technolog${incompatibleList.length === 1 ? 'y' : 'ies'} ${incompatibleList.map((value) => `"${value}"`).join(', ')} incompatible with MAG. MAG requires short-read technologies that support paired reads.`;
+          if (longReadList.length > 0) {
+            message += ` Also found long-read platform(s): ${longReadList.map((value) => `"${value}"`).join(', ')}.`;
+          }
+          if (unsupportedList.length > 0) {
+            message += ` Also found unsupported platform(s): ${unsupportedList.map((value) => `"${value}"`).join(', ')}.`;
+          }
+        } else if (longReadList.length > 0) {
           message = `Platform(s) ${longReadList.map((value) => `"${value}"`).join(', ')} indicate long-read data. MAG currently expects short reads with one of: ${MAG_SHORT_READ_PLATFORM_OPTIONS.join(', ')}.`;
           if (unsupportedList.length > 0) {
             message += ` Also found unsupported platform(s): ${unsupportedList.map((value) => `"${value}"`).join(', ')}.`;

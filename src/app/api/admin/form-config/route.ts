@@ -9,6 +9,7 @@ import {
 } from "@/types/form-config";
 import {
   ensureOrderModuleDefaultFields,
+  isLegacyPlatformField,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
 import {
@@ -60,7 +61,9 @@ export async function GET() {
       Array.isArray(parsed) || typeof parsed.moduleDefaultsVersion !== "number"
         ? 0
         : parsed.moduleDefaultsVersion;
-    const baseFields = Array.isArray(parsed) ? parsed : parsed.fields || [];
+    const baseFields = (Array.isArray(parsed) ? parsed : parsed.fields || []).filter(
+      (field: FormFieldDefinition) => !isLegacyPlatformField(field)
+    );
     const fields =
       moduleDefaultsVersion < ORDER_FORM_DEFAULTS_VERSION
         ? ensureOrderModuleDefaultFields(baseFields, {
@@ -130,7 +133,9 @@ export async function PUT(request: NextRequest) {
 
     // Build schema object with fields, groups, and enabledMixsChecklists
     const normalizedSchema = normalizeOrderFormSchema({
-      fields: fields || DEFAULT_FORM_SCHEMA.fields,
+      fields: (fields || DEFAULT_FORM_SCHEMA.fields).filter(
+        (field) => !isLegacyPlatformField(field)
+      ),
       groups,
     });
     const schemaObj = {

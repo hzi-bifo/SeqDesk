@@ -100,6 +100,12 @@ export interface PackageExecution {
   };
 }
 
+export interface PackageSequencingCompatibility {
+  readLengthClass?: 'short' | 'long' | 'both' | 'unknown';
+  readLayouts?: Array<'single' | 'paired'>;
+  platformFamilies?: string[];
+}
+
 export interface PackageManifest {
   package: {
     id: string;
@@ -123,6 +129,7 @@ export interface PackageManifest {
   targets?: {
     supported: PackageTargetType[];
   };
+  sequencingCompatibility?: PackageSequencingCompatibility;
   inputs: PackageInput[];
   execution: PackageExecution;
   outputs: PackageOutput[];
@@ -216,6 +223,7 @@ export interface RegistryConfig {
       bins?: boolean;
     };
   };
+  sequencingCompatibility?: PackageSequencingCompatibility;
   samplesheet: {
     format: string;
     generator: string;

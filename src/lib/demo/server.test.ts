@@ -209,6 +209,26 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.study.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(3);
+    const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
+    const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;
+    expect(draftOrder.platform).toBeNull();
+    expect(submittedOrder.platform).toBeNull();
+    expect(JSON.parse(draftOrder.customFields)).toMatchObject({
+      _sequencing_tech: {
+        technologyId: "illumina-miseq",
+        platformFamily: "illumina",
+        readLengthClass: "short",
+        supportedReadLayouts: ["single", "paired"],
+      },
+    });
+    expect(JSON.parse(submittedOrder.customFields)).toMatchObject({
+      _sequencing_tech: {
+        technologyId: "illumina-novaseq",
+        platformFamily: "illumina",
+        readLengthClass: "short",
+        supportedReadLayouts: ["single", "paired"],
+      },
+    });
     expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(3);
     expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(4);
     expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(3);

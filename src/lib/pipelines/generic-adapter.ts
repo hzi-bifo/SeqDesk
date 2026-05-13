@@ -447,7 +447,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
             const platform = resolveOrderPlatform(sample.order);
             if (!platform) {
               issues.push(
-                `Sample ${sample.sampleId}: Sequencing platform is required (set Order platform or Sequencing Technologies selection)`
+                `Sample ${sample.sampleId}: Sequencing technology metadata is required`
               );
               continue;
             }
@@ -469,7 +469,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
                   new Set(Object.values(mapping))
                 ).join(', ');
                 issues.push(
-                  `Sample ${sample.sampleId}: Unsupported sequencing platform "${platform}" for this pipeline${allowedTargets ? ` (expected mapping to: ${allowedTargets})` : ''}`
+                  `Sample ${sample.sampleId}: Unsupported sequencing technology/platform "${platform}" for this pipeline${allowedTargets ? ` (expected mapping to: ${allowedTargets})` : ''}`
                 );
               }
             }

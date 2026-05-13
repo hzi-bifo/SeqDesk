@@ -167,19 +167,19 @@ describe("GET /api/form-schema", () => {
     expect(body.version).toBe(6);
     expect(body.enabledMixsChecklists).toEqual([]);
     expect(
-      body.fields.find((field: { id: string }) => field.id === "platform-field")
-    ).toMatchObject({
-      groupId: "group_sequencing",
-    });
+      body.fields.some((field: { id: string }) => field.id === "platform-field")
+    ).toBe(false);
     expect(body.fields.some((field: { type: string }) => field.type === "billing")).toBe(false);
     expect(
       body.fields.some((field: { id: string }) => field.id === "admin-only-field")
     ).toBe(true);
-    expect(body.perSampleFields).toEqual([
-      expect.objectContaining({
-        id: "per-sample-field",
-        perSample: true,
-      }),
-    ]);
+    expect(body.perSampleFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "per-sample-field",
+          perSample: true,
+        }),
+      ])
+    );
   });
 });

@@ -36,7 +36,7 @@
         "name": "short_reads_platform",
         "source": "order.platform",
         "transform": "mapPlatform",
-        "description": "Sequencing platform (ILLUMINA, OXFORD, PACBIO)"
+        "description": "Short-read platform derived from sequencing technology metadata"
       },
       {
         "name": "long_reads",

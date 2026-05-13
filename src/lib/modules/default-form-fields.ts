@@ -5,7 +5,7 @@ import {
   type FormFieldGroup,
 } from "@/types/form-config";
 
-export const ORDER_FORM_DEFAULTS_VERSION = 3;
+export const ORDER_FORM_DEFAULTS_VERSION = 4;
 export const STUDY_FORM_DEFAULTS_VERSION = 1;
 
 export function hasSequencingTechField(fields: FormFieldDefinition[]): boolean {
@@ -58,10 +58,18 @@ export function getDefaultSequencingTechField(): FormFieldDefinition {
     required: false,
     visible: true,
     helpText: "Select the sequencing technology for your samples",
-    order: 1,
+    order: 0,
     groupId: "group_sequencing",
     moduleSource: "sequencing-tech",
   };
+}
+
+export function isLegacyPlatformField(field: FormFieldDefinition): boolean {
+  return (
+    field.id === "system_platform" ||
+    field.name === "platform" ||
+    field.systemKey === "platform"
+  );
 }
 
 export function getDefaultFacilityQcField(
@@ -184,7 +192,9 @@ export function ensureOrderModuleDefaultFields(
   fields: FormFieldDefinition[],
   options: { sequencingTech: boolean }
 ): FormFieldDefinition[] {
-  let withFacilityDefaults = fields;
+  const withoutLegacyPlatform = fields.filter((field) => !isLegacyPlatformField(field));
+  let withFacilityDefaults =
+    withoutLegacyPlatform.length === fields.length ? fields : withoutLegacyPlatform;
 
   if (!hasFacilityQcField(withFacilityDefaults)) {
     withFacilityDefaults = [

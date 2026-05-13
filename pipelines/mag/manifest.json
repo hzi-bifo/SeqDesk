@@ -18,6 +18,11 @@
     ],
     "readme": "README.md"
   },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": ["paired"],
+    "platformFamilies": ["illumina", "mgi", "bgi", "ion-torrent"]
+  },
   "inputs": [
     {
       "id": "paired_reads",
@@ -42,6 +47,10 @@
           "miseq": "ILLUMINA",
           "novaseq": "ILLUMINA",
           "nextseq": "ILLUMINA",
+          "mgi": "DNBSEQ",
+          "dnbseq": "DNBSEQ",
+          "bgi": "BGISEQ",
+          "bgiseq": "BGISEQ",
           "ont": "OXFORD",
           "nanopore": "OXFORD",
           "oxford_nanopore": "OXFORD",

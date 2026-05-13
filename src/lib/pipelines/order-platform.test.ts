@@ -58,13 +58,22 @@ describe("order-platform", () => {
     expect(resolveOrderSequencingTechnology(undefined)).toBeNull();
   });
 
-  it("derives platform from technology name first, then id", () => {
+  it("derives platform from technology name first, then platform family, then id", () => {
     expect(
       derivePlatformFromSequencingTechSelection({
         technologyId: "ONT",
         technologyName: " Nanopore ",
+        platformFamily: "oxford-nanopore",
       })
     ).toBe("Nanopore");
+
+    expect(
+      derivePlatformFromSequencingTechSelection({
+        technologyId: "  mgi-dnbseq-t7  ",
+        technologyName: "",
+        platformFamily: " mgi ",
+      })
+    ).toBe("mgi");
 
     expect(
       derivePlatformFromSequencingTechSelection({
@@ -76,13 +85,13 @@ describe("order-platform", () => {
     expect(derivePlatformFromSequencingTechSelection(null)).toBeNull();
   });
 
-  it("prefers explicit order.platform before derived platform", () => {
+  it("prefers sequencing technology selection before stale order.platform", () => {
     const order = {
       platform: "  Manual Platform  ",
       customFields: JSON.stringify({ _sequencing_tech: "ONT" }),
     };
 
-    expect(resolveOrderPlatform(order)).toBe("Manual Platform");
+    expect(resolveOrderPlatform(order)).toBe("ONT");
   });
 
   it("derives platform from selection when order.platform is absent", () => {

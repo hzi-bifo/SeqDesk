@@ -28,6 +28,40 @@ vi.mock("@/lib/pipelines/package-loader", () => ({
 
 import { mapPlatformForPipeline, validatePipelineMetadata } from "./metadata-validation";
 
+function mockSequencingTechConfig(
+  technologies: Array<{
+    id: string;
+    name: string;
+    platformFamily: string;
+    readLengthClass: "short" | "long" | "both" | "unknown";
+    supportedReadLayouts: Array<"single" | "paired">;
+  }>
+) {
+  mocks.db.siteSettings.findUnique.mockResolvedValue({
+    enaTestMode: false,
+    extraSettings: JSON.stringify({
+      sequencingTechConfig: {
+        version: 1,
+        technologies: technologies.map((technology, index) => ({
+          ...technology,
+          manufacturer: "Test",
+          shortDescription: technology.name,
+          specs: [],
+          pros: [],
+          cons: [],
+          bestFor: [],
+          available: true,
+          order: index,
+        })),
+        devices: [],
+        flowCells: [],
+        kits: [],
+        software: [],
+      },
+    }),
+  });
+}
+
 describe("metadata-validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -211,6 +245,7 @@ describe("metadata-validation", () => {
             customFields: JSON.stringify({
               _sequencing_tech: {
                 technologyId: "tech-illumina",
+                technologyName: "Illumina",
               },
             }),
             instrumentModel: null,
@@ -264,11 +299,12 @@ describe("metadata-validation", () => {
           order: {
             id: "order-1",
             platform: "Illumina",
-            customFields: JSON.stringify({
-              _sequencing_tech: {
-                technologyId: "tech-illumina",
-              },
-            }),
+          customFields: JSON.stringify({
+            _sequencing_tech: {
+              technologyId: "tech-illumina",
+              technologyName: "Illumina",
+            },
+          }),
             instrumentModel: null,
             libraryStrategy: null,
             librarySelection: null,
@@ -285,6 +321,141 @@ describe("metadata-validation", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.metadata.platform).toBe("Illumina");
+  });
+
+  it("allows MAG for registry short-read paired sequencing technologies", async () => {
+    mockSequencingTechConfig([
+      {
+        id: "illumina-novaseq",
+        name: "NovaSeq 6000/X",
+        platformFamily: "illumina",
+        readLengthClass: "short",
+        supportedReadLayouts: ["single", "paired"],
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: null,
+            customFields: JSON.stringify({
+              _sequencing_tech: {
+                technologyId: "illumina-novaseq",
+                technologyName: "NovaSeq 6000/X",
+              },
+            }),
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+
+    expect(result.valid).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.metadata.platform).toBe("NovaSeq 6000/X");
+  });
+
+  it("rejects MAG for ONT and PacBio registry technologies even when allowlisted", async () => {
+    mockSequencingTechConfig([
+      {
+        id: "ont-minion",
+        name: "MinION",
+        platformFamily: "oxford-nanopore",
+        readLengthClass: "long",
+        supportedReadLayouts: ["single"],
+      },
+      {
+        id: "pacbio-revio",
+        name: "Revio",
+        platformFamily: "pacbio",
+        readLengthClass: "long",
+        supportedReadLayouts: ["single"],
+      },
+    ]);
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue({
+      config: JSON.stringify({
+        runAt: "selected-technologies",
+        allowedSequencingTechnologies: ["ont-minion", "pacbio-revio"],
+      }),
+    });
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-1",
+            platform: "Illumina",
+            customFields: JSON.stringify({
+              _sequencing_tech: {
+                technologyId: "ont-minion",
+                technologyName: "MinION",
+              },
+            }),
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+        {
+          id: "sample-2",
+          sampleId: "SAMPLE-2",
+          checklistData: null,
+          taxId: null,
+          reads: [],
+          assemblies: [],
+          bins: [],
+          order: {
+            id: "order-2",
+            platform: "Illumina",
+            customFields: JSON.stringify({
+              _sequencing_tech: {
+                technologyId: "pacbio-revio",
+                technologyName: "Revio",
+              },
+            }),
+            instrumentModel: null,
+            libraryStrategy: null,
+            librarySelection: null,
+            librarySource: null,
+          },
+        },
+      ],
+    });
+
+    const result = await validatePipelineMetadata("study-1", "mag");
+    const platformIssue = result.issues.find(
+      (issue) => issue.field === "platform" && issue.severity === "error"
+    );
+
+    expect(result.valid).toBe(false);
+    expect(
+      result.issues.some((issue) => issue.field === "allowedSequencingTechnologies")
+    ).toBe(false);
+    expect(platformIssue?.message).toContain("MinION (ont-minion)");
+    expect(platformIssue?.message).toContain("Revio (pacbio-revio)");
+    expect(platformIssue?.message).toContain("short-read technologies that support paired reads");
   });
 
   it("returns platform missing error when one sample has no order", async () => {
@@ -854,7 +1025,7 @@ describe("metadata-validation", () => {
     );
 
     expect(result.valid).toBe(false);
-    expect(platformIssue?.message).toContain("Sequencing platform is required");
+    expect(platformIssue?.message).toContain("Sequencing technology is required");
   });
 
   it("emits unrecognized-platform fallback message when no mapped platform exists", async () => {

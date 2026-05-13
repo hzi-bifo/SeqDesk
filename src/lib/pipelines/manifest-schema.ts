@@ -77,6 +77,14 @@ export const ManifestSchema = z
       })
       .strict()
       .optional(),
+    sequencingCompatibility: z
+      .object({
+        readLengthClass: z.enum(["short", "long", "both", "unknown"]).optional(),
+        readLayouts: z.array(z.enum(["single", "paired"])).optional(),
+        platformFamilies: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
     inputs: z.array(
       z
         .object({

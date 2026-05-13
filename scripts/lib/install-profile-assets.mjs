@@ -1325,10 +1325,13 @@ async function seedDownloadedFastqBundleFixture({
     toOptionalString(manifest.order.orderNumber) ||
     `${profileToken}-SMOKE-001`;
   const sequencingTech = {
-    technologyId: "ont-minion-mk1d",
-    technologyName: "MinION Mk1D",
-    platformName: "Oxford Nanopore",
+    technologyId: "ont-minion",
+    technologyName: "MinION",
+    platformFamily: "oxford-nanopore",
+    readLengthClass: "long",
+    supportedReadLayouts: ["single"],
     deviceId: "ont-minion-mk1d",
+    deviceName: "MinION Mk1D",
     ...toJsonObject(manifest.order.sequencingTech),
   };
   const customFields = {
@@ -1352,7 +1355,7 @@ async function seedDownloadedFastqBundleFixture({
     contactPhone: toOptionalString(manifest.order.contactPhone) || null,
     billingAddress:
       toOptionalString(manifest.order.billingAddress) || "SeqDesk profile fixture",
-    platform: toOptionalString(manifest.order.platform) || "Nanopore",
+    platform: null,
     instrumentModel: toOptionalString(manifest.order.instrumentModel) || "MinION Mk1D",
     libraryStrategy: toOptionalString(manifest.order.libraryStrategy) || "WGS",
     librarySource: toOptionalString(manifest.order.librarySource) || "METAGENOMIC",
@@ -1475,10 +1478,13 @@ async function seedOrderPipelineSmokeFixture({
   const customFields = {
     run_type: "metagenomics",
     _sequencing_tech: {
-      technologyId: "ont-minion-mk1d",
-      technologyName: "MinION Mk1D",
-      platformName: "Oxford Nanopore",
+      technologyId: "ont-minion",
+      technologyName: "MinION",
+      platformFamily: "oxford-nanopore",
+      readLengthClass: "long",
+      supportedReadLayouts: ["single"],
       deviceId: "ont-minion-mk1d",
+      deviceName: "MinION Mk1D",
     },
     _installProfileFixture: marker,
   };
@@ -1493,7 +1499,7 @@ async function seedOrderPipelineSmokeFixture({
     contactName: `${researcher.firstName} ${researcher.lastName}`.trim(),
     contactEmail: researcher.email,
     billingAddress: "SeqDesk profile smoke fixture",
-    platform: "Nanopore",
+    platform: null,
     instrumentModel: "MinION Mk1D",
     libraryStrategy: "WGS",
     librarySource: "METAGENOMIC",

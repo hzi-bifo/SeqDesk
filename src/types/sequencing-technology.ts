@@ -28,6 +28,19 @@ export interface TechnologyOption {
   helpText?: string;
 }
 
+export type SequencingPlatformFamily =
+  | "illumina"
+  | "mgi"
+  | "bgi"
+  | "ion-torrent"
+  | "oxford-nanopore"
+  | "pacbio"
+  | "other";
+
+export type SequencingReadLengthClass = "short" | "long" | "both" | "unknown";
+
+export type SequencingReadLayout = "single" | "paired";
+
 // Main sequencing technology definition
 export interface SequencingTechnology {
   id: string;
@@ -42,6 +55,9 @@ export interface SequencingTechnology {
 
   // Technical info
   specs: TechnologySpec[];
+  platformFamily?: SequencingPlatformFamily | string;
+  readLengthClass?: SequencingReadLengthClass;
+  supportedReadLayouts?: SequencingReadLayout[];
   pros: TechnologyPoint[];
   cons: TechnologyPoint[];
   bestFor: string[]; // Use cases
@@ -208,6 +224,9 @@ export interface TechSyncResponse {
 export interface SequencingTechSelection {
   technologyId: string;
   technologyName?: string;
+  platformFamily?: SequencingPlatformFamily | string;
+  readLengthClass?: SequencingReadLengthClass;
+  supportedReadLayouts?: SequencingReadLayout[];
   deviceId?: string;
   deviceName?: string;
   flowCellId?: string;

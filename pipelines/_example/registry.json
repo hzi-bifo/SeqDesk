@@ -7,7 +7,7 @@
   "website": "https://github.com/your-org/your-pipeline",
   "requires": {
     "pairedEndReads": true,
-    "platform": true
+    "sequencingTechnology": true
   },
   "outputs": [
     {
@@ -38,6 +38,11 @@
       "readMode": "paired_only",
       "pairedEnd": true
     }
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": ["paired"],
+    "platformFamilies": ["illumina"]
   },
   "samplesheet": {
     "format": "csv",

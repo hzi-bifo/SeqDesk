@@ -213,7 +213,7 @@ describe('magAdapter.generateSamplesheet', () => {
       dataBasePath: '/data',
     });
 
-    expect(result.errors[0]).toContain('Unsupported sequencing platform');
+    expect(result.errors[0]).toContain('Unsupported sequencing technology/platform');
   });
 
   it('returns error when no samples found in fallback', async () => {

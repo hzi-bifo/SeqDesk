@@ -147,11 +147,14 @@ export async function runDummySeed(
             numberOfSamples: orderSpec.numberOfSamples,
             contactName: options.ownerDisplayName ?? "Seed Dummy Data",
             contactEmail: options.ownerEmail ?? null,
-            platform: orderSpec.platform,
+            platform: orderSpec.platform ?? null,
             instrumentModel: orderSpec.instrumentModel,
             libraryStrategy: orderSpec.libraryStrategy,
             librarySource: orderSpec.librarySource,
-            customFields: JSON.stringify({ seedSource: SEED_DUMMY_MARKER }),
+            customFields: JSON.stringify({
+              _sequencing_tech: orderSpec.sequencingTechSelection,
+              seedSource: SEED_DUMMY_MARKER,
+            }),
             userId: ownerUserId,
             samples: {
               create: orderSpec.samples.map((sample) => ({

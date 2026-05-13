@@ -14,7 +14,7 @@ const ORDER_GROUPS = [
   {
     id: "group_sequencing",
     name: "Sequencing Information",
-    description: "Sequencing platform, library, and run settings",
+    description: "Sequencing technology, library, and run settings",
     icon: "Dna",
     order: 1,
   },
@@ -37,8 +37,16 @@ const STUDY_GROUPS = [
   },
 ];
 
-const ORDER_DEFAULTS_VERSION = 1;
+const ORDER_DEFAULTS_VERSION = 4;
 const STUDY_DEFAULTS_VERSION = 1;
+
+function isLegacyPlatformField(field) {
+  return (
+    field?.id === "system_platform" ||
+    field?.name === "platform" ||
+    field?.systemKey === "platform"
+  );
+}
 
 function usage() {
   console.log(`Usage:
@@ -90,7 +98,7 @@ function readJsonFile(filePath) {
 }
 
 function normalizeOrderFields(fields) {
-  return fields.map((field) => {
+  return fields.filter((field) => !isLegacyPlatformField(field)).map((field) => {
     if (field.perSample || field.adminOnly || field.type === "mixs") {
       return field;
     }

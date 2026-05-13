@@ -31,6 +31,7 @@ samplesheet:
 
     - name: short_reads_platform
       source: order.platform
+      description: Derived from the sequencing technology selector, with legacy Order.platform fallback
       transform:
         type: map_value
         mapping:
@@ -40,6 +41,10 @@ samplesheet:
           miseq: ILLUMINA
           novaseq: ILLUMINA
           nextseq: ILLUMINA
+          mgi: DNBSEQ
+          dnbseq: DNBSEQ
+          bgi: BGISEQ
+          bgiseq: BGISEQ
           ont: OXFORD
           nanopore: OXFORD
           oxford_nanopore: OXFORD

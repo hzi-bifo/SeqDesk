@@ -215,6 +215,14 @@ function sortByOrder(items) {
   });
 }
 
+function isLegacyOrderPlatformField(field) {
+  return (
+    field?.id === "system_platform" ||
+    field?.name === "platform" ||
+    field?.systemKey === "platform"
+  );
+}
+
 function mergeGroups(existingGroups, incomingGroups) {
   return sortByOrder(
     mergeByKey(
@@ -228,8 +236,12 @@ function mergeGroups(existingGroups, incomingGroups) {
 function mergeFields(existingFields, incomingFields) {
   return sortByOrder(
     mergeByKey(
-      Array.isArray(existingFields) ? existingFields : [],
-      Array.isArray(incomingFields) ? incomingFields : [],
+      Array.isArray(existingFields)
+        ? existingFields.filter((field) => !isLegacyOrderPlatformField(field))
+        : [],
+      Array.isArray(incomingFields)
+        ? incomingFields.filter((field) => !isLegacyOrderPlatformField(field))
+        : [],
       (field) => itemKey(field, "field")
     )
   );

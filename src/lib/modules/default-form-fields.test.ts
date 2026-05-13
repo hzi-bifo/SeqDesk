@@ -32,7 +32,8 @@ describe("module default form fields", () => {
       sequencingTech: true,
     });
 
-    expect(updated).toHaveLength(6);
+    expect(updated).toHaveLength(5);
+    expect(updated.some((field) => field.name === "platform")).toBe(false);
     expect(hasFacilityQcField(updated)).toBe(true);
     expect(hasFacilityInternalNotesField(updated)).toBe(true);
     expect(hasFacilitySampleQcField(updated)).toBe(true);
@@ -59,7 +60,8 @@ describe("module default form fields", () => {
       sequencingTech: false,
     });
 
-    expect(updated).toHaveLength(5);
+    expect(updated).toHaveLength(4);
+    expect(updated.some((field) => field.name === "platform")).toBe(false);
     expect(hasFacilityQcField(updated)).toBe(true);
     expect(hasFacilityInternalNotesField(updated)).toBe(true);
     expect(hasFacilitySampleQcField(updated)).toBe(true);

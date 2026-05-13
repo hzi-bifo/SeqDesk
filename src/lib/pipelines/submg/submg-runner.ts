@@ -297,7 +297,7 @@ function mapSubmissionPlatform(platform: string | null | undefined): string {
   if (!platform) return "ILLUMINA";
   const normalized = platform.toLowerCase().replace(/[_\s-]+/g, "");
 
-  if (["illumina", "hiseq", "miseq", "novaseq", "nextseq", "bgiseq", "dnbseq"].some((token) => normalized.includes(token))) {
+  if (["illumina", "hiseq", "miseq", "novaseq", "nextseq", "mgi", "bgi", "bgiseq", "dnbseq"].some((token) => normalized.includes(token))) {
     return "ILLUMINA";
   }
   if (

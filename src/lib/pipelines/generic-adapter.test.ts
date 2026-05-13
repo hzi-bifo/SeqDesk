@@ -285,7 +285,7 @@ describe("generic-adapter", () => {
     expect(result.valid).toBe(false);
     expect(result.issues).toContain("Sample SAMPLE-1: Read checksums are required");
     expect(result.issues).toContain(
-      "Sample SAMPLE-1: Sequencing platform is required (set Order platform or Sequencing Technologies selection)"
+      "Sample SAMPLE-1: Sequencing technology metadata is required"
     );
   });
 
@@ -329,7 +329,7 @@ describe("generic-adapter", () => {
 
     expect(result.valid).toBe(false);
     expect(result.issues).toContain(
-      'Sample SAMPLE-1: Unsupported sequencing platform "Sequel II/IIe" for this pipeline (expected mapping to: Nanopore, PacBio)'
+      'Sample SAMPLE-1: Unsupported sequencing technology/platform "Sequel II/IIe" for this pipeline (expected mapping to: Nanopore, PacBio)'
     );
   });
 

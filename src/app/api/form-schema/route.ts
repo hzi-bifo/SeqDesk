@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { DEFAULT_FORM_SCHEMA, type FormFieldDefinition } from "@/types/form-config";
 import {
   ensureOrderModuleDefaultFields,
+  isLegacyPlatformField,
   ORDER_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
 import {
@@ -73,7 +74,9 @@ export async function GET() {
       Array.isArray(parsed) || typeof parsed.moduleDefaultsVersion !== "number"
         ? 0
         : parsed.moduleDefaultsVersion;
-    const baseFields = (Array.isArray(parsed) ? parsed : parsed.fields || []) as FormFieldDefinition[];
+    const baseFields = (
+      (Array.isArray(parsed) ? parsed : parsed.fields || []) as FormFieldDefinition[]
+    ).filter((field) => !isLegacyPlatformField(field));
     const fields =
       moduleDefaultsVersion < ORDER_FORM_DEFAULTS_VERSION
         ? ensureOrderModuleDefaultFields(baseFields, {

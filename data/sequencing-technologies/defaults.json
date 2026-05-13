@@ -1,7 +1,7 @@
 {
   "_note": "Default sequencing technology configurations. Verify specs match your equipment.",
-  "version": 1,
-  "lastUpdated": "2025-01-17",
+  "version": 2,
+  "lastUpdated": "2026-05-13",
   "technologies": [
     {
       "id": "illumina-novaseq",
@@ -65,7 +65,10 @@
       "priceIndicator": "$$",
       "turnaroundDays": { "min": 5, "max": 10 },
       "order": 1,
-      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/novaseq.html"
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/novaseq.html",
+      "platformFamily": "illumina",
+      "readLengthClass": "short",
+      "supportedReadLayouts": ["single", "paired"]
     },
     {
       "id": "illumina-miseq",
@@ -115,7 +118,10 @@
       "priceIndicator": "$",
       "turnaroundDays": { "min": 2, "max": 5 },
       "order": 2,
-      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/miseq.html"
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/miseq.html",
+      "platformFamily": "illumina",
+      "readLengthClass": "short",
+      "supportedReadLayouts": ["single", "paired"]
     },
     {
       "id": "illumina-nextseq",
@@ -149,7 +155,10 @@
       "priceIndicator": "$$",
       "turnaroundDays": { "min": 3, "max": 7 },
       "order": 3,
-      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/nextseq-2000.html"
+      "sourceUrl": "https://www.illumina.com/systems/sequencing-platforms/nextseq-2000.html",
+      "platformFamily": "illumina",
+      "readLengthClass": "short",
+      "supportedReadLayouts": ["single", "paired"]
     },
     {
       "id": "ont-promethion",
@@ -208,7 +217,10 @@
       "priceIndicator": "$$$",
       "turnaroundDays": { "min": 5, "max": 14 },
       "order": 4,
-      "sourceUrl": "https://nanoporetech.com/products/promethion"
+      "sourceUrl": "https://nanoporetech.com/products/promethion",
+      "platformFamily": "oxford-nanopore",
+      "readLengthClass": "long",
+      "supportedReadLayouts": ["single"]
     },
     {
       "id": "ont-minion",
@@ -244,7 +256,10 @@
       "priceIndicator": "$",
       "turnaroundDays": { "min": 1, "max": 3 },
       "order": 5,
-      "sourceUrl": "https://nanoporetech.com/products/minion"
+      "sourceUrl": "https://nanoporetech.com/products/minion",
+      "platformFamily": "oxford-nanopore",
+      "readLengthClass": "long",
+      "supportedReadLayouts": ["single"]
     },
     {
       "id": "pacbio-revio",
@@ -295,7 +310,10 @@
       "priceIndicator": "$$$$",
       "turnaroundDays": { "min": 7, "max": 14 },
       "order": 6,
-      "sourceUrl": "https://www.pacb.com/revio/"
+      "sourceUrl": "https://www.pacb.com/revio/",
+      "platformFamily": "pacbio",
+      "readLengthClass": "long",
+      "supportedReadLayouts": ["single"]
     },
     {
       "id": "pacbio-sequel2",
@@ -329,7 +347,10 @@
       "priceIndicator": "$$$",
       "turnaroundDays": { "min": 7, "max": 14 },
       "order": 7,
-      "sourceUrl": "https://www.pacb.com/technology/hifi-sequencing/"
+      "sourceUrl": "https://www.pacb.com/technology/hifi-sequencing/",
+      "platformFamily": "pacbio",
+      "readLengthClass": "long",
+      "supportedReadLayouts": ["single"]
     },
     {
       "id": "mgi-dnbseq-t7",
@@ -364,7 +385,10 @@
       "priceIndicator": "$$",
       "turnaroundDays": { "min": 7, "max": 14 },
       "order": 8,
-      "sourceUrl": "https://www.mgi-tech.com/products/"
+      "sourceUrl": "https://www.mgi-tech.com/products/",
+      "platformFamily": "mgi",
+      "readLengthClass": "short",
+      "supportedReadLayouts": ["single", "paired"]
     }
   ]
 }

@@ -69,6 +69,11 @@
       "pairedEnd": true
     }
   },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": ["paired"],
+    "platformFamilies": ["illumina", "mgi", "bgi", "ion-torrent"]
+  },
   "samplesheet": {
     "format": "csv",
     "generator": "samplesheet.yaml"
@@ -145,14 +150,14 @@
       "runAt": {
         "type": "string",
         "title": "Run At",
-        "description": "Choose where MAG is allowed to run: all inputs (default) or only selected sequencing technologies.",
+        "description": "Choose whether MAG can run on all compatible sequencing technologies or only a selected subset.",
         "default": "all",
         "enum": ["all", "selected-technologies"]
       },
       "allowedSequencingTechnologies": {
         "type": "array",
         "title": "Allowed Sequencing Technologies",
-        "description": "Used when Run At is set to selected-technologies. Select technology IDs that are allowed to run MAG.",
+        "description": "Used when Run At is set to selected-technologies. This narrows compatible short-read paired technologies; incompatible technologies remain blocked.",
         "default": []
       },
       "gtdbDb": {

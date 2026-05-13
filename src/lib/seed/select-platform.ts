@@ -52,7 +52,12 @@ export async function selectPlatformForSeed(): Promise<{
       return {
         // Use the device's display name as the instrumentModel so it matches
         // exactly what the admin set up (e.g. "MinION Mk1D" instead of "MinION").
-        primary: { ...profile, instrumentModel: device.name },
+        primary: {
+          ...profile,
+          instrumentModel: device.name,
+          deviceId: device.id,
+          deviceName: device.name,
+        },
         primaryDeviceName: device.name,
         fromConfiguredDevice: true,
       };

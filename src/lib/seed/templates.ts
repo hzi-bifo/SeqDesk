@@ -3,6 +3,12 @@
  * Used by both the admin "seed dummy data" feature and the public demo workspace
  * so naming, species attribution, and metadata stay in sync between them.
  */
+import type {
+  SequencingPlatformFamily,
+  SequencingReadLengthClass,
+  SequencingReadLayout,
+  SequencingTechSelection,
+} from "@/types/sequencing-technology";
 
 export interface StudyTemplate {
   titleBase: string;
@@ -24,6 +30,13 @@ export interface SampleTemplate {
 
 export interface PlatformProfile {
   platform: string;
+  technologyId: string;
+  technologyName: string;
+  platformFamily: SequencingPlatformFamily;
+  readLengthClass: SequencingReadLengthClass;
+  supportedReadLayouts: SequencingReadLayout[];
+  deviceId?: string;
+  deviceName?: string;
   instrumentModel: string;
   libraryStrategy: string;
   librarySource: string;
@@ -55,6 +68,11 @@ export const STUDY_SURFACE_RESISTOME: StudyTemplate = {
 
 export const PLATFORM_ILLUMINA_NOVASEQ_WGS: PlatformProfile = {
   platform: "ILLUMINA",
+  technologyId: "illumina-novaseq",
+  technologyName: "NovaSeq 6000/X",
+  platformFamily: "illumina",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
   instrumentModel: "NovaSeq 6000",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
@@ -63,6 +81,11 @@ export const PLATFORM_ILLUMINA_NOVASEQ_WGS: PlatformProfile = {
 
 export const PLATFORM_ILLUMINA_MISEQ_AMPLICON: PlatformProfile = {
   platform: "ILLUMINA",
+  technologyId: "illumina-miseq",
+  technologyName: "MiSeq",
+  platformFamily: "illumina",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
   instrumentModel: "MiSeq",
   libraryStrategy: "AMPLICON",
   librarySource: "METAGENOMIC",
@@ -71,6 +94,11 @@ export const PLATFORM_ILLUMINA_MISEQ_AMPLICON: PlatformProfile = {
 
 export const PLATFORM_ILLUMINA_NEXTSEQ_WGS: PlatformProfile = {
   platform: "ILLUMINA",
+  technologyId: "illumina-nextseq",
+  technologyName: "NextSeq 2000",
+  platformFamily: "illumina",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
   instrumentModel: "NextSeq 2000",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
@@ -79,6 +107,11 @@ export const PLATFORM_ILLUMINA_NEXTSEQ_WGS: PlatformProfile = {
 
 export const PLATFORM_ONT_MINION_WGS: PlatformProfile = {
   platform: "OXFORD_NANOPORE",
+  technologyId: "ont-minion",
+  technologyName: "MinION",
+  platformFamily: "oxford-nanopore",
+  readLengthClass: "long",
+  supportedReadLayouts: ["single"],
   instrumentModel: "MinION",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
@@ -87,6 +120,11 @@ export const PLATFORM_ONT_MINION_WGS: PlatformProfile = {
 
 export const PLATFORM_ONT_MINION_AMPLICON: PlatformProfile = {
   platform: "OXFORD_NANOPORE",
+  technologyId: "ont-minion",
+  technologyName: "MinION",
+  platformFamily: "oxford-nanopore",
+  readLengthClass: "long",
+  supportedReadLayouts: ["single"],
   instrumentModel: "MinION",
   libraryStrategy: "AMPLICON",
   librarySource: "METAGENOMIC",
@@ -95,6 +133,11 @@ export const PLATFORM_ONT_MINION_AMPLICON: PlatformProfile = {
 
 export const PLATFORM_ONT_PROMETHION_WGS: PlatformProfile = {
   platform: "OXFORD_NANOPORE",
+  technologyId: "ont-promethion",
+  technologyName: "PromethION",
+  platformFamily: "oxford-nanopore",
+  readLengthClass: "long",
+  supportedReadLayouts: ["single"],
   instrumentModel: "PromethION",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
@@ -103,6 +146,11 @@ export const PLATFORM_ONT_PROMETHION_WGS: PlatformProfile = {
 
 export const PLATFORM_PACBIO_REVIO_WGS: PlatformProfile = {
   platform: "PACBIO_SMRT",
+  technologyId: "pacbio-revio",
+  technologyName: "Revio",
+  platformFamily: "pacbio",
+  readLengthClass: "long",
+  supportedReadLayouts: ["single"],
   instrumentModel: "Revio",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
@@ -111,11 +159,43 @@ export const PLATFORM_PACBIO_REVIO_WGS: PlatformProfile = {
 
 export const PLATFORM_PACBIO_SEQUEL2_WGS: PlatformProfile = {
   platform: "PACBIO_SMRT",
+  technologyId: "pacbio-sequel2",
+  technologyName: "Sequel IIe",
+  platformFamily: "pacbio",
+  readLengthClass: "long",
+  supportedReadLayouts: ["single"],
   instrumentModel: "Sequel IIe",
   libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
   pairedEnd: false,
 };
+
+export const PLATFORM_MGI_DNBSEQ_T7_WGS: PlatformProfile = {
+  platform: "DNBSEQ",
+  technologyId: "mgi-dnbseq-t7",
+  technologyName: "DNBSEQ-T7",
+  platformFamily: "mgi",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
+  instrumentModel: "DNBSEQ-T7",
+  libraryStrategy: "WGS",
+  librarySource: "METAGENOMIC",
+  pairedEnd: true,
+};
+
+export function buildSequencingTechSelection(
+  profile: PlatformProfile
+): SequencingTechSelection {
+  return {
+    technologyId: profile.technologyId,
+    technologyName: profile.technologyName,
+    platformFamily: profile.platformFamily,
+    readLengthClass: profile.readLengthClass,
+    supportedReadLayouts: profile.supportedReadLayouts,
+    deviceId: profile.deviceId,
+    deviceName: profile.deviceName,
+  };
+}
 
 /**
  * Maps a sequencing-technology id (as used in data/sequencing-technologies/defaults.json
@@ -130,6 +210,7 @@ export const PLATFORM_BY_TECH_ID: Record<string, PlatformProfile> = {
   "ont-promethion": PLATFORM_ONT_PROMETHION_WGS,
   "pacbio-revio": PLATFORM_PACBIO_REVIO_WGS,
   "pacbio-sequel2": PLATFORM_PACBIO_SEQUEL2_WGS,
+  "mgi-dnbseq-t7": PLATFORM_MGI_DNBSEQ_T7_WGS,
 };
 
 /** Long-read single-end fallback when ONT/PacBio is configured but no specific match. */

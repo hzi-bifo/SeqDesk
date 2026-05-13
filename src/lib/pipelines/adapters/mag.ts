@@ -356,7 +356,7 @@ export const magAdapter: PipelineAdapter = {
 
       const platform = mapPlatformForPipeline(resolveOrderPlatform(sample.order), 'mag');
       if (!platform) {
-        errors.push(`Sample ${sample.sampleId}: Unsupported sequencing platform for short reads`);
+        errors.push(`Sample ${sample.sampleId}: Unsupported sequencing technology/platform for short reads`);
         continue;
       }
 
