@@ -93,6 +93,11 @@ export interface PackageExecution {
   version: string;
   profiles: string[];
   defaultParams: Record<string, unknown>;
+  paramMap?: Record<string, string>;
+  paramRules?: Array<{
+    when: Record<string, unknown>;
+    add: Array<string | { flag: string; value: unknown }>;
+  }>;
   runtime?: {
     allowMacOsArmConda?: boolean;
     /** When true, skip Conda profile on macOS ARM and run using locally installed tools */
@@ -517,6 +522,33 @@ function validatePackageManifest(
   };
 }
 
+function appendUnique<T extends string>(values: T[] | undefined, value: T): T[] {
+  const next = values ? [...values] : [];
+  if (!next.includes(value)) {
+    next.push(value);
+  }
+  return next;
+}
+
+function normalizeMetaxPathCompatibility(
+  manifest: PackageManifest,
+  registry: RegistryConfig
+): void {
+  if (manifest.package.id !== 'metaxpath') return;
+
+  manifest.targets = {
+    supported: appendUnique(manifest.targets?.supported, 'order'),
+  };
+  registry.input.supportedScopes = appendUnique(
+    registry.input.supportedScopes,
+    'order'
+  );
+  manifest.execution.paramMap = {
+    ...manifest.execution.paramMap,
+    paramsFile: '-params-file',
+  };
+}
+
 /**
  * Load a single pipeline package from its directory
  */
@@ -564,6 +596,8 @@ function loadPackage(packageDir: string): LoadedPackage | null {
     console.error(`Package ${packageId} failed validation - skipping`);
     return null;
   }
+
+  normalizeMetaxPathCompatibility(manifest, registry);
 
   // Load samplesheet (optional)
   let samplesheet: SamplesheetConfig | null = null;

@@ -221,6 +221,7 @@ function buildRunConfig(
       ``,
       `conda {`,
       `  channels = ['conda-forge', 'bioconda']`,
+      `  useMamba = false`,
       `  createOptions = '--override-channels -c conda-forge -c bioconda'`,
       `}`,
     ].join('\n')

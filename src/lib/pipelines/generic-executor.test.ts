@@ -264,6 +264,7 @@ describe("generic-executor", () => {
     expect(nextflowConfig).toContain("standard {}");
     expect(nextflowConfig).toContain("conda {");
     expect(nextflowConfig).toContain("conda.enabled = true");
+    expect(nextflowConfig).toContain("useMamba = false");
     expect(nextflowConfig).not.toContain("executor = 'slurm'");
     expect(script).not.toContain("#SBATCH");
 
@@ -281,6 +282,42 @@ describe("generic-executor", () => {
         runFolder: result.runFolder,
       }),
     });
+  });
+
+  it("passes MetaxPath params files using Nextflow -params-file", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "metaxpath",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {
+            paramsFile: "-params-file",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-metaxpath",
+      pipelineId: "metaxpath",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {
+        paramsFile: "/shared/metaxpath/params.yaml",
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("-params-file /shared/metaxpath/params.yaml");
+    expect(script).not.toContain("--paramsFile");
   });
 
   it("normalizes relative pipeline run directories to absolute paths", async () => {
