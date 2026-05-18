@@ -17,6 +17,12 @@ const mocks = vi.hoisted(() => ({
   requirePostgresDatabaseUrlMock: vi.fn(),
   loadInstalledDatabaseConfigMock: vi.fn(),
   getDatabaseCompatibilityErrorMock: vi.fn(),
+  dbMock: {
+    order: { count: vi.fn() },
+    sample: { count: vi.fn() },
+    study: { count: vi.fn() },
+    user: { count: vi.fn() },
+  },
 }));
 
 const {
@@ -27,6 +33,10 @@ const {
   loadInstalledDatabaseConfigMock,
   getDatabaseCompatibilityErrorMock,
 } = mocks;
+
+vi.mock("@/lib/db", () => ({
+  db: mocks.dbMock,
+}));
 
 vi.mock("child_process", () => ({
   exec: mocks.execMock,
@@ -232,6 +242,24 @@ function configureInstallerShell(options: {
       return { stdout: "" };
     }
 
+    if (command === "npm install --omit=dev --no-audit --no-fund") {
+      expect(execOptions).toEqual({
+        cwd: tempDir,
+        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
+      });
+      await fs.mkdir(path.join(tempDir, "node_modules", ".bin"), { recursive: true });
+      await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
+      return { stdout: "" };
+    }
+
+    if (command === "node scripts/run-prisma.mjs generate") {
+      expect(execOptions).toEqual({
+        cwd: tempDir,
+        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
+      });
+      return { stdout: "" };
+    }
+
     if (command === "pm2 restart seqdesk") {
       return restartMode === "pm2"
         ? { stdout: "" }
@@ -310,6 +338,10 @@ beforeEach(async () => {
     provider: "postgresql",
   });
   getDatabaseCompatibilityErrorMock.mockReturnValue(undefined);
+  mocks.dbMock.order.count.mockResolvedValue(4);
+  mocks.dbMock.sample.count.mockResolvedValue(8);
+  mocks.dbMock.study.count.mockResolvedValue(2);
+  mocks.dbMock.user.count.mockResolvedValue(3);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
 
@@ -359,12 +391,22 @@ describe("installer", () => {
       "extracting:60",
       "extracting:80",
       "extracting:85",
+      "extracting:87",
       "extracting:90",
+      "extracting:93",
       "complete:100",
       "restarting:100",
     ]);
     expect(requirePostgresDatabaseUrlMock).toHaveBeenCalledWith(
       "postgresql://installed.example/seqdesk"
+    );
+    const commands = execMock.mock.calls.map((call) => call[0]);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        "npm install --omit=dev --no-audit --no-fund",
+        "node scripts/run-prisma.mjs generate",
+        "node scripts/run-prisma.mjs migrate deploy",
+      ])
     );
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
   });

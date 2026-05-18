@@ -157,8 +157,15 @@ export async function installUpdate(
     report('extracting', 85, 'Verifying update...');
     await verifyInstalledVersion(release.version);
 
-    // Step 6: Run migrations (snapshot row counts to guard against silent data loss)
-    report('extracting', 90, 'Running database migrations...');
+    // Step 6: Refresh runtime dependencies and Prisma client
+    report('extracting', 87, 'Installing runtime dependencies...');
+    await installRuntimeDependencies();
+
+    report('extracting', 90, 'Generating Prisma client...');
+    await generatePrismaClient();
+
+    // Step 7: Run migrations (snapshot row counts to guard against silent data loss)
+    report('extracting', 93, 'Running database migrations...');
     const before = await snapshotDataCounts();
     await runMigrations();
     const after = await snapshotDataCounts();
@@ -167,11 +174,11 @@ export async function installUpdate(
       throw new Error(`Aborting update: data loss detected after migrations (${loss}). Backup will be restored.`);
     }
 
-    // Step 7: Cleanup
+    // Step 8: Cleanup
     report('complete', 100, 'Update complete! Restarting...');
     await cleanup();
 
-    // Step 8: Restart
+    // Step 9: Restart
     report('restarting', 100, 'Restarting application...');
     await releaseUpdateLock();
     await restartApplication();
@@ -361,6 +368,22 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Installed version check failed: ${message}`);
   }
+}
+
+async function installRuntimeDependencies(): Promise<void> {
+  await runUpdateCommand('npm install --omit=dev --no-audit --no-fund', {
+    cwd: INSTALL_DIR,
+  });
+
+  try {
+    await fs.access(path.join(INSTALL_DIR, 'node_modules', '.bin', 'next'));
+  } catch {
+    throw new Error('Runtime dependency install did not create node_modules/.bin/next');
+  }
+}
+
+async function generatePrismaClient(): Promise<void> {
+  await runUpdateCommand('node scripts/run-prisma.mjs generate', { cwd: INSTALL_DIR });
 }
 
 /**
