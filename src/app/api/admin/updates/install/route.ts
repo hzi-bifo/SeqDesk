@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { checkForUpdates } from '@/lib/updater';
-import { installUpdate } from '@/lib/updater/installer';
+import { checkForUpdates, getInstalledVersion } from '@/lib/updater';
+import { installUpdate, repairInstalledUpdate } from '@/lib/updater/installer';
 import {
   acquireUpdateLock,
   isUpdateInProgress,
@@ -16,7 +16,7 @@ import {
  * Install the latest available update.
  * This will download, extract, and restart the application.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session || session.user.role !== 'FACILITY_ADMIN') {
@@ -37,6 +37,38 @@ export async function POST() {
         { error: 'Update already in progress' },
         { status: 409 }
       );
+    }
+
+    const body = (await request.json().catch(() => null)) as
+      | { repair?: unknown; targetVersion?: unknown }
+      | null;
+    const repair = body?.repair === true;
+
+    if (repair) {
+      const targetVersion =
+        typeof body?.targetVersion === 'string' && body.targetVersion.trim()
+          ? body.targetVersion.trim()
+          : await getInstalledVersion();
+
+      await writeUpdateStatus(
+        { status: 'checking', progress: 0, message: 'Preparing update repair...' },
+        { targetVersion }
+      );
+
+      repairInstalledUpdate(targetVersion, (progress) => {
+        console.log(`Update repair progress: ${progress.status} - ${progress.message}`);
+        void writeUpdateStatus(progress, { targetVersion })
+          .catch((error) => console.error('Failed to write update status:', error));
+      }).catch((error) => {
+        console.error('Update repair failed:', error);
+      });
+
+      return NextResponse.json({
+        success: true,
+        repair: true,
+        message: `Repairing update installation for version ${targetVersion}. SeqDesk will attempt automatic restart.`,
+        version: targetVersion,
+      });
     }
 
     // Check for updates first

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   readUpdateStatus: vi.fn(),
   writeUpdateStatus: vi.fn(),
   clearUpdateStatus: vi.fn(),
+  releaseUpdateLock: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -26,9 +27,10 @@ vi.mock("@/lib/updater/status", () => ({
   readUpdateStatus: mocks.readUpdateStatus,
   writeUpdateStatus: mocks.writeUpdateStatus,
   clearUpdateStatus: mocks.clearUpdateStatus,
+  releaseUpdateLock: mocks.releaseUpdateLock,
 }));
 
-import { GET } from "./route";
+import { DELETE, GET } from "./route";
 
 describe("GET /api/admin/updates/progress", () => {
   beforeEach(() => {
@@ -41,6 +43,7 @@ describe("GET /api/admin/updates/progress", () => {
     mocks.readUpdateStatus.mockResolvedValue(null);
     mocks.writeUpdateStatus.mockResolvedValue(undefined);
     mocks.clearUpdateStatus.mockResolvedValue(undefined);
+    mocks.releaseUpdateLock.mockResolvedValue(undefined);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -195,5 +198,42 @@ describe("GET /api/admin/updates/progress", () => {
       message: "Update complete.",
       targetVersion: "2.0.0",
     });
+  });
+
+  it("clears failed update status and releases lock", async () => {
+    mocks.readUpdateStatus.mockResolvedValue({
+      status: "error",
+      progress: 0,
+      message: "Update failed",
+      error: "Prisma failed",
+      targetVersion: "2.0.0",
+    });
+
+    const response = await DELETE();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(mocks.clearUpdateStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseUpdateLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects clearing status while an update is in progress", async () => {
+    mocks.readUpdateStatus.mockResolvedValue({
+      status: "downloading",
+      progress: 20,
+      message: "Downloading",
+      targetVersion: "2.0.0",
+    });
+
+    const response = await DELETE();
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data).toEqual({
+      error: "Cannot clear update status while an update is in progress",
+    });
+    expect(mocks.clearUpdateStatus).not.toHaveBeenCalled();
+    expect(mocks.releaseUpdateLock).not.toHaveBeenCalled();
   });
 });

@@ -371,7 +371,15 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
 }
 
 async function installRuntimeDependencies(): Promise<void> {
-  await runUpdateCommand('npm install --omit=dev --no-audit --no-fund', {
+  const hasLockfile = await fs
+    .access(path.join(INSTALL_DIR, 'package-lock.json'))
+    .then(() => true)
+    .catch(() => false);
+  const installCommand = hasLockfile
+    ? 'npm ci --omit=dev --no-audit --no-fund'
+    : 'npm install --omit=dev --no-audit --no-fund';
+
+  await runUpdateCommand(installCommand, {
     cwd: INSTALL_DIR,
   });
 
@@ -379,6 +387,12 @@ async function installRuntimeDependencies(): Promise<void> {
     await fs.access(path.join(INSTALL_DIR, 'node_modules', '.bin', 'next'));
   } catch {
     throw new Error('Runtime dependency install did not create node_modules/.bin/next');
+  }
+
+  try {
+    await fs.access(path.join(INSTALL_DIR, 'node_modules', '.bin', 'prisma'));
+  } catch {
+    throw new Error('Runtime dependency install did not create node_modules/.bin/prisma');
   }
 }
 
@@ -391,6 +405,46 @@ async function generatePrismaClient(): Promise<void> {
  */
 async function runMigrations(): Promise<void> {
   await runUpdateCommand('node scripts/run-prisma.mjs migrate deploy', { cwd: INSTALL_DIR });
+}
+
+export async function repairInstalledUpdate(
+  targetVersion?: string,
+  onProgress?: ProgressCallback
+): Promise<void> {
+  const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
+    onProgress?.({ status, progress, message, error });
+  };
+
+  try {
+    const installedDatabase = await loadInstalledDatabaseConfig(INSTALL_DIR);
+    requirePostgresDatabaseUrl(installedDatabase.databaseUrl);
+
+    report('extracting', 20, 'Repairing runtime dependencies...');
+    await installRuntimeDependencies();
+
+    report('extracting', 45, 'Regenerating Prisma client...');
+    await generatePrismaClient();
+
+    report('extracting', 70, 'Running database migrations...');
+    const before = await snapshotDataCounts();
+    await runMigrations();
+    const after = await snapshotDataCounts();
+    const loss = describeDataLoss(before, after);
+    if (loss) {
+      throw new Error(`Aborting repair: data loss detected after migrations (${loss}).`);
+    }
+
+    const suffix = targetVersion ? ` to ${targetVersion}` : '';
+    report('complete', 100, `Update repair complete${suffix}. Restarting...`);
+    report('restarting', 100, 'Restarting application...');
+    await releaseUpdateLock();
+    await restartApplication();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    report('error', 0, 'Update repair failed', errorMessage);
+    await releaseUpdateLock();
+    throw error;
+  }
 }
 
 /**

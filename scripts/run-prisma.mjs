@@ -132,17 +132,55 @@ const prismaBin =
     ? path.join(process.cwd(), "node_modules", ".bin", "prisma.cmd")
     : path.join(process.cwd(), "node_modules", ".bin", "prisma");
 
-const command = fs.existsSync(prismaBin) ? prismaBin : "npx";
-const args =
-  process.argv.length > 2
-    ? fs.existsSync(prismaBin)
-      ? process.argv.slice(2)
-      : ["prisma", ...process.argv.slice(2)]
-    : fs.existsSync(prismaBin)
-      ? []
-      : ["prisma"];
+if (!fs.existsSync(prismaBin)) {
+  fail(
+    `Local Prisma CLI not found at ${prismaBin}. Run "npm ci --omit=dev --no-audit --no-fund" in the SeqDesk install directory before running Prisma commands.`
+  );
+}
 
-const prismaArgs = fs.existsSync(prismaBin) ? args : args.slice(1);
+const versionResult = spawnSync(prismaBin, ["--version"], {
+  stdio: ["ignore", "pipe", "pipe"],
+  env: process.env,
+  encoding: "utf8",
+  maxBuffer: 128 * 1024 * 1024,
+});
+
+if (versionResult.error) {
+  fail(`Failed to run local Prisma CLI: ${versionResult.error.message}`);
+}
+
+if (versionResult.status !== 0) {
+  const stdout = clipOutput(versionResult.stdout);
+  const stderr = clipOutput(versionResult.stderr);
+  fail(
+    [
+      "Failed to inspect local Prisma CLI version.",
+      stdout ? `Prisma stdout:\n${stdout}` : "",
+      stderr ? `Prisma stderr:\n${stderr}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+const versionOutput = `${versionResult.stdout || ""}\n${versionResult.stderr || ""}`;
+const versionMatch = versionOutput.match(/prisma\s+:\s+(\d+)\.(\d+)\.(\d+)/i)
+  || versionOutput.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+const prismaVersion = versionMatch
+  ? `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}`
+  : "unknown";
+const prismaMajor = versionMatch ? Number(versionMatch[1]) : NaN;
+
+if (prismaMajor !== 5) {
+  fail(
+    `Unsupported local Prisma CLI version ${prismaVersion}. SeqDesk currently requires Prisma CLI 5.x; run "npm ci --omit=dev --no-audit --no-fund" in the SeqDesk install directory and retry.`
+  );
+}
+
+const command = prismaBin;
+const args = process.argv.length > 2 ? process.argv.slice(2) : [];
+
+const prismaArgs = args;
 const isMigrateDeploy =
   prismaArgs.length === 2 && prismaArgs[0] === "migrate" && prismaArgs[1] === "deploy";
 const quietMigrateDeploy =

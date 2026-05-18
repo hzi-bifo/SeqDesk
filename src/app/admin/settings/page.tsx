@@ -1193,37 +1193,54 @@ export default function SettingsPage() {
     };
   }, [stopRestartPolling, stopUpdatePolling]);
 
-  const performUpdate = async () => {
-    if (
+  const performUpdate = async (options: { repair?: boolean } = {}) => {
+    const repair = options.repair === true;
+    const targetVersion =
+      updateStatus?.targetVersion ||
+      updateInfo?.latest?.version ||
+      updateInfo?.installedVersion ||
+      updateInfo?.currentVersion ||
+      "unknown";
+
+    if (!repair && (
       !updateInfo?.updateAvailable ||
       !updateInfo.latest ||
       updateInfo.databaseCompatible === false
-    ) {
+    )) {
       return;
     }
 
     const confirmed = window.confirm(
-      `Update to v${updateInfo.latest.version}?\n\n` +
-        `This will:\n` +
-        `1. Download the new version\n` +
-        `2. Run PostgreSQL migrations\n` +
-        `3. Install the update\n` +
-        `4. Restart the server\n\n` +
-        `Ensure you have a recent database backup before continuing.\n\n` +
-        `The app will be unavailable for a few seconds during restart.`
+      repair
+        ? `Retry the failed update repair for v${targetVersion}?\n\n` +
+          `This will reinstall runtime dependencies, regenerate Prisma, run migrations, and restart the server.`
+        : (
+          `Update to v${updateInfo!.latest!.version}?\n\n` +
+          `This will:\n` +
+          `1. Download the new version\n` +
+          `2. Run PostgreSQL migrations\n` +
+          `3. Install the update\n` +
+          `4. Restart the server\n\n` +
+          `Ensure you have a recent database backup before continuing.\n\n` +
+          `The app will be unavailable for a few seconds during restart.`
+        )
     );
     if (!confirmed) return;
 
     setUpdateStatus({
       status: "checking",
       progress: 0,
-      message: "Starting update...",
-      targetVersion: updateInfo.latest.version,
+      message: repair ? "Starting update repair..." : "Starting update...",
+      targetVersion: repair ? targetVersion : updateInfo!.latest!.version,
     });
 
     try {
       const res = await fetch("/api/admin/updates/install", {
         method: "POST",
+        headers: repair ? { "Content-Type": "application/json" } : undefined,
+        body: repair
+          ? JSON.stringify({ repair: true, targetVersion })
+          : undefined,
       });
 
       const payload = (await res.json().catch(() => null)) as
@@ -1238,7 +1255,9 @@ export default function SettingsPage() {
       }
 
       toast.success(
-        "Update started. SeqDesk will attempt restart; if it does not return, restart it manually."
+        repair
+          ? "Update repair started. SeqDesk will attempt restart; if it does not return, restart it manually."
+          : "Update started. SeqDesk will attempt restart; if it does not return, restart it manually."
       );
       await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
     } catch (error) {
@@ -1248,10 +1267,31 @@ export default function SettingsPage() {
       setUpdateStatus({
         status: "error",
         progress: 0,
-        message: "Update failed",
+        message: repair ? "Update repair failed" : "Update failed",
         error: message,
-        targetVersion: updateInfo.latest.version,
+        targetVersion: repair ? targetVersion : updateInfo?.latest?.version,
       });
+    }
+  };
+
+  const clearFailedUpdateStatus = async () => {
+    try {
+      const res = await fetch("/api/admin/updates/progress", {
+        method: "DELETE",
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to clear update status");
+      }
+      setUpdateStatus(null);
+      toast.success("Failed update status cleared");
+      await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to clear update status";
+      toast.error(message);
     }
   };
 
@@ -1856,6 +1896,26 @@ export default function SettingsPage() {
                         {updateStatus.progress || 0}% • {updateStatus.status}
                       </p>
                     </div>
+                    {updateStatus.status === "error" && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => void performUpdate({ repair: true })}
+                        >
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Retry update
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-white"
+                          onClick={() => void clearFailedUpdateStatus()}
+                        >
+                          Clear failed status
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1928,7 +1988,7 @@ export default function SettingsPage() {
                         )}
                         <div className="mt-3">
                           <Button
-                            onClick={performUpdate}
+                            onClick={() => void performUpdate()}
                             disabled={
                               updateInProgress ||
                               restartPending ||

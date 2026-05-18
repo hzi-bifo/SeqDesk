@@ -130,6 +130,11 @@ async function seedInstallDir(): Promise<void> {
     "utf8"
   );
   await fs.writeFile(
+    path.join(tempDir, "package-lock.json"),
+    JSON.stringify({ name: "seqdesk", version: "1.1.80", lockfileVersion: 3 }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
     path.join(tempDir, "seqdesk.config.json"),
     JSON.stringify(
       {
@@ -242,13 +247,17 @@ function configureInstallerShell(options: {
       return { stdout: "" };
     }
 
-    if (command === "npm install --omit=dev --no-audit --no-fund") {
+    if (
+      command === "npm ci --omit=dev --no-audit --no-fund" ||
+      command === "npm install --omit=dev --no-audit --no-fund"
+    ) {
       expect(execOptions).toEqual({
         cwd: tempDir,
         maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
       });
       await fs.mkdir(path.join(tempDir, "node_modules", ".bin"), { recursive: true });
       await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
+      await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "prisma"), "#!/bin/sh\n", "utf8");
       return { stdout: "" };
     }
 
@@ -403,12 +412,74 @@ describe("installer", () => {
     const commands = execMock.mock.calls.map((call) => call[0]);
     expect(commands).toEqual(
       expect.arrayContaining([
-        "npm install --omit=dev --no-audit --no-fund",
+        "npm ci --omit=dev --no-audit --no-fund",
         "node scripts/run-prisma.mjs generate",
         "node scripts/run-prisma.mjs migrate deploy",
       ])
     );
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to npm install only when package-lock.json is missing", async () => {
+    await fs.rm(path.join(tempDir, "package-lock.json"), { force: true });
+    configureInstallerShell();
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease());
+
+    const commands = execMock.mock.calls.map((call) => call[0]);
+    expect(commands).toContain("npm install --omit=dev --no-audit --no-fund");
+    expect(commands).not.toContain("npm ci --omit=dev --no-audit --no-fund");
+  });
+
+  it("repairs an already applied update without downloading a release", async () => {
+    configureInstallerShell();
+    const progress: string[] = [];
+    const mod = await loadInstallerModule();
+
+    await mod.repairInstalledUpdate("1.2.0", (entry) => {
+      progress.push(`${entry.status}:${entry.progress}`);
+    });
+
+    const commands = execMock.mock.calls.map((call) => call[0]);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        "npm ci --omit=dev --no-audit --no-fund",
+        "node scripts/run-prisma.mjs generate",
+        "node scripts/run-prisma.mjs migrate deploy",
+      ])
+    );
+    expect(commands.some((command) => String(command).startsWith("curl -fsSL"))).toBe(false);
+    expect(progress).toEqual([
+      "extracting:20",
+      "extracting:45",
+      "extracting:70",
+      "complete:100",
+      "restarting:100",
+    ]);
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails when runtime dependency install does not create a local Prisma CLI", async () => {
+    configureInstallerShell();
+    const baseResponder = execResponder;
+    execResponder = async (command: string, execOptions?: unknown) => {
+      if (command === "npm ci --omit=dev --no-audit --no-fund") {
+        expect(execOptions).toEqual({
+          cwd: tempDir,
+          maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
+        });
+        await fs.mkdir(path.join(tempDir, "node_modules", ".bin"), { recursive: true });
+        await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
+        return { stdout: "" };
+      }
+      return baseResponder(command, execOptions);
+    };
+    const mod = await loadInstallerModule();
+
+    await expect(mod.installUpdate(createRelease())).rejects.toThrow(
+      "Runtime dependency install did not create node_modules/.bin/prisma"
+    );
   });
 
   it("restores the previous install when version verification fails", async () => {

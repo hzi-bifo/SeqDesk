@@ -2462,7 +2462,7 @@ print_node_install_instructions() {
 }
 
 install_runtime_node_modules() {
-    if [ -x "./node_modules/.bin/next" ]; then
+    if [ -x "./node_modules/.bin/next" ] && [ -x "./node_modules/.bin/prisma" ]; then
         print_info "Runtime Node dependencies already available."
         return 0
     fi
@@ -2477,6 +2477,11 @@ install_runtime_node_modules() {
     if [ ! -x "./node_modules/.bin/next" ]; then
         print_error "next CLI is missing after dependency install (node_modules/.bin/next)."
         print_error "Run 'npm install --omit=dev' manually in $SEQDESK_DIR and retry."
+        exit 1
+    fi
+    if [ ! -x "./node_modules/.bin/prisma" ]; then
+        print_error "Prisma CLI is missing after dependency install (node_modules/.bin/prisma)."
+        print_error "Run 'npm ci --omit=dev' manually in $SEQDESK_DIR and retry."
         exit 1
     fi
 }
