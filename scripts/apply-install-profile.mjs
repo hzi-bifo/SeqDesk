@@ -55,6 +55,17 @@ function toRecord(value) {
   return isRecord(value) ? value : {};
 }
 
+function parseJsonObject(value) {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string" || value.trim().length === 0) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function toOptionalString(value) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -353,6 +364,31 @@ function buildPipelineExecutionOverrides(pipelines, execution) {
   }
 
   return merged;
+}
+
+function buildPipelineProfileConfig(pipelines, pipelineId) {
+  const merged = {};
+  const configMaps = [
+    toRecord(pipelines.configs),
+    toRecord(pipelines.pipelineConfigs),
+  ];
+
+  for (const configMap of configMaps) {
+    Object.assign(merged, toRecord(configMap[pipelineId]));
+  }
+
+  const pipelineConfig = toRecord(pipelines[pipelineId]);
+  Object.assign(merged, toRecord(pipelineConfig.config));
+
+  return merged;
+}
+
+function mergePipelineConfig(existingConfig, profileConfig) {
+  const nextConfig = {
+    ...parseJsonObject(existingConfig),
+    ...profileConfig,
+  };
+  return Object.keys(nextConfig).length > 0 ? JSON.stringify(nextConfig) : null;
 }
 
 function discoverInstalledPipelineIds() {
@@ -715,16 +751,21 @@ async function applyPipelineEnablement(prisma, profile) {
     const existing = await prisma.pipelineConfig.findUnique({
       where: { pipelineId },
     });
+    const profileConfig = buildPipelineProfileConfig(pipelines, pipelineId);
+    const config =
+      Object.keys(profileConfig).length > 0
+        ? mergePipelineConfig(existing?.config, profileConfig)
+        : existing?.config || null;
     await prisma.pipelineConfig.upsert({
       where: { pipelineId },
       update: {
         enabled: allowlist.has(pipelineId),
-        config: existing?.config || null,
+        config,
       },
       create: {
         pipelineId,
         enabled: allowlist.has(pipelineId),
-        config: null,
+        config,
       },
     });
   }

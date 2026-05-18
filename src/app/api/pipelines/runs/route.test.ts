@@ -174,6 +174,7 @@ describe("GET /api/pipelines/runs", () => {
 describe("POST /api/pipelines/runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete (mocks.pipelineRegistry as Record<string, unknown>).metaxpath;
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "admin-1",
@@ -365,6 +366,62 @@ describe("POST /api/pipelines/runs", () => {
       details: [
         "Template simulation is not supported for long-read mode. Choose synthetic or auto mode, or switch to a short-read mode.",
       ],
+    });
+  });
+
+  it("merges saved admin pipeline config into created runs", async () => {
+    (mocks.pipelineRegistry as Record<string, unknown>).metaxpath = {
+      id: "metaxpath",
+      name: "MetaxPath",
+      icon: "Dna",
+      defaultConfig: {
+        topn: 50,
+      },
+      input: {
+        supportedScopes: ["order"],
+        perSample: {
+          reads: true,
+          pairedEnd: false,
+        },
+      },
+    };
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue({
+      enabled: true,
+      config: JSON.stringify({
+        paramsFile: "/shared/metaxpath/downloaded.params.yaml",
+        topn: 25,
+        allowedSequencingTechnologies: ["Nanopore"],
+      }),
+    });
+    const adapter = {
+      validateInputs: vi.fn().mockResolvedValue({
+        valid: true,
+      }),
+    };
+    mocks.createGenericAdapter.mockReturnValue(adapter);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "metaxpath",
+          orderId: "order-1",
+          config: {
+            topn: 10,
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        pipelineId: "metaxpath",
+        config: JSON.stringify({
+          topn: 10,
+          paramsFile: "/shared/metaxpath/downloaded.params.yaml",
+        }),
+      }),
     });
   });
 

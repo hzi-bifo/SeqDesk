@@ -122,6 +122,11 @@ describe("install profile installer wiring", () => {
     expect(profileApplicator).toContain("installProfilePipelineAllowlist");
     expect(profileApplicator).toContain("discoverInstalledPipelineIds");
     expect(profileApplicator).toContain("buildPipelineExecutionOverrides");
+    expect(profileApplicator).toContain("buildPipelineProfileConfig");
+    expect(profileApplicator).toContain("mergePipelineConfig");
+    expect(profileApplicator).toContain("pipelines.configs");
+    expect(profileApplicator).toContain("pipelines.pipelineConfigs");
+    expect(profileApplicator).toContain("pipelineConfig.config");
     expect(profileApplicator).toContain("pipelineOverrides");
     expect(profileApplicator).toContain("...Object.keys(pipelines)");
     expect(profileApplicator).toContain("pipelineDatabaseDir");

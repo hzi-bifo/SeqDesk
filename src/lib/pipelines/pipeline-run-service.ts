@@ -89,6 +89,48 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
 
+function parseConfigJson(rawConfig: string | null | undefined): Record<string, unknown> {
+  if (!rawConfig) return {};
+  try {
+    const parsed = JSON.parse(rawConfig);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function stripSeqDeskOnlyRunConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const runtimeConfig = { ...config };
+  delete runtimeConfig.allowedSequencingTechnologies;
+  return runtimeConfig;
+}
+
+function getPipelineDefaultConfig(pipelineId: string): Record<string, unknown> {
+  try {
+    return PIPELINE_REGISTRY[pipelineId]?.defaultConfig || {};
+  } catch {
+    return {};
+  }
+}
+
+async function resolvePipelineRuntimeConfig(
+  pipelineId: string,
+  runConfig: Record<string, unknown> | null
+): Promise<Record<string, unknown>> {
+  const savedConfigRecord = await db.pipelineConfig.findUnique({
+    where: { pipelineId },
+    select: { config: true },
+  });
+  const savedConfig = parseConfigJson(savedConfigRecord?.config);
+  const mergedConfig = stripSeqDeskOnlyRunConfig({
+    ...getPipelineDefaultConfig(pipelineId),
+    ...savedConfig,
+    ...(runConfig || {}),
+  });
+
+  return normalizePipelineRunConfig(pipelineId, mergedConfig);
+}
+
 async function commandExists(command: string): Promise<boolean> {
   try {
     await execAsync(`command -v ${command}`, { timeout: 5000 });
@@ -403,7 +445,7 @@ export async function createPipelineRunForOperator({
     }
   }
 
-  const normalizedConfig = normalizePipelineRunConfig(pipelineId, asRecord(config));
+  const normalizedConfig = await resolvePipelineRuntimeConfig(pipelineId, asRecord(config));
   const configIssues = getPipelineRunConfigIssues(pipelineId, normalizedConfig);
   if (configIssues.length > 0) {
     return jsonResponse(
@@ -535,7 +577,7 @@ export async function startPipelineRunForOperator({
       return jsonResponse({ error: 'Run config is invalid JSON' }, 400);
     }
   }
-  config = normalizePipelineRunConfig(run.pipelineId, config);
+  config = await resolvePipelineRuntimeConfig(run.pipelineId, config);
   const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
   if (configIssues.length > 0) {
     const message = configIssues.join('\n');

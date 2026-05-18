@@ -914,6 +914,35 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(prepArgs.config).toEqual({ maxCpus: 4, customParam: "value" });
   });
 
+  it("merges saved admin pipeline config when starting a run", async () => {
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue({
+      enabled: true,
+      config: JSON.stringify({
+        paramsFile: "/shared/metaxpath/downloaded.params.yaml",
+        topn: 50,
+        allowedSequencingTechnologies: ["Nanopore"],
+      }),
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      config: JSON.stringify({
+        topn: 10,
+        customParam: "run-value",
+      }),
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.config).toEqual({
+      paramsFile: "/shared/metaxpath/downloaded.params.yaml",
+      topn: 10,
+      customParam: "run-value",
+    });
+    expect(prepArgs.config).not.toHaveProperty("allowedSequencingTechnologies");
+  });
+
   it("resolves effective profile with multiple comma-separated values", async () => {
     mocks.getExecutionSettings.mockResolvedValue({
       ...defaultExecutionSettings,
