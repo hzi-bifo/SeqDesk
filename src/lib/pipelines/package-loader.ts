@@ -522,27 +522,9 @@ function validatePackageManifest(
   };
 }
 
-function appendUnique<T extends string>(values: T[] | undefined, value: T): T[] {
-  const next = values ? [...values] : [];
-  if (!next.includes(value)) {
-    next.push(value);
-  }
-  return next;
-}
-
-function normalizeMetaxPathCompatibility(
-  manifest: PackageManifest,
-  registry: RegistryConfig
-): void {
+function normalizeMetaxPathCompatibility(manifest: PackageManifest): void {
   if (manifest.package.id !== 'metaxpath') return;
 
-  manifest.targets = {
-    supported: appendUnique(manifest.targets?.supported, 'order'),
-  };
-  registry.input.supportedScopes = appendUnique(
-    registry.input.supportedScopes,
-    'order'
-  );
   manifest.execution.paramMap = {
     ...manifest.execution.paramMap,
     paramsFile: '-params-file',
@@ -597,7 +579,7 @@ function loadPackage(packageDir: string): LoadedPackage | null {
     return null;
   }
 
-  normalizeMetaxPathCompatibility(manifest, registry);
+  normalizeMetaxPathCompatibility(manifest);
 
   // Load samplesheet (optional)
   let samplesheet: SamplesheetConfig | null = null;

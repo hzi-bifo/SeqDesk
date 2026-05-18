@@ -415,7 +415,7 @@ describe("package-loader", () => {
     expect(definition?.input.supportedScopes).toEqual(["order"]);
   });
 
-  it("normalizes installed MetaxPath descriptors for order runs and params files", async () => {
+  it("normalizes installed MetaxPath descriptors for params files without changing scope", async () => {
     const packageDir = path.join(process.cwd(), "pipelines", "metaxpath");
     await fs.mkdir(packageDir, { recursive: true });
 
@@ -452,13 +452,51 @@ describe("package-loader", () => {
     const registry = getPackageRegistry("metaxpath");
     const definition = packageToPipelineDefinition("metaxpath");
 
-    expect(manifest?.targets?.supported).toEqual(["study", "order"]);
+    expect(manifest?.targets?.supported).toEqual(["study"]);
     expect(manifest?.execution.paramMap).toEqual({
       otherSetting: "--other",
       paramsFile: "-params-file",
     });
-    expect(registry?.input.supportedScopes).toEqual(["study", "samples", "order"]);
-    expect(definition?.input.supportedScopes).toEqual(["study", "order"]);
+    expect(registry?.input.supportedScopes).toEqual(["study", "samples"]);
+    expect(definition?.input.supportedScopes).toEqual(["study"]);
+  });
+
+  it("keeps registry-derived MetaxPath study support when manifest targets are omitted", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "metaxpath");
+    await fs.mkdir(packageDir, { recursive: true });
+
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("metaxpath"),
+      targets: undefined,
+      execution: {
+        ...baseManifest("metaxpath").execution,
+        paramMap: {
+          otherSetting: "--other",
+        },
+      },
+    });
+    await writeJson(path.join(packageDir, "definition.json"), baseDefinition("metaxpath"));
+    await writeJson(path.join(packageDir, "registry.json"), {
+      ...baseRegistry("metaxpath"),
+      input: {
+        ...baseRegistry("metaxpath").input,
+        supportedScopes: ["study", "samples"],
+      },
+    });
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: {
+        format: "csv",
+        filename: "metaxpath.csv",
+        rows: { scope: "study" },
+        columns: [],
+      },
+    });
+
+    const manifest = getPackageManifest("metaxpath");
+    const definition = packageToPipelineDefinition("metaxpath");
+
+    expect(manifest?.targets).toBeUndefined();
+    expect(definition?.input.supportedScopes).toEqual(["study"]);
   });
 
   it("omits packages with invalid Read writeback destinations", async () => {
