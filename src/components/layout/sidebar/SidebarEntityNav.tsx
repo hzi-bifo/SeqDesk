@@ -163,6 +163,9 @@ export function SidebarEntityNav({
       : "empty";
 
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
+  const isAnalysisDetailRoute = /^\/analysis\/[^/]+/.test(pathname);
+  const isStudyAnalysisContext = isAnalysisDetailRoute && entityType === "study";
+  const isOrderAnalysisContext = isAnalysisDetailRoute && entityType === "order";
   const activeTab = pathname.startsWith("/studies")
     ? "studies"
     : pathname.startsWith("/orders")
@@ -172,7 +175,11 @@ export function SidebarEntityNav({
         : "orders";
   const requestedStudyTab = searchParams.get("tab");
   const currentStudyTab =
-    requestedStudyTab === "ena" ? "publishing" : requestedStudyTab;
+    isStudyAnalysisContext
+      ? "pipelines"
+      : requestedStudyTab === "ena"
+        ? "publishing"
+        : requestedStudyTab;
   const currentStudyPublishingTarget =
     currentStudyTab === "publishing"
       ? (requestedStudyTab === "ena" ? "ena" : searchParams.get("publisher"))
@@ -269,6 +276,9 @@ export function SidebarEntityNav({
 
     // Orders
     if (item.key === "details") {
+      if (isOrderAnalysisContext) {
+        return false;
+      }
       if (currentOrderSubview === "edit") {
         return currentOrderEditStep !== "_facility" && currentOrderEditScope !== "facility";
       }
@@ -284,10 +294,19 @@ export function SidebarEntityNav({
     if (item.key === "sequencing") {
       const hasPipelineParam = !!searchParams.get("pipeline");
       const hasAnalysisView = searchParams.get("view") === "analysis";
-      return (currentOrderSubview === "sequencing" && !hasPipelineParam && !hasAnalysisView) || currentOrderSubview === "files" || (!currentOrderSubview && currentOrderSection === "reads");
+      return (
+        !isOrderAnalysisContext &&
+        ((currentOrderSubview === "sequencing" && !hasPipelineParam && !hasAnalysisView) ||
+          currentOrderSubview === "files" ||
+          (!currentOrderSubview && currentOrderSection === "reads"))
+      );
     }
     if (item.key === "analysis") {
-      return currentOrderSubview === "sequencing" && (!!searchParams.get("pipeline") || searchParams.get("view") === "analysis");
+      return (
+        isOrderAnalysisContext ||
+        (currentOrderSubview === "sequencing" &&
+          (!!searchParams.get("pipeline") || searchParams.get("view") === "analysis"))
+      );
     }
     return false;
   };
@@ -731,7 +750,7 @@ export function SidebarEntityNav({
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {orderPipelines.map((pipeline) => {
                     const isPipelineActive =
-                      currentOrderSubview === "sequencing" &&
+                      (currentOrderSubview === "sequencing" || isOrderAnalysisContext) &&
                       searchParams.get("pipeline") === pipeline.pipelineId;
                     return (
                       <Link

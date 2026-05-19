@@ -2297,6 +2297,9 @@ export function StudyPipelinesSection({
                     const sampleCount = getSampleCount(run);
                     const reportPath = getStudyPipelineRunReportPath(run);
                     const hasOutputErrors = runHasOutputErrors(run);
+                    const analysisRunHref =
+                      `/analysis/${run.id}?studyId=${encodeURIComponent(studyId)}` +
+                      `&pipeline=${encodeURIComponent(run.pipelineId)}`;
 
                     return (
                       <tr
@@ -2305,7 +2308,7 @@ export function StudyPipelinesSection({
                           "cursor-pointer transition-colors hover:bg-secondary/20",
                           selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
                         )}
-                        onClick={() => window.open(`/analysis/${run.id}?studyId=${studyId}`, '_blank')}
+                        onClick={() => window.open(analysisRunHref, '_blank')}
                       >
                         {selectMode && (
                           <td
@@ -2406,7 +2409,7 @@ export function StudyPipelinesSection({
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem
                                 onSelect={() => {
-                                  window.open(`/analysis/${run.id}?studyId=${studyId}`, '_blank');
+                                  window.open(analysisRunHref, '_blank');
                                 }}
                               >
                                 <ExternalLink className="h-4 w-4" />

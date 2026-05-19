@@ -308,6 +308,77 @@ describe("SidebarEntityNav", () => {
     expect(pipelineDot?.className).toContain("bg-blue-500");
   });
 
+  it("marks study analysis and the selected pipeline active on analysis detail pages", () => {
+    mocks.usePathname.mockReturnValue("/analysis/run-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("studyId=study-1&pipeline=mag"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    expect(analysisLink.className).toContain("font-medium");
+
+    const pipelineLink = screen.getByRole("link", { name: /MAG/i });
+    expect(pipelineLink.className).toContain("font-medium");
+  });
+
+  it("marks study analysis active on analysis detail pages without selecting a pipeline", () => {
+    mocks.usePathname.mockReturnValue("/analysis/run-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("studyId=study-1"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    expect(analysisLink.className).toContain("font-medium");
+
+    const pipelineLink = screen.getByRole("link", { name: /MAG/i });
+    expect(pipelineLink.className).not.toContain("font-medium");
+  });
+
+  it("marks order analysis and the selected pipeline active on analysis detail pages", () => {
+    mocks.usePathname.mockReturnValue("/analysis/run-1");
+    mocks.useSearchParams.mockReturnValue(
+      new URLSearchParams("orderId=order-1&pipeline=fastq-checksum")
+    );
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "order",
+          entityId: "order-1",
+          entityData: { label: "Order 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    expect(analysisLink.className).toContain("font-medium");
+
+    const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
+    expect(pipelineLink.className).toContain("font-medium");
+  });
+
   it("renders study publishing with ENA subitem", () => {
     mocks.usePathname.mockReturnValue("/studies/study-1");
     mocks.useSearchParams.mockReturnValue(
