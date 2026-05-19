@@ -30,6 +30,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  ListTree,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -1315,13 +1316,10 @@ export default function AnalysisRunDetailPage({
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <h3 className="text-sm font-semibold text-muted-foreground">Recent Events ({recentEvents.length})</h3>
                   <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={`/api/pipelines/runs/${run.id}/weblog`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Raw weblog API
-                    </a>
+                    <Link href={`/analysis/${run.id}/weblog`}>
+                      <ListTree className="h-3.5 w-3.5 mr-1.5" />
+                      Processed weblog
+                    </Link>
                   </Button>
                 </div>
                 <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
