@@ -31,6 +31,8 @@ export default function BackgroundWorkersAdminPage() {
 
           <HelpBox title="When to use this page">
             Start and stop background daemons here so you don&apos;t need a separate terminal for normal use.
+            Pipeline monitor should run as one singleton process; weblog callbacks provide live Nextflow events,
+            while the monitor recovers status from queue/trace state when callbacks are unavailable.
             Production deployments behind PM2 or systemd should leave these stopped and let the OS supervisor
             manage them &mdash; starting a worker here while a supervisor also runs one will result in two
             instances racing on the same database tables.

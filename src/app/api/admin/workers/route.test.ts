@@ -41,7 +41,8 @@ describe("GET /api/admin/workers", () => {
       {
         name: "pipeline-monitor",
         label: "Pipeline monitor",
-        description: "Polls SLURM and Nextflow trace files.",
+        description:
+          "Safety-net daemon that syncs PipelineRun status from SLURM/local process state and Nextflow trace files when weblog callbacks are missing, delayed, or after app restarts.",
         script: "scripts/pipeline-monitor.ts",
         supportsPause: false,
         devOnly: false,
