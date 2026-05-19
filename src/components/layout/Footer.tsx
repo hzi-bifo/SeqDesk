@@ -74,6 +74,8 @@ type PipelineLoadModeCounts = {
   unknown: number;
 };
 
+type PipelineLoadMode = keyof PipelineLoadModeCounts;
+
 interface PipelineLoadUserSummary {
   userId: string;
   name: string;
