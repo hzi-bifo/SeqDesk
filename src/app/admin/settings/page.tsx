@@ -208,7 +208,6 @@ export default function SettingsPage() {
   const [savingOrderNotesSetting, setSavingOrderNotesSetting] = useState(false);
   const [savingTelemetrySetting, setSavingTelemetrySetting] = useState(false);
   const [testingTelemetry, setTestingTelemetry] = useState(false);
-  const [applyingOntRunPreset, setApplyingOntRunPreset] = useState(false);
   const [accessLoaded, setAccessLoaded] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
@@ -724,32 +723,6 @@ export default function SettingsPage() {
       setTestingTelemetry(false);
     }
   }, [fetchTelemetrySettings]);
-
-  const applyOntRunPlanPreset = useCallback(async () => {
-    setApplyingOntRunPreset(true);
-    try {
-      const res = await fetch("/api/admin/sequencing-run-form-config/preset", {
-        method: "POST",
-      });
-      const payload = (await res.json().catch(() => null)) as
-        | {
-            orderFieldsAdded?: number;
-            runAssignmentFieldsAdded?: number;
-            error?: string;
-          }
-        | null;
-      if (!res.ok) {
-        throw new Error(payload?.error || "Failed to apply preset");
-      }
-      toast.success(
-        `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
-      );
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to apply preset");
-    } finally {
-      setApplyingOntRunPreset(false);
-    }
-  }, []);
 
   const fetchSeedStatus = useCallback(async () => {
     try {
@@ -1685,35 +1658,6 @@ export default function SettingsPage() {
                   aria-label="Enable SeqDesk telemetry"
                 />
               </div>
-            </div>
-            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-foreground">ONT run plan preset</p>
-                  {applyingOntRunPreset && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                  )}
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Adds order, sample, and sequencing run-assignment fields for barcode mapping,
-                  flowcell details, and metagenomics/metatranscriptomics tracking.
-                </p>
-              </div>
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 bg-white"
-                onClick={() => void applyOntRunPlanPreset()}
-                disabled={applyingOntRunPreset}
-              >
-                {applyingOntRunPreset ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <FileText className="mr-2 h-4 w-4" />
-                )}
-                Apply preset
-              </Button>
             </div>
           </div>
         </section>

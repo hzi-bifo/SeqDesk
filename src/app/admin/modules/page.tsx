@@ -17,8 +17,9 @@ import {
   Shield,
   ArrowRight,
   Receipt,
+  FileText,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
   type AccountValidationSettings,
@@ -26,6 +27,7 @@ import {
   type ModuleCategory,
   MODULE_CATEGORIES,
   DEFAULT_BILLING_SETTINGS,
+  isAlwaysEnabledModule,
 } from "@/lib/modules/types";
 import {
   getFormModuleIntegration,
@@ -40,7 +42,10 @@ const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }
   "mixs-metadata": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
   "funding-info": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
   "billing-info": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
-  "sequencing-tech": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "sequencing-tech": [
+    { href: "/admin/form-builder", label: "Order Form Builder" },
+    { href: "/admin/sequencing-run-form-builder", label: "Run Assignment Form Builder" },
+  ],
   "ena-sample-fields": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
   "ai-validation": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
 };
@@ -60,6 +65,7 @@ export default function ModulesPage() {
   const {
     availableModules,
     moduleStates,
+    isModuleEnabled,
     setModuleEnabled,
     loading,
     globalDisabled,
@@ -126,41 +132,42 @@ export default function ModulesPage() {
     fetchBillingSettings();
   }, []);
 
-  useEffect(() => {
-    const fetchFormConfigs = async () => {
-      try {
-        const [orderRes, studyRes] = await Promise.all([
-          fetch("/api/admin/form-config"),
-          fetch("/api/admin/study-form-config"),
-        ]);
+  const fetchFormConfigs = useCallback(async () => {
+    setLoadingFormConfigs(true);
+    try {
+      const [orderRes, studyRes] = await Promise.all([
+        fetch("/api/admin/form-config"),
+        fetch("/api/admin/study-form-config"),
+      ]);
 
-        if (!orderRes.ok || !studyRes.ok) {
-          throw new Error("Failed to load form configurations");
-        }
-
-        const orderData = await orderRes.json();
-        const studyData = await studyRes.json();
-
-        setOrderFormConfig({
-          fields: Array.isArray(orderData.fields) ? orderData.fields : [],
-          groups: Array.isArray(orderData.groups) ? orderData.groups : [],
-          enabledMixsChecklists: Array.isArray(orderData.enabledMixsChecklists)
-            ? orderData.enabledMixsChecklists
-            : [],
-        });
-        setStudyFormConfig({
-          fields: Array.isArray(studyData.fields) ? studyData.fields : [],
-          groups: Array.isArray(studyData.groups) ? studyData.groups : [],
-        });
-      } catch {
-        toast.error("Failed to load form builder configuration");
-      } finally {
-        setLoadingFormConfigs(false);
+      if (!orderRes.ok || !studyRes.ok) {
+        throw new Error("Failed to load form configurations");
       }
-    };
 
-    fetchFormConfigs();
+      const orderData = await orderRes.json();
+      const studyData = await studyRes.json();
+
+      setOrderFormConfig({
+        fields: Array.isArray(orderData.fields) ? orderData.fields : [],
+        groups: Array.isArray(orderData.groups) ? orderData.groups : [],
+        enabledMixsChecklists: Array.isArray(orderData.enabledMixsChecklists)
+          ? orderData.enabledMixsChecklists
+          : [],
+      });
+      setStudyFormConfig({
+        fields: Array.isArray(studyData.fields) ? studyData.fields : [],
+        groups: Array.isArray(studyData.groups) ? studyData.groups : [],
+      });
+    } catch {
+      toast.error("Failed to load form builder configuration");
+    } finally {
+      setLoadingFormConfigs(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchFormConfigs();
+  }, [fetchFormConfigs]);
 
   const handleToggle = async (moduleId: string, enabled: boolean) => {
     setUpdating(moduleId);
@@ -238,8 +245,10 @@ export default function ModulesPage() {
     setRunningAction(actionId);
     try {
       await action();
-    } catch {
-      toast.error("Failed to update form configuration");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update form configuration"
+      );
     } finally {
       setRunningAction(null);
     }
@@ -360,6 +369,28 @@ export default function ModulesPage() {
 
     await persistOrderFormConfig([...orderFormConfig.fields, newField]);
     toast.success("Added Barcode field to Order Form Builder");
+  };
+
+  const applyOntRunPlanPreset = async () => {
+    const res = await fetch("/api/admin/sequencing-run-form-config/preset", {
+      method: "POST",
+    });
+    const payload = (await res.json().catch(() => null)) as
+      | {
+          orderFieldsAdded?: number;
+          runAssignmentFieldsAdded?: number;
+          error?: string;
+        }
+      | null;
+
+    if (!res.ok) {
+      throw new Error(payload?.error || "Failed to apply preset");
+    }
+
+    await fetchFormConfigs();
+    toast.success(
+      `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
+    );
   };
 
   const addEnaSampleFields = async () => {
@@ -582,8 +613,9 @@ export default function ModulesPage() {
               <TabsContent key={category} value={category} className="m-0">
                 <div className="grid gap-3">
                   {categoryModules.map((module) => {
-                    const isEnabled = moduleStates[module.id] ?? false;
-                    const isEffectivelyEnabled = isEnabled && !globalDisabled;
+                    const isAlwaysEnabled = isAlwaysEnabledModule(module.id);
+                    const isEnabled = isAlwaysEnabled || (moduleStates[module.id] ?? false);
+                    const isEffectivelyEnabled = isModuleEnabled(module.id);
                     const isUpdating = updating === module.id;
                     const isComingSoon = module.comingSoon;
                     const builderLinks = MODULE_BUILDER_LINKS[module.id] ?? [];
@@ -620,6 +652,10 @@ export default function ModulesPage() {
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-medium flex items-center gap-1">
                                   <Clock className="h-3 w-3" />
                                   Coming Soon
+                                </span>
+                              ) : isAlwaysEnabled ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium">
+                                  Always active
                                 </span>
                               ) : isEffectivelyEnabled ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium">
@@ -758,6 +794,12 @@ export default function ModulesPage() {
                                     !hasSequencingTechField,
                                   onClick: addBarcodeField,
                                 });
+                                quickActions.push({
+                                  key: "apply-ont-run-plan-preset",
+                                  label: "Apply ONT Run Plan Preset",
+                                  disabled: !orderFormConfig,
+                                  onClick: applyOntRunPlanPreset,
+                                });
                               }
 
                               if (module.id === "ena-sample-fields") {
@@ -804,6 +846,10 @@ export default function ModulesPage() {
                                           {isRunning && (
                                             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                           )}
+                                          {!isRunning &&
+                                            action.key === "apply-ont-run-plan-preset" && (
+                                              <FileText className="h-3 w-3 mr-1" />
+                                            )}
                                           {action.label}
                                         </Button>
                                       );
@@ -825,6 +871,7 @@ export default function ModulesPage() {
                                 handleToggle(module.id, checked)
                               }
                               disabled={
+                                isAlwaysEnabled ||
                                 isUpdating ||
                                 isComingSoon ||
                                 globalDisabled

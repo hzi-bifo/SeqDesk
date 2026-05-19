@@ -85,6 +85,14 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     category: "order-form",
     featureLocation: "Configuration > Order Forms",
   },
+  {
+    id: "sequencing-tech",
+    name: "Sequencing Technology",
+    description: "Sequencing technology, kit registry, barcode-aware sample fields, and sequencing run-assignment configuration for instrument-specific workflows.",
+    category: "order-form",
+    featureLocation: "Configuration > Order Forms / Sequencing Run Forms",
+    hasSettings: true,
+  },
   // Validation
   {
     id: "ai-validation",
