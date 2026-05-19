@@ -144,6 +144,24 @@ export type PipelineOpsResponse<TBody = Record<string, unknown>> = {
   body: TBody;
 };
 
+function isMeaningfulActiveStepLabel(value: string | null | undefined): value is string {
+  const trimmed = value?.trim();
+  if (!trimmed) return false;
+
+  const normalized = trimmed.toLowerCase();
+  return ![
+    '-',
+    'queued',
+    'processing...',
+    'finalizing...',
+    'finalizing outputs...',
+    'completed',
+    'failed',
+    'cancelled',
+    'canceled',
+  ].includes(normalized);
+}
+
 function jsonResponse<TBody extends Record<string, unknown>>(
   body: TBody,
   status = 200
@@ -1023,6 +1041,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       runFolder: true,
       status: true,
       pipelineId: true,
+      currentStep: true,
       startedAt: true,
       completedAt: true,
       lastEventAt: true,
@@ -1277,36 +1296,63 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     });
   }
 
-  const runningProcesses = Array.from(steps.entries())
-    .filter(([, s]) => s.status === 'running')
-    .map(([stepId]) => stepId);
-
-  const currentStep =
-    runningProcesses.length > 0
-      ? `Running: ${runningProcesses.join(', ')}`
-      : traceResult.overallProgress === 100
-        ? 'Completed'
-        : 'Processing...';
+  const runningStepLabels = Array.from(steps.values())
+    .filter((s) => s.status === 'running')
+    .map((s) => s.stepName);
 
   const pipelineSteps = getStepsForPipeline(run.pipelineId);
   const totalSteps = pipelineSteps.length;
   const completedSteps = Array.from(steps.values()).filter((s) => s.status === 'completed').length;
+  const completedKnownSteps =
+    totalSteps > 0
+      ? pipelineSteps.filter((step) => steps.get(step.id)?.status === 'completed').length
+      : completedSteps;
   const progress =
     totalSteps > 0
-      ? Math.min(99, Math.round((completedSteps / totalSteps) * 100))
+      ? Math.min(99, Math.round((completedKnownSteps / totalSteps) * 100))
       : traceResult.overallProgress;
+
+  const traceCompletedKnownWork =
+    hasTasks &&
+    traceResult.overallProgress === 100 &&
+    (totalSteps === 0 || completedKnownSteps >= totalSteps);
+  const currentStep =
+    runningStepLabels.length > 0
+      ? `Running: ${runningStepLabels.join(', ')}`
+      : traceCompletedKnownWork
+        ? 'Completed'
+        : isMeaningfulActiveStepLabel(run.currentStep)
+          ? run.currentStep
+          : 'Processing...';
+  const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId);
+  const queueIsActive = isActiveQueueState(traceQueueSnapshot.state);
+  const workflowCompletionObserved =
+    queueIsActive && traceResult.overallProgress === 100
+      ? Boolean(
+          await db.pipelineRunEvent.findFirst({
+            where: {
+              pipelineRunId: runId,
+              OR: [
+                { eventType: { contains: 'workflow_complete' } },
+                { eventType: { contains: 'workflow_finish' } },
+              ],
+            },
+            select: { id: true },
+            orderBy: { occurredAt: 'desc' },
+          })
+        )
+      : false;
 
   let nextStatus = run.status;
   let resolvedOutputsInThisSync = false;
   if (hasRunning) {
     nextStatus = 'running';
-  } else if (traceResult.overallProgress === 100 && hasTasks) {
+  } else if (traceCompletedKnownWork) {
     nextStatus = 'completed';
   } else if (hasFailures) {
     nextStatus = 'failed';
   }
 
-  const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId);
   const normalizedQueueState = normalizeQueueState(traceQueueSnapshot.state);
   const queueCompleted = normalizedQueueState === 'COMPLETED';
   const queueExitedLocal = normalizedQueueState === 'EXITED';
@@ -1316,6 +1362,17 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   let statusDeterminedByQueue = false;
 
   if (nextStatus === 'failed' && !hasRunning) {
+    const workflowExitSucceeded =
+      queueCompleted ||
+      (queueExitedLocal && inferredExitCode === 0) ||
+      inferredExitCode === 0;
+    if (workflowExitSucceeded) {
+      nextStatus = 'completed';
+      statusDeterminedByQueue = true;
+    }
+  }
+
+  if (!hasRunning && nextStatus === run.status) {
     const workflowExitSucceeded =
       queueCompleted ||
       (queueExitedLocal && inferredExitCode === 0) ||
@@ -1336,11 +1393,20 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
 
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
-    isActiveQueueState(traceQueueSnapshot.state);
+    queueIsActive;
   if (forceRunningFromQueue) {
     nextStatus = 'running';
     statusDeterminedByQueue = true;
   }
+
+  const activeQueueCurrentStep =
+    runningStepLabels.length > 0
+      ? `Running: ${runningStepLabels.join(', ')}`
+      : workflowCompletionObserved
+        ? 'Finalizing...'
+        : isMeaningfulActiveStepLabel(run.currentStep)
+          ? run.currentStep
+          : 'Processing...';
 
   if (nextStatus === 'completed' && run.pipelineId === 'mag') {
     try {
@@ -1360,9 +1426,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     progress: nextStatus === 'completed' ? 100 : progress,
     currentStep:
       forceRunningFromQueue
-        ? runningProcesses.length > 0
-          ? `Running: ${runningProcesses.join(', ')}`
-          : 'Finalizing...'
+        ? activeQueueCurrentStep
         : nextStatus === 'completed'
           ? 'Completed'
           : nextStatus === 'failed'
@@ -1390,7 +1454,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     updateData.completedAt = null;
     updateData.lastEventAt = new Date();
     updateData.progress = Math.min(99, progress);
-  } else if (nextStatus === 'running' && traceResult.overallProgress === 100) {
+  } else if (nextStatus === 'running' && traceCompletedKnownWork) {
     updateData.currentStep = 'Finalizing outputs...';
     updateData.progress = 99;
     updateData.completedAt = null;

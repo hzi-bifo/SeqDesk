@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    pipelineRunEvent: {
+      findFirst: vi.fn(),
+    },
     pipelineRunStep: {
       upsert: vi.fn(),
     },
@@ -86,6 +89,7 @@ const defaultRun = {
   runFolder: "/tmp/runs/run-1",
   status: "running",
   pipelineId: "fastqc",
+  currentStep: null,
   startedAt: new Date("2024-01-01"),
   completedAt: null,
   lastEventAt: null,
@@ -94,6 +98,22 @@ const defaultRun = {
   study: null,
   order: { userId: "user-1" },
 };
+
+const metaxpathSteps = [
+  { id: "input-validation", name: "Input Validation" },
+  { id: "prepare-no-human-fastq", name: "Prepare No-Human FASTQ" },
+  { id: "metax-profiling", name: "Metax Profiling" },
+  { id: "sylph-profiling", name: "Sylph Profiling" },
+  { id: "sam-to-bam", name: "SAM to BAM" },
+  { id: "process-metax-profiles", name: "Process Metax Profiles" },
+  { id: "assembly-vf-amr", name: "Assembly, VF and AMR Prediction" },
+  { id: "readcount-stats", name: "Generate Readcount Stats" },
+  { id: "merge-profiles-vf-amr", name: "Merge Profiles with VF/AMR" },
+  { id: "combined-report", name: "Generate Combined Report" },
+  { id: "dotplot-rendering", name: "Dotplot Rendering" },
+  { id: "clean-species-report", name: "Clean Species Report" },
+  { id: "clean-species-dotplot", name: "Clean Species Dotplot" },
+];
 
 describe("POST /api/pipelines/runs/[id]/sync", () => {
   beforeEach(() => {
@@ -105,6 +125,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.isDemoSession.mockReturnValue(false);
     mocks.db.pipelineRun.findUnique.mockResolvedValue(defaultRun);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRunEvent.findFirst.mockResolvedValue(null);
     mocks.db.pipelineRunStep.upsert.mockResolvedValue({});
     mocks.findTraceFile.mockResolvedValue(null);
     mocks.execFileAsync.mockRejectedValue(new Error("not found"));
@@ -609,6 +630,139 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
         }),
       })
     );
+  });
+
+  it("does not show finalizing for partial known-step trace while SLURM is running", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      status: "running",
+      pipelineId: "metaxpath",
+      queueJobId: "5313",
+      currentStep: null,
+    });
+    mocks.findTraceFile.mockResolvedValue("/tmp/runs/run-1/trace.txt");
+    mocks.parseTraceFile.mockResolvedValue({
+      tasks: [
+        {
+          process: "MV_FASTQ",
+          status: "COMPLETED",
+          exit: 0,
+          submit: new Date("2024-01-01T10:00:00Z"),
+          start: new Date("2024-01-01T10:01:00Z"),
+          complete: new Date("2024-01-01T10:05:00Z"),
+        },
+      ],
+      processes: new Map([["MV_FASTQ", { completed: 1, total: 1 }]]),
+      overallProgress: 100,
+      startedAt: new Date("2024-01-01T10:00:00Z"),
+      completedAt: new Date("2024-01-01T10:05:00Z"),
+    });
+    mocks.findStepByProcess.mockReturnValue({
+      id: "prepare-no-human-fastq",
+      name: "Prepare No-Human FASTQ",
+    });
+    mocks.getStepsForPipeline.mockReturnValue(metaxpathSteps);
+    mocks.execFileAsync.mockImplementation(async (cmd: string) => {
+      if (cmd === "squeue") {
+        return { stdout: "RUNNING|Resources\n" };
+      }
+      throw new Error("not found");
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
+    expect(updateData.currentStep).toBe("Processing...");
+    expect(updateData.currentStep).not.toBe("Finalizing...");
+    expect(updateData.progress).toBe(8);
+    expect(updateData.status).toBeUndefined();
+  });
+
+  it("preserves a live weblog current step when trace only has completed earlier rows", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      status: "running",
+      pipelineId: "metaxpath",
+      queueJobId: "5313",
+      currentStep: "Metax Profiling",
+    });
+    mocks.findTraceFile.mockResolvedValue("/tmp/runs/run-1/trace.txt");
+    mocks.parseTraceFile.mockResolvedValue({
+      tasks: [
+        {
+          process: "MV_FASTQ",
+          status: "COMPLETED",
+          exit: 0,
+          submit: new Date("2024-01-01T10:00:00Z"),
+          start: new Date("2024-01-01T10:01:00Z"),
+          complete: new Date("2024-01-01T10:05:00Z"),
+        },
+      ],
+      processes: new Map([["MV_FASTQ", { completed: 1, total: 1 }]]),
+      overallProgress: 100,
+      startedAt: new Date("2024-01-01T10:00:00Z"),
+      completedAt: new Date("2024-01-01T10:05:00Z"),
+    });
+    mocks.findStepByProcess.mockReturnValue({
+      id: "prepare-no-human-fastq",
+      name: "Prepare No-Human FASTQ",
+    });
+    mocks.getStepsForPipeline.mockReturnValue(metaxpathSteps);
+    mocks.execFileAsync.mockImplementation(async (cmd: string) => {
+      if (cmd === "squeue") {
+        return { stdout: "RUNNING|Resources\n" };
+      }
+      throw new Error("not found");
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
+    expect(updateData.currentStep).toBe("Metax Profiling");
+    expect(updateData.progress).toBe(8);
+    expect(updateData.status).toBeUndefined();
+  });
+
+  it("keeps finalizing when workflow completion was observed and SLURM is still active", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      status: "running",
+      queueJobId: "44444",
+    });
+    mocks.findTraceFile.mockResolvedValue("/tmp/runs/run-1/trace.txt");
+    mocks.parseTraceFile.mockResolvedValue({
+      tasks: [
+        {
+          process: "FASTQC",
+          status: "COMPLETED",
+          exit: 0,
+          submit: new Date("2024-01-01T10:00:00Z"),
+          start: new Date("2024-01-01T10:01:00Z"),
+          complete: new Date("2024-01-01T10:05:00Z"),
+        },
+      ],
+      processes: new Map([["FASTQC", { completed: 1, total: 1 }]]),
+      overallProgress: 100,
+      startedAt: new Date("2024-01-01T10:00:00Z"),
+      completedAt: new Date("2024-01-01T10:05:00Z"),
+    });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.db.pipelineRunEvent.findFirst.mockResolvedValue({ id: "event-1" });
+    mocks.execFileAsync.mockImplementation(async (cmd: string) => {
+      if (cmd === "squeue") {
+        return { stdout: "RUNNING|Resources\n" };
+      }
+      throw new Error("not found");
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
+    expect(updateData.currentStep).toBe("Finalizing...");
+    expect(updateData.completedAt).toBeNull();
   });
 
   it("handles MAG pipeline post-completion processing on queue COMPLETED (no trace)", async () => {

@@ -108,7 +108,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
         queueStatus: "RUNNING",
         queueReason: null,
         status: "running",
-        currentStep: "Finalizing...",
+        currentStep: "Processing...",
         completedAt: null,
         statusSource: "queue",
       }),

@@ -95,7 +95,7 @@ function buildQueueUpdateData(
   if (isQueueStateLikelyActive(queueState) && shouldReviveRun(runStatus)) {
     const revivedStatus = queueStateToRunStatus(queueState);
     data.status = revivedStatus;
-    data.currentStep = revivedStatus === "queued" ? "Queued" : "Finalizing...";
+    data.currentStep = revivedStatus === "queued" ? "Queued" : "Processing...";
     data.completedAt = null;
     data.statusSource = "queue";
     data.lastEventAt = now;
