@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Footer } from "./Footer";
 
@@ -17,6 +17,44 @@ function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 500) {
     ok,
     status,
     json: async () => body,
+  };
+}
+
+function makePipelineLoad(overrides: Record<string, unknown> = {}) {
+  const visibleUsers = [
+    {
+      userId: "user-1",
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      active: 3,
+      staleActive: 0,
+      statuses: { pending: 1, queued: 1, running: 1 },
+      staleByStatus: { pending: 0, queued: 0, running: 0 },
+      modes: { slurm: 2, local: 1, unknown: 0 },
+    },
+    {
+      userId: "user-2",
+      name: "Max Planck",
+      email: "max@example.com",
+      active: 1,
+      staleActive: 0,
+      statuses: { pending: 0, queued: 0, running: 1 },
+      staleByStatus: { pending: 0, queued: 0, running: 0 },
+      modes: { slurm: 1, local: 0, unknown: 0 },
+    },
+  ];
+  return {
+    totalActive: 4,
+    statuses: { pending: 1, queued: 1, running: 2 },
+    modes: { slurm: 3, local: 1, unknown: 0 },
+    staleActive: 0,
+    staleByStatus: { pending: 0, queued: 0, running: 0 },
+    totalUsers: visibleUsers.length,
+    visibleUsers,
+    hiddenUserCount: 0,
+    users: visibleUsers,
+    updatedAt: "2026-05-19T10:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -184,6 +222,211 @@ describe("Footer admin activity", () => {
     expect(screen.getByText("Open full page")).toBeTruthy();
   });
 
+  it("shows compact pipeline load when active runs exist", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [],
+            pipelineLoad: makePipelineLoad(),
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline load: 4 active · 3 SLURM · 1 local")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+
+    expect(screen.getByText("Pipeline load")).toBeTruthy();
+    expect(screen.getByText("2 running · 1 queued · 1 pending")).toBeTruthy();
+    expect(screen.getByText("3 SLURM · 1 local")).toBeTruthy();
+    expect(screen.getByText(/Ada Lovelace/)).toBeTruthy();
+    expect(screen.getByText(/3 active · 2 SLURM · 1 local/)).toBeTruthy();
+  });
+
+  it("renders a short pipeline load label for narrow footer space", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [],
+            pipelineLoad: makePipelineLoad(),
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline load: 4")).toBeTruthy();
+    });
+  });
+
+  it("shows stale pipeline load and hidden user counts in details", async () => {
+    const visibleUsers = [
+      {
+        userId: "user-1",
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        active: 3,
+        staleActive: 2,
+        statuses: { pending: 1, queued: 1, running: 1 },
+        staleByStatus: { pending: 1, queued: 0, running: 1 },
+        modes: { slurm: 2, local: 1, unknown: 0 },
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [],
+            pipelineLoad: makePipelineLoad({
+              totalActive: 8,
+              statuses: { pending: 2, queued: 2, running: 4 },
+              modes: { slurm: 6, local: 1, unknown: 1 },
+              staleActive: 2,
+              staleByStatus: { pending: 1, queued: 0, running: 1 },
+              totalUsers: 3,
+              visibleUsers,
+              users: visibleUsers,
+              hiddenUserCount: 2,
+            }),
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline load: 8 active · 6 SLURM · 1 local · 1 unknown")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+
+    expect(screen.getByText("8 active · 2 stale")).toBeTruthy();
+    expect(screen.getByText("1 running · 1 pending")).toBeTruthy();
+    expect(screen.getByText("+2 more users")).toBeTruthy();
+  });
+
+  it("shows partial admin status warnings from the workers endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [],
+            pipelineLoad: null,
+            workersError: "Some background worker status could not be loaded.",
+            pipelineLoadError: "Pipeline load could not be loaded.",
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Admin status: partial data unavailable")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+
+    expect(screen.getByText("Status warnings")).toBeTruthy();
+    expect(screen.getByText("Some background worker status could not be loaded.")).toBeTruthy();
+    expect(screen.getByText("Pipeline load could not be loaded.")).toBeTruthy();
+  });
+
+  it("keeps worker attention visible while adding pipeline load context", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [
+              {
+                name: "pipeline-monitor",
+                label: "Pipeline monitor",
+                paused: false,
+                latest: {
+                  id: "worker-1",
+                  name: "pipeline-monitor",
+                  pid: 1234,
+                  startedAt: new Date(Date.now() - 60_000).toISOString(),
+                  stoppedAt: new Date().toISOString(),
+                  status: "ERROR",
+                  exitCode: 1,
+                  logPath: "/tmp/pipeline-monitor.log",
+                  lastErrorMsg: "squeue unavailable",
+                  startedByEmail: "admin@example.com",
+                },
+              },
+            ],
+            pipelineLoad: makePipelineLoad({
+              totalActive: 2,
+              statuses: { pending: 0, queued: 1, running: 1 },
+              modes: { slurm: 2, local: 0, unknown: 0 },
+              users: [],
+            }),
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Error")).toBeTruthy();
+    });
+    expect(screen.getByText("Pipeline load: 2 active · 2 SLURM")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+
+    expect(screen.getByText("squeue unavailable")).toBeTruthy();
+    expect(screen.getByText("Pipeline load")).toBeTruthy();
+  });
+
+  it("does not show pipeline load when no active runs are reported", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [],
+          pipelineLoad: makePipelineLoad({
+            totalActive: 0,
+            statuses: { pending: 0, queued: 0, running: 0 },
+            modes: { slurm: 0, local: 0, unknown: 0 },
+            users: [],
+          }),
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/workers", { cache: "no-store" });
+    });
+    expect(screen.queryByText(/Pipeline load/)).toBeNull();
+  });
+
   it("expands worker log output from the footer details panel", async () => {
     vi.stubGlobal(
       "fetch",
@@ -232,6 +475,535 @@ describe("Footer admin activity", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/polling SLURM/)).toBeTruthy();
+    });
+  });
+
+  it("starts an errored worker from the footer details panel", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/start") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ ok: true, id: "worker-2", pid: 5678 });
+      }
+      if (url === "/api/admin/workers") {
+        const workerCalls = fetchMock.mock.calls.filter(
+          ([callUrl]) => String(callUrl) === "/api/admin/workers"
+        ).length;
+        const running = workerCalls > 1;
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: running ? "worker-2" : "worker-1",
+                name: "pipeline-monitor",
+                pid: running ? 5678 : 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: running ? null : new Date().toISOString(),
+                status: running ? "RUNNING" : "ERROR",
+                exitCode: running ? null : 1,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: running ? null : "exited via signal SIGINT",
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Error")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url) === "/api/admin/workers/pipeline-monitor/start" &&
+            init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url) === "/api/admin/workers")
+          .length
+      ).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("shows a footer worker start error inline", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/start") {
+        return jsonResponse(
+          { error: "Failed to start pipeline-monitor: missing NEXTFLOW_BIN" },
+          false,
+          500
+        );
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: new Date().toISOString(),
+                status: "ERROR",
+                exitCode: 1,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Error")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/missing NEXTFLOW_BIN/)).toBeTruthy();
+    });
+  });
+
+  it("clears a stale worker action error after a successful retry refreshes status", async () => {
+    let started = false;
+    let startAttempts = 0;
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/start") {
+        startAttempts += 1;
+        if (startAttempts === 1) {
+          return jsonResponse(
+            { error: "Failed to start pipeline-monitor: missing NEXTFLOW_BIN" },
+            false,
+            500
+          );
+        }
+        started = true;
+        return jsonResponse({ ok: true, id: "worker-2", pid: 5678 });
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: started ? "worker-2" : "worker-1",
+                name: "pipeline-monitor",
+                pid: started ? 5678 : 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: started ? null : new Date().toISOString(),
+                status: started ? "RUNNING" : "ERROR",
+                exitCode: started ? null : 1,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Error")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/missing NEXTFLOW_BIN/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /start pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Running")).toBeTruthy();
+    });
+    expect(screen.queryByText(/missing NEXTFLOW_BIN/)).toBeNull();
+  });
+
+  it("disables other footer worker actions while one action is pending", async () => {
+    let resolveStart: ((value: unknown) => void) | undefined;
+    const pendingStart = new Promise((resolve) => {
+      resolveStart = resolve;
+    });
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/stream-monitor/start") {
+        return pendingStart;
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: null,
+                status: "RUNNING",
+                exitCode: null,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+            {
+              name: "stream-monitor",
+              label: "Stream monitor",
+              paused: false,
+              latest: {
+                id: "worker-2",
+                name: "stream-monitor",
+                pid: 2345,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: new Date().toISOString(),
+                status: "ERROR",
+                exitCode: 1,
+                logPath: "/tmp/stream-monitor.log",
+                lastErrorMsg: "socket closed",
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Running")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start stream monitor/i }));
+
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: /start stream monitor/i }) as HTMLButtonElement)
+          .disabled
+      ).toBe(true);
+    });
+    expect(
+      (screen.getByRole("button", { name: /stop pipeline monitor/i }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+
+    await act(async () => {
+      resolveStart?.(jsonResponse({ ok: true }));
+      await Promise.resolve();
+    });
+  });
+
+  it("stops a running worker from the footer details panel", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/stop") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ ok: true });
+      }
+      if (url === "/api/admin/workers") {
+        const workerCalls = fetchMock.mock.calls.filter(
+          ([callUrl]) => String(callUrl) === "/api/admin/workers"
+        ).length;
+        const stopping = workerCalls > 1;
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: null,
+                status: stopping ? "STOPPING" : "RUNNING",
+                exitCode: null,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Running")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stop pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url) === "/api/admin/workers/pipeline-monitor/stop" &&
+            init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url) === "/api/admin/workers")
+          .length
+      ).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("does not stop a running worker when confirmation is cancelled", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: null,
+                status: "RUNNING",
+                exitCode: null,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => false));
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Running")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stop pipeline monitor/i }));
+
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url) === "/api/admin/workers/pipeline-monitor/stop")
+    ).toBe(false);
+  });
+
+  it("stops a paused worker from the footer details panel", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/stop") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ ok: true });
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: true,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: null,
+                status: "RUNNING",
+                exitCode: null,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Paused")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stop pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url) === "/api/admin/workers/pipeline-monitor/stop" &&
+            init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+  });
+
+  it("clears a zombie worker from the footer details panel", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/stop") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ ok: true, cleared: "zombie" });
+      }
+      if (url === "/api/admin/workers") {
+        const workerCalls = fetchMock.mock.calls.filter(
+          ([callUrl]) => String(callUrl) === "/api/admin/workers"
+        ).length;
+        return jsonResponse({
+          workers:
+            workerCalls > 1
+              ? []
+              : [
+                  {
+                    name: "pipeline-monitor",
+                    label: "Pipeline monitor",
+                    paused: false,
+                    latest: {
+                      id: "worker-1",
+                      name: "pipeline-monitor",
+                      pid: 1234,
+                      startedAt: new Date(Date.now() - 60_000).toISOString(),
+                      stoppedAt: new Date().toISOString(),
+                      status: "ZOMBIE",
+                      exitCode: null,
+                      logPath: "/tmp/pipeline-monitor.log",
+                      lastErrorMsg: "process disappeared",
+                      startedByEmail: "admin@example.com",
+                    },
+                  },
+                ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Zombie")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /clear zombie status for pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url) === "/api/admin/workers/pipeline-monitor/stop" &&
+            init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+  });
+
+  it("shows a footer worker stop error inline", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers/pipeline-monitor/stop") {
+        return jsonResponse(
+          { error: "No running pipeline-monitor to stop" },
+          false,
+          404
+        );
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({
+          workers: [
+            {
+              name: "pipeline-monitor",
+              label: "Pipeline monitor",
+              paused: false,
+              latest: {
+                id: "worker-1",
+                name: "pipeline-monitor",
+                pid: 1234,
+                startedAt: new Date(Date.now() - 60_000).toISOString(),
+                stoppedAt: null,
+                status: "RUNNING",
+                exitCode: null,
+                logPath: "/tmp/pipeline-monitor.log",
+                lastErrorMsg: null,
+                startedByEmail: "admin@example.com",
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background workers: Pipeline monitor · Running")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stop pipeline monitor/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/No running pipeline-monitor to stop/)).toBeTruthy();
     });
   });
 });

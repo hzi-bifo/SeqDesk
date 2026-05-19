@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Eraser, Loader2, Play, Square } from "lucide-react";
 import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { useHelpText } from "@/lib/useHelpText";
 import { SidebarContext } from "./SidebarContext";
@@ -49,6 +50,61 @@ interface WorkerLogResponse {
   lines: string[];
   logPath?: string;
   message?: string;
+}
+
+type PipelineLoadStatusCounts = {
+  pending: number;
+  queued: number;
+  running: number;
+};
+
+type PipelineLoadModeCounts = {
+  slurm: number;
+  local: number;
+  unknown: number;
+};
+
+interface PipelineLoadUserSummary {
+  userId: string;
+  name: string;
+  email: string | null;
+  active: number;
+  staleActive?: number;
+  statuses: PipelineLoadStatusCounts;
+  staleByStatus?: PipelineLoadStatusCounts;
+  modes: PipelineLoadModeCounts;
+}
+
+interface PipelineLoadSummary {
+  totalActive: number;
+  statuses: PipelineLoadStatusCounts;
+  modes: PipelineLoadModeCounts;
+  staleActive: number;
+  staleByStatus: PipelineLoadStatusCounts;
+  totalUsers: number;
+  visibleUsers: PipelineLoadUserSummary[];
+  hiddenUserCount: number;
+  users?: PipelineLoadUserSummary[];
+  updatedAt: string;
+}
+
+interface WorkerStatusPayload {
+  workers: WorkerCard[];
+  pipelineLoad: PipelineLoadSummary | null;
+  workersError: string | null;
+  pipelineLoadError: string | null;
+}
+
+type WorkerAction = "start" | "stop" | "clear";
+
+interface WorkerActionError {
+  action: WorkerAction;
+  message: string;
+}
+
+interface BusyWorkerAction {
+  name: string;
+  action: WorkerAction;
 }
 
 const STALE_RUNNING_MS = 2 * 60 * 60 * 1000;
@@ -170,6 +226,18 @@ function shouldShowWorker(worker: WorkerCard): boolean {
   return ["RUNNING", "STOPPING", "ERROR", "ZOMBIE", "PAUSED"].includes(getWorkerStatus(worker));
 }
 
+function canStartWorker(status: string): boolean {
+  return !["RUNNING", "STOPPING", "PAUSED"].includes(status);
+}
+
+function canStopWorker(status: string): boolean {
+  return status === "RUNNING" || status === "PAUSED";
+}
+
+function canClearWorker(status: string): boolean {
+  return status === "ZOMBIE";
+}
+
 function workerBadgeClass(status: string): string {
   if (status === "ERROR" || status === "ZOMBIE") {
     return "border-red-200 bg-red-100 text-red-700";
@@ -183,13 +251,62 @@ function workerBadgeClass(status: string): string {
   return "border-border bg-muted text-muted-foreground";
 }
 
+function hasPipelineLoad(load: PipelineLoadSummary | null): load is PipelineLoadSummary {
+  return Boolean(load && load.totalActive > 0);
+}
+
+function formatCount(value: number, label: string): string {
+  return `${value} ${label}`;
+}
+
+function formatPipelineLoadSummary(load: PipelineLoadSummary): string {
+  const parts = [`Pipeline load: ${formatCount(load.totalActive, "active")}`];
+  if (load.modes.slurm > 0) parts.push(`${load.modes.slurm} SLURM`);
+  if (load.modes.local > 0) parts.push(`${load.modes.local} local`);
+  if (load.modes.unknown > 0) parts.push(`${load.modes.unknown} unknown`);
+  return parts.join(" · ");
+}
+
+function formatCompactPipelineLoadSummary(load: PipelineLoadSummary): string {
+  return `Pipeline load: ${load.totalActive}`;
+}
+
+function formatPipelineStatusBreakdown(statuses: PipelineLoadStatusCounts): string {
+  return [
+    statuses.running > 0 ? `${statuses.running} running` : null,
+    statuses.queued > 0 ? `${statuses.queued} queued` : null,
+    statuses.pending > 0 ? `${statuses.pending} pending` : null,
+  ].filter(Boolean).join(" · ") || "None";
+}
+
+function formatPipelineModeBreakdown(modes: PipelineLoadModeCounts): string {
+  return [
+    modes.slurm > 0 ? `${modes.slurm} SLURM` : null,
+    modes.local > 0 ? `${modes.local} local` : null,
+    modes.unknown > 0 ? `${modes.unknown} unknown` : null,
+  ].filter(Boolean).join(" · ") || "None";
+}
+
+function getVisiblePipelineUsers(load: PipelineLoadSummary): PipelineLoadUserSummary[] {
+  return Array.isArray(load.visibleUsers)
+    ? load.visibleUsers
+    : Array.isArray(load.users)
+      ? load.users
+      : [];
+}
+
 export function Footer() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [activityJobs, setActivityJobs] = useState<AdminActivityJob[]>([]);
   const [workers, setWorkers] = useState<WorkerCard[]>([]);
+  const [pipelineLoad, setPipelineLoad] = useState<PipelineLoadSummary | null>(null);
+  const [workersError, setWorkersError] = useState<string | null>(null);
+  const [pipelineLoadError, setPipelineLoadError] = useState<string | null>(null);
   const [workerLogs, setWorkerLogs] = useState<Record<string, WorkerLogResponse>>({});
   const [openWorkerLogs, setOpenWorkerLogs] = useState<Record<string, boolean>>({});
   const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
+  const [busyWorkerAction, setBusyWorkerAction] = useState<BusyWorkerAction | null>(null);
+  const [workerActionErrors, setWorkerActionErrors] = useState<Record<string, WorkerActionError>>({});
   const [detailsOpen, setDetailsOpen] = useState(false);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
@@ -219,6 +336,68 @@ export function Footer() {
     }
   }, []);
 
+  const loadWorkerStatus = useCallback(async (): Promise<WorkerStatusPayload> => {
+    const response = await fetch("/api/admin/workers", { cache: "no-store" });
+    if (!response.ok) {
+      return {
+        workers: [],
+        pipelineLoad: null,
+        workersError: null,
+        pipelineLoadError: null,
+      };
+    }
+    const payload = (await response.json()) as {
+      workers?: WorkerCard[];
+      pipelineLoad?: PipelineLoadSummary | null;
+      workersError?: string | null;
+      pipelineLoadError?: string | null;
+    };
+    return {
+      workers: Array.isArray(payload.workers) ? payload.workers : [],
+      pipelineLoad: payload.pipelineLoad ?? null,
+      workersError: payload.workersError ?? null,
+      pipelineLoadError: payload.pipelineLoadError ?? null,
+    };
+  }, []);
+
+  const reconcileWorkerActionErrors = useCallback((nextWorkers: WorkerCard[]) => {
+    setWorkerActionErrors((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      const workersByName = new Map(nextWorkers.map((worker) => [worker.name, worker]));
+
+      for (const [name, error] of Object.entries(prev)) {
+        const worker = workersByName.get(name);
+        if (!worker) {
+          delete next[name];
+          changed = true;
+          continue;
+        }
+
+        const status = getWorkerStatus(worker);
+        if (
+          (error.action === "start" && !canStartWorker(status)) ||
+          (error.action === "stop" && !canStopWorker(status)) ||
+          (error.action === "clear" && !canClearWorker(status))
+        ) {
+          delete next[name];
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const refreshWorkers = useCallback(async () => {
+    const next = await loadWorkerStatus();
+    setWorkers(next.workers);
+    setPipelineLoad(next.pipelineLoad);
+    setWorkersError(next.workersError);
+    setPipelineLoadError(next.pipelineLoadError);
+    reconcileWorkerActionErrors(next.workers);
+  }, [loadWorkerStatus, reconcileWorkerActionErrors]);
+
   const hideActivity = async (job: AdminActivityJob) => {
     setBusyActivityId(job.id);
     try {
@@ -239,6 +418,50 @@ export function Footer() {
       await refreshActivity().catch(() => undefined);
     } finally {
       setBusyActivityId(null);
+    }
+  };
+
+  const runWorkerAction = async (worker: WorkerCard, action: WorkerAction) => {
+    if (busyWorkerAction) return;
+    if (
+      action === "stop" &&
+      !window.confirm(`Stop ${worker.label}? The worker can be started again from this footer or the full background workers page.`)
+    ) {
+      return;
+    }
+    if (
+      action === "clear" &&
+      !window.confirm(`Clear zombie status for ${worker.label}? This only clears the stale process row.`)
+    ) {
+      return;
+    }
+
+    setBusyWorkerAction({ name: worker.name, action });
+    setWorkerActionErrors((prev) => {
+      const next = { ...prev };
+      delete next[worker.name];
+      return next;
+    });
+    try {
+      const endpointAction = action === "start" ? "start" : "stop";
+      const response = await fetch(`/api/admin/workers/${encodeURIComponent(worker.name)}/${endpointAction}`, {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      await refreshWorkers();
+    } catch (error) {
+      setWorkerActionErrors((prev) => ({
+        ...prev,
+        [worker.name]: {
+          action,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      setBusyWorkerAction(null);
     }
   };
 
@@ -300,12 +523,22 @@ export function Footer() {
 
     async function loadWorkers() {
       try {
-        const response = await fetch("/api/admin/workers", { cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = (await response.json()) as { workers?: WorkerCard[] };
-        if (!cancelled) setWorkers(Array.isArray(payload.workers) ? payload.workers : []);
+        const next = await loadWorkerStatus();
+        if (!cancelled) {
+          setWorkers(next.workers);
+          setPipelineLoad(next.pipelineLoad);
+          setWorkersError(next.workersError);
+          setPipelineLoadError(next.pipelineLoadError);
+          reconcileWorkerActionErrors(next.workers);
+        }
       } catch {
-        if (!cancelled) setWorkers([]);
+        if (!cancelled) {
+          setWorkers([]);
+          setPipelineLoad(null);
+          setWorkersError(null);
+          setPipelineLoadError(null);
+          reconcileWorkerActionErrors([]);
+        }
       }
     }
 
@@ -315,7 +548,7 @@ export function Footer() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [loadWorkerStatus, reconcileWorkerActionErrors]);
 
   const visibleJobs = useMemo(
     () =>
@@ -325,17 +558,36 @@ export function Footer() {
     [activityJobs]
   );
   const visibleWorkers = useMemo(() => workers.filter(shouldShowWorker), [workers]);
+  const workerActionBusy = Boolean(busyWorkerAction);
+  const activePipelineLoad = hasPipelineLoad(pipelineLoad) ? pipelineLoad : null;
+  const pipelineLoadSummary = activePipelineLoad
+    ? formatPipelineLoadSummary(activePipelineLoad)
+    : null;
+  const statusWarnings = [workersError, pipelineLoadError].filter(Boolean) as string[];
+  const statusWarningSummary =
+    statusWarnings.length > 0 ? "Admin status: partial data unavailable" : null;
   const primaryJob = visibleJobs[0] || null;
   const primaryWorker = primaryJob ? null : visibleWorkers[0] || null;
   const primarySummary = primaryJob
     ? formatActivitySummary(primaryJob)
     : primaryWorker
       ? `Background workers: ${primaryWorker.label} · ${formatWorkerStatus(getWorkerStatus(primaryWorker))}`
+      : pipelineLoadSummary ?? statusWarningSummary;
+  const secondaryPipelineLoadSummary =
+    primarySummary && pipelineLoadSummary && primarySummary !== pipelineLoadSummary
+      ? pipelineLoadSummary
       : null;
+  const primaryIsPipelineLoad = Boolean(
+    activePipelineLoad && primarySummary === pipelineLoadSummary
+  );
   const primaryIsError =
     primaryJob?.state === "error" ||
     Boolean(primaryWorker && ["ERROR", "ZOMBIE"].includes(getWorkerStatus(primaryWorker)));
-  const hasDetails = visibleJobs.length > 0 || visibleWorkers.length > 0;
+  const hasDetails =
+    visibleJobs.length > 0 ||
+    visibleWorkers.length > 0 ||
+    Boolean(activePipelineLoad) ||
+    statusWarnings.length > 0;
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-US", {
@@ -385,7 +637,16 @@ export function Footer() {
                 }`}
                 title={primarySummary}
               >
-                {primarySummary}
+                {primaryIsPipelineLoad && activePipelineLoad ? (
+                  <>
+                    <span className="hidden sm:inline">{primarySummary}</span>
+                    <span className="sm:hidden">
+                      {formatCompactPipelineLoadSummary(activePipelineLoad)}
+                    </span>
+                  </>
+                ) : (
+                  primarySummary
+                )}
               </span>
               <button
                 type="button"
@@ -394,6 +655,26 @@ export function Footer() {
               >
                 details
               </button>
+            </div>
+          )}
+          {secondaryPipelineLoadSummary && (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#00BD7D]" />
+              <span
+                className="max-w-[36vw] truncate text-foreground"
+                title={secondaryPipelineLoadSummary}
+              >
+                {activePipelineLoad ? (
+                  <>
+                    <span className="hidden sm:inline">{secondaryPipelineLoadSummary}</span>
+                    <span className="sm:hidden">
+                      {formatCompactPipelineLoadSummary(activePipelineLoad)}
+                    </span>
+                  </>
+                ) : (
+                  secondaryPipelineLoadSummary
+                )}
+              </span>
             </div>
           )}
           {detailsOpen && hasDetails && (
@@ -409,6 +690,17 @@ export function Footer() {
                 </button>
               </div>
               <div className="space-y-3">
+                {statusWarnings.length > 0 && (
+                  <section className="rounded border border-amber-200 bg-amber-50/60 p-2 text-muted-foreground">
+                    <div className="mb-1 font-medium text-amber-900">Status warnings</div>
+                    <div className="space-y-1">
+                      {statusWarnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 <section>
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="font-medium text-foreground">Admin activity</span>
@@ -478,6 +770,75 @@ export function Footer() {
                   )}
                 </section>
 
+                {activePipelineLoad && (
+                  <section className="border-t border-border/70 pt-3">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="font-medium text-foreground">Pipeline load</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {activePipelineLoad.totalActive} active
+                        {activePipelineLoad.staleActive > 0
+                          ? ` · ${activePipelineLoad.staleActive} stale`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="rounded border border-border/70 p-2">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <div>
+                          <p className="text-[11px] uppercase text-muted-foreground">Status</p>
+                          <p className="mt-0.5 text-foreground">
+                            {formatPipelineStatusBreakdown(activePipelineLoad.statuses)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase text-muted-foreground">Execution</p>
+                          <p className="mt-0.5 text-foreground">
+                            {formatPipelineModeBreakdown(activePipelineLoad.modes)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase text-muted-foreground">Stale</p>
+                          <p className="mt-0.5 text-foreground">
+                            {activePipelineLoad.staleActive > 0
+                              ? formatPipelineStatusBreakdown(activePipelineLoad.staleByStatus)
+                              : "None"}
+                          </p>
+                        </div>
+                      </div>
+                      {getVisiblePipelineUsers(activePipelineLoad).length > 0 && (
+                        <div className="mt-2 border-t border-border/70 pt-2">
+                          <p className="mb-1 text-[11px] uppercase text-muted-foreground">Users</p>
+                          <div className="space-y-1">
+                            {getVisiblePipelineUsers(activePipelineLoad).map((user) => (
+                              <div
+                                key={user.userId}
+                                className="flex flex-wrap items-center justify-between gap-2"
+                              >
+                                <span className="min-w-0 truncate text-foreground">
+                                  {user.name}
+                                  {user.email && user.email !== user.name ? (
+                                    <span className="text-muted-foreground"> · {user.email}</span>
+                                  ) : null}
+                                </span>
+                                <span className="shrink-0 text-muted-foreground">
+                                  {user.active} active
+                                  {user.modes.slurm > 0 ? ` · ${user.modes.slurm} SLURM` : ""}
+                                  {user.modes.local > 0 ? ` · ${user.modes.local} local` : ""}
+                                  {user.modes.unknown > 0 ? ` · ${user.modes.unknown} unknown` : ""}
+                                </span>
+                              </div>
+                            ))}
+                            {activePipelineLoad.hiddenUserCount > 0 && (
+                              <p className="text-muted-foreground">
+                                +{activePipelineLoad.hiddenUserCount} more users
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                )}
+
                 <section className="border-t border-border/70 pt-3">
                   <div className="mb-1.5 flex items-center justify-between gap-3">
                     <span className="font-medium text-foreground">Background workers</span>
@@ -494,6 +855,13 @@ export function Footer() {
                         const status = getWorkerStatus(worker);
                         const logOpen = Boolean(openWorkerLogs[worker.name]);
                         const log = workerLogs[worker.name];
+                        const isStarting =
+                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "start";
+                        const isStopping =
+                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "stop";
+                        const isClearing =
+                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "clear";
+                        const actionError = workerActionErrors[worker.name];
                         return (
                           <div key={worker.name} className="rounded border border-border/70 p-2">
                             <div className="flex items-start justify-between gap-2">
@@ -524,20 +892,80 @@ export function Footer() {
                                     {worker.latest.lastErrorMsg}
                                   </p>
                                 )}
+                                {actionError && (
+                                  <p className="mt-1 break-all text-destructive">
+                                    {actionError.message}
+                                  </p>
+                                )}
                               </div>
-                              <button
-                                type="button"
-                                className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                                onClick={() => {
-                                  setOpenWorkerLogs((prev) => ({
-                                    ...prev,
-                                    [worker.name]: !prev[worker.name],
-                                  }));
-                                  if (!logOpen) void refreshWorkerLog(worker.name);
-                                }}
-                              >
-                                {logOpen ? "Hide log" : "Show log"}
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {canStartWorker(status) && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Start ${worker.label}`}
+                                    title={`Start ${worker.label}`}
+                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                    disabled={workerActionBusy}
+                                    onClick={() => void runWorkerAction(worker, "start")}
+                                  >
+                                    {isStarting ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                    ) : (
+                                      <Play className="h-3 w-3" aria-hidden="true" />
+                                    )}
+                                    {isStarting ? "Starting" : "Start"}
+                                  </button>
+                                )}
+                                {canStopWorker(status) && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Stop ${worker.label}`}
+                                    title={`Stop ${worker.label}`}
+                                    className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                    disabled={workerActionBusy}
+                                    onClick={() => void runWorkerAction(worker, "stop")}
+                                  >
+                                    {isStopping ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                    ) : (
+                                      <Square className="h-3 w-3" aria-hidden="true" />
+                                    )}
+                                    {isStopping ? "Stopping" : "Stop"}
+                                  </button>
+                                )}
+                                {canClearWorker(status) && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Clear zombie status for ${worker.label}`}
+                                    title={`Clear zombie status for ${worker.label}`}
+                                    className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                    disabled={workerActionBusy}
+                                    onClick={() => void runWorkerAction(worker, "clear")}
+                                  >
+                                    {isClearing ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                    ) : (
+                                      <Eraser className="h-3 w-3" aria-hidden="true" />
+                                    )}
+                                    {isClearing ? "Clearing" : "Clear"}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  aria-label={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
+                                  title={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
+                                  className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  onClick={() => {
+                                    setOpenWorkerLogs((prev) => ({
+                                      ...prev,
+                                      [worker.name]: !prev[worker.name],
+                                    }));
+                                    if (!logOpen) void refreshWorkerLog(worker.name);
+                                  }}
+                                >
+                                  {logOpen ? "Hide log" : "Show log"}
+                                </button>
+                              </div>
                             </div>
                             {logOpen && (
                               <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
