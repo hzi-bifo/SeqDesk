@@ -13,6 +13,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
+import os from 'os';
 import { db } from '@/lib/db';
 import { getPackage, type LoadedPackage, type PackageExecution } from './package-loader';
 import { createGenericAdapter } from './generic-adapter';
@@ -257,6 +258,57 @@ function normalizeParamKey(value: string): string {
 
 function isBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length === 0;
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const normalized = Math.floor(value);
+    return normalized > 0 ? normalized : null;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+function getAvailableLocalCpus(): number | null {
+  try {
+    const available =
+      typeof os.availableParallelism === 'function'
+        ? os.availableParallelism()
+        : os.cpus().length;
+    return toPositiveInteger(available);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeConfigForLocalExecution(
+  pipelineId: string,
+  execution: ExtendedPackageExecution,
+  userConfig: Record<string, unknown>,
+  settings: ExecutionSettings
+): Record<string, unknown> {
+  if (pipelineId !== 'metaxpath' || settings.useSlurm) {
+    return userConfig;
+  }
+
+  const localCpus = getAvailableLocalCpus();
+  const requestedThreads = toPositiveInteger(
+    userConfig.threads ?? execution.defaultParams?.threads
+  );
+
+  if (!localCpus || !requestedThreads || requestedThreads <= localCpus) {
+    return userConfig;
+  }
+
+  // Nextflow's local executor refuses tasks whose cpus exceed the local budget.
+  // MetaxPath defaults to 20 threads, so cap local runs to the host/container limit.
+  return {
+    ...userConfig,
+    threads: localCpus,
+  };
 }
 
 // Wrap a value as a single POSIX shell token. Values that are only made up of
@@ -742,7 +794,13 @@ export async function prepareGenericRun(
 
     // Build pipeline flags
     const execution = pkg.manifest.execution as ExtendedPackageExecution;
-    const flags = buildPipelineFlags(execution, config);
+    const runtimeConfig = normalizeConfigForLocalExecution(
+      pipelineId,
+      execution,
+      config,
+      executionSettings
+    );
+    const flags = buildPipelineFlags(execution, runtimeConfig);
 
     // Generate execution script
     const script = executionSettings.useSlurm

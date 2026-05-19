@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -33,12 +33,20 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { LiveLogViewer } from "@/components/pipelines/LiveLogViewer";
 import {
   type PipelineInputFile,
   type PipelineOutputFile,
 } from "@/components/pipelines/PipelineProgressViewer";
 import { PipelineFileBrowser } from "@/components/pipelines/PipelineFileBrowser";
+import {
+  ExecutionTargetControl,
+  getExecutionTargetBlockMessage,
+  isExecutionTargetBlocked,
+  useSlurmAvailability,
+  type ExecutionModeRequest,
+} from "@/components/pipelines/ExecutionTargetControl";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -242,6 +250,7 @@ interface Run {
   pipelineVersion?: string | null;
   pipelineIcon: string;
   pipelineDescription: string;
+  executionMode?: "local" | "slurm" | null;
   status: string;
   progress: number | null;
   currentStep: string | null;
@@ -309,6 +318,14 @@ interface Run {
   }[];
 }
 
+interface AdminPipelineExecutionSummary {
+  pipelineId: string;
+  executionPolicy?: {
+    mode: "local" | "slurm";
+    source: "global" | "pipeline" | "run";
+  };
+}
+
 interface QueueStatus {
   available: boolean;
   type?: "slurm" | "local";
@@ -353,7 +370,11 @@ export default function AnalysisRunDetailPage({
   const [queueHeartbeatAt, setQueueHeartbeatAt] = useState<string | null>(null);
   const [syncForbidden, setSyncForbidden] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const [retryExecutionMode, setRetryExecutionMode] =
+    useState<ExecutionModeRequest>("default");
   const router = useRouter();
+  const { data: session } = useSession();
+  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   const { data, error, isLoading, mutate } = useSWR(
     `/api/pipelines/runs/${id}`,
@@ -367,6 +388,59 @@ export default function AnalysisRunDetailPage({
   );
 
   const run: Run | undefined = data?.run;
+  const { data: pipelineSettingsData } = useSWR<{
+    pipelines: AdminPipelineExecutionSummary[];
+  }>(
+    isFacilityAdmin && run?.pipelineId
+      ? "/api/admin/settings/pipelines?enabled=true"
+      : null,
+    fetcher
+  );
+  const {
+    slurmAvailability,
+    slurmAvailabilityLoading,
+    slurmAvailabilityError,
+  } = useSlurmAvailability(Boolean(isFacilityAdmin && run?.status === "failed"));
+  const retryPipeline = useMemo(
+    () =>
+      (pipelineSettingsData?.pipelines ?? []).find(
+        (pipeline) => pipeline.pipelineId === run?.pipelineId
+      ) ?? null,
+    [pipelineSettingsData?.pipelines, run?.pipelineId]
+  );
+  const retryExecutionPolicy = useMemo(
+    () =>
+      retryPipeline?.executionPolicy ??
+      (run?.executionMode
+        ? {
+            mode: run.executionMode,
+            source: "run" as const,
+          }
+        : null),
+    [retryPipeline?.executionPolicy, run?.executionMode]
+  );
+  const retryExecutionTargetBlockMessage = useMemo(
+    () =>
+      run?.status === "failed" && isFacilityAdmin
+        ? getExecutionTargetBlockMessage({
+            executionMode: retryExecutionMode,
+            executionPolicy: retryExecutionPolicy,
+            slurmAvailability,
+            slurmAvailabilityLoading,
+            slurmAvailabilityError,
+          })
+        : null,
+    [
+      isFacilityAdmin,
+      retryExecutionMode,
+      retryExecutionPolicy,
+      run?.status,
+      slurmAvailability,
+      slurmAvailabilityError,
+      slurmAvailabilityLoading,
+    ]
+  );
+  const retryExecutionTargetBlocked = Boolean(retryExecutionTargetBlockMessage);
   const assemblies = run?.assembliesCreated || [];
   const bins = run?.binsCreated || [];
   const materializedOutputCount =
@@ -401,6 +475,10 @@ export default function AnalysisRunDetailPage({
     const timer = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(timer);
   }, [runIsActive]);
+
+  useEffect(() => {
+    setRetryExecutionMode("default");
+  }, [run?.id]);
 
   // Load pipeline definition for ordered step labels in the progress list
   const { data: defData } = useSWR<{
@@ -660,6 +738,22 @@ export default function AnalysisRunDetailPage({
       setRetryError("Run is missing an associated study");
       return;
     }
+    if (
+      isFacilityAdmin &&
+      isExecutionTargetBlocked({
+        executionMode: retryExecutionMode,
+        executionPolicy: retryExecutionPolicy,
+        slurmAvailability,
+        slurmAvailabilityLoading,
+        slurmAvailabilityError,
+      })
+    ) {
+      setRetryError(
+        retryExecutionTargetBlockMessage ||
+          "The selected execution target is not available."
+      );
+      return;
+    }
 
     setRetrying(true);
     setRetryError(null);
@@ -678,6 +772,7 @@ export default function AnalysisRunDetailPage({
           studyId: run.study.id,
           sampleIds,
           config: run.config || {},
+          ...(isFacilityAdmin ? { executionMode: retryExecutionMode } : {}),
         }),
       });
 
@@ -1075,7 +1170,12 @@ export default function AnalysisRunDetailPage({
               </Button>
             )}
             {run.status === "failed" && (
-              <Button size="sm" onClick={handleRetry} disabled={retrying}>
+              <Button
+                size="sm"
+                onClick={handleRetry}
+                disabled={retrying || retryExecutionTargetBlocked}
+                title={retryExecutionTargetBlockMessage || undefined}
+              >
                 {retrying ? (
                   <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
                 ) : (
@@ -1090,6 +1190,21 @@ export default function AnalysisRunDetailPage({
 
       {retryError && (
         <div className="px-6 lg:px-8 mt-4 text-sm text-destructive">{retryError}</div>
+      )}
+
+      {run.status === "failed" && isFacilityAdmin && (
+        <div className="px-6 lg:px-8 mt-4">
+          <ExecutionTargetControl
+            id="analysis-retry-execution-mode"
+            label="Retry Target"
+            value={retryExecutionMode}
+            onChange={setRetryExecutionMode}
+            executionPolicy={retryExecutionPolicy}
+            slurmAvailability={slurmAvailability}
+            slurmAvailabilityLoading={slurmAvailabilityLoading}
+            slurmAvailabilityError={slurmAvailabilityError}
+          />
+        </div>
       )}
 
     <PageContainer>

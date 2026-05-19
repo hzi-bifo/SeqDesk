@@ -320,6 +320,85 @@ describe("generic-executor", () => {
     expect(script).not.toContain("--paramsFile");
   });
 
+  it("caps MetaxPath local thread defaults to available local CPUs", async () => {
+    vi.spyOn(os, "availableParallelism").mockReturnValue(4);
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "metaxpath",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {
+            threads: 20,
+            topn: 50,
+          },
+          paramMap: {
+            threads: "--threads",
+            topn: "--topn",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-metaxpath-local",
+      pipelineId: "metaxpath",
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("--threads 4");
+    expect(script).not.toContain("--threads 20");
+    expect(script).toContain("--topn 50");
+  });
+
+  it("does not cap MetaxPath thread defaults for SLURM runs", async () => {
+    vi.spyOn(os, "availableParallelism").mockReturnValue(4);
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "metaxpath",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {
+            threads: 20,
+          },
+          paramMap: {
+            threads: "--threads",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-metaxpath-slurm",
+      pipelineId: "metaxpath",
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("--threads 20");
+  });
+
   it("normalizes relative pipeline run directories to absolute paths", async () => {
     const adapter = createAdapter();
     const relativeRunDir = path.relative(process.cwd(), tempDir) || ".";

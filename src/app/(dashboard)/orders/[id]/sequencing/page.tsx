@@ -1531,6 +1531,7 @@ export default function OrderSequencingPage({
           onRunCompleted={() => void refreshSummary({ silent: true })}
           onSampleDataChanged={() => void refreshSummary({ silent: true })}
           isDemo={isDemo}
+          isFacilityAdmin={isFacilityAdmin}
         />
       </PageContainer>
     );

@@ -22,9 +22,15 @@ import { Dna, FlaskConical, Upload, Loader2, Play, AlertCircle, CheckCircle2, XC
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import {
+  ExecutionTargetControl,
+  getExecutionTargetBlockMessage,
+  isExecutionTargetBlocked,
+  useSlurmAvailability,
+  type ExecutionModeRequest,
+} from "./ExecutionTargetControl";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-type ExecutionModeRequest = "default" | "local" | "slurm";
 
 interface PrerequisiteCheck {
   id: string;
@@ -134,6 +140,11 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
   const [loadingMetadata, setLoadingMetadata] = useState(false);
 
   const { systemReady, checkingSystem } = useQuickPrerequisiteStatus();
+  const {
+    slurmAvailability,
+    slurmAvailabilityLoading,
+    slurmAvailabilityError,
+  } = useSlurmAvailability(Boolean(isFacilityAdmin && runDialogOpen));
 
   // Pre-check metadata for all pipelines on mount
   const [metadataPrecheck, setMetadataPrecheck] = useState<Record<string, MetadataValidation>>({});
@@ -143,6 +154,27 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
     [pipelinesData]
   );
   const selectedPipelineId = selectedPipeline?.pipelineId;
+  const executionTargetBlockMessage = useMemo(
+    () =>
+      selectedPipeline && isFacilityAdmin
+        ? getExecutionTargetBlockMessage({
+            executionMode,
+            executionPolicy: selectedPipeline.executionPolicy,
+            slurmAvailability,
+            slurmAvailabilityLoading,
+            slurmAvailabilityError,
+          })
+        : null,
+    [
+      executionMode,
+      isFacilityAdmin,
+      selectedPipeline,
+      slurmAvailability,
+      slurmAvailabilityError,
+      slurmAvailabilityLoading,
+    ]
+  );
+  const executionTargetBlocked = Boolean(executionTargetBlockMessage);
 
   // Pre-check metadata for enabled pipelines
   useEffect(() => {
@@ -179,7 +211,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
   const openRunDialog = async (pipeline: Pipeline) => {
     setSelectedPipeline(pipeline);
     setLocalConfig({ ...(pipeline.config || pipeline.defaultConfig) });
-    setExecutionMode(pipeline.executionPolicy?.mode || "default");
+    setExecutionMode("default");
     setSelectedSamples(new Set(samplesWithReads.map(s => s.id)));
     setRunResult(null);
     setPrerequisites(null);
@@ -275,6 +307,24 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
 
   const handleStartRun = async () => {
     if (!selectedPipeline || selectedSamples.size === 0) return;
+    if (
+      isFacilityAdmin &&
+      isExecutionTargetBlocked({
+        executionMode,
+        executionPolicy: selectedPipeline.executionPolicy,
+        slurmAvailability,
+        slurmAvailabilityLoading,
+        slurmAvailabilityError,
+      })
+    ) {
+      setRunResult({
+        success: false,
+        error:
+          executionTargetBlockMessage ||
+          "The selected execution target is not available.",
+      });
+      return;
+    }
 
     setRunning(true);
     setRunResult(null);
@@ -714,29 +764,16 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
 
               {isFacilityAdmin && selectedPipeline && (
                 <div className="border-t py-4">
-                  <Label
-                    htmlFor="legacy-study-pipeline-execution-mode"
-                    className="mb-2 block"
-                  >
-                    Execution Target
-                  </Label>
-                  <select
+                  <ExecutionTargetControl
                     id="legacy-study-pipeline-execution-mode"
                     value={executionMode}
-                    onChange={(event) =>
-                      setExecutionMode(event.target.value as ExecutionModeRequest)
-                    }
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="default">
-                      Default ({selectedPipeline.executionPolicy?.mode === "slurm" ? "SLURM" : "Local"})
-                    </option>
-                    <option value="local">Local</option>
-                    <option value="slurm">SLURM</option>
-                  </select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Policy source: {selectedPipeline.executionPolicy?.source || "global"}
-                  </p>
+                    onChange={setExecutionMode}
+                    executionPolicy={selectedPipeline.executionPolicy}
+                    slurmAvailability={slurmAvailability}
+                    slurmAvailabilityLoading={slurmAvailabilityLoading}
+                    slurmAvailabilityError={slurmAvailabilityError}
+                    className="rounded-lg"
+                  />
                 </div>
               )}
 
@@ -879,6 +916,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                     selectedSamples.size === 0 ||
                     loadingPrereqs ||
                     loadingMetadata ||
+                    executionTargetBlocked ||
                     (prerequisites !== null && !prerequisites.requiredPassed) ||
                     (metadataValidation !== null && metadataValidation.issues.some(i => i.severity === "error"))
                   }

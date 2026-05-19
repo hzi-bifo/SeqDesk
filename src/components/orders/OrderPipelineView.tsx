@@ -71,6 +71,13 @@ import {
   type SimulateReadsMode,
   type SimulateReadsSimulationMode,
 } from "@/lib/pipelines/simulate-reads-config";
+import {
+  ExecutionTargetControl,
+  getExecutionTargetBlockMessage,
+  isExecutionTargetBlocked,
+  useSlurmAvailability,
+  type ExecutionModeRequest,
+} from "@/components/pipelines/ExecutionTargetControl";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -111,6 +118,10 @@ type AdminPipeline = {
   enabled: boolean;
   config: Record<string, unknown>;
   defaultConfig: Record<string, unknown>;
+  executionPolicy?: {
+    mode: "local" | "slurm";
+    source: "global" | "pipeline" | "run";
+  };
   sampleResult?: PipelineSampleResult;
   configSchema?: {
     properties?: Record<string, ConfigSchemaProperty>;
@@ -276,12 +287,14 @@ function getSampleRunActionCopy({
   isDemo,
   systemBlocked,
   systemSummary,
+  launchBlockMessage,
 }: {
   pipeline: AdminPipeline;
   sampleLabel: string;
   isDemo?: boolean;
   systemBlocked?: boolean;
   systemSummary?: string | null;
+  launchBlockMessage?: string | null;
 }): { title: string; description: string } {
   if (isDemo) {
     return {
@@ -294,6 +307,13 @@ function getSampleRunActionCopy({
     return {
       title: "Pipeline cannot start yet",
       description: systemSummary || "One or more required runtime settings are missing. Check the environment status before starting this pipeline.",
+    };
+  }
+
+  if (launchBlockMessage) {
+    return {
+      title: "Execution target unavailable",
+      description: launchBlockMessage,
     };
   }
 
@@ -337,14 +357,16 @@ function getRunAllActionCopy({
   isDemo,
   systemBlocked,
   systemSummary,
+  launchBlockMessage,
 }: {
   pipeline: AdminPipeline;
   readyCount: number;
   isDemo?: boolean;
   systemBlocked?: boolean;
   systemSummary?: string | null;
+  launchBlockMessage?: string | null;
 }): { title: string; description: string } {
-  if (readyCount === 0 && !systemBlocked && !isDemo) {
+  if (readyCount === 0 && !systemBlocked && !isDemo && !launchBlockMessage) {
     return {
       title: "No ready samples",
       description: "No samples currently meet this pipeline's input requirements.",
@@ -357,6 +379,7 @@ function getRunAllActionCopy({
     isDemo,
     systemBlocked,
     systemSummary,
+    launchBlockMessage,
   });
 
   return {
@@ -372,6 +395,7 @@ interface OrderPipelineViewProps {
   onRunCompleted?: () => void;
   onSampleDataChanged?: () => void;
   isDemo?: boolean;
+  isFacilityAdmin?: boolean;
 }
 
 export function OrderPipelineView({
@@ -381,8 +405,10 @@ export function OrderPipelineView({
   onRunCompleted,
   onSampleDataChanged,
   isDemo,
+  isFacilityAdmin = false,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
   const [simulateReadsAdvancedOpen, setSimulateReadsAdvancedOpen] = useState(false);
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
@@ -409,6 +435,11 @@ export function OrderPipelineView({
     initialCheckPending,
     systemBlocked,
   } = useQuickPrerequisiteStatus();
+  const {
+    slurmAvailability,
+    slurmAvailabilityLoading,
+    slurmAvailabilityError,
+  } = useSlurmAvailability(Boolean(isFacilityAdmin && !isDemo));
 
   const pipelinesResponse = useSWR<{ pipelines: AdminPipeline[] }>(
     "/api/admin/settings/pipelines?enabled=true&catalog=order",
@@ -501,6 +532,7 @@ export function OrderPipelineView({
         ? { ...normalizeSimulateReadsConfig(mergedConfig) } as Record<string, unknown>
         : mergedConfig
     );
+    setExecutionMode("default");
     setSimulateReadsAdvancedOpen(false);
   }, [pipeline]);
 
@@ -553,6 +585,28 @@ export function OrderPipelineView({
     (statusCounts.running ?? 0) + (statusCounts.queued ?? 0) + (statusCounts.pending ?? 0);
   const completedRunCount = statusCounts.completed ?? 0;
   const failedRunCount = statusCounts.failed ?? 0;
+  const executionTargetBlockMessage = useMemo(
+    () =>
+      pipeline && isFacilityAdmin && !isDemo
+        ? getExecutionTargetBlockMessage({
+            executionMode,
+            executionPolicy: pipeline.executionPolicy,
+            slurmAvailability,
+            slurmAvailabilityLoading,
+            slurmAvailabilityError,
+          })
+        : null,
+    [
+      executionMode,
+      isDemo,
+      isFacilityAdmin,
+      pipeline,
+      slurmAvailability,
+      slurmAvailabilityError,
+      slurmAvailabilityLoading,
+    ]
+  );
+  const executionTargetBlocked = Boolean(executionTargetBlockMessage);
   const staleReadsPreservedCount = useMemo(() => {
     if (
       pipeline?.pipelineId !== SIMULATE_READS_PIPELINE_ID ||
@@ -567,6 +621,22 @@ export function OrderPipelineView({
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
       if (!pipeline) return;
+      if (
+        isFacilityAdmin &&
+        isExecutionTargetBlocked({
+          executionMode,
+          executionPolicy: pipeline.executionPolicy,
+          slurmAvailability,
+          slurmAvailabilityLoading,
+          slurmAvailabilityError,
+        })
+      ) {
+        setError(
+          executionTargetBlockMessage ||
+            "The selected execution target is not available."
+        );
+        return;
+      }
       const protectedSamples = samples.filter(
         (sample) => sampleIds.includes(sample.id) && sample.read?.isProtectedRaw
       );
@@ -587,6 +657,7 @@ export function OrderPipelineView({
             orderId,
             sampleIds,
             config: localConfig,
+            ...(isFacilityAdmin ? { executionMode } : {}),
           }),
         });
 
@@ -615,7 +686,19 @@ export function OrderPipelineView({
         setError(err instanceof Error ? err.message : "Failed to start pipeline");
       }
     },
-    [localConfig, orderId, pipeline, runsResponse, samples]
+    [
+      executionMode,
+      executionTargetBlockMessage,
+      isFacilityAdmin,
+      localConfig,
+      orderId,
+      pipeline,
+      runsResponse,
+      samples,
+      slurmAvailability,
+      slurmAvailabilityError,
+      slurmAvailabilityLoading,
+    ]
   );
 
   const handleDeleteRun = useCallback(
@@ -838,6 +921,7 @@ export function OrderPipelineView({
     isDemo,
     systemBlocked,
     systemSummary: systemReady?.summary,
+    launchBlockMessage: executionTargetBlockMessage,
   });
 
   const renderGenericSettings = () => {
@@ -1153,7 +1237,12 @@ export function OrderPipelineView({
                     <Button
                       size="sm"
                       className="h-9 w-40"
-                      disabled={readySamples.length === 0 || runningAll || systemBlocked}
+                      disabled={
+                        readySamples.length === 0 ||
+                        runningAll ||
+                        systemBlocked ||
+                        executionTargetBlocked
+                      }
                       onClick={handleRunAllReady}
                       aria-label="Run all ready samples"
                     >
@@ -1213,6 +1302,18 @@ export function OrderPipelineView({
       <HelpBox title="What is this order pipeline?">
         {getOrderPipelineHelpText(pipeline)}
       </HelpBox>
+
+      {isFacilityAdmin && !isDemo ? (
+        <ExecutionTargetControl
+          id="order-pipeline-execution-mode"
+          value={executionMode}
+          onChange={setExecutionMode}
+          executionPolicy={pipeline.executionPolicy}
+          slurmAvailability={slurmAvailability}
+          slurmAvailabilityLoading={slurmAvailabilityLoading}
+          slurmAvailabilityError={slurmAvailabilityError}
+        />
+      ) : null}
 
       {/* Pipeline settings — hidden in demo mode */}
       {!isDemo && pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
@@ -1364,6 +1465,7 @@ export function OrderPipelineView({
                 isDemo,
                 systemBlocked,
                 systemSummary: systemReady?.summary,
+                launchBlockMessage: executionTargetBlockMessage,
               });
 
               return (
@@ -1438,17 +1540,17 @@ export function OrderPipelineView({
                                 size="sm"
                                 variant="outline"
                                 className="h-9 px-3"
-                                disabled={systemBlocked || !!isDemo}
+                                disabled={systemBlocked || executionTargetBlocked || !!isDemo}
                                 onClick={() => void handleRunSingle(sample.id)}
                                 aria-label={`${sampleActionCopy.title} for ${sample.sampleId}`}
                               >
-                                {systemBlocked ? (
+                                {systemBlocked || executionTargetBlocked ? (
                                   <AlertCircle className="h-4 w-4" />
                                 ) : (
                                   <Play className="h-4 w-4" />
                                 )}
                                 <span className="sr-only">
-                                  {systemBlocked ? "Blocked" : "Run"}
+                                  {systemBlocked || executionTargetBlocked ? "Blocked" : "Run"}
                                 </span>
                               </Button>
                             </span>

@@ -225,6 +225,10 @@ const pipeline = {
     seed: null,
   },
   configSchema: simulateReadsSchema,
+  executionPolicy: {
+    mode: "slurm",
+    source: "global",
+  },
   sampleResult: {
     columnLabel: "Generated reads",
     layout: "columns",
@@ -329,7 +333,17 @@ describe("OrderPipelineView", () => {
       initialCheckPending: false,
       systemBlocked: false,
     });
-    mocks.useSWR.mockImplementation((url: string) => {
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
       if (url.includes("/api/admin/settings/pipelines")) {
         return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
       }
@@ -374,6 +388,7 @@ describe("OrderPipelineView", () => {
         samples={samples}
         onRunCompleted={onRunCompleted}
         onSampleDataChanged={onSampleDataChanged}
+        isFacilityAdmin
       />
     );
 
@@ -412,6 +427,7 @@ describe("OrderPipelineView", () => {
       pipelineId: "simulate-reads",
       orderId: "order-1",
       sampleIds: ["sample-a", "sample-b"],
+      executionMode: "default",
     });
     expect(createBody.config.readCount).toBe(24);
 
