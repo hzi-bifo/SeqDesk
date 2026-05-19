@@ -117,6 +117,7 @@ export default function StudyFacilityFieldsPage({
 
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const apiStudyId = study?.id ?? resolvedParams.id;
+  const loadedStudyId = study?.id ?? null;
   const requestedSubsection = searchParams.get("subsection");
   const activeFacilitySubsection = isStudyFacilityFieldSubsectionId(requestedSubsection)
     ? requestedSubsection
@@ -243,18 +244,14 @@ export default function StudyFacilityFieldsPage({
   }, [apiStudyId, facilitySections.length, isAdmin, loading, router, schemaLoading, sessionStatus]);
 
   useEffect(() => {
-    if (!study || !activeFacilitySubsection) return;
-
-    const anchorId = getStudyFacilityFieldSubsectionAnchorId(activeFacilitySubsection);
-    const element = document.getElementById(anchorId);
-    if (!element) return;
+    if (!loadedStudyId) return;
 
     const rafId = window.requestAnimationFrame(() => {
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     });
 
     return () => window.cancelAnimationFrame(rafId);
-  }, [activeFacilitySubsection, study]);
+  }, [activeFacilitySubsection, loadedStudyId]);
 
   if (sessionStatus === "loading" || loading || schemaLoading) {
     return (

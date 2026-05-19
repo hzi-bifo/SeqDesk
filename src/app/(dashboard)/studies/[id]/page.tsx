@@ -434,6 +434,7 @@ export default function StudyDetailPage({
   const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isDemoUser = session?.user?.isDemo === true;
   const apiStudyId = study?.id ?? id;
+  const loadedStudyId = study?.id ?? null;
   const requestedTab = searchParams.get("tab");
   const currentTab = normalizeStudyTab(requestedTab);
   const selectedPipelineId =
@@ -957,6 +958,22 @@ export default function StudyDetailPage({
     study,
   ]);
 
+  useEffect(() => {
+    if (!loadedStudyId || currentTab === "overview") return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [
+    currentTab,
+    selectedPipelineId,
+    selectedPublishingPipeline,
+    selectedPublishingTarget,
+    loadedStudyId,
+  ]);
+
   if (loading) {
     return (
       <PageContainer className="flex items-center justify-center min-h-[400px]">
@@ -1013,7 +1030,7 @@ export default function StudyDetailPage({
     <>
       <Tabs value={currentTab} onValueChange={(tab) => {
         const url = tab === "overview" ? `/studies/${id}` : `/studies/${id}?tab=${tab}`;
-        router.replace(url, { scroll: false });
+        router.replace(url);
       }}>
 
       <PageContainer>

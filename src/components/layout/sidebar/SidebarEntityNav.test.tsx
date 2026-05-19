@@ -229,7 +229,7 @@ describe("SidebarEntityNav", () => {
 
     const pipelineLink = screen.getByRole("link", { name: /MAG/i });
     expect(pipelineLink.getAttribute("href")).toBe(
-      "/studies/study-1?tab=pipelines&pipeline=mag#study-pipeline-mag"
+      "/studies/study-1?tab=pipelines&pipeline=mag"
     );
   });
 

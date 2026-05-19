@@ -680,7 +680,7 @@ export function SidebarEntityNav({
                     return (
                       <Link
                         key={pipeline.pipelineId}
-                        href={`/studies/${entityId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}#study-pipeline-${encodeURIComponent(pipeline.pipelineId)}`}
+                        href={`/studies/${entityId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isPipelineActive
