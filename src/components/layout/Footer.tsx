@@ -85,6 +85,33 @@ interface PipelineLoadUserSummary {
   modes: PipelineLoadModeCounts;
 }
 
+interface PipelineLoadRunResources {
+  queue: string | null;
+  cores: number | null;
+  memory: string | null;
+  timeLimitHours: number | null;
+}
+
+interface PipelineLoadRunSummary {
+  id: string;
+  runNumber: string;
+  pipelineId: string;
+  targetType: string;
+  targetLabel: string | null;
+  userId: string;
+  userName: string;
+  userEmail: string | null;
+  status: keyof PipelineLoadStatusCounts;
+  mode: keyof PipelineLoadModeCounts;
+  queueJobId: string | null;
+  queueStatus: string | null;
+  queueReason: string | null;
+  activeSince: string;
+  updatedAt: string;
+  stale: boolean;
+  resources: PipelineLoadRunResources | null;
+}
+
 interface PipelineLoadSummary {
   totalActive: number;
   statuses: PipelineLoadStatusCounts;
@@ -94,6 +121,8 @@ interface PipelineLoadSummary {
   totalUsers: number;
   visibleUsers: PipelineLoadUserSummary[];
   hiddenUserCount: number;
+  activeRuns?: PipelineLoadRunSummary[];
+  hiddenRunCount?: number;
   users?: PipelineLoadUserSummary[];
   updatedAt: string;
 }
@@ -206,6 +235,19 @@ function formatRelative(ts: string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function formatElapsedSince(ts: string): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (seconds < 60) return "<1m";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
 function getActivityTimestamp(job: AdminActivityJob): string | undefined {
   return job.updatedAt || job.finishedAt || job.startedAt;
 }
@@ -285,20 +327,36 @@ function hasPipelineLoad(load: PipelineLoadSummary | null): load is PipelineLoad
   return Boolean(load && load.totalActive > 0);
 }
 
-function formatCount(value: number, label: string): string {
-  return `${value} ${label}`;
+function formatPlural(value: number, singular: string, plural = `${singular}s`): string {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function formatSlurmModeCount(value: number, totalActive: number): string {
+  return value === 1 && totalActive === 1 ? "SLURM" : `${value} on SLURM`;
+}
+
+function formatPipelineModePart(mode: PipelineLoadMode, value: number, totalActive: number): string {
+  if (mode === "slurm") return formatSlurmModeCount(value, totalActive);
+  if (mode === "local") return `${value} local`;
+  return `${value} unknown`;
 }
 
 function formatPipelineLoadSummary(load: PipelineLoadSummary): string {
-  const parts = [`Pipeline load: ${formatCount(load.totalActive, "active")}`];
-  if (load.modes.slurm > 0) parts.push(`${load.modes.slurm} SLURM`);
-  if (load.modes.local > 0) parts.push(`${load.modes.local} local`);
-  if (load.modes.unknown > 0) parts.push(`${load.modes.unknown} unknown`);
+  const parts = [`${formatPlural(load.totalActive, "job")} active`];
+  if (load.modes.slurm > 0) {
+    parts.push(formatPipelineModePart("slurm", load.modes.slurm, load.totalActive));
+  }
+  if (load.modes.local > 0) {
+    parts.push(formatPipelineModePart("local", load.modes.local, load.totalActive));
+  }
+  if (load.modes.unknown > 0) {
+    parts.push(formatPipelineModePart("unknown", load.modes.unknown, load.totalActive));
+  }
   return parts.join(" · ");
 }
 
 function formatCompactPipelineLoadSummary(load: PipelineLoadSummary): string {
-  return `Pipeline load: ${load.totalActive}`;
+  return formatPlural(load.totalActive, "job");
 }
 
 function formatPipelineStatusBreakdown(statuses: PipelineLoadStatusCounts): string {
@@ -310,11 +368,37 @@ function formatPipelineStatusBreakdown(statuses: PipelineLoadStatusCounts): stri
 }
 
 function formatPipelineModeBreakdown(modes: PipelineLoadModeCounts): string {
+  const total = modes.slurm + modes.local + modes.unknown;
   return [
-    modes.slurm > 0 ? `${modes.slurm} SLURM` : null,
-    modes.local > 0 ? `${modes.local} local` : null,
-    modes.unknown > 0 ? `${modes.unknown} unknown` : null,
+    modes.slurm > 0 ? formatPipelineModePart("slurm", modes.slurm, total) : null,
+    modes.local > 0 ? formatPipelineModePart("local", modes.local, total) : null,
+    modes.unknown > 0 ? formatPipelineModePart("unknown", modes.unknown, total) : null,
   ].filter(Boolean).join(" · ") || "None";
+}
+
+function formatPipelineUserSummary(user: PipelineLoadUserSummary): string {
+  const parts = [`${formatPlural(user.active, "job")} active`];
+  if (user.modes.slurm > 0) {
+    parts.push(formatPipelineModePart("slurm", user.modes.slurm, user.active));
+  }
+  if (user.modes.local > 0) {
+    parts.push(formatPipelineModePart("local", user.modes.local, user.active));
+  }
+  if (user.modes.unknown > 0) {
+    parts.push(formatPipelineModePart("unknown", user.modes.unknown, user.active));
+  }
+  return parts.join(" · ");
+}
+
+function pipelineLoadIndicatorClass(load: PipelineLoadSummary): string {
+  return load.staleActive > 0 ? "bg-amber-500" : "bg-[#00BD7D]";
+}
+
+function pipelineLoadButtonClass(load: PipelineLoadSummary): string {
+  if (load.staleActive > 0) {
+    return "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200";
+  }
+  return "border-transparent text-foreground hover:border-border hover:bg-muted";
 }
 
 function getVisiblePipelineUsers(load: PipelineLoadSummary): PipelineLoadUserSummary[] {
@@ -323,6 +407,33 @@ function getVisiblePipelineUsers(load: PipelineLoadSummary): PipelineLoadUserSum
     : Array.isArray(load.users)
       ? load.users
       : [];
+}
+
+function getVisiblePipelineRuns(load: PipelineLoadSummary): PipelineLoadRunSummary[] {
+  return Array.isArray(load.activeRuns) ? load.activeRuns : [];
+}
+
+function formatPipelineRunElapsed(run: PipelineLoadRunSummary): string {
+  const elapsed = formatElapsedSince(run.activeSince);
+  if (run.status === "running") return `Running for ${elapsed}`;
+  if (run.status === "queued") return `Queued for ${elapsed}`;
+  return `Pending for ${elapsed}`;
+}
+
+function formatPipelineRunResources(resources: PipelineLoadRunResources | null): string {
+  if (!resources) return "Resources not recorded";
+  return [
+    resources.queue ? `queue ${resources.queue}` : null,
+    resources.cores ? `${resources.cores} CPU` : null,
+    resources.memory,
+    resources.timeLimitHours ? `${resources.timeLimitHours}h limit` : null,
+  ].filter(Boolean).join(" · ") || "Resources not recorded";
+}
+
+function formatRunMode(run: PipelineLoadRunSummary): string {
+  if (run.mode === "slurm") return run.queueJobId ? `SLURM ${run.queueJobId}` : "SLURM";
+  if (run.mode === "local") return "Local";
+  return "Unknown mode";
 }
 
 function notificationSeverityClass(severity: string): string {
@@ -349,6 +460,7 @@ export function Footer() {
   const [busyWorkerAction, setBusyWorkerAction] = useState<BusyWorkerAction | null>(null);
   const [workerActionErrors, setWorkerActionErrors] = useState<Record<string, WorkerActionError>>({});
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [pipelineLoadOpen, setPipelineLoadOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<FooterNotification[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
@@ -707,13 +819,18 @@ export function Footer() {
   const primaryIsPipelineLoad = Boolean(
     activePipelineLoad && primarySummary === pipelineLoadSummary
   );
+  const visiblePipelineUsers = activePipelineLoad
+    ? getVisiblePipelineUsers(activePipelineLoad)
+    : [];
+  const visiblePipelineRuns = activePipelineLoad
+    ? getVisiblePipelineRuns(activePipelineLoad)
+    : [];
   const primaryIsError =
     primaryJob?.state === "error" ||
     Boolean(primaryWorker && ["ERROR", "ZOMBIE"].includes(getWorkerStatus(primaryWorker)));
   const hasDetails =
     visibleJobs.length > 0 ||
     visibleWorkers.length > 0 ||
-    Boolean(activePipelineLoad) ||
     statusWarnings.length > 0;
 
   const formatDate = (date: Date) => {
@@ -731,6 +848,31 @@ export function Footer() {
       minute: "2-digit",
     });
   };
+
+  const renderPipelineLoadButton = (
+    load: PipelineLoadSummary,
+    summary: string,
+    maxWidthClass: string
+  ) => (
+    <button
+      type="button"
+      aria-expanded={pipelineLoadOpen}
+      aria-label={`Pipeline jobs, ${summary}`}
+      title={summary}
+      className={`inline-flex min-w-0 items-center rounded border px-1.5 py-0.5 text-left transition-colors ${maxWidthClass} ${pipelineLoadButtonClass(
+        load
+      )}`}
+      onClick={() => {
+        setPipelineLoadOpen((open) => !open);
+        setDetailsOpen(false);
+      }}
+    >
+      <span className="min-w-0 truncate">
+        <span className="hidden sm:inline">{summary}</span>
+        <span className="sm:hidden">{formatCompactPipelineLoadSummary(load)}</span>
+      </span>
+    </button>
+  );
 
   return (
     <footer
@@ -753,55 +895,216 @@ export function Footer() {
           )}
           {primarySummary && (
             <div className="flex min-w-0 items-center gap-2">
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                  primaryIsError ? "bg-destructive" : "bg-[#00BD7D]"
-                }`}
-              />
-              <span
-                className={`max-w-[52vw] truncate ${
-                  primaryIsError ? "text-destructive" : "text-foreground"
-                }`}
-                title={primarySummary}
-              >
-                {primaryIsPipelineLoad && activePipelineLoad ? (
-                  <>
-                    <span className="hidden sm:inline">{primarySummary}</span>
-                    <span className="sm:hidden">
-                      {formatCompactPipelineLoadSummary(activePipelineLoad)}
-                    </span>
-                  </>
-                ) : (
-                  primarySummary
-                )}
-              </span>
-              <button
-                type="button"
-                className="shrink-0 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => setDetailsOpen((open) => !open)}
-              >
-                details
-              </button>
+              {primaryIsPipelineLoad && activePipelineLoad ? (
+                <>
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${pipelineLoadIndicatorClass(
+                      activePipelineLoad
+                    )}`}
+                  />
+                  {renderPipelineLoadButton(activePipelineLoad, primarySummary, "max-w-[52vw]")}
+                </>
+              ) : (
+                <>
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      primaryIsError ? "bg-destructive" : "bg-[#00BD7D]"
+                    }`}
+                  />
+                  <span
+                    className={`max-w-[52vw] truncate ${
+                      primaryIsError ? "text-destructive" : "text-foreground"
+                    }`}
+                    title={primarySummary}
+                  >
+                    {primarySummary}
+                  </span>
+                  {hasDetails && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => {
+                        setDetailsOpen((open) => !open);
+                        setPipelineLoadOpen(false);
+                      }}
+                    >
+                      details
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           )}
-          {secondaryPipelineLoadSummary && (
+          {secondaryPipelineLoadSummary && activePipelineLoad && (
             <div className="flex min-w-0 items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#00BD7D]" />
               <span
-                className="max-w-[36vw] truncate text-foreground"
-                title={secondaryPipelineLoadSummary}
-              >
-                {activePipelineLoad ? (
-                  <>
-                    <span className="hidden sm:inline">{secondaryPipelineLoadSummary}</span>
-                    <span className="sm:hidden">
-                      {formatCompactPipelineLoadSummary(activePipelineLoad)}
-                    </span>
-                  </>
-                ) : (
-                  secondaryPipelineLoadSummary
-                )}
-              </span>
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${pipelineLoadIndicatorClass(
+                  activePipelineLoad
+                )}`}
+              />
+              {renderPipelineLoadButton(
+                activePipelineLoad,
+                secondaryPipelineLoadSummary,
+                "max-w-[36vw]"
+              )}
+            </div>
+          )}
+          {pipelineLoadOpen && activePipelineLoad && (
+            <div className="absolute bottom-7 left-0 z-50 max-h-[70vh] w-[min(480px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <span className="font-medium text-foreground">Pipeline jobs</span>
+                  <span className="ml-2 text-[11px] text-muted-foreground">
+                    Updated {formatRelative(activePipelineLoad.updatedAt)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => setPipelineLoadOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <section className="rounded border border-border/70 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-foreground">
+                        {formatPlural(activePipelineLoad.totalActive, "job")} active
+                      </p>
+                      <p className="mt-0.5 text-muted-foreground">
+                        {formatPipelineLoadSummary(activePipelineLoad)}
+                      </p>
+                    </div>
+                    {activePipelineLoad.staleActive > 0 && (
+                      <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                        {formatPlural(activePipelineLoad.staleActive, "stale job")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <p className="text-[11px] uppercase text-muted-foreground">Status</p>
+                      <p className="mt-0.5 text-foreground">
+                        {formatPipelineStatusBreakdown(activePipelineLoad.statuses)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase text-muted-foreground">Execution</p>
+                      <p className="mt-0.5 text-foreground">
+                        {formatPipelineModeBreakdown(activePipelineLoad.modes)}
+                      </p>
+                    </div>
+                    {activePipelineLoad.staleActive > 0 && (
+                      <div className="sm:col-span-2">
+                        <p className="text-[11px] uppercase text-muted-foreground">Stale jobs</p>
+                        <p className="mt-0.5 text-foreground">
+                          {formatPipelineStatusBreakdown(activePipelineLoad.staleByStatus)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Active jobs</p>
+                  {visiblePipelineRuns.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {visiblePipelineRuns.map((run) => (
+                        <div
+                          key={run.id}
+                          className="rounded border border-border/70 p-2"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <Link
+                                href={`/analysis/${run.id}`}
+                                className="font-mono text-[11px] font-medium text-foreground hover:underline"
+                                onClick={() => setPipelineLoadOpen(false)}
+                              >
+                                {run.runNumber}
+                              </Link>
+                              <p className="mt-0.5 truncate text-muted-foreground">
+                                {run.pipelineId}
+                                {run.targetLabel ? ` · ${run.targetLabel}` : ""}
+                                {" · "}
+                                {run.userName}
+                              </p>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] ${
+                                run.stale
+                                  ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                                  : "border-border bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {formatPipelineRunElapsed(run)}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid gap-1 text-muted-foreground sm:grid-cols-2">
+                            <p>
+                              {formatRunMode(run)}
+                              {run.queueStatus ? ` · ${run.queueStatus}` : ""}
+                            </p>
+                            <p>{formatPipelineRunResources(run.resources)}</p>
+                          </div>
+                          {run.queueReason && (
+                            <p className="mt-1 break-all text-muted-foreground">
+                              Reason: {run.queueReason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                      {(activePipelineLoad.hiddenRunCount ?? 0) > 0 && (
+                        <p className="text-muted-foreground">
+                          +{activePipelineLoad.hiddenRunCount} more jobs
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
+                      Per-job timing is not available yet.
+                    </p>
+                  )}
+                </section>
+
+                <section>
+                  <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Users</p>
+                  {visiblePipelineUsers.length > 0 ? (
+                    <div className="space-y-1">
+                      {visiblePipelineUsers.map((user) => (
+                        <div
+                          key={user.userId}
+                          className="rounded border border-border/70 p-2"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="min-w-0 truncate text-foreground">
+                              {user.name}
+                              {user.email && user.email !== user.name ? (
+                                <span className="text-muted-foreground"> · {user.email}</span>
+                              ) : null}
+                            </span>
+                            <span className="shrink-0 text-muted-foreground">
+                              {formatPipelineUserSummary(user)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {activePipelineLoad.hiddenUserCount > 0 && (
+                        <p className="text-muted-foreground">
+                          +{activePipelineLoad.hiddenUserCount} more users
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
+                      No active users reported.
+                    </p>
+                  )}
+                </section>
+              </div>
             </div>
           )}
           {detailsOpen && hasDetails && (
@@ -896,75 +1199,6 @@ export function Footer() {
                     </p>
                   )}
                 </section>
-
-                {activePipelineLoad && (
-                  <section className="border-t border-border/70 pt-3">
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <span className="font-medium text-foreground">Pipeline load</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {activePipelineLoad.totalActive} active
-                        {activePipelineLoad.staleActive > 0
-                          ? ` · ${activePipelineLoad.staleActive} stale`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="rounded border border-border/70 p-2">
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        <div>
-                          <p className="text-[11px] uppercase text-muted-foreground">Status</p>
-                          <p className="mt-0.5 text-foreground">
-                            {formatPipelineStatusBreakdown(activePipelineLoad.statuses)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] uppercase text-muted-foreground">Execution</p>
-                          <p className="mt-0.5 text-foreground">
-                            {formatPipelineModeBreakdown(activePipelineLoad.modes)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] uppercase text-muted-foreground">Stale</p>
-                          <p className="mt-0.5 text-foreground">
-                            {activePipelineLoad.staleActive > 0
-                              ? formatPipelineStatusBreakdown(activePipelineLoad.staleByStatus)
-                              : "None"}
-                          </p>
-                        </div>
-                      </div>
-                      {getVisiblePipelineUsers(activePipelineLoad).length > 0 && (
-                        <div className="mt-2 border-t border-border/70 pt-2">
-                          <p className="mb-1 text-[11px] uppercase text-muted-foreground">Users</p>
-                          <div className="space-y-1">
-                            {getVisiblePipelineUsers(activePipelineLoad).map((user) => (
-                              <div
-                                key={user.userId}
-                                className="flex flex-wrap items-center justify-between gap-2"
-                              >
-                                <span className="min-w-0 truncate text-foreground">
-                                  {user.name}
-                                  {user.email && user.email !== user.name ? (
-                                    <span className="text-muted-foreground"> · {user.email}</span>
-                                  ) : null}
-                                </span>
-                                <span className="shrink-0 text-muted-foreground">
-                                  {user.active} active
-                                  {user.modes.slurm > 0 ? ` · ${user.modes.slurm} SLURM` : ""}
-                                  {user.modes.local > 0 ? ` · ${user.modes.local} local` : ""}
-                                  {user.modes.unknown > 0 ? ` · ${user.modes.unknown} unknown` : ""}
-                                </span>
-                              </div>
-                            ))}
-                            {activePipelineLoad.hiddenUserCount > 0 && (
-                              <p className="text-muted-foreground">
-                                +{activePipelineLoad.hiddenUserCount} more users
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                )}
 
                 <section className="border-t border-border/70 pt-3">
                   <div className="mb-1.5 flex items-center justify-between gap-3">

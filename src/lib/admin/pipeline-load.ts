@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 
 const ACTIVE_STATUSES = ["pending", "queued", "running"] as const;
 const DEFAULT_VISIBLE_USER_LIMIT = 6;
+const DEFAULT_VISIBLE_RUN_LIMIT = 6;
 export const PIPELINE_LOAD_STALE_AFTER_MS = 10 * 60 * 1000;
 
 export type PipelineLoadStatus = (typeof ACTIVE_STATUSES)[number];
@@ -21,6 +22,33 @@ export interface PipelineLoadUserSummary {
   modes: PipelineLoadModeCounts;
 }
 
+export interface PipelineLoadRunResources {
+  queue: string | null;
+  cores: number | null;
+  memory: string | null;
+  timeLimitHours: number | null;
+}
+
+export interface PipelineLoadRunSummary {
+  id: string;
+  runNumber: string;
+  pipelineId: string;
+  targetType: string;
+  targetLabel: string | null;
+  userId: string;
+  userName: string;
+  userEmail: string | null;
+  status: PipelineLoadStatus;
+  mode: PipelineLoadMode;
+  queueJobId: string | null;
+  queueStatus: string | null;
+  queueReason: string | null;
+  activeSince: string;
+  updatedAt: string;
+  stale: boolean;
+  resources: PipelineLoadRunResources | null;
+}
+
 export interface PipelineLoadSummary {
   totalActive: number;
   statuses: PipelineLoadStatusCounts;
@@ -30,6 +58,8 @@ export interface PipelineLoadSummary {
   totalUsers: number;
   visibleUsers: PipelineLoadUserSummary[];
   hiddenUserCount: number;
+  activeRuns: PipelineLoadRunSummary[];
+  hiddenRunCount: number;
   /** Back-compat alias for older footer payload consumers. */
   users: PipelineLoadUserSummary[];
   updatedAt: string;
@@ -39,16 +69,29 @@ interface PipelineLoadOptions {
   now?: Date;
   staleAfterMs?: number;
   visibleUserLimit?: number;
+  visibleRunLimit?: number;
 }
 
 type ActiveRunRow = {
+  id: string;
+  runNumber: string;
+  pipelineId: string;
   status: string;
+  targetType: string;
+  study: { title: string | null } | null;
+  order: { name: string | null; orderNumber: string | null } | null;
   executionMode: string | null;
+  executionProfile: string | null;
   queueJobId: string | null;
+  queueStatus: string | null;
+  queueReason: string | null;
   userId: string;
+  startedAt: Date | null;
+  queuedAt: Date | null;
   queueUpdatedAt: Date | null;
   lastEventAt: Date | null;
   lastTraceAt: Date | null;
+  createdAt: Date;
   updatedAt: Date;
 };
 
@@ -103,6 +146,12 @@ function latestKnownActivity(run: Pick<ActiveRunRow, "queueUpdatedAt" | "lastEve
   return run.queueUpdatedAt || run.lastEventAt || run.lastTraceAt || run.updatedAt;
 }
 
+function activeSince(run: Pick<ActiveRunRow, "status" | "startedAt" | "queuedAt" | "createdAt">): Date {
+  const status = normalizeStatus(run.status);
+  if (status === "running") return run.startedAt || run.queuedAt || run.createdAt;
+  return run.queuedAt || run.startedAt || run.createdAt;
+}
+
 function isStaleRun(
   run: Pick<ActiveRunRow, "queueUpdatedAt" | "lastEventAt" | "lastTraceAt" | "updatedAt">,
   nowMs: number,
@@ -125,6 +174,84 @@ function createUserSummary(userId: string, user: UserRow | null | undefined): Pi
   };
 }
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalPositiveInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const next = Math.trunc(value);
+    return next > 0 ? next : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+function parseRunResources(rawProfile: string | null): PipelineLoadRunResources | null {
+  if (!rawProfile) return null;
+  try {
+    const profile = toRecord(JSON.parse(rawProfile));
+    if (!profile) return null;
+    const request = toRecord(profile.request);
+    const slurm = toRecord(profile.slurm) || toRecord(request?.slurm) || profile;
+    if (!slurm) return null;
+
+    const resources: PipelineLoadRunResources = {
+      queue: optionalString(slurm.queue ?? slurm.slurmQueue),
+      cores: optionalPositiveInt(slurm.cores ?? slurm.slurmCores),
+      memory: optionalString(slurm.memory ?? slurm.slurmMemory),
+      timeLimitHours: optionalPositiveInt(slurm.timeLimit ?? slurm.slurmTimeLimit),
+    };
+    return Object.values(resources).some((value) => value !== null) ? resources : null;
+  } catch {
+    return null;
+  }
+}
+
+function targetLabel(run: Pick<ActiveRunRow, "study" | "order">): string | null {
+  if (run.order) {
+    return run.order.orderNumber || run.order.name || null;
+  }
+  return run.study?.title || null;
+}
+
+function createRunSummary(
+  run: ActiveRunRow,
+  user: UserRow | null | undefined,
+  status: PipelineLoadStatus,
+  mode: PipelineLoadMode,
+  stale: boolean
+): PipelineLoadRunSummary {
+  return {
+    id: run.id,
+    runNumber: run.runNumber,
+    pipelineId: run.pipelineId,
+    targetType: run.targetType,
+    targetLabel: targetLabel(run),
+    userId: run.userId,
+    userName: displayName(user),
+    userEmail: user?.email ?? null,
+    status,
+    mode,
+    queueJobId: run.queueJobId,
+    queueStatus: run.queueStatus,
+    queueReason: run.queueReason,
+    activeSince: activeSince(run).toISOString(),
+    updatedAt: latestKnownActivity(run).toISOString(),
+    stale,
+    resources: mode === "slurm" ? parseRunResources(run.executionProfile) : null,
+  };
+}
+
 export async function getPipelineLoadSummary(
   options: PipelineLoadOptions = {}
 ): Promise<PipelineLoadSummary> {
@@ -132,17 +259,30 @@ export async function getPipelineLoadSummary(
   const nowMs = now.getTime();
   const staleAfterMs = options.staleAfterMs ?? PIPELINE_LOAD_STALE_AFTER_MS;
   const visibleUserLimit = Math.max(0, options.visibleUserLimit ?? DEFAULT_VISIBLE_USER_LIMIT);
+  const visibleRunLimit = Math.max(0, options.visibleRunLimit ?? DEFAULT_VISIBLE_RUN_LIMIT);
 
   const runs: ActiveRunRow[] = await db.pipelineRun.findMany({
     where: { status: { in: [...ACTIVE_STATUSES] } },
     select: {
+      id: true,
+      runNumber: true,
+      pipelineId: true,
       status: true,
+      targetType: true,
+      study: { select: { title: true } },
+      order: { select: { name: true, orderNumber: true } },
       executionMode: true,
+      executionProfile: true,
       queueJobId: true,
+      queueStatus: true,
+      queueReason: true,
       userId: true,
+      startedAt: true,
+      queuedAt: true,
       queueUpdatedAt: true,
       lastEventAt: true,
       lastTraceAt: true,
+      createdAt: true,
       updatedAt: true,
     },
   });
@@ -152,6 +292,7 @@ export async function getPipelineLoadSummary(
       const status = normalizeStatus(run.status);
       if (!status) return null;
       return {
+        raw: run,
         userId: run.userId,
         status,
         mode: inferMode(run),
@@ -160,6 +301,7 @@ export async function getPipelineLoadSummary(
     })
     .filter(
       (run): run is {
+        raw: ActiveRunRow;
         userId: string;
         status: PipelineLoadStatus;
         mode: PipelineLoadMode;
@@ -186,6 +328,7 @@ export async function getPipelineLoadSummary(
   const modes = emptyModeCounts();
   const staleByStatus = emptyStatusCounts();
   const users = new Map<string, PipelineLoadUserSummary>();
+  const runSummaries: PipelineLoadRunSummary[] = [];
   let totalActive = 0;
   let staleActive = 0;
 
@@ -211,6 +354,9 @@ export async function getPipelineLoadSummary(
       summary.staleByStatus[status] += 1;
     }
     users.set(userId, summary);
+    runSummaries.push(
+      createRunSummary(run.raw, usersById.get(userId), status, mode, stale)
+    );
   }
 
   const allUsers = Array.from(users.values()).sort((a, b) => {
@@ -218,6 +364,12 @@ export async function getPipelineLoadSummary(
     return a.name.localeCompare(b.name);
   });
   const visibleUsers = allUsers.slice(0, visibleUserLimit);
+  const activeRuns = runSummaries
+    .sort((a, b) => {
+      if (a.stale !== b.stale) return a.stale ? -1 : 1;
+      return new Date(a.activeSince).getTime() - new Date(b.activeSince).getTime();
+    })
+    .slice(0, visibleRunLimit);
 
   return {
     totalActive,
@@ -228,6 +380,8 @@ export async function getPipelineLoadSummary(
     totalUsers: allUsers.length,
     visibleUsers,
     hiddenUserCount: Math.max(0, allUsers.length - visibleUsers.length),
+    activeRuns,
+    hiddenRunCount: Math.max(0, runSummaries.length - activeRuns.length),
     users: visibleUsers,
     updatedAt: now.toISOString(),
   };

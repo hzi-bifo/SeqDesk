@@ -23,13 +23,25 @@ const stale = new Date("2026-05-19T09:40:00.000Z");
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
+    id: "run-1",
+    runNumber: "RUN-1",
+    pipelineId: "mag",
     status: "running",
+    targetType: "study",
+    study: { title: "Metagenomics Study" },
+    order: null,
     executionMode: null,
+    executionProfile: null,
     queueJobId: null,
+    queueStatus: null,
+    queueReason: null,
     userId: "user-1",
+    startedAt: fresh,
+    queuedAt: null,
     queueUpdatedAt: null,
     lastEventAt: null,
     lastTraceAt: null,
+    createdAt: fresh,
     updatedAt: fresh,
     ...overrides,
   };
@@ -68,13 +80,25 @@ describe("getPipelineLoadSummary", () => {
     expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledWith({
       where: { status: { in: ["pending", "queued", "running"] } },
       select: {
+        id: true,
+        runNumber: true,
+        pipelineId: true,
         status: true,
+        targetType: true,
+        study: { select: { title: true } },
+        order: { select: { name: true, orderNumber: true } },
         executionMode: true,
+        executionProfile: true,
         queueJobId: true,
+        queueStatus: true,
+        queueReason: true,
         userId: true,
+        startedAt: true,
+        queuedAt: true,
         queueUpdatedAt: true,
         lastEventAt: true,
         lastTraceAt: true,
+        createdAt: true,
         updatedAt: true,
       },
     });
@@ -117,7 +141,71 @@ describe("getPipelineLoadSummary", () => {
     expect(summary.users).toEqual(summary.visibleUsers);
     expect(summary.totalUsers).toBe(2);
     expect(summary.hiddenUserCount).toBe(0);
+    expect(summary.activeRuns).toHaveLength(4);
+    expect(summary.hiddenRunCount).toBe(0);
     expect(summary.updatedAt).toBe(now.toISOString());
+  });
+
+  it("includes visible active run timing and requested SLURM resources", async () => {
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      run({
+        id: "run-slurm",
+        runNumber: "MAG-20260519-001",
+        pipelineId: "mag",
+        executionMode: "slurm",
+        executionProfile: JSON.stringify({
+          mode: "slurm",
+          slurm: {
+            queue: "bigmem",
+            cores: 24,
+            memory: "256GB",
+            timeLimit: 48,
+          },
+        }),
+        queueJobId: "12345",
+        queueStatus: "RUNNING",
+        queueReason: "None",
+        startedAt: new Date("2026-05-19T08:30:00.000Z"),
+        queuedAt: new Date("2026-05-19T08:00:00.000Z"),
+        updatedAt: stale,
+        order: { name: "RNA order", orderNumber: "ORD-1" },
+        study: null,
+      }),
+      run({
+        id: "run-local",
+        runNumber: "FASTQC-20260519-001",
+        pipelineId: "fastqc",
+        executionMode: "local",
+        queueJobId: "local-1",
+        startedAt: new Date("2026-05-19T09:45:00.000Z"),
+      }),
+    ]);
+
+    const summary = await getPipelineLoadSummary({ now });
+
+    expect(summary.activeRuns[0]).toMatchObject({
+      id: "run-slurm",
+      runNumber: "MAG-20260519-001",
+      pipelineId: "mag",
+      targetLabel: "ORD-1",
+      mode: "slurm",
+      queueJobId: "12345",
+      queueStatus: "RUNNING",
+      queueReason: "None",
+      activeSince: "2026-05-19T08:30:00.000Z",
+      stale: true,
+      resources: {
+        queue: "bigmem",
+        cores: 24,
+        memory: "256GB",
+        timeLimitHours: 48,
+      },
+    });
+    expect(summary.activeRuns[1]).toMatchObject({
+      id: "run-local",
+      mode: "local",
+      resources: null,
+    });
   });
 
   it("infers only strict local and SLURM-like queue ids", async () => {

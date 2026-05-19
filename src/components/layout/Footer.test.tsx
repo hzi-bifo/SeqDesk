@@ -20,6 +20,34 @@ function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 500) {
   };
 }
 
+function makePipelineRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "run-1",
+    runNumber: "MAG-20260519-001",
+    pipelineId: "mag",
+    targetType: "study",
+    targetLabel: "Metagenomics Study",
+    userId: "user-1",
+    userName: "Ada Lovelace",
+    userEmail: "ada@example.com",
+    status: "running",
+    mode: "slurm",
+    queueJobId: "12345",
+    queueStatus: "RUNNING",
+    queueReason: null,
+    activeSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+    updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    stale: false,
+    resources: {
+      queue: "bigmem",
+      cores: 24,
+      memory: "256GB",
+      timeLimitHours: 48,
+    },
+    ...overrides,
+  };
+}
+
 function makePipelineLoad(overrides: Record<string, unknown> = {}) {
   const visibleUsers = [
     {
@@ -52,6 +80,8 @@ function makePipelineLoad(overrides: Record<string, unknown> = {}) {
     totalUsers: visibleUsers.length,
     visibleUsers,
     hiddenUserCount: 0,
+    activeRuns: [makePipelineRun()],
+    hiddenRunCount: 0,
     users: visibleUsers,
     updatedAt: "2026-05-19T10:00:00.000Z",
     ...overrides,
@@ -243,7 +273,7 @@ describe("Footer admin activity", () => {
     expect(screen.getByText("Open full page")).toBeTruthy();
   });
 
-  it("shows compact pipeline load when active runs exist", async () => {
+  it("shows clickable pipeline job details when active runs exist", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown) => {
@@ -261,15 +291,61 @@ describe("Footer admin activity", () => {
     render(<Footer />);
 
     await waitFor(() => {
-      expect(screen.getByText("Pipeline load: 4 active · 3 SLURM · 1 local")).toBeTruthy();
+      expect(screen.getByText("4 jobs active · 3 on SLURM · 1 local")).toBeTruthy();
     });
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 4 jobs active/i }));
 
-    expect(screen.getByText("Pipeline load")).toBeTruthy();
+    expect(screen.getByText("Pipeline jobs")).toBeTruthy();
     expect(screen.getByText("2 running · 1 queued · 1 pending")).toBeTruthy();
-    expect(screen.getByText("3 SLURM · 1 local")).toBeTruthy();
-    expect(screen.getByText(/Ada Lovelace/)).toBeTruthy();
-    expect(screen.getByText(/3 active · 2 SLURM · 1 local/)).toBeTruthy();
+    expect(screen.getByText("3 on SLURM · 1 local")).toBeTruthy();
+    expect(screen.getByText("Active jobs")).toBeTruthy();
+    expect(screen.getByText("MAG-20260519-001")).toBeTruthy();
+    expect(screen.getByText(/Running for/)).toBeTruthy();
+    expect(screen.getByText("SLURM 12345 · RUNNING")).toBeTruthy();
+    expect(screen.getByText("queue bigmem · 24 CPU · 256GB · 48h limit")).toBeTruthy();
+    expect(screen.getAllByText(/Ada Lovelace/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/3 jobs active · 2 on SLURM · 1 local/)).toBeTruthy();
+  });
+
+  it("uses singular pipeline job copy", async () => {
+    const visibleUsers = [
+      {
+        userId: "user-1",
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        active: 1,
+        staleActive: 0,
+        statuses: { pending: 0, queued: 0, running: 1 },
+        staleByStatus: { pending: 0, queued: 0, running: 0 },
+        modes: { slurm: 1, local: 0, unknown: 0 },
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/admin/workers") {
+          return jsonResponse({
+            workers: [],
+            pipelineLoad: makePipelineLoad({
+              totalActive: 1,
+              statuses: { pending: 0, queued: 0, running: 1 },
+              modes: { slurm: 1, local: 0, unknown: 0 },
+              totalUsers: 1,
+              visibleUsers,
+              users: visibleUsers,
+            }),
+          });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText("1 job active · SLURM")).toBeTruthy();
+    });
   });
 
   it("renders a short pipeline load label for narrow footer space", async () => {
@@ -290,7 +366,7 @@ describe("Footer admin activity", () => {
     render(<Footer />);
 
     await waitFor(() => {
-      expect(screen.getByText("Pipeline load: 4")).toBeTruthy();
+      expect(screen.getByText("4 jobs")).toBeTruthy();
     });
   });
 
@@ -334,11 +410,13 @@ describe("Footer admin activity", () => {
     render(<Footer />);
 
     await waitFor(() => {
-      expect(screen.getByText("Pipeline load: 8 active · 6 SLURM · 1 local · 1 unknown")).toBeTruthy();
+      expect(screen.getByText("8 jobs active · 6 on SLURM · 1 local · 1 unknown")).toBeTruthy();
     });
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 8 jobs active/i }));
 
-    expect(screen.getByText("8 active · 2 stale")).toBeTruthy();
+    expect(screen.getByText("Pipeline jobs")).toBeTruthy();
+    expect(screen.getByText("8 jobs active")).toBeTruthy();
+    expect(screen.getByText("2 stale jobs")).toBeTruthy();
     expect(screen.getByText("1 running · 1 pending")).toBeTruthy();
     expect(screen.getByText("+2 more users")).toBeTruthy();
   });
@@ -415,11 +493,13 @@ describe("Footer admin activity", () => {
     await waitFor(() => {
       expect(screen.getByText("Background workers: Pipeline monitor · Error")).toBeTruthy();
     });
-    expect(screen.getByText("Pipeline load: 2 active · 2 SLURM")).toBeTruthy();
+    expect(screen.getByText("2 jobs active · 2 on SLURM")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 2 jobs active/i }));
+
+    expect(screen.getByText("Pipeline jobs")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /details/i }));
 
     expect(screen.getByText("squeue unavailable")).toBeTruthy();
-    expect(screen.getByText("Pipeline load")).toBeTruthy();
   });
 
   it("does not show pipeline load when no active runs are reported", async () => {
@@ -445,7 +525,7 @@ describe("Footer admin activity", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/admin/workers", { cache: "no-store" });
     });
-    expect(screen.queryByText(/Pipeline load/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /pipeline jobs/i })).toBeNull();
   });
 
   it("shows notification unread count and expands notification details", async () => {
