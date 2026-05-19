@@ -100,6 +100,8 @@ export function SidebarEntityNav({
     currentStudyTab === "publishing"
       ? (requestedStudyTab === "ena" ? "ena" : searchParams.get("publisher"))
       : null;
+  const isEnaRegistered =
+    entityType === "study" && entityContext.entityData?.status === "PUBLISHED";
   const currentStudySubview =
     pathname.match(/^\/studies\/[^/]+\/(facility|edit|metadata)$/)?.[1] ?? null;
   const currentStudySection =
@@ -459,7 +461,10 @@ export function SidebarEntityNav({
                     )}
                   >
                     <span
-                      className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm"
+                      className={cn(
+                        "h-2 w-2 rounded-full shadow-sm",
+                        isEnaRegistered ? "bg-emerald-500" : "bg-slate-300"
+                      )}
                       aria-hidden="true"
                     />
                     <span className="truncate">Register at ENA</span>

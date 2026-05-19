@@ -244,7 +244,7 @@ describe("SidebarEntityNav", () => {
         entityContext={{
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: { label: "Study 1", sublabel: "STD-001", status: "READY" },
         }}
         collapsed={false}
         showAdminControls
@@ -256,6 +256,32 @@ describe("SidebarEntityNav", () => {
     expect(enaLink.getAttribute("href")).toBe(
       "/studies/study-1?tab=publishing&publisher=ena"
     );
+    const enaDot = enaLink.querySelector("span[aria-hidden='true']");
+    expect(enaDot?.className).toContain("bg-slate-300");
+    expect(enaDot?.className).not.toContain("bg-emerald-500");
+  });
+
+  it("marks the ENA publishing subitem green only after registration", () => {
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(
+      new URLSearchParams("tab=publishing&publisher=ena")
+    );
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1", sublabel: "STD-001", status: "PUBLISHED" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const enaLink = screen.getByRole("link", { name: /ENA/i });
+    const enaDot = enaLink.querySelector("span[aria-hidden='true']");
+    expect(enaDot?.className).toContain("bg-emerald-500");
   });
 
   it("hides entity navigation on collection routes without a selected entity", () => {
