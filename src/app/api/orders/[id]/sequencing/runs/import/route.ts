@@ -9,6 +9,7 @@ import {
   findDuplicateRunPlanBarcodes,
   mapRunPlanHeader,
   normalizeRunPlanImportedValue,
+  ONT_SAMPLE_FIELDS,
   prefillSequencingRunSamplesFromOrderBarcodes,
   RUN_PLAN_IMPORT_MAX_BYTES,
   RUN_PLAN_IMPORT_MAX_COLUMNS,
@@ -30,6 +31,8 @@ type ImportRowError = {
   message: string;
 };
 
+const SAMPLE_FIELD_NAMES = new Set(ONT_SAMPLE_FIELDS.map((field) => field.name));
+
 function cellToString(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString().slice(0, 10);
@@ -42,6 +45,42 @@ function cellToString(value: unknown): string {
       .join("");
   }
   return String(value).trim();
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function serializeJsonObject(value: Record<string, unknown>): string | null {
+  return Object.keys(value).length > 0 ? JSON.stringify(value) : null;
+}
+
+function splitSampleAndRunAssignmentFields(
+  customFields: Record<string, unknown>
+): {
+  sampleCustomFields: Record<string, unknown>;
+  runAssignmentCustomFields: Record<string, unknown>;
+} {
+  const sampleCustomFields: Record<string, unknown> = {};
+  const runAssignmentCustomFields: Record<string, unknown> = {};
+
+  for (const [fieldName, value] of Object.entries(customFields)) {
+    if (SAMPLE_FIELD_NAMES.has(fieldName)) {
+      sampleCustomFields[fieldName] = value;
+    } else {
+      runAssignmentCustomFields[fieldName] = value;
+    }
+  }
+
+  return { sampleCustomFields, runAssignmentCustomFields };
 }
 
 export async function POST(
@@ -141,9 +180,12 @@ export async function POST(
 
     const orderSamples = await db.sample.findMany({
       where: { orderId: id },
-      select: { id: true, sampleId: true },
+      select: { id: true, sampleId: true, customFields: true },
     });
     const knownSampleCodes = new Set(orderSamples.map((sample) => sample.sampleId));
+    const samplesByCode = new Map(
+      orderSamples.map((sample) => [sample.sampleId, sample])
+    );
     const missingSamples = importedRows
       .map((row) => row.sampleCode)
       .filter((sampleCode, index, all) => !knownSampleCodes.has(sampleCode) && all.indexOf(sampleCode) === index);
@@ -183,8 +225,47 @@ export async function POST(
       );
     }
 
-    const rowsByRun = new Map<string, ImportedRow[]>();
-    for (const row of importedRows) {
+    const preparedRows = importedRows.map((row) => {
+      const { sampleCustomFields, runAssignmentCustomFields } =
+        splitSampleAndRunAssignmentFields(row.customFields);
+      return { ...row, customFields: runAssignmentCustomFields, sampleCustomFields };
+    });
+
+    const sampleFieldUpdates = new Map<
+      string,
+      {
+        sample: (typeof orderSamples)[number];
+        customFields: Record<string, unknown>;
+      }
+    >();
+    for (const row of preparedRows) {
+      if (Object.keys(row.sampleCustomFields).length === 0) continue;
+      const sample = samplesByCode.get(row.sampleCode);
+      if (!sample) continue;
+      const current = sampleFieldUpdates.get(sample.id);
+      sampleFieldUpdates.set(sample.id, {
+        sample,
+        customFields: {
+          ...(current?.customFields ?? {}),
+          ...row.sampleCustomFields,
+        },
+      });
+    }
+
+    for (const { sample, customFields } of sampleFieldUpdates.values()) {
+      await db.sample.update({
+        where: { id: sample.id },
+        data: {
+          customFields: serializeJsonObject({
+            ...parseJsonObject(sample.customFields),
+            ...customFields,
+          }),
+        },
+      });
+    }
+
+    const rowsByRun = new Map<string, typeof preparedRows>();
+    for (const row of preparedRows) {
       rowsByRun.set(row.runId, [...(rowsByRun.get(row.runId) ?? []), row]);
     }
 

@@ -296,14 +296,34 @@ function filePathContainsBarcode(file: FileInfo, barcode: string): boolean {
     .some((part) => normalizeBarcode(part) === normalizedBarcode);
 }
 
+function filePathContainsRunId(file: FileInfo, runId: string | null): boolean {
+  const normalizedRunId = runId?.trim().toLowerCase();
+  if (!normalizedRunId) return false;
+
+  return file.relativePath
+    .split(/[\\/]+/)
+    .some((part) => {
+      const normalizedPart = part.toLowerCase();
+      return (
+        normalizedPart === normalizedRunId ||
+        (normalizedRunId.length >= 4 && normalizedPart.includes(normalizedRunId))
+      );
+    });
+}
+
 function findFilesForBarcode(
   barcode: string | null,
   files: FileInfo[],
-  allowSingleEnd: boolean
+  allowSingleEnd: boolean,
+  runId: string | null = null
 ): FileMatchSuggestion {
   if (!barcode) return emptyFileSuggestion();
 
-  const candidates = files.filter((file) => filePathContainsBarcode(file, barcode));
+  const candidates = files.filter(
+    (file) =>
+      filePathContainsBarcode(file, barcode) &&
+      (!runId || filePathContainsRunId(file, runId))
+  );
   if (candidates.length === 0) return emptyFileSuggestion();
 
   const pairs = matchPairedEndFiles(candidates);
@@ -348,7 +368,12 @@ function findSequencingSuggestionForSample(
 ): FileMatchSuggestion {
   const runPlan = getLatestRunPlanBarcode(sample);
   if (runPlan.barcode) {
-    const suggestion = findFilesForBarcode(runPlan.barcode, files, allowSingleEnd);
+    const suggestion = findFilesForBarcode(
+      runPlan.barcode,
+      files,
+      allowSingleEnd,
+      runPlan.runId
+    );
     if (suggestion.status !== "none") {
       return withDiscoveryMatchedBy(suggestion, "run-plan-barcode");
     }

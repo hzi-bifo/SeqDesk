@@ -139,7 +139,7 @@ function resetWorkspaceMocks() {
     matchedBy: null,
   });
   mocks.files.hasAllowedExtension.mockReturnValue(true);
-  mocks.files.matchPairedEndFiles.mockImplementation((files: any[]) =>
+  mocks.files.matchPairedEndFiles.mockImplementation((files: Array<{ filename: string }>) =>
     files.map((file) => ({
       identifier: file.filename.replace(/\.f(?:ast)?q(?:\.gz)?$/i, ""),
       read1: file,
@@ -978,6 +978,77 @@ describe("discoverOrderSequencingFiles", () => {
           status: "exact",
           matchedBy: "run-plan-barcode",
           read1: expect.objectContaining({ relativePath: runPlanRead.relativePath }),
+        }),
+      })
+    );
+  });
+
+  it("scopes run-plan barcode matching to the planned run folder", async () => {
+    const currentRunRead = {
+      relativePath: "run-2/barcode02/SAMPLE_A.fastq.gz",
+      filename: "SAMPLE_A.fastq.gz",
+    };
+    const olderRunRead = {
+      relativePath: "run-1/barcode02/SAMPLE_A.fastq.gz",
+      filename: "SAMPLE_A.fastq.gz",
+    };
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "SAMPLE_A",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: null,
+            sequencingRunSamples: [
+              {
+                barcode: "barcode02",
+                sequencingRun: {
+                  id: "run-db-2",
+                  runId: "RUN-2",
+                  runName: "Run 2",
+                },
+              },
+            ],
+            facilityStatus: "WAITING",
+            reads: [],
+          },
+        ],
+      })
+    );
+    mocks.files.scanDirectoryWithReport.mockResolvedValue({
+      files: [olderRunRead, currentRunRead],
+      warnings: {
+        inaccessibleDirectories: [],
+        ignoredEntries: 0,
+        truncated: false,
+        activeWritesSkipped: 0,
+        skippedRecentFiles: [],
+        maxFiles: 10000,
+        maxDepth: 4,
+      },
+    });
+    mocks.files.matchPairedEndFiles.mockReturnValue([
+      {
+        identifier: "SAMPLE_A",
+        read1: currentRunRead,
+        read2: null,
+        isPaired: false,
+      },
+    ]);
+
+    const result = await discoverOrderSequencingFiles("order-1");
+
+    expect(mocks.files.matchPairedEndFiles).toHaveBeenCalledWith([currentRunRead]);
+    expect(result.results[0]).toEqual(
+      expect.objectContaining({
+        plannedBarcode: "barcode02",
+        plannedBarcodeRunId: "RUN-2",
+        suggestion: expect.objectContaining({
+          status: "exact",
+          matchedBy: "run-plan-barcode",
+          read1: expect.objectContaining({ relativePath: currentRunRead.relativePath }),
         }),
       })
     );

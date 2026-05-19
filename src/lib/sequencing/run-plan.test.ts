@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     },
     sequencingRunSample: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
     },
     siteSettings: {
@@ -37,6 +38,7 @@ import {
   normalizeRunPlanImportedValue,
   normalizeRunAssignmentFormSchema,
   ONT_RUN_ASSIGNMENT_FIELDS,
+  ONT_SAMPLE_FIELDS,
   prefillSequencingRunSamplesFromOrderBarcodes,
   upsertSequencingRunSamples,
 } from "./run-plan";
@@ -54,6 +56,7 @@ describe("sequencing run plan helpers", () => {
       { id: "sample-db-1", sampleId: "sample-1" },
     ]);
     mocks.db.sequencingRunSample.findMany.mockResolvedValue([]);
+    mocks.db.sequencingRunSample.updateMany.mockResolvedValue({ count: 0 });
     mocks.db.sequencingRunSample.upsert.mockResolvedValue({ id: "assignment-1" });
   });
 
@@ -111,7 +114,24 @@ describe("sequencing run plan helpers", () => {
     expect(mapRunPlanHeader("Patient")).toBe("sampleCode");
     expect(mapRunPlanHeader("Material")).toBe("material_body_site");
     expect(mapRunPlanHeader("DNA(ng/µl)")).toBe("concentration_ng_ul");
+    expect(mapRunPlanHeader("10ng DNA 20 µl H2O")).toBe("total_volume_ul");
+    expect(mapRunPlanHeader("Nanopore DNA (ng/µl) after PCR and purification")).toBe(
+      "post_pcr_concentration_ng_ul"
+    );
     expect(mapRunPlanHeader("Unknown Column")).toBeNull();
+  });
+
+  it("includes order barcode fields in the ONT sample preset", () => {
+    expect(ONT_SAMPLE_FIELDS).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "barcode",
+          name: "_barcode",
+          perSample: true,
+          moduleSource: "sequencing-tech",
+        }),
+      ])
+    );
   });
 
   it("normalizes German date and decimal Excel values", () => {
@@ -260,6 +280,36 @@ describe("sequencing run plan helpers", () => {
       customFields: null,
       notes: null,
     });
+  });
+
+  it("allows barcode swaps when both owning samples are in the same request", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([
+      { id: "sample-db-1", sampleId: "sample-1" },
+      { id: "sample-db-2", sampleId: "sample-2" },
+    ]);
+    mocks.db.sequencingRunSample.findMany.mockResolvedValue([
+      { sampleId: "sample-db-1", barcode: "barcode01" },
+      { sampleId: "sample-db-2", barcode: "barcode02" },
+    ]);
+
+    await upsertSequencingRunSamples({
+      orderId: "order-1",
+      runDbId: "run-db-1",
+      assignments: [
+        { sampleId: "sample-1", barcode: "BC2" },
+        { sampleId: "sample-2", barcode: "BC1" },
+      ],
+    });
+
+    expect(mocks.db.sequencingRunSample.updateMany).toHaveBeenCalledWith({
+      where: {
+        sequencingRunId: "run-db-1",
+        sampleId: { in: ["sample-db-1", "sample-db-2"] },
+        barcode: { in: ["barcode02", "barcode01"] },
+      },
+      data: { barcode: null },
+    });
+    expect(mocks.db.sequencingRunSample.upsert).toHaveBeenCalledTimes(2);
   });
 
   it("rejects run creation for non-manageable orders", async () => {

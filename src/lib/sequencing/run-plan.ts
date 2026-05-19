@@ -132,6 +132,19 @@ export const ONT_ORDER_FIELDS: FormFieldDefinition[] = [
 
 export const ONT_SAMPLE_FIELDS: FormFieldDefinition[] = [
   {
+    id: "field_ont_sample_barcode",
+    type: "barcode",
+    label: "Barcode",
+    name: "_barcode",
+    required: false,
+    visible: true,
+    perSample: true,
+    helpText:
+      "Barcode assigned to this sample on the order. Used to prefill sequencing run plans.",
+    order: 19,
+    moduleSource: "sequencing-tech",
+  },
+  {
     id: "field_internal_sample_code",
     type: "text",
     label: "Internal Sample/Patient Code",
@@ -880,9 +893,26 @@ export async function upsertSequencingRunSamples(input: {
     samplesByIdOrCode.set(sample.sampleId, sample.id);
   }
 
+  const normalizedAssignments = input.assignments.map((assignment) => {
+    const sampleDbId = samplesByIdOrCode.get(assignment.sampleId);
+    if (!sampleDbId) {
+      throw new Error(`Sample not found: ${assignment.sampleId}`);
+    }
+    return {
+      ...assignment,
+      sampleDbId,
+      barcode: normalizeBarcode(assignment.barcode),
+      hasCustomFields: Object.prototype.hasOwnProperty.call(
+        assignment,
+        "customFields"
+      ),
+      hasNotes: Object.prototype.hasOwnProperty.call(assignment, "notes"),
+    };
+  });
+
   const seenBarcodes = new Set<string>();
-  for (const assignment of input.assignments) {
-    const barcode = normalizeBarcode(assignment.barcode);
+  for (const assignment of normalizedAssignments) {
+    const barcode = assignment.barcode;
     if (barcode) {
       if (seenBarcodes.has(barcode)) {
         throw new Error(`Barcode ${barcode} is assigned more than once in this request`);
@@ -898,50 +928,58 @@ export async function upsertSequencingRunSamples(input: {
     },
     select: { sampleId: true, barcode: true },
   });
+  const requestSampleIds = new Set(
+    normalizedAssignments.map((assignment) => assignment.sampleDbId)
+  );
+  const barcodeOwnersToClear = new Set<string>();
   for (const existing of existingAssignments) {
-    const incoming = input.assignments.find((assignment) => {
-      const sampleDbId = samplesByIdOrCode.get(assignment.sampleId);
+    const incoming = normalizedAssignments.find((assignment) => {
       return (
-        sampleDbId !== existing.sampleId &&
-        normalizeBarcode(assignment.barcode) === existing.barcode
+        assignment.sampleDbId !== existing.sampleId &&
+        assignment.barcode === existing.barcode
       );
     });
     if (incoming && existing.barcode) {
-      throw new Error(`Barcode ${existing.barcode} is already assigned in this run`);
+      if (!requestSampleIds.has(existing.sampleId)) {
+        throw new Error(`Barcode ${existing.barcode} is already assigned in this run`);
+      }
+      barcodeOwnersToClear.add(existing.sampleId);
     }
   }
 
+  if (barcodeOwnersToClear.size > 0) {
+    await db.sequencingRunSample.updateMany({
+      where: {
+        sequencingRunId: input.runDbId,
+        sampleId: { in: Array.from(barcodeOwnersToClear) },
+        barcode: { in: Array.from(seenBarcodes) },
+      },
+      data: { barcode: null },
+    });
+  }
+
   const results = [];
-  for (const assignment of input.assignments) {
-    const sampleDbId = samplesByIdOrCode.get(assignment.sampleId);
-    if (!sampleDbId) {
-      throw new Error(`Sample not found: ${assignment.sampleId}`);
-    }
-    const barcode = normalizeBarcode(assignment.barcode);
-    const hasCustomFields = Object.prototype.hasOwnProperty.call(
-      assignment,
-      "customFields"
-    );
-    const hasNotes = Object.prototype.hasOwnProperty.call(assignment, "notes");
+  for (const assignment of normalizedAssignments) {
+    const barcode = assignment.barcode;
     try {
       results.push(
         await db.sequencingRunSample.upsert({
           where: {
             sequencingRunId_sampleId: {
               sequencingRunId: input.runDbId,
-              sampleId: sampleDbId,
+              sampleId: assignment.sampleDbId,
             },
           },
           update: {
             barcode,
-            ...(hasCustomFields
+            ...(assignment.hasCustomFields
               ? { customFields: serializeJsonObject(assignment.customFields ?? {}) }
               : {}),
-            ...(hasNotes ? { notes: assignment.notes?.trim() || null } : {}),
+            ...(assignment.hasNotes ? { notes: assignment.notes?.trim() || null } : {}),
           },
           create: {
             sequencingRunId: input.runDbId,
-            sampleId: sampleDbId,
+            sampleId: assignment.sampleDbId,
             barcode,
             customFields: serializeJsonObject(assignment.customFields ?? {}),
             notes: assignment.notes?.trim() || null,
@@ -965,23 +1003,46 @@ export const RUN_PLAN_COLUMN_ALIASES: Record<string, string> = {
   run: "runId",
   run_id: "runId",
   runid: "runId",
+  run_name: "runId",
+  sequencing_run: "runId",
+  sequencing_run_id: "runId",
   barcode: "barcode",
+  barcode_id: "barcode",
+  barcode_name: "barcode",
   patient: "sampleCode",
   patient_id: "sampleCode",
   patient_code: "sampleCode",
   sample: "sampleCode",
   sample_id: "sampleCode",
+  sample_code: "sampleCode",
+  internal_sample_code: "sampleCode",
+  internal_sample_patient_code: "sampleCode",
   material: "material_body_site",
+  material_body_site: "material_body_site",
   body_site: "material_body_site",
   date: "sampling_date",
   sampling_date: "sampling_date",
+  storage_box: "storage_box",
+  storage_position: "storage_position",
+  buffer: "storage_buffer",
+  storage_buffer: "storage_buffer",
   dna_ng_ul: "concentration_ng_ul",
   dna_ng_l: "concentration_ng_ul",
   dna_ng: "concentration_ng_ul",
   "10ng_dna_20_l_h2o": "total_volume_ul",
+  "10ng_dna_20_ul_h2o": "total_volume_ul",
   nanopore_dna_ng_l_after_pcr_and_purification: "post_pcr_concentration_ng_ul",
+  nanopore_dna_ng_ul_after_pcr_and_purification: "post_pcr_concentration_ng_ul",
   nanodrop_dna_ng_l_after_pcr_and_purification: "post_pcr_concentration_ng_ul",
+  nanodrop_dna_ng_ul_after_pcr_and_purification: "post_pcr_concentration_ng_ul",
   depletion: "depletion",
+  extraction_date: "extraction_date",
+  extraction_method: "extraction_method",
+  analyte: "analyte",
+  concentration_ng_ul: "concentration_ng_ul",
+  post_pcr_concentration_ng_ul: "post_pcr_concentration_ng_ul",
+  total_volume_ul: "total_volume_ul",
+  run_specific_notes: "run_specific_notes",
 };
 
 export function mapRunPlanHeader(header: string): string | null {
