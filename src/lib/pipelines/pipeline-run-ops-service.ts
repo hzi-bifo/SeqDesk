@@ -9,6 +9,7 @@ import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
+import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getAllPackages } from '@/lib/pipelines/package-loader';
 import { inferPipelineExitCode, processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
@@ -1133,6 +1134,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     if (Object.keys(updateData).length > 0) {
       await db.pipelineRun.update({ where: { id: runId }, data: updateData });
     }
+    await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
 
     if (nextStatus === 'completed' && run.status !== 'completed' && !resolvedOutputsInThisSync) {
       try {
@@ -1418,6 +1420,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     where: { id: runId },
     data: updateData,
   });
+  await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
 
   if (nextStatus === 'completed' && run.status !== 'completed' && !resolvedOutputsInThisSync) {
     try {

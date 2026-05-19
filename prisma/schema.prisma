@@ -36,10 +36,32 @@ model User {
   tickets          Ticket[]
   ticketMessages TicketMessage[]
   pipelineRuns   PipelineRun[]
+  inAppNotifications InAppNotification[]
   sequencingArtifactsCreated SequencingArtifact[] @relation("SequencingArtifactCreator")
   sequencingUploadsCreated   SequencingUpload[]   @relation("SequencingUploadCreator")
   backgroundWorkersStarted   BackgroundWorkerProcess[] @relation("BackgroundWorkerStartedBy")
   department     Department?     @relation(fields: [departmentId], references: [id])
+}
+
+model InAppNotification {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType  String
+  severity   String    @default("info")
+  title      String
+  body       String?
+  linkPath   String?
+  sourceType String
+  sourceId   String?
+  dedupeKey  String    @unique
+  readAt     DateTime?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, archivedAt, readAt, createdAt])
+  @@index([sourceType, sourceId])
 }
 
 model Department {

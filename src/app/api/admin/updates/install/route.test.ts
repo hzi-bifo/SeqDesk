@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   isUpdateInProgress: vi.fn(),
   releaseUpdateLock: vi.fn(),
   writeUpdateStatus: vi.fn(),
+  notifyAppUpdateStartedInApp: vi.fn(),
+  notifyAppUpdateProgressInApp: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -37,6 +39,11 @@ vi.mock("@/lib/updater/status", () => ({
   writeUpdateStatus: mocks.writeUpdateStatus,
 }));
 
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyAppUpdateStartedInApp: mocks.notifyAppUpdateStartedInApp,
+  notifyAppUpdateProgressInApp: mocks.notifyAppUpdateProgressInApp,
+}));
+
 import { POST } from "./route";
 
 function makeInstallRequest(body?: unknown) {
@@ -58,6 +65,8 @@ describe("POST /api/admin/updates/install", () => {
     mocks.installUpdate.mockResolvedValue(undefined);
     mocks.repairInstalledUpdate.mockResolvedValue(undefined);
     mocks.getInstalledVersion.mockResolvedValue("1.2.0");
+    mocks.notifyAppUpdateStartedInApp.mockResolvedValue(undefined);
+    mocks.notifyAppUpdateProgressInApp.mockResolvedValue(undefined);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -92,6 +101,22 @@ describe("POST /api/admin/updates/install", () => {
     expect(data.success).toBe(true);
     expect(data.version).toBe("1.2.0");
     expect(mocks.installUpdate).toHaveBeenCalled();
+    expect(mocks.notifyAppUpdateStartedInApp).toHaveBeenCalledWith({
+      targetVersion: "1.2.0",
+    });
+
+    const progressCallback = mocks.installUpdate.mock.calls[0][1];
+    progressCallback({
+      status: "complete",
+      progress: 100,
+      message: "Update complete!",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mocks.notifyAppUpdateProgressInApp).toHaveBeenCalledWith(
+      { status: "complete", progress: 100, message: "Update complete!" },
+      { targetVersion: "1.2.0" }
+    );
   });
 
   it("starts repair mode without requiring a newer update", async () => {
@@ -108,9 +133,32 @@ describe("POST /api/admin/updates/install", () => {
       "1.2.0",
       expect.any(Function)
     );
+    expect(mocks.notifyAppUpdateStartedInApp).toHaveBeenCalledWith({
+      targetVersion: "1.2.0",
+      repair: true,
+    });
     expect(mocks.writeUpdateStatus).toHaveBeenCalledWith(
       { status: "checking", progress: 0, message: "Preparing update repair..." },
       { targetVersion: "1.2.0" }
+    );
+
+    const progressCallback = mocks.repairInstalledUpdate.mock.calls[0][1];
+    progressCallback({
+      status: "error",
+      progress: 0,
+      message: "Update repair failed",
+      error: "Prisma failed",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mocks.notifyAppUpdateProgressInApp).toHaveBeenCalledWith(
+      {
+        status: "error",
+        progress: 0,
+        message: "Update repair failed",
+        error: "Prisma failed",
+      },
+      { targetVersion: "1.2.0", repair: true }
     );
   });
 

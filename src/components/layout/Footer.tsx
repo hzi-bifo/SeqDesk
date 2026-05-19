@@ -1,7 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Eraser, Loader2, Play, Square } from "lucide-react";
+import {
+  Archive,
+  Bell,
+  Check,
+  ChevronDown,
+  Eraser,
+  ExternalLink,
+  Loader2,
+  Play,
+  Square,
+} from "lucide-react";
 import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { useHelpText } from "@/lib/useHelpText";
 import { SidebarContext } from "./SidebarContext";
@@ -93,6 +103,26 @@ interface WorkerStatusPayload {
   pipelineLoad: PipelineLoadSummary | null;
   workersError: string | null;
   pipelineLoadError: string | null;
+}
+
+interface FooterNotification {
+  id: string;
+  eventType: string;
+  severity: string;
+  title: string;
+  body: string | null;
+  linkPath: string | null;
+  sourceType: string;
+  sourceId: string | null;
+  readAt: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface NotificationPayload {
+  notifications?: FooterNotification[];
+  unreadCount?: number;
 }
 
 type WorkerAction = "start" | "stop" | "clear";
@@ -295,6 +325,17 @@ function getVisiblePipelineUsers(load: PipelineLoadSummary): PipelineLoadUserSum
       : [];
 }
 
+function notificationSeverityClass(severity: string): string {
+  if (severity === "success") return "bg-emerald-500";
+  if (severity === "warning") return "bg-amber-500";
+  if (severity === "error") return "bg-destructive";
+  return "bg-sky-500";
+}
+
+function formatUnreadCount(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}
+
 export function Footer() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [activityJobs, setActivityJobs] = useState<AdminActivityJob[]>([]);
@@ -308,6 +349,11 @@ export function Footer() {
   const [busyWorkerAction, setBusyWorkerAction] = useState<BusyWorkerAction | null>(null);
   const [workerActionErrors, setWorkerActionErrors] = useState<Record<string, WorkerActionError>>({});
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<FooterNotification[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [expandedNotificationIds, setExpandedNotificationIds] = useState<Record<string, boolean>>({});
+  const [busyNotificationId, setBusyNotificationId] = useState<string | null>(null);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
   const collapsed = sidebarContext?.collapsed ?? false;
@@ -398,6 +444,27 @@ export function Footer() {
     reconcileWorkerActionErrors(next.workers);
   }, [loadWorkerStatus, reconcileWorkerActionErrors]);
 
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const response = await fetch("/api/notifications?limit=20&archived=false", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        setNotifications([]);
+        setUnreadNotificationCount(0);
+        return;
+      }
+      const payload = (await response.json()) as NotificationPayload;
+      setNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
+      setUnreadNotificationCount(
+        typeof payload.unreadCount === "number" ? payload.unreadCount : 0
+      );
+    } catch {
+      setNotifications([]);
+      setUnreadNotificationCount(0);
+    }
+  }, []);
+
   const hideActivity = async (job: AdminActivityJob) => {
     setBusyActivityId(job.id);
     try {
@@ -462,6 +529,50 @@ export function Footer() {
       }));
     } finally {
       setBusyWorkerAction(null);
+    }
+  };
+
+  const markNotificationRead = async (notification: FooterNotification) => {
+    if (notification.readAt || busyNotificationId) return;
+    setBusyNotificationId(notification.id);
+    try {
+      const response = await fetch(`/api/notifications/${encodeURIComponent(notification.id)}/read`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        await refreshNotifications();
+      }
+    } finally {
+      setBusyNotificationId(null);
+    }
+  };
+
+  const archiveNotification = async (notification: FooterNotification) => {
+    if (busyNotificationId) return;
+    setBusyNotificationId(notification.id);
+    try {
+      const response = await fetch(
+        `/api/notifications/${encodeURIComponent(notification.id)}/archive`,
+        { method: "POST" }
+      );
+      if (response.ok) {
+        await refreshNotifications();
+      }
+    } finally {
+      setBusyNotificationId(null);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (busyNotificationId) return;
+    setBusyNotificationId("__all__");
+    try {
+      const response = await fetch("/api/notifications/read-all", { method: "POST" });
+      if (response.ok) {
+        await refreshNotifications();
+      }
+    } finally {
+      setBusyNotificationId(null);
     }
   };
 
@@ -549,6 +660,22 @@ export function Footer() {
       clearInterval(timer);
     };
   }, [loadWorkerStatus, reconcileWorkerActionErrors]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNotifications() {
+      if (cancelled) return;
+      await refreshNotifications();
+    }
+
+    void loadNotifications();
+    const timer = setInterval(() => void loadNotifications(), 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [refreshNotifications]);
 
   const visibleJobs = useMemo(
     () =>
@@ -988,7 +1115,154 @@ export function Footer() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="relative flex items-center gap-3">
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ""}`}
+              title="Notifications"
+              className="relative inline-flex h-6 items-center gap-1.5 rounded border border-transparent px-1.5 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
+              <Bell className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">Notifications</span>
+              {unreadNotificationCount > 0 && (
+                <span className="ml-0.5 rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-medium leading-none text-destructive-foreground">
+                  {formatUnreadCount(unreadNotificationCount)}
+                </span>
+              )}
+            </button>
+            {notificationsOpen && (
+              <div className="absolute bottom-7 right-0 z-50 max-h-[70vh] w-[min(420px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="font-medium text-foreground">Notifications</span>
+                    {unreadNotificationCount > 0 && (
+                      <span className="ml-2 text-[11px] text-muted-foreground">
+                        {unreadNotificationCount} unread
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {unreadNotificationCount > 0 && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                        disabled={busyNotificationId === "__all__"}
+                        onClick={() => void markAllNotificationsRead()}
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => setNotificationsOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+
+                {notifications.length === 0 ? (
+                  <p className="rounded border border-border/70 p-3 text-muted-foreground">
+                    No notifications.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {notifications.map((notification) => {
+                      const isUnread = !notification.readAt;
+                      const isExpanded = Boolean(expandedNotificationIds[notification.id]);
+                      const isBusy = busyNotificationId === notification.id;
+                      return (
+                        <div
+                          key={notification.id}
+                          className={`rounded border border-border/70 p-2 ${
+                            isUnread ? "bg-muted/40" : ""
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span
+                              className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${notificationSeverityClass(
+                                notification.severity
+                              )}`}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                className="flex w-full items-start justify-between gap-2 text-left"
+                                onClick={() =>
+                                  setExpandedNotificationIds((prev) => ({
+                                    ...prev,
+                                    [notification.id]: !prev[notification.id],
+                                  }))
+                                }
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate font-medium text-foreground">
+                                    {notification.title}
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                                    {formatRelative(notification.createdAt)}
+                                    {isUnread ? " · unread" : ""}
+                                  </span>
+                                </span>
+                                <ChevronDown
+                                  className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                                    isExpanded ? "rotate-180" : ""
+                                  }`}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                              {isExpanded && notification.body && (
+                                <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
+                                  {notification.body}
+                                </p>
+                              )}
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {!notification.readAt && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Mark ${notification.title} read`}
+                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                    disabled={isBusy}
+                                    onClick={() => void markNotificationRead(notification)}
+                                  >
+                                    <Check className="h-3 w-3" aria-hidden="true" />
+                                    Mark read
+                                  </button>
+                                )}
+                                {notification.linkPath && (
+                                  <Link
+                                    href={notification.linkPath}
+                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    onClick={() => void markNotificationRead(notification)}
+                                  >
+                                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                                    Open
+                                  </Link>
+                                )}
+                                <button
+                                  type="button"
+                                  aria-label={`Hide ${notification.title}`}
+                                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                  disabled={isBusy}
+                                  onClick={() => void archiveNotification(notification)}
+                                >
+                                  <Archive className="h-3 w-3" aria-hidden="true" />
+                                  Hide
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           {currentTime && (
             <>
               <span>{formatDate(currentTime)}</span>

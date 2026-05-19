@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  notifyOrderUpdatedInApp: vi.fn(),
   db: {
     order: {
       findUnique: vi.fn(),
@@ -43,6 +44,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyOrderUpdatedInApp: mocks.notifyOrderUpdatedInApp,
 }));
 
 import { DELETE, GET, PUT } from "./route";
@@ -338,6 +343,7 @@ describe("DELETE /api/orders/[id]", () => {
 describe("PUT /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.notifyOrderUpdatedInApp.mockResolvedValue(undefined);
   });
 
   it("updates name and contactName fields", async () => {
@@ -376,6 +382,11 @@ describe("PUT /api/orders/[id]", () => {
           contactName: "Jane Doe",
         }),
       }),
+    );
+    expect(mocks.notifyOrderUpdatedInApp).toHaveBeenCalledWith(
+      "order-1",
+      expect.objectContaining({ id: "user-1", role: "RESEARCHER" }),
+      expect.stringContaining("updated order details")
     );
   });
 

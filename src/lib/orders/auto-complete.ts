@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 
 /**
  * Check if an order should be automatically completed.
@@ -47,6 +48,12 @@ export async function checkAndCompleteOrder(orderId: string): Promise<boolean> {
         "Automatically completed - all samples have sequencing files",
     },
   });
+
+  await notifyOrderUpdatedInApp(
+    orderId,
+    null,
+    "SeqDesk automatically completed the order because all samples have sequencing files."
+  );
 
   return true;
 }

@@ -58,6 +58,24 @@ function makePipelineLoad(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeNotification(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "notification-1",
+    eventType: "order.updated",
+    severity: "info",
+    title: "Order ORD-20260519-0001 updated",
+    body: "Ada Lovelace updated order details.",
+    linkPath: "/orders/order-1",
+    sourceType: "order",
+    sourceId: "order-1",
+    readAt: null,
+    archivedAt: null,
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
+    updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    ...overrides,
+  };
+}
+
 describe("Footer admin activity", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -66,6 +84,9 @@ describe("Footer admin activity", () => {
         const url = String(input);
         if (url === "/api/admin/workers") {
           return jsonResponse({ workers: [] });
+        }
+        if (url.startsWith("/api/notifications")) {
+          return jsonResponse({ notifications: [], unreadCount: 0 });
         }
         return jsonResponse({
           jobs: [
@@ -425,6 +446,123 @@ describe("Footer admin activity", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/admin/workers", { cache: "no-store" });
     });
     expect(screen.queryByText(/Pipeline load/)).toBeNull();
+  });
+
+  it("shows notification unread count and expands notification details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/notifications?limit=20&archived=false") {
+          return jsonResponse({
+            notifications: [makeNotification()],
+            unreadCount: 2,
+          });
+        }
+        if (url === "/api/admin/workers") {
+          return jsonResponse({ workers: [] });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /notifications, 2 unread/i })
+      ).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /notifications/i }));
+    expect(screen.getByText("Order ORD-20260519-0001 updated")).toBeTruthy();
+    expect(screen.queryByText("Ada Lovelace updated order details.")).toBeNull();
+
+    fireEvent.click(screen.getByText("Order ORD-20260519-0001 updated"));
+
+    expect(screen.getByText("Ada Lovelace updated order details.")).toBeTruthy();
+    expect(
+      (screen.getByRole("link", { name: /open/i }) as HTMLAnchorElement).getAttribute("href")
+    ).toBe("/orders/order-1");
+  });
+
+  it("marks notification rows read and archives hidden notifications", async () => {
+    let read = false;
+    let archived = false;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/notifications/notification-1/read") {
+        expect(init?.method).toBe("POST");
+        read = true;
+        return jsonResponse({ success: true });
+      }
+      if (url === "/api/notifications/notification-1/archive") {
+        expect(init?.method).toBe("POST");
+        archived = true;
+        return jsonResponse({ success: true });
+      }
+      if (url === "/api/notifications?limit=20&archived=false") {
+        return jsonResponse({
+          notifications: archived
+            ? []
+            : [makeNotification({ readAt: read ? new Date().toISOString() : null })],
+          unreadCount: read || archived ? 0 : 1,
+        });
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({ workers: [] });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /notifications, 1 unread/i })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /notifications/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /mark order ord-20260519-0001 updated read/i })
+    );
+
+    await waitFor(() => {
+      expect(read).toBe(true);
+    });
+    expect(screen.queryByRole("button", { name: /mark order ord-20260519-0001 updated read/i })).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /hide order ord-20260519-0001 updated/i })
+    );
+
+    await waitFor(() => {
+      expect(archived).toBe(true);
+    });
+    expect(screen.queryByText("Order ORD-20260519-0001 updated")).toBeNull();
+  });
+
+  it("shows an empty notification state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url === "/api/notifications?limit=20&archived=false") {
+          return jsonResponse({ notifications: [], unreadCount: 0 });
+        }
+        if (url === "/api/admin/workers") {
+          return jsonResponse({ workers: [] });
+        }
+        return jsonResponse({ jobs: [] });
+      })
+    );
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Notifications" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+
+    expect(screen.getByText("No notifications.")).toBeTruthy();
   });
 
   it("expands worker log output from the footer details panel", async () => {

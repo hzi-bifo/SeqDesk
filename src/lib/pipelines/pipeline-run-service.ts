@@ -5,6 +5,7 @@ import { promisify } from 'util';
 
 import { db } from '@/lib/db';
 import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
+import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
@@ -178,6 +179,7 @@ async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       },
     });
+    await notifyPipelineRunTerminalInApp(runId, null, 'completed');
     processCompletedPipelineRun(runId, pipelineId).catch((err) => {
       console.error('[Pipeline Run] Output resolution failed:', err);
     });
@@ -208,6 +210,7 @@ async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       },
     });
+    await notifyPipelineRunTerminalInApp(runId, null, 'failed');
   }
 }
 

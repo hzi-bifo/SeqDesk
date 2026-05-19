@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 
 function parseExtraSettings(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) {
@@ -246,6 +247,17 @@ export async function PUT(
         },
       },
     });
+
+    await notifyOrderUpdatedInApp(
+      id,
+      {
+        id: session.user.id,
+        role: session.user.role,
+        email: session.user.email,
+        name: session.user.name,
+      },
+      `${session.user.name || session.user.email || "Someone"} updated order notes.`
+    );
 
     return NextResponse.json({
       ...updatedOrder,

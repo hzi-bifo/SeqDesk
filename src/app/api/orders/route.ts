@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { notifyOrderCreatedInApp } from "@/lib/notifications/in-app";
 
 // Generate order number: ORD-YYYYMMDD-XXXX
 async function generateOrderNumber(): Promise<string> {
@@ -211,6 +212,13 @@ export async function POST(request: NextRequest) {
             orderNumber,
             ...orderData,
           },
+        });
+
+        await notifyOrderCreatedInApp(order.id, {
+          id: session.user.id,
+          role: session.user.role,
+          email: session.user.email,
+          name: session.user.name,
         });
 
         return NextResponse.json(order, { status: 201 });

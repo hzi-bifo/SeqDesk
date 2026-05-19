@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { notifyAppUpdateProgressInApp } from "@/lib/notifications/in-app";
 import { getCurrentVersion, getInstalledVersion } from "@/lib/updater";
 import {
   clearUpdateStatus,
@@ -35,6 +36,9 @@ export async function GET() {
       message: "Update complete.",
     };
     await writeUpdateStatus(nextStatus, { targetVersion: status.targetVersion });
+    await notifyAppUpdateProgressInApp(nextStatus, {
+      targetVersion: status.targetVersion,
+    });
     return NextResponse.json({
       status: nextStatus,
       runningVersion,

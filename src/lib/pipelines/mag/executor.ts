@@ -2,6 +2,7 @@
 // Handles running nf-core/mag pipeline
 
 import { db } from '@/lib/db';
+import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getAdapter } from '@/lib/pipelines/adapters';
 // Import to trigger adapter registration
 import '@/lib/pipelines/adapters/mag';
@@ -509,6 +510,10 @@ export async function updateRunStatus(
     errorTail?: string;
   }
 ): Promise<void> {
+  const existing = await db.pipelineRun.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  });
   const updateData: Record<string, unknown> = { status };
 
   if (status === 'running' && !details?.progress) {
@@ -530,6 +535,7 @@ export async function updateRunStatus(
     where: { id: runId },
     data: updateData,
   });
+  await notifyPipelineRunTerminalInApp(runId, existing?.status, status);
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   notifyOrderSubmitted,
   notifySamplesMarkedSent,
 } from "@/lib/notifications/dispatcher";
+import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 
 // Order status progression
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
@@ -391,7 +392,8 @@ export async function PUT(
       }
     }
 
-    const order = Object.keys(updateData).length > 0
+    const orderUpdated = Object.keys(updateData).length > 0;
+    const order = orderUpdated
       ? await db.order.update({
           where: { id },
           data: updateData,
@@ -413,6 +415,15 @@ export async function PUT(
     }
     if (samplesSentCreated) {
       await notifySamplesMarkedSent(id, actor);
+    }
+    if (orderUpdated) {
+      await notifyOrderUpdatedInApp(
+        id,
+        actor,
+        changedStatusTo
+          ? `${actor.name || actor.email || "Someone"} changed order status from ${existing.status} to ${changedStatusTo}.`
+          : `${actor.name || actor.email || "Someone"} updated order details.`
+      );
     }
 
     return NextResponse.json(order);

@@ -15,6 +15,7 @@ import {
 } from "@/lib/modules/form-integration";
 import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
 import { mapPerSampleFieldToColumn, type CoreSampleColumn } from "@/lib/sample-fields";
+import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 
 const sampleSelect = {
   id: true,
@@ -413,6 +414,17 @@ export async function POST(
       where: { id },
       data: { numberOfSamples: allSamples.length },
     });
+
+    await notifyOrderUpdatedInApp(
+      id,
+      {
+        id: session.user.id,
+        role: session.user.role,
+        email: session.user.email,
+        name: session.user.name,
+      },
+      `${session.user.name || session.user.email || "Someone"} updated order samples.`
+    );
 
     return NextResponse.json({ samples: samplesWithParsedData });
   } catch (error) {

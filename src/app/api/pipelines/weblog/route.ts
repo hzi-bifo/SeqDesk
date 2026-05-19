@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
@@ -628,6 +629,11 @@ export async function POST(request: NextRequest) {
         });
       }
     });
+    await notifyPipelineRunTerminalInApp(
+      runId,
+      run.status,
+      typeof runUpdates.status === 'string' ? runUpdates.status : run.status
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   writeUpdateStatus: vi.fn(),
   clearUpdateStatus: vi.fn(),
   releaseUpdateLock: vi.fn(),
+  notifyAppUpdateProgressInApp: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -30,6 +31,10 @@ vi.mock("@/lib/updater/status", () => ({
   releaseUpdateLock: mocks.releaseUpdateLock,
 }));
 
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyAppUpdateProgressInApp: mocks.notifyAppUpdateProgressInApp,
+}));
+
 import { DELETE, GET } from "./route";
 
 describe("GET /api/admin/updates/progress", () => {
@@ -44,6 +49,7 @@ describe("GET /api/admin/updates/progress", () => {
     mocks.writeUpdateStatus.mockResolvedValue(undefined);
     mocks.clearUpdateStatus.mockResolvedValue(undefined);
     mocks.releaseUpdateLock.mockResolvedValue(undefined);
+    mocks.notifyAppUpdateProgressInApp.mockResolvedValue(undefined);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -121,6 +127,14 @@ describe("GET /api/admin/updates/progress", () => {
         message: "Update complete.",
       }),
       { targetVersion: "2.0.0" },
+    );
+    expect(mocks.notifyAppUpdateProgressInApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        progress: 100,
+        message: "Update complete.",
+      }),
+      { targetVersion: "2.0.0" }
     );
   });
 

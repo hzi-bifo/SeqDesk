@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   resolveOutputs: vi.fn(),
   saveRunResults: vi.fn(),
   execFileAsync: vi.fn(),
+  notifyPipelineRunTerminalInApp: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -61,6 +62,10 @@ vi.mock("@/lib/pipelines/adapters/mag", () => ({}));
 vi.mock("@/lib/pipelines/output-resolver", () => ({
   resolveOutputs: mocks.resolveOutputs,
   saveRunResults: mocks.saveRunResults,
+}));
+
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyPipelineRunTerminalInApp: mocks.notifyPipelineRunTerminalInApp,
 }));
 
 vi.mock("child_process", () => ({
@@ -106,6 +111,7 @@ describe("POST /api/pipelines/weblog", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue(baseRun);
     mocks.db.pipelineRunStep.findUnique.mockResolvedValue(null);
     mocks.db.pipelineRunStep.count.mockResolvedValue(0);
+    mocks.notifyPipelineRunTerminalInApp.mockResolvedValue(undefined);
     mocks.getStepsForPipeline.mockReturnValue([]);
     mocks.findStepByProcess.mockReturnValue(null);
     mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
@@ -243,6 +249,11 @@ describe("POST /api/pipelines/weblog", () => {
 
     const res = await POST(req);
     expect(res.status).toBe(200);
+    expect(mocks.notifyPipelineRunTerminalInApp).toHaveBeenCalledWith(
+      "run-1",
+      "running",
+      "failed"
+    );
 
     const txCallback = mocks.db.$transaction.mock.calls[0][0];
     const txMock = {
@@ -457,6 +468,11 @@ describe("POST /api/pipelines/weblog", () => {
 
     const res = await POST(req);
     expect(res.status).toBe(200);
+    expect(mocks.notifyPipelineRunTerminalInApp).toHaveBeenCalledWith(
+      "run-1",
+      "running",
+      "completed"
+    );
 
     const txCallback = mocks.db.$transaction.mock.calls[0][0];
     const txMock = {

@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth';
 import { checkForUpdates, getInstalledVersion } from '@/lib/updater';
 import { installUpdate, repairInstalledUpdate } from '@/lib/updater/installer';
 import {
+  notifyAppUpdateProgressInApp,
+  notifyAppUpdateStartedInApp,
+} from '@/lib/notifications/in-app';
+import {
   acquireUpdateLock,
   isUpdateInProgress,
   releaseUpdateLock,
@@ -54,10 +58,14 @@ export async function POST(request: Request) {
         { status: 'checking', progress: 0, message: 'Preparing update repair...' },
         { targetVersion }
       );
+      await notifyAppUpdateStartedInApp({ targetVersion, repair: true });
 
       repairInstalledUpdate(targetVersion, (progress) => {
         console.log(`Update repair progress: ${progress.status} - ${progress.message}`);
         void writeUpdateStatus(progress, { targetVersion })
+          .then(() =>
+            notifyAppUpdateProgressInApp(progress, { targetVersion, repair: true })
+          )
           .catch((error) => console.error('Failed to write update status:', error));
       }).catch((error) => {
         console.error('Update repair failed:', error);
@@ -106,6 +114,7 @@ export async function POST(request: Request) {
       { status: 'checking', progress: 0, message: 'Preparing update...' },
       { targetVersion: result.latest.version }
     );
+    await notifyAppUpdateStartedInApp({ targetVersion: result.latest.version });
 
     // Start update in background
     // Note: This is a simplified implementation
@@ -113,6 +122,11 @@ export async function POST(request: Request) {
     installUpdate(result.latest, (progress) => {
       console.log(`Update progress: ${progress.status} - ${progress.message}`);
       void writeUpdateStatus(progress, { targetVersion: result.latest?.version })
+        .then(() =>
+          notifyAppUpdateProgressInApp(progress, {
+            targetVersion: result.latest?.version,
+          })
+        )
         .catch((error) => console.error('Failed to write update status:', error));
     }).catch((error) => {
       console.error('Update failed:', error);

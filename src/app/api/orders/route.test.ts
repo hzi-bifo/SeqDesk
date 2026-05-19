@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  notifyOrderCreatedInApp: vi.fn(),
   db: {
     order: {
       findFirst: vi.fn(),
@@ -30,6 +31,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyOrderCreatedInApp: mocks.notifyOrderCreatedInApp,
+}));
+
 import { GET, POST } from "./route";
 
 describe("POST /api/orders", () => {
@@ -52,6 +57,7 @@ describe("POST /api/orders", () => {
       id: "order-1",
       ...data,
     }));
+    mocks.notifyOrderCreatedInApp.mockResolvedValue(undefined);
   });
 
   it("marks orders as E2E-generated when the Playwright header is present", async () => {
@@ -98,6 +104,10 @@ describe("POST /api/orders", () => {
       data: { generatedByE2E: boolean };
     };
     expect(args.data.generatedByE2E).toBe(false);
+    expect(mocks.notifyOrderCreatedInApp).toHaveBeenCalledWith(
+      "order-1",
+      expect.objectContaining({ id: "user-1", role: "RESEARCHER" })
+    );
   });
 
   it("returns 401 when no session (POST)", async () => {
