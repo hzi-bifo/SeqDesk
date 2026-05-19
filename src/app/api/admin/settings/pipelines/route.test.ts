@@ -236,7 +236,7 @@ describe("GET /api/admin/settings/pipelines", () => {
           package: {
             id: "metaxpath",
             name: "MetaXpath",
-            version: "0.1.1",
+            version: "0.1.4",
             description: "ONT metagenomics",
           },
           execution: {
@@ -621,6 +621,48 @@ describe("GET /api/admin/settings/pipelines", () => {
           detail: expect.stringContaining("older than required 0.1.1"),
         }),
       ])
+    );
+  });
+
+  it("returns non-blocking MetaxPath runtime warnings for unsafe Kraken2 defaults", async () => {
+    mocks.getAllPipelineIds.mockReturnValue(["metaxpath"]);
+    mocks.db.pipelineConfig.findMany.mockResolvedValue([
+      {
+        pipelineId: "metaxpath",
+        enabled: true,
+        config: JSON.stringify({
+          paramsFile: `${process.cwd()}/package.json`,
+          kraken2Db: "/shared/dbs/kraken2_pluspf_20230314",
+          kraken2MemoryMapping: false,
+          predVfsAmrsMemory: "64 GB",
+        }),
+      },
+    ]);
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/settings/pipelines")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.pipelines[0]).toEqual(
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        runtimeWarnings: expect.arrayContaining([
+          expect.stringContaining("PlusPF is configured without memory mapping"),
+          expect.stringContaining("PRED_VFS_AMRS memory is 64 GB"),
+        ]),
+        readiness: expect.objectContaining({
+          status: "warning",
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              id: "metaxpath-runtime-warnings",
+              status: "warning",
+              detail: expect.stringContaining("SIGKILLed"),
+            }),
+          ]),
+        }),
+      })
     );
   });
 });

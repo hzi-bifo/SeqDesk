@@ -6,6 +6,7 @@ import type { LoadedPackage } from './package-loader';
 import {
   checkMetaxPathPackageCompatibility,
   comparePackageVersions,
+  getMetaxPathRuntimeWarnings,
 } from './metaxpath-compatibility';
 
 function makePackage(basePath: string, version: string): LoadedPackage {
@@ -175,5 +176,57 @@ describe('metaxpath compatibility', () => {
     expect(result.issues).toEqual([
       expect.stringContaining('does not declare study target support'),
     ]);
+  });
+});
+
+describe('metaxpath runtime warnings', () => {
+  it('warns for stale packages, unmapped PlusPF, and low PRED_VFS_AMRS memory', () => {
+    const pkg = makePackage('/tmp/metaxpath', '0.1.3');
+    const warnings = getMetaxPathRuntimeWarnings({
+      manifest: pkg.manifest,
+      config: {
+        kraken2Db: '/shared/dbs/kraken2_pluspf_20230314',
+        kraken2MemoryMapping: false,
+        predVfsAmrsMemory: '64 GB',
+      },
+    });
+
+    expect(warnings).toEqual([
+      expect.stringContaining('predates the Kraken2 safe defaults in 0.1.4'),
+      expect.stringContaining('PlusPF is configured without memory mapping'),
+      expect.stringContaining('PRED_VFS_AMRS memory is 64 GB'),
+    ]);
+  });
+
+  it('detects PlusPF and memory mapping from params file content', () => {
+    const pkg = makePackage('/tmp/metaxpath', '0.1.4');
+    const warnings = getMetaxPathRuntimeWarnings({
+      manifest: pkg.manifest,
+      config: {
+        predVfsAmrsMemory: '96 GB',
+      },
+      paramsFileContent: [
+        'kraken2_db: /shared/dbs/kraken2_pluspf_20230314',
+        'kraken2_memory_mapping: false',
+      ].join('\n'),
+    });
+
+    expect(warnings).toEqual([
+      expect.stringContaining('PlusPF is configured without memory mapping'),
+    ]);
+  });
+
+  it('does not warn for safe MetaxPath runtime defaults', () => {
+    const pkg = makePackage('/tmp/metaxpath', '0.1.4');
+    const warnings = getMetaxPathRuntimeWarnings({
+      manifest: pkg.manifest,
+      config: {
+        kraken2Db: '/shared/dbs/kraken2_pluspf_20230314',
+        kraken2MemoryMapping: true,
+        predVfsAmrsMemory: '96 GB',
+      },
+    });
+
+    expect(warnings).toEqual([]);
   });
 });

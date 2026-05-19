@@ -14,6 +14,7 @@ import { getPackage, getPackageManifest, type PackageManifest } from '@/lib/pipe
 import { getPipelineDownloadStatus } from '@/lib/pipelines/nextflow-downloads';
 import {
   checkMetaxPathPackageCompatibility,
+  collectMetaxPathRuntimeWarnings,
   METAXPATH_MIN_COMPATIBLE_VERSION,
 } from '@/lib/pipelines/metaxpath-compatibility';
 import {
@@ -149,6 +150,7 @@ async function buildPipelineReadiness(args: {
   manifest: PackageManifest | null;
   resolvedConfig: Record<string, unknown>;
   databaseDownloads: Awaited<ReturnType<typeof getPipelineDatabaseStatuses>>;
+  runtimeWarnings: string[];
 }): Promise<PipelineReadiness> {
   const pkg = getPackage(args.pipelineId);
   const localPipelinePath = resolveLocalPipelinePath(pkg?.basePath, args.manifest);
@@ -199,6 +201,15 @@ async function buildPipelineReadiness(args: {
         ? `Installed package ${compatibility.version} is compatible.`
         : `${compatibility.issues.join(' ')} Sync MetaxPath-Nextflow ${METAXPATH_MIN_COMPATIBLE_VERSION} or newer.`,
       action: compatibility.compatible ? undefined : 'sync',
+    });
+  }
+
+  if (args.runtimeWarnings.length > 0) {
+    items.push({
+      id: 'metaxpath-runtime-warnings',
+      label: 'MetaxPath runtime defaults',
+      status: 'warning',
+      detail: args.runtimeWarnings.join(' '),
     });
   }
 
@@ -352,12 +363,17 @@ export async function GET(request: NextRequest) {
         executionSettings.pipelineRunDir,
         executionSettings.pipelineDatabaseDir
       );
+      const runtimeWarnings = await collectMetaxPathRuntimeWarnings({
+        manifest,
+        config: resolvedConfig,
+      });
       const readiness = await buildPipelineReadiness({
         pipelineId,
         enabled: effectiveEnabled,
         manifest,
         resolvedConfig,
         databaseDownloads,
+        runtimeWarnings,
       });
       const executionPolicy = resolvePipelineExecutionPolicy({
         pipelineId,
@@ -392,6 +408,7 @@ export async function GET(request: NextRequest) {
         download: downloadStatus,
         databaseDownloads,
         readiness,
+        runtimeWarnings,
       };
     }));
 

@@ -166,6 +166,7 @@ interface Pipeline {
     mode: "local" | "slurm";
     source: "global" | "pipeline" | "run";
   };
+  runtimeWarnings?: string[];
   input?: {
     perSample?: {
       reads?: boolean;
@@ -1717,6 +1718,20 @@ export function StudyPipelinesSection({
       {error && (
         <PageNotice variant="error" title="Pipeline action failed" className="rounded-xl border">
           {error}
+        </PageNotice>
+      )}
+
+      {selectedPipeline?.runtimeWarnings && selectedPipeline.runtimeWarnings.length > 0 && (
+        <PageNotice
+          variant="warning"
+          title="MetaxPath runtime warning"
+          className="rounded-xl border"
+        >
+          <div className="space-y-1.5">
+            {selectedPipeline.runtimeWarnings.map((warning, index) => (
+              <p key={index}>{warning}</p>
+            ))}
+          </div>
         </PageNotice>
       )}
 

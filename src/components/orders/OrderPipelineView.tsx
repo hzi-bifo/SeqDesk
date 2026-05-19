@@ -122,6 +122,7 @@ type AdminPipeline = {
     mode: "local" | "slurm";
     source: "global" | "pipeline" | "run";
   };
+  runtimeWarnings?: string[];
   sampleResult?: PipelineSampleResult;
   configSchema?: {
     properties?: Record<string, ConfigSchemaProperty>;
@@ -1298,6 +1299,20 @@ export function OrderPipelineView({
           {error}
         </PageNotice>
       )}
+
+      {pipeline.runtimeWarnings && pipeline.runtimeWarnings.length > 0 ? (
+        <PageNotice
+          variant="warning"
+          title="MetaxPath runtime warning"
+          className="rounded-xl border"
+        >
+          <div className="space-y-1.5">
+            {pipeline.runtimeWarnings.map((warning, index) => (
+              <p key={index}>{warning}</p>
+            ))}
+          </div>
+        </PageNotice>
+      ) : null}
 
       <HelpBox title="What is this order pipeline?">
         {getOrderPipelineHelpText(pipeline)}

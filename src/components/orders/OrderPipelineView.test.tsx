@@ -503,4 +503,55 @@ describe("OrderPipelineView", () => {
       screen.getByText(/will leave 1 stale linked sample unchanged/i)
     ).toBeTruthy();
   });
+
+  it("shows MetaxPath runtime warnings without blocking launch", () => {
+    const metaxPathPipeline = {
+      ...pipeline,
+      pipelineId: "metaxpath",
+      name: "MetaxPath",
+      description: "ONT metagenomics",
+      config: {},
+      defaultConfig: {},
+      configSchema: { properties: {} },
+      runtimeWarnings: [
+        "Kraken2 PlusPF is configured without memory mapping. PlusPF can exceed common Slurm cgroup memory limits and be SIGKILLed while loading the database.",
+      ],
+      input: {
+        supportedScopes: ["order"],
+        perSample: { reads: true, pairedEnd: false },
+      },
+    };
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return { data: { pipelines: [metaxPathPipeline] }, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return { data: { runs: [], total: 0 }, mutate: mocks.mutateRuns };
+      }
+      return { data: undefined, mutate: vi.fn() };
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="metaxpath"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    expect(screen.getByText("MetaxPath runtime warning")).toBeTruthy();
+    expect(screen.getByText(/PlusPF is configured without memory mapping/i)).toBeTruthy();
+    expect(screen.getByLabelText("Run all ready samples").hasAttribute("disabled")).toBe(false);
+  });
 });
