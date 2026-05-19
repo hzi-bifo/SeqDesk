@@ -105,6 +105,8 @@ interface TelemetrySettingsResponse {
 
 interface GemmaMetaxPathSeedStatus {
   seeded: boolean;
+  fixtureState: "missing" | "applied" | "changed";
+  fixtureIssues: string[];
   orderNumber: string;
   orderId: string | null;
   orderStatus: string | null;
@@ -167,6 +169,61 @@ function fallbackCopyText(text: string): boolean {
     return document.execCommand("copy");
   } finally {
     document.body.removeChild(textarea);
+  }
+}
+
+type GemmaFixtureDisplayState =
+  | "checking"
+  | "missing"
+  | "applied"
+  | "changed"
+  | "error";
+
+function getGemmaFixtureDisplayState(
+  status: GemmaMetaxPathSeedStatus | null,
+  error: string | null
+): GemmaFixtureDisplayState {
+  if (error) return "error";
+  if (!status) return "checking";
+  return status.fixtureState ?? (status.seeded ? "applied" : "missing");
+}
+
+function getGemmaFixtureCardClassName(state: GemmaFixtureDisplayState): string {
+  switch (state) {
+    case "applied":
+      return "border-emerald-200 bg-emerald-50";
+    case "changed":
+      return "border-amber-200 bg-amber-50";
+    case "error":
+      return "border-red-200 bg-red-50";
+    default:
+      return "border-border bg-white";
+  }
+}
+
+function getGemmaFixtureBadge(state: GemmaFixtureDisplayState) {
+  switch (state) {
+    case "applied":
+      return (
+        <Badge variant="success" className="border-emerald-200">
+          <CheckCircle2 className="h-3 w-3" />
+          Applied
+        </Badge>
+      );
+    case "changed":
+      return (
+        <Badge variant="warning" className="border-amber-200">
+          <AlertTriangle className="h-3 w-3" />
+          Changed
+        </Badge>
+      );
+    case "error":
+      return <Badge variant="destructive">Error</Badge>;
+    case "checking":
+      return <Badge variant="secondary">Checking</Badge>;
+    case "missing":
+    default:
+      return <Badge variant="outline">Not loaded</Badge>;
   }
 }
 
@@ -252,6 +309,10 @@ export default function SettingsPage() {
     telemetrySettings !== null &&
     telemetrySettings.enabled !== true &&
     telemetrySettings.promptDismissed !== true;
+  const gemmaFixtureDisplayState = getGemmaFixtureDisplayState(
+    gemmaSeedStatus,
+    gemmaSeedStatusError
+  );
   const currentInstallProfile = installProfileStatus?.profile || null;
   const installProfileEnvHint = installProfileStatus?.profileCodeEnvName || null;
   const canSubmitProfileReload = Boolean(currentInstallProfile?.id) && (
@@ -1726,7 +1787,11 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+            <div
+              className={`flex items-start justify-between gap-4 rounded-lg border px-4 py-3 ${getGemmaFixtureCardClassName(
+                gemmaFixtureDisplayState
+              )}`}
+            >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Download className="h-4 w-4 text-muted-foreground" />
@@ -1742,10 +1807,28 @@ export default function SettingsPage() {
                     ? gemmaSeedStatusError
                     : gemmaSeedStatus === null
                     ? "Checking current state..."
-                    : gemmaSeedStatus.seeded
+                    : gemmaSeedStatus.fixtureState === "applied"
                       ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples loaded in order ${gemmaSeedStatus.orderNumber}.`
+                      : gemmaSeedStatus.fixtureState === "changed"
+                        ? gemmaSeedStatus.orderId
+                          ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples found in order ${gemmaSeedStatus.orderNumber}.`
+                          : "Gemma fixture records are partially present, but the order is missing."
                       : "Downloads the verified 580 MB hosted bundle and creates the linked study, submitted order, samples, and cleaned FASTQ read links for MetaxPath."}
                 </p>
+                {gemmaSeedStatus?.fixtureState === "changed" && (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+                    <p className="font-medium">
+                      Seeded dataset exists but no longer matches the original fixture.
+                    </p>
+                    {gemmaSeedStatus.fixtureIssues.length > 0 && (
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                        {gemmaSeedStatus.fixtureIssues.slice(0, 3).map((issue) => (
+                          <li key={issue}>{issue}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 {gemmaSeedStatusError && (
                   <p className="mt-1 text-xs text-destructive">
                     Configure a writable sequencing data path before loading this dataset.
@@ -1761,20 +1844,31 @@ export default function SettingsPage() {
                 )}
               </div>
 
-              <Button
-                variant={gemmaSeedStatus?.seeded ? "outline" : "default"}
-                size="sm"
-                className="shrink-0"
-                onClick={() => void seedGemmaMetaxPathData()}
-                disabled={seedingGemma || gemmaSeedStatus === null || Boolean(gemmaSeedStatusError)}
-              >
-                {seedingGemma ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                {gemmaSeedStatus?.seeded ? "Re-seed" : "Load dataset"}
-              </Button>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                {getGemmaFixtureBadge(gemmaFixtureDisplayState)}
+                <Button
+                  variant={
+                    gemmaSeedStatus?.fixtureState === "missing" ? "default" : "outline"
+                  }
+                  size="sm"
+                  className="bg-white"
+                  onClick={() => void seedGemmaMetaxPathData()}
+                  disabled={
+                    seedingGemma ||
+                    gemmaSeedStatus === null ||
+                    Boolean(gemmaSeedStatusError)
+                  }
+                >
+                  {seedingGemma ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  {gemmaSeedStatus?.fixtureState === "missing"
+                    ? "Load dataset"
+                    : "Re-seed"}
+                </Button>
+              </div>
             </div>
           </div>
         </section>

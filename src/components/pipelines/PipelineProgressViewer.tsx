@@ -100,7 +100,7 @@ interface PipelineProgressViewerProps {
 // Status colors
 const statusStyles: Record<string, { bg: string; border: string; text: string; glow?: string; extra?: string }> = {
   pending: { bg: "bg-gray-50", border: "border-gray-300", text: "text-gray-600", extra: "opacity-60" },
-  running: { bg: "bg-red-50", border: "border-red-500", text: "text-red-700", glow: "shadow-red-200 shadow-lg", extra: "animate-pulse ring-2 ring-red-300" },
+  running: { bg: "bg-blue-50", border: "border-blue-500", text: "text-blue-700", glow: "shadow-blue-200 shadow-lg", extra: "animate-pulse ring-2 ring-blue-300" },
   completed: { bg: "bg-green-50", border: "border-green-500", text: "text-green-700" },
   failed: { bg: "bg-red-50", border: "border-red-500", text: "text-red-700" },
   skipped: { bg: "bg-gray-50", border: "border-gray-300 border-dashed", text: "text-gray-400", extra: "opacity-40" },
@@ -124,7 +124,7 @@ function StatusIcon({ status }: { status: string }) {
     case "completed":
       return <CheckCircle2 className="h-4 w-4 text-green-600" />;
     case "running":
-      return <Loader2 className="h-4 w-4 text-red-600 animate-spin" />;
+      return <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />;
     case "failed":
       return <XCircle className="h-4 w-4 text-red-600" />;
     case "skipped":
@@ -156,7 +156,7 @@ function ProgressStepNode({ data }: { data: ProgressNodeData }) {
   const style = hasStatus
     ? statusStyles[data.status || "pending"]
     : categoryStyles[data.category || ""] || categoryStyles.reporting;
-  const currentRing = data.isCurrent ? "ring-2 ring-red-300" : "";
+  const currentRing = data.isCurrent ? "ring-2 ring-blue-300" : "";
 
   return (
     <div

@@ -19,6 +19,80 @@ function jsonResponse(body: unknown, init?: ResponseInit) {
   });
 }
 
+const appliedGemmaStatus = {
+  seeded: true,
+  fixtureState: "applied",
+  fixtureIssues: [],
+  orderNumber: "DEV-GEMMA-ONT-001",
+  orderId: "order-1",
+  orderStatus: "SUBMITTED",
+  studyId: "study-1",
+  samplesCount: 5,
+  readsCount: 5,
+  sourceUrl: "https://research.example/gemma.tar.gz",
+  sha256: "sha256",
+};
+
+const missingGemmaStatus = {
+  seeded: false,
+  fixtureState: "missing",
+  fixtureIssues: [],
+  orderNumber: "DEV-GEMMA-ONT-001",
+  orderId: null,
+  orderStatus: null,
+  studyId: null,
+  samplesCount: 0,
+  readsCount: 0,
+  sourceUrl: "https://research.example/gemma.tar.gz",
+  sha256: "sha256",
+};
+
+function createSettingsFetchMock(gemmaStatus: unknown) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/admin/seed/dummy-data") {
+      return jsonResponse({ seeded: false, ordersCount: 0, dummyDataEnabled: false });
+    }
+    if (url === "/api/admin/seed/example-datasets/gemma-metaxpath") {
+      return jsonResponse(gemmaStatus);
+    }
+    if (url === "/api/admin/config/status") {
+      return jsonResponse({ config: {}, sources: {} });
+    }
+    if (url === "/api/admin/settings/access") {
+      return jsonResponse({ orderNotesEnabled: true });
+    }
+    if (url === "/api/admin/settings/telemetry") {
+      return jsonResponse({
+        enabled: false,
+        endpoint: "",
+        intervalHours: 1,
+        instanceId: null,
+        clientTokenConfigured: false,
+        lastSentAt: null,
+        lastError: null,
+        lastStatus: null,
+        promptDismissed: true,
+      });
+    }
+    if (url === "/api/admin/updates/progress") {
+      return jsonResponse({ status: null });
+    }
+    if (url.startsWith("/api/admin/updates")) {
+      return jsonResponse({
+        currentVersion: "1.1.94",
+        runningVersion: "1.1.94",
+        installedVersion: "1.1.94",
+        updateAvailable: false,
+      });
+    }
+    if (url === "/api/admin/settings/pipelines/test-setting") {
+      return jsonResponse({ versions: {} });
+    }
+    return jsonResponse({});
+  });
+}
+
 describe("admin settings seed status", () => {
   const confirmMock = vi.fn();
 
@@ -105,6 +179,85 @@ describe("admin settings seed status", () => {
     expect(screen.queryByText("Checking current state...")).toBeNull();
   });
 
+  it("shows the Gemma dataset as applied with green status styling", async () => {
+    vi.stubGlobal("fetch", createSettingsFetchMock(appliedGemmaStatus));
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Applied")).toBeTruthy();
+    });
+    expect(
+      screen.getByText(
+        "5 ONT MinION Mk1D samples loaded in order DEV-GEMMA-ONT-001."
+      )
+    ).toBeTruthy();
+    expect(screen.getByText("Re-seed")).toBeTruthy();
+
+    const card = screen
+      .getByText("Gemma Nanopore MetaxPath dataset")
+      .closest(".rounded-lg");
+    expect(card?.className).toContain("border-emerald-200");
+    expect(card?.className).toContain("bg-emerald-50");
+  });
+
+  it("shows changed Gemma fixture integrity with amber status and issues", async () => {
+    vi.stubGlobal(
+      "fetch",
+      createSettingsFetchMock({
+        ...appliedGemmaStatus,
+        fixtureState: "changed",
+        fixtureIssues: [
+          "Expected 5 samples, found 4.",
+          "One or more read file links no longer point to the fixture reads folder.",
+        ],
+        samplesCount: 4,
+        readsCount: 4,
+      })
+    );
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Changed")).toBeTruthy();
+    });
+    expect(
+      screen.getByText(
+        "Seeded dataset exists but no longer matches the original fixture."
+      )
+    ).toBeTruthy();
+    expect(screen.getByText("Expected 5 samples, found 4.")).toBeTruthy();
+    expect(screen.getByText("Re-seed")).toBeTruthy();
+
+    const card = screen
+      .getByText("Gemma Nanopore MetaxPath dataset")
+      .closest(".rounded-lg");
+    expect(card?.className).toContain("border-amber-200");
+    expect(card?.className).toContain("bg-amber-50");
+  });
+
+  it("shows missing Gemma fixture as a neutral not-loaded state", async () => {
+    vi.stubGlobal("fetch", createSettingsFetchMock(missingGemmaStatus));
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Not loaded")).toBeTruthy();
+    });
+    expect(screen.getByText("Load dataset")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "Seeded dataset exists but no longer matches the original fixture."
+      )
+    ).toBeNull();
+
+    const card = screen
+      .getByText("Gemma Nanopore MetaxPath dataset")
+      .closest(".rounded-lg");
+    expect(card?.className).toContain("border-border");
+    expect(card?.className).toContain("bg-white");
+  });
+
   it("lets admins retry or clear failed update state", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -112,14 +265,7 @@ describe("admin settings seed status", () => {
         return jsonResponse({ seeded: false });
       }
       if (url === "/api/admin/seed/example-datasets/gemma-metaxpath") {
-        return jsonResponse({
-          seeded: true,
-          orderNumber: "DEV-GEMMA-ONT-001",
-          orderId: "order-1",
-          studyId: "study-1",
-          samplesCount: 5,
-          readsCount: 5,
-        });
+        return jsonResponse(appliedGemmaStatus);
       }
       if (url === "/api/admin/config/status") {
         return jsonResponse({ config: {}, sources: {} });

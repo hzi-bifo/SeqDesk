@@ -81,7 +81,7 @@ describe("useOrderPipelines hook", () => {
         {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
-          status: "partial",
+          status: "active",
         },
       ]);
     });

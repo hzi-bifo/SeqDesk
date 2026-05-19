@@ -45,6 +45,8 @@ import { GET, POST } from "./route";
 
 const seededStatus = {
   seeded: true,
+  fixtureState: "applied",
+  fixtureIssues: [],
   orderNumber: "DEV-GEMMA-ONT-001",
   orderId: "order-1",
   orderStatus: "SUBMITTED",
@@ -96,6 +98,8 @@ describe("Gemma MetaxPath example dataset seed API", () => {
 
     expect(res.status).toBe(200);
     expect(body).toEqual(seededStatus);
+    expect(body.fixtureState).toBe("applied");
+    expect(body.fixtureIssues).toEqual([]);
     expect(mocks.getGemmaMetaxPathExampleStatus).toHaveBeenCalledTimes(1);
   });
 

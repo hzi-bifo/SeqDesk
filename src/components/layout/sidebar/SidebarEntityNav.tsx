@@ -20,9 +20,14 @@ import { useOrderPipelines } from "./useOrderPipelines";
 import { useStudyPipelines } from "./useStudyPipelines";
 import { useStudyFormSteps } from "./useStudyFormSteps";
 import {
+  type OrderProgressCompletionStatus,
   getOrderProgressIndicatorClassName,
   getOrderProgressIndicatorLabel,
 } from "@/lib/orders/progress-status";
+import {
+  getPipelineProgressIndicatorClassName,
+  getPipelineProgressIndicatorLabel,
+} from "./pipelineProgress";
 
 interface SidebarEntityNavProps {
   entityContext: SidebarEntityContext;
@@ -37,6 +42,40 @@ interface NavItem {
   href: string | undefined;
   icon: React.ComponentType<{ className?: string }>;
   show: boolean;
+}
+
+interface StudyReadSampleSummary {
+  reads?: Array<{
+    file1?: string | null;
+    file2?: string | null;
+  }> | null;
+}
+
+function getStudyReadFileStatus(
+  samples: StudyReadSampleSummary[]
+): OrderProgressCompletionStatus {
+  if (samples.length === 0) return "empty";
+
+  const samplesWithReads = samples.filter((sample) =>
+    (sample.reads ?? []).some((read) => read.file1 || read.file2)
+  ).length;
+
+  if (samplesWithReads === 0) return "empty";
+  if (samplesWithReads >= samples.length) return "complete";
+  return "partial";
+}
+
+function getStudyReadFileIndicatorLabel(
+  status: OrderProgressCompletionStatus
+): string {
+  switch (status) {
+    case "complete":
+      return "Read files linked";
+    case "partial":
+      return "Some read files linked";
+    default:
+      return "No read files linked";
+  }
 }
 
 export function SidebarEntityNav({
@@ -85,6 +124,44 @@ export function SidebarEntityNav({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [entityType, entityId, showAdminControls, pathname]);
+
+  const [studyReadFileStatus, setStudyReadFileStatus] = useState<{
+    studyId: string | null;
+    status: OrderProgressCompletionStatus;
+  }>({ studyId: null, status: "empty" });
+  useEffect(() => {
+    if (entityType !== "study" || !entityId || isDemoUser) {
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/studies/${entityId}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const samples = Array.isArray(data?.samples)
+          ? (data.samples as StudyReadSampleSummary[])
+          : [];
+        setStudyReadFileStatus({
+          studyId: entityId,
+          status: getStudyReadFileStatus(samples),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStudyReadFileStatus({ studyId: entityId, status: "empty" });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entityType, entityId, isDemoUser, pathname]);
+  const currentStudyReadFileStatus =
+    entityType === "study" && entityId === studyReadFileStatus.studyId
+      ? studyReadFileStatus.status
+      : "empty";
+
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
   const activeTab = pathname.startsWith("/studies")
     ? "studies"
@@ -425,6 +502,8 @@ export function SidebarEntityNav({
                     .filter((sub) => sub.visible)
                     .map((sub) => {
                       const isSubActive = currentStudyTab === sub.id;
+                      const indicatorStatus =
+                        sub.id === "reads" ? currentStudyReadFileStatus : "empty";
                       return (
                         <Link
                           key={sub.id}
@@ -439,11 +518,17 @@ export function SidebarEntityNav({
                           <span
                             className={cn(
                               "h-2 w-2 rounded-full shadow-sm",
-                              sub.id === "reads" ? "bg-emerald-500" : "bg-slate-300"
+                              getOrderProgressIndicatorClassName(indicatorStatus),
+                              isSubActive && "ring-2 ring-background"
                             )}
                             aria-hidden="true"
                           />
                           <span className="truncate">{sub.label}</span>
+                          {sub.id === "reads" && (
+                            <span className="sr-only">
+                              {getStudyReadFileIndicatorLabel(indicatorStatus)}
+                            </span>
+                          )}
                         </Link>
                       );
                     })}
@@ -487,14 +572,14 @@ export function SidebarEntityNav({
                         <span
                           className={cn(
                             "h-2 w-2 rounded-full shadow-sm",
-                            getOrderProgressIndicatorClassName(pipeline.status),
+                            getPipelineProgressIndicatorClassName(pipeline.status),
                             isPipelineActive && "ring-2 ring-background"
                           )}
                           aria-hidden="true"
                         />
                         <span className="truncate">{pipeline.name}</span>
                         <span className="sr-only">
-                          {getOrderProgressIndicatorLabel(pipeline.status)}
+                          {getPipelineProgressIndicatorLabel(pipeline.status)}
                         </span>
                       </Link>
                     );
@@ -662,14 +747,14 @@ export function SidebarEntityNav({
                         <span
                           className={cn(
                             "h-2 w-2 rounded-full shadow-sm",
-                            getOrderProgressIndicatorClassName(pipeline.status),
+                            getPipelineProgressIndicatorClassName(pipeline.status),
                             isPipelineActive && "ring-2 ring-background"
                           )}
                           aria-hidden="true"
                         />
                         <span className="truncate">{pipeline.name}</span>
                         <span className="sr-only">
-                          {getOrderProgressIndicatorLabel(pipeline.status)}
+                          {getPipelineProgressIndicatorLabel(pipeline.status)}
                         </span>
                       </Link>
                     );
@@ -696,14 +781,14 @@ export function SidebarEntityNav({
                         <span
                           className={cn(
                             "h-2 w-2 rounded-full shadow-sm",
-                            getOrderProgressIndicatorClassName(pipeline.status),
+                            getPipelineProgressIndicatorClassName(pipeline.status),
                             isPipelineActive && "ring-2 ring-background"
                           )}
                           aria-hidden="true"
                         />
                         <span className="truncate">{pipeline.name}</span>
                         <span className="sr-only">
-                          {getOrderProgressIndicatorLabel(pipeline.status)}
+                          {getPipelineProgressIndicatorLabel(pipeline.status)}
                         </span>
                       </Link>
                     );

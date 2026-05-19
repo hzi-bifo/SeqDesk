@@ -95,9 +95,13 @@ describe("SidebarEntityNav", () => {
       { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete" },
     ]);
     mocks.useStudyPipelines.mockReturnValue([
-      { pipelineId: "mag", name: "MAG", status: "partial" },
+      { pipelineId: "mag", name: "MAG", status: "active" },
     ]);
-    mocks.progressClassName.mockImplementation((status: string) => `indicator-${status}`);
+    mocks.progressClassName.mockImplementation((status: string) => {
+      if (status === "complete") return "bg-emerald-500";
+      if (status === "partial") return "bg-amber-400";
+      return "bg-slate-400";
+    });
     mocks.progressLabel.mockImplementation((status: string) => `label-${status}`);
     fetchMock.mockResolvedValue({
       ok: true,
@@ -158,6 +162,9 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("Sample Fields")).toBeTruthy();
     expect(screen.getByText("Associate")).toBeTruthy();
     expect(screen.getByText("FASTQ Checksum")).toBeTruthy();
+    const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
+    const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
+    expect(pipelineDot?.className).toContain("bg-emerald-500");
   });
 
   it("renders study navigation and hides demo-only restricted items", () => {
@@ -211,6 +218,72 @@ describe("SidebarEntityNav", () => {
     expect(readsLink.getAttribute("href")).toBe("/studies/study-1?tab=reads");
   });
 
+  it("marks study read files green only when every sample has linked reads", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        samples: [
+          { reads: [{ file1: "reads/sample-a.fastq", file2: null }] },
+          { reads: [{ file1: "reads/sample-b.fastq", file2: null }] },
+        ],
+      }),
+    });
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=reads"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const readsLink = screen.getByRole("link", { name: /Read Files/i });
+    const readsDot = readsLink.querySelector("span[aria-hidden='true']");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/studies/study-1");
+      expect(readsDot?.className).toContain("bg-emerald-500");
+    });
+  });
+
+  it("marks study read files amber when only some samples have reads", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        samples: [
+          { reads: [{ file1: "reads/sample-a.fastq", file2: null }] },
+          { reads: [] },
+        ],
+      }),
+    });
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=reads"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const readsLink = screen.getByRole("link", { name: /Read Files/i });
+    const readsDot = readsLink.querySelector("span[aria-hidden='true']");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/studies/study-1");
+      expect(readsDot?.className).toContain("bg-amber-400");
+    });
+  });
+
   it("renders study analysis pipeline subitems with progress dots", () => {
     mocks.usePathname.mockReturnValue("/studies/study-1");
     mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=pipelines&pipeline=mag"));
@@ -231,6 +304,8 @@ describe("SidebarEntityNav", () => {
     expect(pipelineLink.getAttribute("href")).toBe(
       "/studies/study-1?tab=pipelines&pipeline=mag"
     );
+    const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
+    expect(pipelineDot?.className).toContain("bg-blue-500");
   });
 
   it("renders study publishing with ENA subitem", () => {

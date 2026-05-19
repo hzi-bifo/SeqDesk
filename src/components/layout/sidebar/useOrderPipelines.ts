@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { OrderProgressCompletionStatus } from "@/lib/orders/progress-status";
-import { getPipelineProgressStatuses } from "./pipelineProgress";
+import {
+  getPipelineProgressStatuses,
+  type PipelineProgressIndicatorStatus,
+} from "./pipelineProgress";
 
 export interface OrderPipelineNavItem {
   pipelineId: string;
   name: string;
-  status: OrderProgressCompletionStatus;
+  status: PipelineProgressIndicatorStatus;
 }
 
 interface OrderPipelineDefinition {
@@ -21,6 +23,7 @@ interface OrderPipelineDefinition {
 interface PipelineRunSummary {
   pipelineId: string;
   status: import("@/lib/pipelines/types").PipelineRunStatus;
+  createdAt?: string | Date | null;
 }
 
 const cache = new Map<string, OrderPipelineDefinition[]>();

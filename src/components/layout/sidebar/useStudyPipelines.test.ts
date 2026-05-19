@@ -70,7 +70,7 @@ describe("useStudyPipelines hook", () => {
           pipelineId: "submg",
           name: "SubMG",
           category: "analysis",
-          status: "partial",
+          status: "active",
         },
       ]);
     });
