@@ -536,7 +536,7 @@ export function PipelineFileBrowser({
   const hasFilters = search || typeFilter !== "all" || sampleFilter !== "all";
 
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`flex min-h-0 flex-col gap-4 ${className ?? ""}`}>
       {/* Header Stats */}
       <div className="flex flex-wrap gap-3">
         <Button
@@ -630,7 +630,7 @@ export function PipelineFileBrowser({
       )}
 
       {/* File List */}
-      <ScrollArea className="h-[400px] border rounded-md">
+      <ScrollArea className="min-h-[400px] flex-1 rounded-md border">
         {filteredFiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <FileText className="h-12 w-12 mb-3 opacity-50" />

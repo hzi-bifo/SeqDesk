@@ -1638,8 +1638,8 @@ export default function AnalysisRunDetailPage({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4">
-          <GlassCard id="files-section">
+        <TabsContent value="files" className="mt-4 min-h-[calc(100vh-9rem)]">
+          <GlassCard id="files-section" className="flex min-h-[calc(100vh-11rem)] flex-col">
             <div className="mb-4">
               <h2 className="text-lg font-semibold">Pipeline Files</h2>
               <p className="text-sm text-muted-foreground mt-1">
@@ -1647,6 +1647,7 @@ export default function AnalysisRunDetailPage({
               </p>
             </div>
             <PipelineFileBrowser
+              className="flex-1"
               inputFiles={inputFiles}
               outputFiles={outputFiles}
               runId={run.id}
