@@ -391,6 +391,8 @@ export async function POST(request: NextRequest) {
         pipelineId: true,
         status: true,
         queueJobId: true,
+        progress: true,
+        currentStep: true,
         startedAt: true,
         completedAt: true,
         lastEventAt: true,
@@ -515,10 +517,17 @@ export async function POST(request: NextRequest) {
 
       if (isActiveQueueState(queueSnapshot.state)) {
         runUpdates.status = 'running';
-        runUpdates.currentStep = 'Finalizing...';
         const progressValue =
-          typeof runUpdates.progress === 'number' ? runUpdates.progress : 99;
-        runUpdates.progress = Math.min(99, progressValue);
+          typeof runUpdates.progress === 'number'
+            ? runUpdates.progress
+            : typeof run.progress === 'number'
+              ? run.progress
+              : null;
+        const readyToFinalize = progressValue === null || progressValue >= 90;
+        runUpdates.currentStep = readyToFinalize ? 'Finalizing...' : 'Running on compute node';
+        if (readyToFinalize) {
+          runUpdates.progress = Math.min(99, progressValue ?? 99);
+        }
         delete runUpdates.completedAt;
       } else {
         let outputsReady = true;

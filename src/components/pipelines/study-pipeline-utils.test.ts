@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getEligibleStudySampleIds,
   getPreferredStudyRead,
+  getStudyPipelineRunDisplayStatus,
   getStudyPipelineRunDetails,
   getStudyPipelineRunReportPath,
   getStudySampleReadIssue,
@@ -194,6 +195,36 @@ describe("study-pipeline-utils", () => {
     expect(getStudyPipelineRunDetails({ status: "queued" })).toBe("Waiting for execution");
     expect(getStudyPipelineRunDetails({ status: "running" })).toBe("Currently running");
     expect(getStudyPipelineRunDetails({ status: "pending" })).toBe("");
+  });
+
+  it("uses queue state for active run status and suppresses generic queued text", () => {
+    expect(
+      getStudyPipelineRunDetails({
+        status: "queued",
+        currentStep: "Processing...",
+        queueJobId: "5371",
+        queueStatus: "PENDING",
+        queueReason: "Resources",
+      })
+    ).toBe("SLURM: PENDING (Resources)");
+
+    expect(
+      getStudyPipelineRunDisplayStatus({
+        status: "queued",
+        currentStep: "Processing...",
+        queueJobId: "5371",
+        queueStatus: "RUNNING",
+      })
+    ).toBe("running");
+
+    expect(
+      getStudyPipelineRunDetails({
+        status: "queued",
+        currentStep: "Processing...",
+        queueJobId: "5371",
+        queueStatus: "RUNNING",
+      })
+    ).toBe("SLURM: RUNNING");
   });
 
   it("prefers a run-scoped HTML artifact for the report link", () => {

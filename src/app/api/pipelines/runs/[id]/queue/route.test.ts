@@ -108,11 +108,48 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
         queueStatus: "RUNNING",
         queueReason: null,
         status: "running",
-        currentStep: "Processing...",
+        currentStep: "Running on compute node",
         completedAt: null,
         statusSource: "queue",
       }),
     });
+  });
+
+  it("promotes a queued run when SLURM reports RUNNING", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      queueJobId: "5371",
+      status: "queued",
+      startedAt: null,
+      study: null,
+      order: null,
+    });
+    mocks.execFileAsync.mockImplementation(async (command: string) => {
+      if (command === "squeue") {
+        return { stdout: "5371|cpu|run.sh|brokerdp|RUNNING|01:19|1|dzif-compute-01\n", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/queue"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("RUNNING");
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data).toEqual(
+      expect.objectContaining({
+        queueStatus: "RUNNING",
+        queueReason: "dzif-compute-01",
+        status: "running",
+        currentStep: "Running on compute node",
+        statusSource: "queue",
+      })
+    );
+    expect(updateCall.data.startedAt).toBeInstanceOf(Date);
   });
 
   it("falls back to sacct when squeue does not return a job", async () => {
@@ -451,6 +488,6 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(body.status).toBe("PENDING");
     const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
     expect(updateCall.data.status).toBe("queued");
-    expect(updateCall.data.currentStep).toBe("Queued");
+    expect(updateCall.data.currentStep).toBe("Waiting for scheduler");
   });
 });

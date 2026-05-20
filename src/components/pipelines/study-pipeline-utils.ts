@@ -37,12 +37,94 @@ export interface StudyPipelineRunLike {
   status: string;
   currentStep?: string | null;
   errorTail?: string | null;
+  queueJobId?: string | null;
+  queueStatus?: string | null;
+  queueReason?: string | null;
   results?: StudyRunResultsLike | null;
   artifacts?: StudyRunArtifactLike[] | null;
 }
 
 function hasText(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function normalizeQueueState(value: string | null | undefined): string | null {
+  if (!hasText(value)) return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized || null;
+}
+
+function isTerminalQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized || normalized === "UNKNOWN") return false;
+
+  if (
+    normalized === "COMPLETED" ||
+    normalized === "EXITED" ||
+    normalized === "REVOKED" ||
+    normalized === "TIMEOUT" ||
+    normalized === "OUT_OF_MEMORY" ||
+    normalized === "NODE_FAIL" ||
+    normalized === "BOOT_FAIL" ||
+    normalized === "PREEMPTED" ||
+    normalized === "DEADLINE"
+  ) {
+    return true;
+  }
+
+  return (
+    normalized.startsWith("CANCELLED") ||
+    normalized.startsWith("CANCELED") ||
+    normalized.startsWith("FAILED")
+  );
+}
+
+function isActiveQueueState(value: string | null | undefined): boolean {
+  const normalized = normalizeQueueState(value);
+  if (!normalized || normalized === "UNKNOWN") return false;
+  return !isTerminalQueueState(normalized);
+}
+
+function queueStateToDisplayStatus(value: string | null | undefined): "queued" | "running" {
+  const normalized = normalizeQueueState(value);
+  if (normalized === "PENDING" || normalized === "CONFIGURING") {
+    return "queued";
+  }
+  return "running";
+}
+
+function isMeaningfulCurrentStep(value: string | null | undefined): value is string {
+  if (!hasText(value)) return false;
+  const normalized = value.trim().toLowerCase();
+  return ![
+    "-",
+    "queued",
+    "processing...",
+    "waiting for scheduler",
+    "running on compute node",
+    "finalizing...",
+    "finalizing outputs...",
+    "completed",
+    "failed",
+    "cancelled",
+    "canceled",
+  ].includes(normalized);
+}
+
+function formatQueueSummary(run: StudyPipelineRunLike): string | null {
+  const queueState = normalizeQueueState(run.queueStatus);
+  if (!queueState) return null;
+
+  const queueType = run.queueJobId?.startsWith("local-") ? "Local process" : "SLURM";
+  const reason = hasText(run.queueReason) ? ` (${run.queueReason.trim()})` : "";
+  return `${queueType}: ${queueState}${reason}`;
+}
+
+export function getStudyPipelineRunDisplayStatus(run: StudyPipelineRunLike): string {
+  if (isActiveQueueState(run.queueStatus)) {
+    return queueStateToDisplayStatus(run.queueStatus);
+  }
+  return run.status;
 }
 
 function pipelineRequiresReads(pipeline: StudyPipelineLike | null | undefined): boolean {
@@ -152,18 +234,22 @@ export function runHasOutputErrors(run: StudyPipelineRunLike): boolean {
 }
 
 export function getStudyPipelineRunDetails(run: StudyPipelineRunLike): string {
-  const currentStep = hasText(run.currentStep) ? run.currentStep.trim() : null;
+  const displayStatus = getStudyPipelineRunDisplayStatus(run);
+  const currentStep = isMeaningfulCurrentStep(run.currentStep)
+    ? run.currentStep.trim()
+    : null;
+  const queueSummary = formatQueueSummary(run);
 
-  if (run.status === "failed" && hasText(run.errorTail)) {
+  if (displayStatus === "failed" && hasText(run.errorTail)) {
     return run.errorTail.trim();
   }
 
-  if (run.status === "completed") {
+  if (displayStatus === "completed") {
     const outputError = getFirstRunError(run);
     if (outputError) {
       return outputError;
     }
-    if (currentStep && !/^completed\b/i.test(currentStep)) {
+    if (currentStep) {
       return currentStep;
     }
     return "Completed successfully";
@@ -173,8 +259,8 @@ export function getStudyPipelineRunDetails(run: StudyPipelineRunLike): string {
     return currentStep;
   }
 
-  if (run.status === "queued") return "Waiting for execution";
-  if (run.status === "running") return "Currently running";
+  if (displayStatus === "queued") return queueSummary || "Waiting for execution";
+  if (displayStatus === "running") return queueSummary || "Currently running";
   return "";
 }
 

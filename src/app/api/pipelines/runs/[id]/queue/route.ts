@@ -84,7 +84,8 @@ function buildQueueUpdateData(
   runStatus: string,
   queueState: string,
   queueReason: string | null,
-  now: Date
+  now: Date,
+  startedAt?: Date | null
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {
     queueStatus: queueState || "UNKNOWN",
@@ -92,13 +93,26 @@ function buildQueueUpdateData(
     queueUpdatedAt: now,
   };
 
-  if (isQueueStateLikelyActive(queueState) && shouldReviveRun(runStatus)) {
-    const revivedStatus = queueStateToRunStatus(queueState);
-    data.status = revivedStatus;
-    data.currentStep = revivedStatus === "queued" ? "Queued" : "Processing...";
-    data.completedAt = null;
-    data.statusSource = "queue";
-    data.lastEventAt = now;
+  if (isQueueStateLikelyActive(queueState)) {
+    const nextStatus = queueStateToRunStatus(queueState);
+    const shouldUpdateRunStatus =
+      shouldReviveRun(runStatus) ||
+      runStatus === "pending" ||
+      runStatus === "queued";
+
+    if (shouldUpdateRunStatus) {
+      data.status = nextStatus;
+      data.currentStep =
+        nextStatus === "queued" ? "Waiting for scheduler" : "Running on compute node";
+      if (nextStatus === "running") {
+        data.startedAt = startedAt || now;
+      }
+      if (shouldReviveRun(runStatus)) {
+        data.completedAt = null;
+      }
+      data.statusSource = "queue";
+      data.lastEventAt = now;
+    }
   }
 
   return data;
@@ -123,6 +137,7 @@ export async function GET(
         id: true,
         queueJobId: true,
         status: true,
+        startedAt: true,
         study: { select: { userId: true } },
         order: { select: { userId: true } },
       },
@@ -165,7 +180,7 @@ export async function GET(
         const now = new Date();
         await db.pipelineRun.update({
           where: { id },
-          data: buildQueueUpdateData(run.status, "RUNNING", null, now),
+          data: buildQueueUpdateData(run.status, "RUNNING", null, now, run.startedAt),
         });
         return NextResponse.json({
           available: true,
@@ -177,7 +192,7 @@ export async function GET(
         const now = new Date();
         await db.pipelineRun.update({
           where: { id },
-          data: buildQueueUpdateData(run.status, "EXITED", null, now),
+          data: buildQueueUpdateData(run.status, "EXITED", null, now, run.startedAt),
         });
         return NextResponse.json({
           available: true,
@@ -210,7 +225,7 @@ export async function GET(
         const now = new Date();
         await db.pipelineRun.update({
           where: { id },
-          data: buildQueueUpdateData(run.status, state, reason, now),
+          data: buildQueueUpdateData(run.status, state, reason, now, run.startedAt),
         });
         return NextResponse.json({
           available: true,
@@ -255,7 +270,13 @@ export async function GET(
         const now = new Date();
         await db.pipelineRun.update({
           where: { id },
-          data: buildQueueUpdateData(run.status, primary.state || "UNKNOWN", null, now),
+          data: buildQueueUpdateData(
+            run.status,
+            primary.state || "UNKNOWN",
+            null,
+            now,
+            run.startedAt
+          ),
         });
         return NextResponse.json({
           available: true,

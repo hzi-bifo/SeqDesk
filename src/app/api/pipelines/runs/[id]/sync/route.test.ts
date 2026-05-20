@@ -309,6 +309,8 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(body.success).toBe(true);
     expect(body.status).toBe("running");
     expect(body.queueStatus).toBe("RUNNING");
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data.currentStep).toBe("Running on compute node");
   });
 
   it("returns 500 on unexpected errors", async () => {
@@ -635,10 +637,11 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
   it("does not show finalizing for partial known-step trace while SLURM is running", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...defaultRun,
-      status: "running",
+      status: "completed",
       pipelineId: "metaxpath",
       queueJobId: "5313",
-      currentStep: null,
+      currentStep: "Finalizing...",
+      completedAt: new Date("2024-01-01T10:06:00Z"),
     });
     mocks.findTraceFile.mockResolvedValue("/tmp/runs/run-1/trace.txt");
     mocks.parseTraceFile.mockResolvedValue({
@@ -662,6 +665,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
       name: "Prepare No-Human FASTQ",
     });
     mocks.getStepsForPipeline.mockReturnValue(metaxpathSteps);
+    mocks.db.pipelineRunEvent.findFirst.mockResolvedValue({ id: "event-1" });
     mocks.execFileAsync.mockImplementation(async (cmd: string) => {
       if (cmd === "squeue") {
         return { stdout: "RUNNING|Resources\n" };
@@ -673,10 +677,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
 
     expect(response.status).toBe(200);
     const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
-    expect(updateData.currentStep).toBe("Processing...");
+    expect(updateData.currentStep).toBe("Running on compute node");
     expect(updateData.currentStep).not.toBe("Finalizing...");
     expect(updateData.progress).toBe(8);
-    expect(updateData.status).toBeUndefined();
+    expect(updateData.status).toBe("running");
   });
 
   it("preserves a live weblog current step when trace only has completed earlier rows", async () => {
@@ -886,8 +890,11 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const response = await POST(makeRequest(), { params: baseParams });
 
     expect(response.status).toBe(200);
-    // pending is not "queued", so the queueStatus is set but status transition from queued to running doesn't apply
     const body = await response.json();
     expect(body.queueStatus).toBe("RUNNING");
+    expect(body.status).toBe("running");
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data.status).toBe("running");
+    expect(updateCall.data.currentStep).toBe("Running on compute node");
   });
 });

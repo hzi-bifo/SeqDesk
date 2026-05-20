@@ -669,9 +669,16 @@ export default function AnalysisRunDetailPage({
   const currentStepLabel = run?.currentStep
     ? run.currentStep.replace(/^failed at\s+/i, "")
     : null;
+  const finalizingTooEarly =
+    effectiveRunStatus === "running" &&
+    typeof run?.progress === "number" &&
+    run.progress < 90 &&
+    Boolean(currentStepLabel?.trim().match(/^finalizing(?: outputs)?\.{0,3}$/i));
   const effectiveCurrentStep = completionPendingOutputs
     ? "Finalizing outputs..."
-    : run?.currentStep || currentStepLabel || "-";
+    : finalizingTooEarly
+      ? "Running on compute node"
+      : currentStepLabel || "-";
 
   const handleCancel = async () => {
     if (!confirm("Are you sure you want to cancel this run?")) return;

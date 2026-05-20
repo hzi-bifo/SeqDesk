@@ -679,6 +679,42 @@ describe("POST /api/pipelines/weblog", () => {
     expect(updateData.currentStep).toBe("Finalizing...");
   });
 
+  it("does not show finalizing for workflow_complete while progress is still low", async () => {
+    mocks.execFileAsync.mockResolvedValue({ stdout: "RUNNING|computing\n", stderr: "" });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      queueJobId: "12345",
+      progress: 15,
+      currentStep: "Finalizing...",
+    });
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    expect(updateData.status).toBe("running");
+    expect(updateData.currentStep).toBe("Running on compute node");
+    expect(updateData.progress).toBeUndefined();
+  });
+
   it("marks run as running when processCompletedRun throws", async () => {
     mocks.execFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
     mocks.getAdapter.mockReturnValue(null);

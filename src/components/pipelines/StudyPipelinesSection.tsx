@@ -69,6 +69,7 @@ import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisite
 import {
   getEligibleStudySampleIds,
   getPreferredStudyRead,
+  getStudyPipelineRunDisplayStatus,
   getStudyPipelineRunDetails,
   getStudyPipelineRunReportPath,
   getStudySampleReadIssue,
@@ -221,6 +222,10 @@ interface PipelineRun {
   errorTail: string | null;
   inputSampleIds?: string | null;
   runFolder?: string | null;
+  queueJobId?: string | null;
+  queueStatus?: string | null;
+  queueReason?: string | null;
+  queueUpdatedAt?: string | null;
   results?: {
     errors?: string[];
     warnings?: string[];
@@ -333,6 +338,10 @@ function getStatusBadge(status: string) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
+}
+
+function isActivePipelineStatus(status: string): boolean {
+  return status === "pending" || status === "queued" || status === "running";
 }
 
 function getSampleCount(run: PipelineRun): number | null {
@@ -1054,8 +1063,8 @@ export function StudyPipelinesSection({
 
   const hasActiveRuns = useMemo(
     () =>
-      pipelineRuns.some(
-        (run) => run.status === "queued" || run.status === "running"
+      pipelineRuns.some((run) =>
+        isActivePipelineStatus(getStudyPipelineRunDisplayStatus(run))
       ),
     [pipelineRuns]
   );
@@ -1072,20 +1081,26 @@ export function StudyPipelinesSection({
     () =>
       statusFilter === "all"
         ? visibleRuns
-        : visibleRuns.filter((run) => run.status === statusFilter),
+        : visibleRuns.filter(
+            (run) => getStudyPipelineRunDisplayStatus(run) === statusFilter
+          ),
     [visibleRuns, statusFilter]
   );
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const run of visibleRuns) {
-      counts[run.status] = (counts[run.status] || 0) + 1;
+      const displayStatus = getStudyPipelineRunDisplayStatus(run);
+      counts[displayStatus] = (counts[displayStatus] || 0) + 1;
     }
     return counts;
   }, [visibleRuns]);
 
   const deletableFilteredRuns = useMemo(
-    () => filteredRuns.filter((r) => r.status !== "running"),
+    () =>
+      filteredRuns.filter(
+        (r) => getStudyPipelineRunDisplayStatus(r) !== "running"
+      ),
     [filteredRuns]
   );
 
@@ -1566,11 +1581,21 @@ export function StudyPipelinesSection({
         <div className="grid gap-4">
           {enabledPipelines.map((pipeline) => {
             const runs = runsByPipeline.get(pipeline.pipelineId) ?? [];
-            const completedRuns = runs.filter((r) => r.status === "completed");
+            const runsWithDisplayStatus = runs.map((run) => ({
+              run,
+              displayStatus: getStudyPipelineRunDisplayStatus(run),
+            }));
+            const completedRuns = runsWithDisplayStatus.filter((r) => r.displayStatus === "completed");
             const activeRuns = runs.filter(
-              (r) => r.status === "running" || r.status === "queued" || r.status === "pending"
+              (r) => isActivePipelineStatus(getStudyPipelineRunDisplayStatus(r))
             );
-            const failedRuns = runs.filter((r) => r.status === "failed");
+            const activeDisplayStatuses = activeRuns.map(getStudyPipelineRunDisplayStatus);
+            const activeOverviewStatus = activeDisplayStatuses.includes("running")
+              ? "running"
+              : activeDisplayStatuses.includes("queued")
+                ? "queued"
+                : "pending";
+            const failedRuns = runsWithDisplayStatus.filter((r) => r.displayStatus === "failed");
             const latestRun = runs[0];
 
             return (
@@ -1588,9 +1613,20 @@ export function StudyPipelinesSection({
                       </CardTitle>
                       <div className="flex items-center gap-2">
                         {activeRuns.length > 0 && (
-                          <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                            Running
+                          <Badge
+                            variant="secondary"
+                            className={
+                              activeOverviewStatus === "running"
+                                ? "text-xs bg-blue-50 text-blue-700 border-blue-200"
+                                : "text-xs"
+                            }
+                          >
+                            {activeOverviewStatus === "running" ? (
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            ) : (
+                              <Clock className="mr-1 h-3 w-3" />
+                            )}
+                            {activeOverviewStatus === "running" ? "Running" : "Queued"}
                           </Badge>
                         )}
                         {activeRuns.length === 0 && completedRuns.length > 0 && (
@@ -2308,6 +2344,7 @@ export function StudyPipelinesSection({
                 </thead>
                 <tbody className="divide-y divide-border">
                   {filteredRuns.map((run) => {
+                    const displayStatus = getStudyPipelineRunDisplayStatus(run);
                     const details = getStudyPipelineRunDetails(run);
                     const sampleCount = getSampleCount(run);
                     const reportPath = getStudyPipelineRunReportPath(run);
@@ -2333,7 +2370,7 @@ export function StudyPipelinesSection({
                             <Checkbox
                               checked={selectedRunIds.has(run.id)}
                               onCheckedChange={() => toggleSelectRun(run.id)}
-                              disabled={run.status === "running"}
+                              disabled={displayStatus === "running"}
                               aria-label={`Select run ${run.runNumber}`}
                             />
                           </td>
@@ -2348,8 +2385,8 @@ export function StudyPipelinesSection({
                         </td>
                         <td className="px-4 py-3 align-top">
                           <div className="flex items-center gap-2">
-                            {getStatusBadge(run.status)}
-                            {run.status === "running" && run.progress != null && run.progress > 0 && (
+                            {getStatusBadge(displayStatus)}
+                            {displayStatus === "running" && run.progress != null && run.progress > 0 && (
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {run.progress}%
                               </span>
@@ -2360,7 +2397,7 @@ export function StudyPipelinesSection({
                           {details ? (
                             <span
                               className={`text-xs ${
-                                run.status === "failed" || hasOutputErrors
+                                displayStatus === "failed" || hasOutputErrors
                                   ? "font-mono text-destructive"
                                   : "text-muted-foreground"
                               }`}
@@ -2398,7 +2435,7 @@ export function StudyPipelinesSection({
                         <td className="px-4 py-3 align-top whitespace-nowrap text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1">
                             <Clock className="h-3 w-3" />
-                            {run.status === "running"
+                            {displayStatus === "running"
                               ? formatDuration(run.startedAt, null)
                               : formatDuration(run.startedAt, run.completedAt)}
                           </span>
@@ -2432,7 +2469,7 @@ export function StudyPipelinesSection({
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 variant="destructive"
-                                disabled={run.status === "running" || deletingRun}
+                                disabled={displayStatus === "running" || deletingRun}
                                 onSelect={(event) => {
                                   event.preventDefault();
                                   setDeleteRunError(null);

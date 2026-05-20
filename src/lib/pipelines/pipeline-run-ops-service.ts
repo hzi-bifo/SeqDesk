@@ -153,6 +153,8 @@ function isMeaningfulActiveStepLabel(value: string | null | undefined): value is
     '-',
     'queued',
     'processing...',
+    'waiting for scheduler',
+    'running on compute node',
     'finalizing...',
     'finalizing outputs...',
     'completed',
@@ -1075,15 +1077,24 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     }
 
     const normalizedQueueState = normalizeQueueState(queueState);
-    const isRunningQueueState = normalizedQueueState === 'RUNNING';
     const isCompletedQueueState = normalizedQueueState === 'COMPLETED';
     const isExitedLocalState = normalizedQueueState === 'EXITED';
     const queueCancelled = isCancelledQueueState(normalizedQueueState);
     const queueFailed = isFailedQueueState(normalizedQueueState);
+    const nextActiveStatus =
+      normalizedQueueState === 'PENDING' || normalizedQueueState === 'CONFIGURING'
+        ? 'queued'
+        : isActiveQueueState(normalizedQueueState)
+          ? 'running'
+          : null;
 
-    if (isRunningQueueState && run.status === 'queued') {
-      updateData.status = 'running';
-      updateData.startedAt = run.startedAt || now;
+    if (nextActiveStatus && (run.status === 'pending' || run.status === 'queued')) {
+      updateData.status = nextActiveStatus;
+      updateData.currentStep =
+        nextActiveStatus === 'queued' ? 'Waiting for scheduler' : 'Running on compute node';
+      if (nextActiveStatus === 'running') {
+        updateData.startedAt = run.startedAt || now;
+      }
       updateData.lastEventAt = now;
       updateData.statusSource = 'queue';
     }
@@ -1342,6 +1353,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
           })
         )
       : false;
+  const workflowCompletionReadyToFinalize =
+    workflowCompletionObserved && progress >= 90;
 
   let nextStatus = run.status;
   let resolvedOutputsInThisSync = false;
@@ -1402,11 +1415,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   const activeQueueCurrentStep =
     runningStepLabels.length > 0
       ? `Running: ${runningStepLabels.join(', ')}`
-      : workflowCompletionObserved
+      : workflowCompletionReadyToFinalize
         ? 'Finalizing...'
         : isMeaningfulActiveStepLabel(run.currentStep)
           ? run.currentStep
-          : 'Processing...';
+          : 'Running on compute node';
 
   if (nextStatus === 'completed' && run.pipelineId === 'mag') {
     try {

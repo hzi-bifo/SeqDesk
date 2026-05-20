@@ -994,6 +994,7 @@ export async function startPipelineRunForOperator({
             queueStatus: 'PENDING',
             queueReason: null,
             queueUpdatedAt: new Date(),
+            currentStep: 'Waiting for scheduler',
             statusSource: 'launcher',
             lastEventAt: new Date(),
           },
