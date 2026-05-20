@@ -61,6 +61,10 @@ vi.mock("@/lib/pipelines/metaxpath-import", () => ({
   METAXPATH_REPO_HTTPS: "https://github.com/org/metaxpath.git",
   METAXPATH_REPOSITORY: "org/metaxpath",
   REQUIRED_DESCRIPTOR_FILES: ["manifest.json", "definition.json", "registry.json", "samplesheet.yaml"],
+  resolveMetaxPathRef: (ref?: string | null) => {
+    const trimmed = typeof ref === "string" ? ref.trim() : "";
+    return !trimmed || trimmed === "Nextflow" ? "main" : trimmed;
+  },
   shouldCopyWorkflowEntry: (name: string) => !name.startsWith("."),
   validateMetaxPathDescriptorDir: mocks.validateMetaxPathDescriptorDir,
 }));
@@ -263,6 +267,31 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.ref).toBe("main");
+  });
+
+  it("maps the legacy Nextflow ref to main", async () => {
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "def789\n", stderr: "" });
+    mocks.fsPromises.readdir.mockResolvedValue([]);
+    mocks.db.pipelineConfig.upsert.mockResolvedValue({});
+
+    const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "ghp_test123", ref: "Nextflow" }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.ref).toBe("main");
+    expect(mocks.execFileAsync).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["--branch", "main"]),
+      expect.any(Object)
+    );
   });
 
   it("extracts exec error details from stdout when stderr is absent", async () => {

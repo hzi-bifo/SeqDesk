@@ -683,6 +683,47 @@ describe("generic-executor", () => {
     expect(script).not.toContain("--bad;key");
   });
 
+  it("shell-escapes generated Nextflow paths and local pipeline targets", async () => {
+    const adapter = createAdapter();
+    const runRoot = path.join(tempDir, "run root with spaces");
+    const packageRoot = path.join(tempDir, "package root with spaces");
+    const workflowPath = path.join(packageRoot, "workflow", "main.nf");
+    await fs.mkdir(path.dirname(workflowPath), { recursive: true });
+    await fs.writeFile(workflowPath, "workflow {}\n");
+
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "./workflow/main.nf",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {},
+        },
+      },
+      basePath: packageRoot,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-paths",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(runRoot),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain(`run '${workflowPath}' \\`);
+    expect(script).toContain(`--input '${path.join(result.runFolder!, "samplesheet.csv")}'`);
+    expect(script).toContain(`--outdir '${path.join(result.runFolder!, "output")}'`);
+    expect(script).toContain(`-with-trace '${path.join(result.runFolder!, "trace.txt")}'`);
+    expect(script).toContain(`-c '${path.join(result.runFolder!, "nextflow.config")}'`);
+  });
+
   it("generates conda activation bootstrap when condaPath is set", async () => {
     const adapter = createAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);

@@ -15,6 +15,15 @@ export const DEFAULT_METAXPATH_REF =
   "main";
 export const METAXPATH_DESCRIPTOR_RELATIVE_PATH = ".seqdesk/pipelines/metaxpath";
 
+function isManagedMetaxPathRepository(repository?: string | null): boolean {
+  const trimmed = trimToUndefined(repository);
+  return (
+    !trimmed ||
+    trimmed === LEGACY_METAXPATH_REPOSITORY ||
+    trimmed === METAXPATH_REPOSITORY
+  );
+}
+
 export function resolveMetaxPathRepository(repository?: string | null): string {
   const trimmed = trimToUndefined(repository);
   if (!trimmed || trimmed === LEGACY_METAXPATH_REPOSITORY) {
@@ -32,10 +41,9 @@ export function resolveMetaxPathRef(
     return DEFAULT_METAXPATH_REF;
   }
 
-  const trimmedRepository = trimToUndefined(repository);
   if (
     trimmedRef === LEGACY_METAXPATH_REF &&
-    (!trimmedRepository || trimmedRepository === LEGACY_METAXPATH_REPOSITORY)
+    isManagedMetaxPathRepository(repository)
   ) {
     return DEFAULT_METAXPATH_REF;
   }

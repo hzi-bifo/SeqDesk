@@ -18,6 +18,7 @@ import {
   METAXPATH_REPO_HTTPS,
   METAXPATH_REPOSITORY,
   REQUIRED_DESCRIPTOR_FILES,
+  resolveMetaxPathRef,
   shouldCopyWorkflowEntry,
   validateMetaxPathDescriptorDir,
 } from "@/lib/pipelines/metaxpath-import";
@@ -214,7 +215,7 @@ export async function POST(req: NextRequest) {
   const token = typeof body.token === "string" ? body.token.trim() : "";
   const refRaw =
     typeof body.ref === "string" && body.ref.trim().length > 0
-      ? body.ref.trim()
+      ? resolveMetaxPathRef(body.ref, METAXPATH_REPOSITORY)
       : DEFAULT_METAXPATH_REF;
 
   if (!token) {

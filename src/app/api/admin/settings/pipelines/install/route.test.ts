@@ -337,4 +337,88 @@ describe("POST /api/admin/settings/pipelines/install", () => {
       })
     );
   });
+
+  it("rewrites legacy metaxpath refs for the maintained github source", async () => {
+    mocks.installGitHubPipelineSnapshot.mockResolvedValue({
+      action: "install",
+      manifest: {
+        package: {
+          version: "0.1.5",
+        },
+      },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "metaxpath",
+          source: {
+            kind: "github",
+            sourceId: "github:hzi-bifo/MetaxPath-Nextflow",
+            label: "GitHub",
+            repository: "hzi-bifo/MetaxPath-Nextflow",
+            refDefault: "Nextflow",
+            descriptorPath: ".seqdesk/pipelines/metaxpath",
+            includeWorkflow: true,
+          },
+          credentials: {
+            token: "gh-token",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.installGitHubPipelineSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        repo: "hzi-bifo/MetaxPath-Nextflow",
+        ref: "main",
+      })
+    );
+  });
+
+  it("preserves legacy-named refs for custom metaxpath repositories", async () => {
+    mocks.installGitHubPipelineSnapshot.mockResolvedValue({
+      action: "install",
+      manifest: {
+        package: {
+          version: "0.1.5",
+        },
+      },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "metaxpath",
+          source: {
+            kind: "github",
+            sourceId: "github:example/MetaxPathFork",
+            label: "GitHub",
+            repository: "example/MetaxPathFork",
+            refDefault: "Nextflow",
+            descriptorPath: ".seqdesk/pipelines/metaxpath",
+            includeWorkflow: true,
+          },
+          credentials: {
+            token: "gh-token",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.installGitHubPipelineSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        repo: "example/MetaxPathFork",
+        ref: "Nextflow",
+      })
+    );
+  });
 });

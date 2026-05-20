@@ -576,23 +576,23 @@ function generateSlurmScript(
   const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
   const runName = buildNextflowRunName(runNumber, runId);
-  const nameFlag = `-name ${runName}`;
+  const nameFlag = `-name ${shellQuote(runName)}`;
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
-  const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
-  const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
-  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
+  const profileFlag = mergedProfiles ? `-profile ${shellQuote(mergedProfiles)}` : '';
+  const configFlag = runConfigPath ? `-c ${shellQuote(runConfigPath)}` : '';
+  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${shellQuote(execution.version)}` : '';
   const pipelineLabel = pipelineTarget.isLocal
     ? `${execution.pipeline} (local)`
     : `${execution.pipeline} v${execution.version}`;
 
   const nextflowArgs = [
-    `--input ${samplesheetPath}`,
-    `--outdir ${outputDir}`,
-    `-with-trace ${traceFile}`,
-    `-with-dag ${dagFile}`,
-    `-with-report ${reportFile}`,
-    `-with-timeline ${timelineFile}`,
+    `--input ${shellQuote(samplesheetPath)}`,
+    `--outdir ${shellQuote(outputDir)}`,
+    `-with-trace ${shellQuote(traceFile)}`,
+    `-with-dag ${shellQuote(dagFile)}`,
+    `-with-report ${shellQuote(reportFile)}`,
+    `-with-timeline ${shellQuote(timelineFile)}`,
     nameFlag,
     revisionFlag,
     configFlag,
@@ -622,7 +622,7 @@ echo "" > "$STDERR_LOG"
 ${runtimeBootstrap}
 
 # Run ${pipelineLabel}
-"\${NEXTFLOW_RUNNER[@]}" run "${pipelineTarget.target}" \\
+"\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 
@@ -657,23 +657,23 @@ function generateLocalScript(
   const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
   const runName = buildNextflowRunName(runNumber, runId);
-  const nameFlag = `-name ${runName}`;
+  const nameFlag = `-name ${shellQuote(runName)}`;
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
-  const profileFlag = mergedProfiles ? `-profile ${mergedProfiles}` : '';
-  const configFlag = runConfigPath ? `-c ${runConfigPath}` : '';
-  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${execution.version}` : '';
+  const profileFlag = mergedProfiles ? `-profile ${shellQuote(mergedProfiles)}` : '';
+  const configFlag = runConfigPath ? `-c ${shellQuote(runConfigPath)}` : '';
+  const revisionFlag = !pipelineTarget.isLocal && execution.version ? `-r ${shellQuote(execution.version)}` : '';
   const pipelineLabel = pipelineTarget.isLocal
     ? `${execution.pipeline} (local)`
     : `${execution.pipeline} v${execution.version}`;
 
   const nextflowArgs = [
-    `--input ${samplesheetPath}`,
-    `--outdir ${outputDir}`,
-    `-with-trace ${traceFile}`,
-    `-with-dag ${dagFile}`,
-    `-with-report ${reportFile}`,
-    `-with-timeline ${timelineFile}`,
+    `--input ${shellQuote(samplesheetPath)}`,
+    `--outdir ${shellQuote(outputDir)}`,
+    `-with-trace ${shellQuote(traceFile)}`,
+    `-with-dag ${shellQuote(dagFile)}`,
+    `-with-report ${shellQuote(reportFile)}`,
+    `-with-timeline ${shellQuote(timelineFile)}`,
     nameFlag,
     revisionFlag,
     configFlag,
@@ -694,7 +694,7 @@ echo "" > "$STDERR_LOG"
 ${runtimeBootstrap}
 
 # Run ${pipelineLabel}
-"\${NEXTFLOW_RUNNER[@]}" run "${pipelineTarget.target}" \\
+"\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 

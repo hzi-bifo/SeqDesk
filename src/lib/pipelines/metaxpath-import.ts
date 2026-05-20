@@ -13,6 +13,7 @@ export {
   METAXPATH_DESCRIPTOR_RELATIVE_PATH,
   METAXPATH_PIPELINE_ID,
   METAXPATH_REPOSITORY,
+  resolveMetaxPathRef,
 } from "./metaxpath-config";
 
 export const METAXPATH_REPO_HTTPS = `https://github.com/${METAXPATH_REPOSITORY}.git`;
