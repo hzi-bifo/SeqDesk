@@ -206,6 +206,67 @@ const simulateReadsSchema = {
   },
 };
 
+const metaxPathConfigSchema = {
+  properties: {
+    sequencer: {
+      type: "string",
+      title: "Sequencer",
+      enum: ["Nanopore", "PacBio"],
+      default: "Nanopore",
+      "x-seqdesk": {
+        placement: "derived",
+      },
+    },
+    skipSylph: {
+      type: "boolean",
+      title: "Sylph",
+      default: false,
+      description: "Optional k-mer abundance profiling with Sylph.",
+      "x-seqdesk": {
+        placement: "basic",
+        group: "analysis",
+        booleanMode: "inverse",
+        helpText: "Optional k-mer abundance profiling with Sylph.",
+      },
+    },
+    skipVirulence: {
+      type: "boolean",
+      title: "Virulence Search",
+      default: false,
+      description: "Search assembled contigs against VFDB with BLAST.",
+      "x-seqdesk": {
+        placement: "basic",
+        group: "analysis",
+        booleanMode: "inverse",
+        helpText: "Search assembled contigs against VFDB with BLAST.",
+      },
+    },
+    skipAmr: {
+      type: "boolean",
+      title: "AMR Prediction",
+      default: false,
+      description:
+        "Predict antimicrobial resistance markers with ResFinder/PointFinder/Kover where available.",
+      "x-seqdesk": {
+        placement: "basic",
+        group: "analysis",
+        booleanMode: "inverse",
+        helpText:
+          "Predict antimicrobial resistance markers with ResFinder/PointFinder/Kover where available.",
+      },
+    },
+    threads: {
+      type: "number",
+      title: "Threads",
+      default: 20,
+      "x-seqdesk": {
+        placement: "advanced",
+        group: "runtime",
+      },
+    },
+  },
+};
+
 const pipeline = {
   pipelineId: "simulate-reads",
   name: "Simulate Reads",
@@ -256,6 +317,40 @@ const runs = [
     inputSampleIds: JSON.stringify(["sample-a"]),
     errorTail: null,
     config: JSON.stringify({ readCount: 12, replaceExisting: false }),
+    results: null,
+    isSelectedFinal: true,
+    selectedFinal: {
+      selectedRunId: "run-1",
+      selectedAt: "2026-04-01T10:03:00.000Z",
+      selectedBy: {
+        id: "admin-1",
+        firstName: "Ada",
+        lastName: "Admin",
+        email: "admin@example.test",
+      },
+    },
+    resultFiles: [
+      {
+        id: "artifact-1",
+        name: "Combined Report",
+        path: "/runs/run-1/output/combined.html",
+        type: "report",
+        outputId: "combined_report_html",
+        source: "artifact",
+        size: 1234,
+        previewable: true,
+      },
+    ],
+    primaryResultFile: {
+      id: "artifact-1",
+      name: "Combined Report",
+      path: "/runs/run-1/output/combined.html",
+      type: "report",
+      outputId: "combined_report_html",
+      source: "artifact",
+      size: 1234,
+      previewable: true,
+    },
     createdAt: "2026-04-01T10:00:00.000Z",
     startedAt: "2026-04-01T10:01:00.000Z",
     completedAt: "2026-04-01T10:02:00.000Z",
@@ -295,7 +390,7 @@ const runs = [
   },
 ];
 
-const samples = [
+const samples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
   {
     id: "sample-a",
     sampleId: "SAMPLE_A",
@@ -316,7 +411,7 @@ const samples = [
     sampleAlias: null,
     read: null,
   },
-] as any;
+];
 
 describe("OrderPipelineView", () => {
   const fetchMock = vi.fn();
@@ -361,6 +456,16 @@ describe("OrderPipelineView", () => {
       if (url === "/api/pipelines/runs/created-run/start") {
         return Promise.resolve(jsonResponse({ ok: true }));
       }
+      if (url === "/api/pipelines/validate-metadata") {
+        return Promise.resolve(
+          jsonResponse({
+            valid: true,
+            issues: [],
+            metadata: {},
+            derivedSettings: [],
+          })
+        );
+      }
       if (url.includes("/delete")) {
         return Promise.resolve(jsonResponse({ ok: true }));
       }
@@ -399,6 +504,8 @@ describe("OrderPipelineView", () => {
     expect(screen.getByText("1 active")).toBeTruthy();
     expect(screen.getByText("1 completed")).toBeTruthy();
     expect(screen.getByText("1 failed")).toBeTruthy();
+    expect(screen.getByText("Final")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /combined report/i })).toBeTruthy();
     expect(screen.getByText("SAMPLE_A")).toBeTruthy();
     expect(screen.getByText("SAMPLE_B")).toBeTruthy();
     expect(screen.getAllByText("SAMPLE_A_R1.fastq.gz").length).toBeGreaterThan(0);
@@ -407,6 +514,9 @@ describe("OrderPipelineView", () => {
 
     fireEvent.change(screen.getByLabelText("Read count"), {
       target: { value: "24" },
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Run all ready samples").hasAttribute("disabled")).toBe(false);
     });
     fireEvent.click(screen.getByLabelText("Run all ready samples"));
 
@@ -452,6 +562,7 @@ describe("OrderPipelineView", () => {
 
     fireEvent.click(screen.getByLabelText("View details for RUN-2026-001"));
     expect(screen.getByText("Run Details")).toBeTruthy();
+    expect(screen.getByText(/Selected by Ada Admin/i)).toBeTruthy();
     expect(screen.getByText("Read count:")).toBeTruthy();
     expect(screen.getByText("No")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -474,7 +585,7 @@ describe("OrderPipelineView", () => {
   });
 
   it("warns when simulate reads would preserve stale linked reads", () => {
-    const staleSamples = [
+    const staleSamples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
       {
         ...samples[0],
         read: {
@@ -484,7 +595,7 @@ describe("OrderPipelineView", () => {
           fileSize2: null,
         },
       },
-    ] as any;
+    ];
 
     render(
       <OrderPipelineView
@@ -504,15 +615,27 @@ describe("OrderPipelineView", () => {
     ).toBeTruthy();
   });
 
-  it("shows MetaxPath runtime warnings without blocking launch", () => {
+  it("shows MetaxPath runtime warnings without blocking launch", async () => {
     const metaxPathPipeline = {
       ...pipeline,
       pipelineId: "metaxpath",
       name: "MetaxPath",
       description: "ONT metagenomics",
-      config: {},
-      defaultConfig: {},
-      configSchema: { properties: {} },
+      config: {
+        sequencer: "Nanopore",
+        skipSylph: false,
+        skipVirulence: false,
+        skipAmr: false,
+        threads: 20,
+      },
+      defaultConfig: {
+        sequencer: "Nanopore",
+        skipSylph: false,
+        skipVirulence: false,
+        skipAmr: false,
+        threads: 20,
+      },
+      configSchema: metaxPathConfigSchema,
       runtimeWarnings: [
         "Kraken2 PlusPF is configured without memory mapping. PlusPF can exceed common Slurm cgroup memory limits and be SIGKILLed while loading the database.",
       ],
@@ -540,6 +663,28 @@ describe("OrderPipelineView", () => {
       }
       return { data: undefined, mutate: vi.fn() };
     });
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/pipelines/validate-metadata") {
+        return Promise.resolve(
+          jsonResponse({
+            valid: true,
+            issues: [],
+            metadata: {},
+            derivedSettings: [
+              {
+                key: "sequencer",
+                title: "Sequencer",
+                value: "Nanopore",
+                message: "MetaxPath will run in Nanopore mode.",
+                source: "order.sequencingTechnology.platformFamily",
+              },
+            ],
+          })
+        );
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
 
     render(
       <OrderPipelineView
@@ -552,6 +697,12 @@ describe("OrderPipelineView", () => {
 
     expect(screen.getByText("MetaxPath runtime warning")).toBeTruthy();
     expect(screen.getByText(/PlusPF is configured without memory mapping/i)).toBeTruthy();
+    expect(await screen.findByText("MetaxPath will run in Nanopore mode.")).toBeTruthy();
+    expect(screen.queryByLabelText("Sequencer")).toBeNull();
+    expect(screen.getByLabelText("AMR Prediction")).toBeTruthy();
+    expect(
+      screen.getByText(/Predict antimicrobial resistance markers with ResFinder\/PointFinder\/Kover/i)
+    ).toBeTruthy();
     expect(screen.getByLabelText("Run all ready samples").hasAttribute("disabled")).toBe(false);
   });
 });

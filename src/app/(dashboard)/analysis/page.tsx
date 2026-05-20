@@ -141,9 +141,11 @@ function queueStateToDisplayStatus(state?: string | null): "queued" | "running" 
 type RunData = {
   id: string;
   runNumber: string;
+  pipelineId: string;
   pipelineName: string;
   pipelineIcon: string;
   study: { id: string; title: string } | null;
+  order: { id: string; name: string; orderNumber: string } | null;
   status: string;
   progress: number | null;
   currentStep: string | null;
@@ -162,6 +164,18 @@ type RunData = {
   queueJobId?: string | null;
   _count: { assembliesCreated: number; binsCreated: number };
 };
+
+function getAnalysisRunHref(run: RunData): string {
+  const params = new URLSearchParams();
+  if (run.study?.id) {
+    params.set("studyId", run.study.id);
+  } else if (run.order?.id) {
+    params.set("orderId", run.order.id);
+  }
+  params.set("pipeline", run.pipelineId);
+  const query = params.toString();
+  return `/analysis/${run.id}${query ? `?${query}` : ""}`;
+}
 
 export default function AnalysisDashboardPage() {
   const { data: session } = useSession();
@@ -420,7 +434,7 @@ export default function AnalysisDashboardPage() {
                   >
                     <TableCell>
                       <Link
-                        href={`/analysis/${run.id}`}
+                        href={getAnalysisRunHref(run)}
                         className="font-mono text-sm hover:underline"
                       >
                         {run.runNumber}

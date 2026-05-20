@@ -38,9 +38,19 @@ import {
   getSampleResultPreview,
   getSampleResultPreviewItem,
 } from "@/lib/pipelines/sample-result";
-import type { PipelineSampleResult } from "@/lib/pipelines/types";
+import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
+import { PipelineRunResultLinks } from "@/components/pipelines/PipelineRunResultLinks";
+import {
+  PipelineRunSettings,
+  type PipelineRunDerivedSetting,
+} from "@/components/pipelines/PipelineRunSettings";
+import type {
+  PipelineConfigProperty,
+  PipelineSampleResult,
+} from "@/lib/pipelines/types";
 import {
   AlertCircle,
+  CheckCircle2,
   Clock,
   ExternalLink,
   Info,
@@ -100,16 +110,6 @@ function getApiErrorMessage(
   return fallback;
 }
 
-type ConfigSchemaProperty = {
-  type: string;
-  title?: string;
-  description?: string;
-  enum?: string[];
-  default?: unknown;
-  minimum?: number;
-  maximum?: number;
-};
-
 type AdminPipeline = {
   pipelineId: string;
   name: string;
@@ -125,7 +125,7 @@ type AdminPipeline = {
   runtimeWarnings?: string[];
   sampleResult?: PipelineSampleResult;
   configSchema?: {
-    properties?: Record<string, ConfigSchemaProperty>;
+    properties?: Record<string, PipelineConfigProperty>;
   };
   input: {
     supportedScopes: string[];
@@ -134,6 +134,22 @@ type AdminPipeline = {
       pairedEnd: boolean;
       readMode?: "single_or_paired" | "paired_only";
     };
+  };
+};
+
+type MetadataValidation = {
+  valid: boolean;
+  issues: Array<{
+    field: string;
+    message: string;
+    severity: "error" | "warning";
+    fixUrl?: string;
+  }>;
+  derivedSettings?: PipelineRunDerivedSetting[];
+  metadata: {
+    platform?: string;
+    instrumentModel?: string;
+    libraryStrategy?: string;
   };
 };
 
@@ -148,6 +164,26 @@ type PipelineRun = {
   inputSampleIds: string | null;
   errorTail?: string | null;
   config?: string | null;
+  runFolder?: string | null;
+  results?: {
+    errors?: string[];
+    warnings?: string[];
+  } | null;
+  isSelectedFinal?: boolean;
+  selectedFinal?: {
+    selectedRunId: string;
+    selectedAt: string;
+    selectedBy?: {
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string;
+    } | null;
+  } | null;
+  resultFiles?: PipelineRunResultFile[];
+  resultFilesOmittedCount?: number;
+  resultFilesOmittedSampleFileCount?: number;
+  primaryResultFile?: PipelineRunResultFile | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -223,6 +259,10 @@ function getRunDetails(run: PipelineRun): string {
   return "";
 }
 
+function runHasOutputErrors(run: PipelineRun): boolean {
+  return Array.isArray(run.results?.errors) && run.results.errors.length > 0;
+}
+
 function getSampleCount(run: PipelineRun): number | null {
   if (!run.inputSampleIds) return null;
   try {
@@ -237,6 +277,13 @@ function getUserDisplay(run: PipelineRun): string {
   if (!run.user) return "-";
   const name = [run.user.firstName, run.user.lastName].filter(Boolean).join(" ");
   return name || run.user.email;
+}
+
+function getSelectedByDisplay(run: PipelineRun): string {
+  const selectedBy = run.selectedFinal?.selectedBy;
+  if (!selectedBy) return "Unknown user";
+  const name = [selectedBy.firstName, selectedBy.lastName].filter(Boolean).join(" ");
+  return name || selectedBy.email;
 }
 
 function getReadinessProblemText(reason?: string): string {
@@ -414,6 +461,8 @@ export function OrderPipelineView({
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
   const [error, setError] = useState("");
+  const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
+  const [loadingMetadata, setLoadingMetadata] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
@@ -421,6 +470,7 @@ export function OrderPipelineView({
   const [selectMode, setSelectMode] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [selectionUpdatingRunId, setSelectionUpdatingRunId] = useState<string | null>(null);
   const [detailRun, setDetailRun] = useState<PipelineRun | null>(null);
   const [changeSourceSample, setChangeSourceSample] = useState<{
     id: string;
@@ -577,6 +627,10 @@ export function OrderPipelineView({
     () => samples.filter((s) => getSampleReadiness(s).ready),
     [samples, getSampleReadiness]
   );
+  const readySampleIdsKey = useMemo(
+    () => readySamples.map((sample) => sample.id).join("|"),
+    [readySamples]
+  );
   const protectedReadySamples = useMemo(
     () => readySamples.filter((sample) => sample.read?.isProtectedRaw),
     [readySamples]
@@ -608,6 +662,58 @@ export function OrderPipelineView({
     ]
   );
   const executionTargetBlocked = Boolean(executionTargetBlockMessage);
+  const metadataErrors = useMemo(
+    () =>
+      !loadingMetadata && metadataValidation
+        ? metadataValidation.issues.filter((issue) => issue.severity === "error")
+        : [],
+    [loadingMetadata, metadataValidation]
+  );
+  const metadataBlockMessage = loadingMetadata
+    ? "Pipeline metadata is still loading."
+    : metadataErrors[0]?.message ?? null;
+  const launchBlockMessage = metadataBlockMessage || executionTargetBlockMessage;
+  const launchBlocked =
+    executionTargetBlocked || loadingMetadata || metadataErrors.length > 0;
+
+  useEffect(() => {
+    if (!pipeline) {
+      setMetadataValidation(null);
+      setLoadingMetadata(false);
+      return;
+    }
+
+    let cancelled = false;
+    const readySampleIds = readySamples.map((sample) => sample.id);
+    setLoadingMetadata(true);
+
+    const load = async () => {
+      try {
+        const res = await fetch("/api/pipelines/validate-metadata", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId,
+            pipelineId: pipeline.pipelineId,
+            ...(readySampleIds.length > 0 ? { sampleIds: readySampleIds } : {}),
+          }),
+        });
+        if (!cancelled && res.ok) {
+          setMetadataValidation(await res.json());
+        }
+      } catch {
+        if (!cancelled) setMetadataValidation(null);
+      } finally {
+        if (!cancelled) setLoadingMetadata(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, pipeline, readySampleIdsKey, readySamples]);
+
   const staleReadsPreservedCount = useMemo(() => {
     if (
       pipeline?.pipelineId !== SIMULATE_READS_PIPELINE_ID ||
@@ -748,6 +854,35 @@ export function OrderPipelineView({
       setBulkDeleting(false);
     }
   }, [selectedRunIds, runsResponse, onSampleDataChanged]);
+
+  const handleSetFinalRun = useCallback(
+    async (run: PipelineRun, selected: boolean) => {
+      if (!isFacilityAdmin || isDemo) return;
+
+      setSelectionUpdatingRunId(run.id);
+      setError("");
+
+      try {
+        const res = await fetch(`/api/pipelines/runs/${run.id}/selection`, {
+          method: selected ? "PUT" : "DELETE",
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(
+            getApiErrorMessage(payload, "Failed to update final run selection")
+          );
+        }
+        await runsResponse.mutate();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update final run selection"
+        );
+      } finally {
+        setSelectionUpdatingRunId(null);
+      }
+    },
+    [isDemo, isFacilityAdmin, runsResponse]
+  );
 
   // Deletable runs are those not currently running
   const deletableFilteredRuns = useMemo(
@@ -922,95 +1057,8 @@ export function OrderPipelineView({
     isDemo,
     systemBlocked,
     systemSummary: systemReady?.summary,
-    launchBlockMessage: executionTargetBlockMessage,
+    launchBlockMessage,
   });
-
-  const renderGenericSettings = () => {
-    if (!pipeline?.configSchema?.properties) return null;
-
-    return (
-      <div className="flex flex-wrap items-end gap-4">
-        {Object.entries(pipeline.configSchema.properties).map(([key, schema]) => {
-          const value = localConfig[key] ?? schema.default;
-
-          if (schema.enum) {
-            const fieldId = `config-${key}`;
-            return (
-              <div key={key} className="space-y-1">
-                <Label className="text-xs" htmlFor={fieldId}>
-                  {schema.title || key}
-                </Label>
-                <Select
-                  value={String(value ?? "")}
-                  onValueChange={(v) => setLocalConfig((prev) => ({ ...prev, [key]: v }))}
-                >
-                  <SelectTrigger
-                    id={fieldId}
-                    aria-label={schema.title || key}
-                    className="h-8 w-[160px] text-xs"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {schema.enum.map((opt) => (
-                      <SelectItem key={opt} value={opt}>
-                        {SIMULATE_READS_ENUM_LABELS[opt] || opt}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            );
-          }
-
-          if (schema.type === "boolean") {
-            const fieldId = `config-${key}`;
-            return (
-              <div key={key} className="flex items-center gap-2 pb-1">
-                <Switch
-                  id={fieldId}
-                  checked={!!value}
-                  onCheckedChange={(checked) =>
-                    setLocalConfig((prev) => ({ ...prev, [key]: !!checked }))
-                  }
-                />
-                <Label htmlFor={fieldId} className="text-xs">
-                  {schema.title || key}
-                </Label>
-              </div>
-            );
-          }
-
-          if (schema.type === "number") {
-            const fieldId = `config-${key}`;
-            return (
-              <div key={key} className="space-y-1">
-                <Label className="text-xs" htmlFor={fieldId}>
-                  {schema.title || key}
-                </Label>
-                <Input
-                  id={fieldId}
-                  type="number"
-                  className="h-8 w-[120px] text-xs"
-                  min={schema.minimum}
-                  max={schema.maximum}
-                  value={value != null ? String(value) : ""}
-                  onChange={(e) =>
-                    setLocalConfig((prev) => ({
-                      ...prev,
-                      [key]: e.target.value ? Number(e.target.value) : undefined,
-                    }))
-                  }
-                />
-              </div>
-            );
-          }
-
-          return null;
-        })}
-      </div>
-    );
-  };
 
   const renderSimulateReadsSettings = () => {
     if (!pipeline?.configSchema?.properties || !simulateReadsConfig) {
@@ -1071,15 +1119,18 @@ export function OrderPipelineView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {fieldSchema.enum.map((option) => (
-                  <SelectItem
-                    key={option}
-                    value={option}
-                    disabled={key === "simulationMode" && option === "template" && longReadMode}
-                  >
-                    {SIMULATE_READS_ENUM_LABELS[option] || option}
-                  </SelectItem>
-                ))}
+                {fieldSchema.enum.map((option) => {
+                  const optionValue = String(option);
+                  return (
+                    <SelectItem
+                      key={optionValue}
+                      value={optionValue}
+                      disabled={key === "simulationMode" && optionValue === "template" && longReadMode}
+                    >
+                      {SIMULATE_READS_ENUM_LABELS[optionValue] || optionValue}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             {options?.helperText ? (
@@ -1242,7 +1293,7 @@ export function OrderPipelineView({
                         readySamples.length === 0 ||
                         runningAll ||
                         systemBlocked ||
-                        executionTargetBlocked
+                        launchBlocked
                       }
                       onClick={handleRunAllReady}
                       aria-label="Run all ready samples"
@@ -1314,6 +1365,20 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
+      {metadataErrors.length > 0 ? (
+        <PageNotice
+          variant="error"
+          title="Pipeline metadata needs attention"
+          className="rounded-xl border"
+        >
+          <div className="space-y-1.5">
+            {metadataErrors.map((issue, index) => (
+              <p key={`${issue.field}-${index}`}>{issue.message}</p>
+            ))}
+          </div>
+        </PageNotice>
+      ) : null}
+
       <HelpBox title="What is this order pipeline?">
         {getOrderPipelineHelpText(pipeline)}
       </HelpBox>
@@ -1331,15 +1396,20 @@ export function OrderPipelineView({
       ) : null}
 
       {/* Pipeline settings — hidden in demo mode */}
-      {!isDemo && pipeline?.configSchema?.properties && Object.entries(pipeline.configSchema.properties).some(
-        ([, s]) => s.enum || s.type === "boolean" || s.type === "number"
-      ) && (
+      {!isDemo && pipeline?.pipelineId === SIMULATE_READS_PIPELINE_ID && pipeline?.configSchema?.properties && (
         <div className="rounded-xl border border-border bg-card p-4">
           <h3 className="mb-3 text-sm font-medium">Settings</h3>
-          {pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID
-            ? renderSimulateReadsSettings()
-            : renderGenericSettings()}
+          {renderSimulateReadsSettings()}
         </div>
+      )}
+
+      {!isDemo && pipeline?.pipelineId !== SIMULATE_READS_PIPELINE_ID && (
+        <PipelineRunSettings
+          configSchema={pipeline.configSchema}
+          localConfig={localConfig}
+          setLocalConfig={setLocalConfig}
+          derivedSettings={loadingMetadata ? [] : metadataValidation?.derivedSettings}
+        />
       )}
 
       {staleReadsPreservedCount > 0 ? (
@@ -1480,7 +1550,7 @@ export function OrderPipelineView({
                 isDemo,
                 systemBlocked,
                 systemSummary: systemReady?.summary,
-                launchBlockMessage: executionTargetBlockMessage,
+                launchBlockMessage,
               });
 
               return (
@@ -1555,17 +1625,17 @@ export function OrderPipelineView({
                                 size="sm"
                                 variant="outline"
                                 className="h-9 px-3"
-                                disabled={systemBlocked || executionTargetBlocked || !!isDemo}
+                                disabled={systemBlocked || launchBlocked || !!isDemo}
                                 onClick={() => void handleRunSingle(sample.id)}
                                 aria-label={`${sampleActionCopy.title} for ${sample.sampleId}`}
                               >
-                                {systemBlocked || executionTargetBlocked ? (
+                                {systemBlocked || launchBlocked ? (
                                   <AlertCircle className="h-4 w-4" />
                                 ) : (
                                   <Play className="h-4 w-4" />
                                 )}
                                 <span className="sr-only">
-                                  {systemBlocked || executionTargetBlocked ? "Blocked" : "Run"}
+                                  {systemBlocked || launchBlocked ? "Blocked" : "Run"}
                                 </span>
                               </Button>
                             </span>
@@ -1912,6 +1982,9 @@ export function OrderPipelineView({
                       Details
                     </th>
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
+                      Results
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                       Samples
                     </th>
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
@@ -1976,12 +2049,20 @@ export function OrderPipelineView({
                           </td>
                         )}
                         <td className="px-4 py-3 align-top">
-                          <code
-                            className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
-                            title={run.runNumber}
-                          >
-                            {run.runNumber}
-                          </code>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <code
+                              className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
+                              title={run.runNumber}
+                            >
+                              {run.runNumber}
+                            </code>
+                            {run.isSelectedFinal && (
+                              <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Final
+                              </Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 align-top">
                           <div className="flex items-center gap-2">
@@ -2008,6 +2089,19 @@ export function OrderPipelineView({
                           ) : (
                             <span className="text-xs text-muted-foreground">-</span>
                           )}
+                        </td>
+                        <td
+                          className="px-4 py-3 align-top"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <PipelineRunResultLinks
+                            status={run.status}
+                            resultFiles={run.resultFiles}
+                            primaryResultFile={run.primaryResultFile}
+                            omittedCount={run.resultFilesOmittedCount}
+                            omittedSampleFileCount={run.resultFilesOmittedSampleFileCount}
+                            hasOutputErrors={runHasOutputErrors(run)}
+                          />
                         </td>
                         <td className="px-4 py-3 align-top text-xs text-muted-foreground tabular-nums">
                           {sampleCount != null ? sampleCount : "-"}
@@ -2051,6 +2145,30 @@ export function OrderPipelineView({
                                 <Info className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
+                              {isFacilityAdmin && !isDemo && run.status === "completed" && !run.isSelectedFinal && (
+                                <DropdownMenuItem
+                                  disabled={selectionUpdatingRunId === run.id}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void handleSetFinalRun(run, true);
+                                  }}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Use as final
+                                </DropdownMenuItem>
+                              )}
+                              {isFacilityAdmin && !isDemo && run.isSelectedFinal && (
+                                <DropdownMenuItem
+                                  disabled={selectionUpdatingRunId === run.id}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void handleSetFinalRun(run, false);
+                                  }}
+                                >
+                                  <X className="h-4 w-4" />
+                                  Clear final
+                                </DropdownMenuItem>
+                              )}
                               {!isDemo && (
                                 <DropdownMenuItem
                                   variant="destructive"
@@ -2073,7 +2191,7 @@ export function OrderPipelineView({
                   {filteredRuns.length === 0 && statusFilter !== "all" && (
                     <tr>
                       <td
-                        colSpan={selectMode ? 9 : 8}
+                        colSpan={selectMode ? 10 : 9}
                         className="px-4 py-8 text-center text-muted-foreground"
                       >
                         No {statusFilter} runs found.
@@ -2146,7 +2264,22 @@ export function OrderPipelineView({
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Status:</span>
                   {getStatusBadge(detailRun.status)}
+                  {detailRun.isSelectedFinal && (
+                    <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Final
+                    </Badge>
+                  )}
                 </div>
+                {detailRun.isSelectedFinal && detailRun.selectedFinal && (
+                  <div className="flex gap-2">
+                    <span className="text-muted-foreground">Final result:</span>
+                    <span>
+                      Selected by {getSelectedByDisplay(detailRun)} at{" "}
+                      {formatDateTime(detailRun.selectedFinal.selectedAt)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <span className="text-muted-foreground">Started:</span>
                   <span>{formatDateTime(detailRun.startedAt || detailRun.createdAt)}</span>

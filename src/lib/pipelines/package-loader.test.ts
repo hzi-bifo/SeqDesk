@@ -456,8 +456,18 @@ describe("package-loader", () => {
     expect(manifest?.execution.paramMap).toEqual({
       otherSetting: "--other",
       paramsFile: "-params-file",
+      kraken2MemoryMapping: "--kraken2_memory_mapping",
     });
     expect(registry?.input.supportedScopes).toEqual(["study", "samples"]);
+    expect(registry?.configSchema.properties.sequencer?.["x-seqdesk"]?.placement).toBe(
+      "derived"
+    );
+    expect(registry?.configSchema.properties.skipAmr?.["x-seqdesk"]?.booleanMode).toBe(
+      "inverse"
+    );
+    expect(registry?.configSchema.properties.threads?.["x-seqdesk"]?.placement).toBe(
+      "advanced"
+    );
     expect(definition?.input.supportedScopes).toEqual(["study"]);
   });
 

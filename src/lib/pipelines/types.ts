@@ -54,16 +54,37 @@ export interface PipelineInput {
 
 export interface PipelineConfigSchema {
   type: 'object';
-  properties: Record<string, {
-    type: string;
-    title: string;
-    description?: string;
-    default?: unknown;
-    enum?: unknown[];
-    minimum?: number;
-    maximum?: number;
-  }>;
+  properties: Record<string, PipelineConfigProperty>;
   required?: string[];
+}
+
+export type PipelineConfigPlacement = 'basic' | 'advanced' | 'derived' | 'admin' | 'hidden';
+export type PipelineConfigGroup = 'analysis' | 'runtime' | 'reporting' | 'databases';
+export type PipelineConfigBooleanMode = 'normal' | 'inverse';
+
+export interface PipelineConfigDeriveRule {
+  source: string;
+  map?: Record<string, string>;
+  requireSingleValue?: boolean;
+}
+
+export interface PipelineConfigSeqDeskUi {
+  placement?: PipelineConfigPlacement;
+  group?: PipelineConfigGroup;
+  booleanMode?: PipelineConfigBooleanMode;
+  derive?: PipelineConfigDeriveRule;
+  helpText?: string;
+}
+
+export interface PipelineConfigProperty {
+  type: string;
+  title: string;
+  description?: string;
+  default?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  'x-seqdesk'?: PipelineConfigSeqDeskUi;
 }
 
 export type PipelineSampleResultFormat = 'text' | 'hash_prefix' | 'filename';

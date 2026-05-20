@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getAdapter: vi.fn(),
   registerAdapter: vi.fn(),
   createGenericAdapter: vi.fn(),
+  mergePipelineDerivedConfig: vi.fn(),
   isDemoSession: vi.fn(),
   supportsPipelineTarget: vi.fn(),
   db: {
@@ -14,6 +15,9 @@ const mocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       count: vi.fn(),
       create: vi.fn(),
+    },
+    pipelineResultSelection: {
+      findMany: vi.fn(),
     },
     study: {
       findUnique: vi.fn(),
@@ -69,6 +73,10 @@ vi.mock("@/lib/pipelines/generic-adapter", () => ({
   createGenericAdapter: mocks.createGenericAdapter,
 }));
 
+vi.mock("@/lib/pipelines/derived-config", () => ({
+  mergePipelineDerivedConfig: mocks.mergePipelineDerivedConfig,
+}));
+
 vi.mock("@/lib/pipelines/metadata-validation", () => ({
   validatePipelineMetadata: mocks.validatePipelineMetadata,
 }));
@@ -95,6 +103,10 @@ describe("GET /api/pipelines/runs", () => {
     mocks.db.pipelineRun.findMany.mockResolvedValue([
       {
         id: "run-1",
+        runFolder: null,
+        targetType: "order",
+        studyId: null,
+        orderId: "order-1",
         pipelineId: "simulate-reads",
         results: JSON.stringify({ warnings: ["ok"] }),
         artifacts: [
@@ -104,11 +116,14 @@ describe("GET /api/pipelines/runs", () => {
             path: "/tmp/run-report.html",
             type: "report",
             sampleId: null,
+            outputId: null,
+            size: null,
           },
         ],
       },
     ]);
     mocks.db.pipelineRun.count.mockResolvedValue(1);
+    mocks.db.pipelineResultSelection.findMany.mockResolvedValue([]);
   });
 
   it("returns 401 when there is no session", async () => {
@@ -149,6 +164,10 @@ describe("GET /api/pipelines/runs", () => {
       runs: [
         {
           id: "run-1",
+          runFolder: null,
+          targetType: "order",
+          studyId: null,
+          orderId: "order-1",
           pipelineId: "simulate-reads",
           pipelineName: "Simulate Reads",
           pipelineIcon: "FlaskConical",
@@ -160,13 +179,76 @@ describe("GET /api/pipelines/runs", () => {
               path: "/tmp/run-report.html",
               type: "report",
               sampleId: null,
+              outputId: null,
+              size: null,
             },
           ],
+          isSelectedFinal: false,
+          selectedFinal: null,
+          resultFiles: [
+            {
+              id: "artifact-1",
+              name: "run-report.html",
+              path: "/tmp/run-report.html",
+              type: "report",
+              outputId: null,
+              source: "artifact",
+              size: null,
+              previewable: false,
+            },
+          ],
+          resultFilesOmittedCount: 0,
+          resultFilesOmittedSampleFileCount: 0,
+          primaryResultFile: {
+            id: "artifact-1",
+            name: "run-report.html",
+            path: "/tmp/run-report.html",
+            type: "report",
+            outputId: null,
+            source: "artifact",
+            size: null,
+            previewable: false,
+          },
         },
       ],
       total: 1,
       limit: 10,
       offset: 5,
+    });
+  });
+
+  it("marks the explicitly selected final run", async () => {
+    const selectedAt = new Date("2026-05-20T10:00:00.000Z");
+    mocks.db.pipelineResultSelection.findMany.mockResolvedValue([
+      {
+        pipelineId: "simulate-reads",
+        targetKey: "order:order-1",
+        selectedRunId: "run-1",
+        selectedAt,
+        selectedBy: {
+          id: "admin-1",
+          firstName: "Ada",
+          lastName: "Admin",
+          email: "ada@example.org",
+        },
+      },
+    ]);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs?orderId=order-1")
+    );
+
+    const body = await response.json();
+    expect(body.runs[0].isSelectedFinal).toBe(true);
+    expect(body.runs[0].selectedFinal).toEqual({
+      selectedRunId: "run-1",
+      selectedAt: selectedAt.toISOString(),
+      selectedBy: {
+        id: "admin-1",
+        firstName: "Ada",
+        lastName: "Admin",
+        email: "ada@example.org",
+      },
     });
   });
 });
@@ -184,6 +266,13 @@ describe("POST /api/pipelines/runs", () => {
     mocks.isDemoSession.mockReturnValue(false);
     mocks.supportsPipelineTarget.mockReturnValue(true);
     mocks.validatePipelineMetadata.mockResolvedValue({ issues: [] });
+    mocks.mergePipelineDerivedConfig.mockImplementation(
+      async ({ config }: { config: Record<string, unknown> }) => ({
+        config,
+        settings: [],
+        issues: [],
+      })
+    );
     mocks.getAdapter.mockReturnValue(null);
     mocks.createGenericAdapter.mockReturnValue(null);
     mocks.db.pipelineConfig.findUnique.mockResolvedValue(null);
@@ -420,6 +509,80 @@ describe("POST /api/pipelines/runs", () => {
         config: JSON.stringify({
           topn: 10,
           paramsFile: "/shared/metaxpath/downloaded.params.yaml",
+        }),
+      }),
+    });
+  });
+
+  it("merges derived MetaxPath sequencer config into created runs", async () => {
+    (mocks.pipelineRegistry as Record<string, unknown>).metaxpath = {
+      id: "metaxpath",
+      name: "MetaxPath",
+      icon: "Dna",
+      defaultConfig: {
+        sequencer: "Nanopore",
+        topn: 50,
+      },
+      input: {
+        supportedScopes: ["order"],
+        perSample: {
+          reads: true,
+          pairedEnd: false,
+        },
+      },
+    };
+    const adapter = {
+      validateInputs: vi.fn().mockResolvedValue({
+        valid: true,
+      }),
+    };
+    mocks.createGenericAdapter.mockReturnValue(adapter);
+    mocks.mergePipelineDerivedConfig.mockResolvedValueOnce({
+      config: {
+        sequencer: "Nanopore",
+        topn: 25,
+      },
+      settings: [
+        {
+          key: "sequencer",
+          title: "Sequencing Mode",
+          value: "Nanopore",
+          message: "MetaxPath will run in Nanopore mode.",
+          source: "order.sequencingTechnology.platformFamily",
+        },
+      ],
+      issues: [],
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "metaxpath",
+          orderId: "order-1",
+          config: {
+            sequencer: "PacBio",
+            topn: 25,
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.mergePipelineDerivedConfig).toHaveBeenCalledWith({
+      pipelineId: "metaxpath",
+      target: { type: "order", orderId: "order-1", sampleIds: undefined },
+      config: expect.objectContaining({
+        sequencer: "PacBio",
+        topn: 25,
+      }),
+    });
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        pipelineId: "metaxpath",
+        config: JSON.stringify({
+          sequencer: "Nanopore",
+          topn: 25,
         }),
       }),
     });

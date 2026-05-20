@@ -10,6 +10,7 @@ export interface OrderPipelineNavItem {
   pipelineId: string;
   name: string;
   status: PipelineProgressIndicatorStatus;
+  runIds: string[];
 }
 
 interface OrderPipelineDefinition {
@@ -21,6 +22,7 @@ interface OrderPipelineDefinition {
 }
 
 interface PipelineRunSummary {
+  id?: string;
   pipelineId: string;
   status: import("@/lib/pipelines/types").PipelineRunStatus;
   createdAt?: string | Date | null;
@@ -100,6 +102,13 @@ export function useOrderPipelines(
         const statusByPipeline = getPipelineProgressStatuses(
           runsPayload?.runs ?? []
         );
+        const runIdsByPipeline = new Map<string, string[]>();
+        for (const run of runsPayload?.runs ?? []) {
+          if (!run.id) continue;
+          const runIds = runIdsByPipeline.get(run.pipelineId) ?? [];
+          runIds.push(run.id);
+          runIdsByPipeline.set(run.pipelineId, runIds);
+        }
 
         // Pipelines that require linked reads (input.requiresReads or
         // outputs targeting sample_reads) should show "empty" when no
@@ -125,6 +134,7 @@ export function useOrderPipelines(
                 pipelineId: pipeline.pipelineId,
                 name: pipeline.name,
                 status,
+                runIds: runIdsByPipeline.get(pipeline.pipelineId) ?? [],
               };
             })
           );

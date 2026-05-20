@@ -184,6 +184,7 @@ describe("in-app notifications", () => {
           userId: "user-1",
           eventType: "pipeline.completed",
           severity: "success",
+          linkPath: "/analysis/run-1?orderId=order-1&pipeline=mag",
           dedupeKey: "pipeline.completed:run-1:user-1",
         }),
         expect.objectContaining({

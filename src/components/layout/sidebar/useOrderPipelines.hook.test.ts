@@ -53,8 +53,8 @@ describe("useOrderPipelines hook", () => {
       if (url === "/api/pipelines/runs?orderId=order-1&limit=200") {
         return jsonResponse({
           runs: [
-            { pipelineId: "fastq-checksum", status: "completed" },
-            { pipelineId: "simulate-reads", status: "running" },
+            { id: "run-1", pipelineId: "fastq-checksum", status: "completed" },
+            { id: "run-2", pipelineId: "simulate-reads", status: "running" },
           ],
         });
       }
@@ -77,11 +77,13 @@ describe("useOrderPipelines hook", () => {
           pipelineId: "fastq-checksum",
           name: "FASTQ Checksum",
           status: "empty",
+          runIds: ["run-1"],
         },
         {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
           status: "active",
+          runIds: ["run-2"],
         },
       ]);
     });
@@ -127,6 +129,7 @@ describe("useOrderPipelines hook", () => {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
           status: "empty",
+          runIds: [],
         },
       ]);
     });
@@ -140,6 +143,7 @@ describe("useOrderPipelines hook", () => {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
           status: "empty",
+          runIds: [],
         },
       ]);
     });

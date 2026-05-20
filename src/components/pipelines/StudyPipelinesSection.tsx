@@ -29,9 +29,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -46,11 +43,9 @@ import {
   Play,
   AlertCircle,
   CheckCircle2,
-  XCircle,
   ExternalLink,
   Trash2,
   MoreHorizontal,
-  RefreshCw,
   Clock,
   X,
 } from "lucide-react";
@@ -62,16 +57,22 @@ import {
   type ExecutionModeRequest,
 } from "./ExecutionTargetControl";
 import {
+  PipelineRunSettings,
+  type PipelineRunDerivedSetting,
+} from "./PipelineRunSettings";
+import {
   getAvailableAssemblies,
   resolveAssemblySelection,
 } from "@/lib/pipelines/assembly-selection";
+import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
+import type { PipelineConfigProperty } from "@/lib/pipelines/types";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import { PipelineRunResultLinks } from "./PipelineRunResultLinks";
 import {
   getEligibleStudySampleIds,
   getPreferredStudyRead,
   getStudyPipelineRunDisplayStatus,
   getStudyPipelineRunDetails,
-  getStudyPipelineRunReportPath,
   getStudySampleReadIssue,
   getStudySelectionEmptyMessage,
   runHasOutputErrors,
@@ -112,6 +113,7 @@ interface MetadataIssue {
 interface MetadataValidation {
   valid: boolean;
   issues: MetadataIssue[];
+  derivedSettings?: PipelineRunDerivedSetting[];
   metadata: {
     platform?: string;
     instrumentModel?: string;
@@ -151,16 +153,7 @@ interface Pipeline {
   category?: string;
   config?: Record<string, unknown>;
   configSchema: {
-    properties: Record<
-      string,
-      {
-        type: string;
-        title: string;
-        description?: string;
-        default?: unknown;
-        enum?: unknown[];
-      }
-    >;
+    properties: Record<string, PipelineConfigProperty>;
   };
   defaultConfig: Record<string, unknown>;
   executionPolicy?: {
@@ -236,7 +229,24 @@ interface PipelineRun {
     path: string;
     type: string;
     sampleId: string | null;
+    outputId?: string | null;
+    size?: number | null;
   }[];
+  isSelectedFinal?: boolean;
+  selectedFinal?: {
+    selectedRunId: string;
+    selectedAt: string;
+    selectedBy?: {
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string;
+    } | null;
+  } | null;
+  resultFiles?: PipelineRunResultFile[];
+  resultFilesOmittedCount?: number;
+  resultFilesOmittedSampleFileCount?: number;
+  primaryResultFile?: PipelineRunResultFile | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -367,31 +377,6 @@ function getFileName(filePath: string | null | undefined): string {
   return parts[parts.length - 1] || filePath;
 }
 
-function fieldLabel(field: string): string {
-  switch (field) {
-    case "studyAccessionId":
-    case "studyAccession":
-      return "Study accession";
-    case "reads":
-      return "Paired reads";
-    case "checksums":
-      return "Read checksums";
-    case "taxId":
-      return "Sample taxId";
-    case "checklistData":
-    case "sampleMetadata":
-      return "Sample metadata";
-    case "assemblies":
-      return "Assemblies";
-    case "platform":
-      return "Platform metadata";
-    case "allowedSequencingTechnologies":
-      return "Allowed technologies";
-    default:
-      return field;
-  }
-}
-
 function extractSampleToken(message: string): string | null {
   const match = message.match(/^Sample\s+(.+?)(?::|\s+is\b|\s+has\b)/i);
   if (!match?.[1]) return null;
@@ -422,19 +407,6 @@ function extractSubmgMissingMetadataFields(message: string): string[] {
     .filter(Boolean);
 }
 
-function countMissingSamples(issues: MetadataIssue[], totalSamples: number): number {
-  if (issues.length === 0) return 0;
-  const sampleTokens = new Set<string>();
-  for (const issue of issues) {
-    const token = extractSampleToken(issue.message);
-    if (token) sampleTokens.add(token);
-  }
-  if (sampleTokens.size > 0) {
-    return Math.min(sampleTokens.size, totalSamples);
-  }
-  return Math.min(issues.length, totalSamples);
-}
-
 function addUniqueField(map: Record<string, string[]>, sampleId: string, label: string) {
   if (!map[sampleId]) {
     map[sampleId] = [];
@@ -454,20 +426,6 @@ function formatSampleMissingRequiredLabels(
     }
     return `Sample metadata (${missingMetadataFields.join(", ")})`;
   });
-}
-
-function formatSamplePreview(
-  sampleIds: string[],
-  sampleById: Map<string, Sample>,
-  limit = 3
-): string | null {
-  if (sampleIds.length === 0) return null;
-  const sampleCodes = sampleIds
-    .map((id) => sampleById.get(id)?.sampleId)
-    .filter((value): value is string => Boolean(value));
-  if (sampleCodes.length === 0) return null;
-  if (sampleCodes.length <= limit) return sampleCodes.join(", ");
-  return `${sampleCodes.slice(0, limit).join(", ")}, +${sampleCodes.length - limit} more`;
 }
 
 // ---------------------------------------------------------------------------
@@ -871,7 +829,7 @@ export function StudyPipelinesSection({
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   // --- Data fetching ---
-  const { data: pipelinesData, isLoading: pipelinesLoading, mutate: mutatePipelines } = useSWR<{
+  const { data: pipelinesData, isLoading: pipelinesLoading } = useSWR<{
     pipelines: Pipeline[];
   }>(
     "/api/admin/settings/pipelines?enabled=true&catalog=study",
@@ -929,6 +887,7 @@ export function StudyPipelinesSection({
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
   const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
+  const [selectionUpdatingRunId, setSelectionUpdatingRunId] = useState<string | null>(null);
 
   // --- Checksum state ---
   const [calculatingChecksums, setCalculatingChecksums] = useState(false);
@@ -1038,16 +997,6 @@ export function StudyPipelinesSection({
     submitBinsEnabled,
   ]);
 
-  const submgMissingRequiredLabels = useMemo(() => {
-    if (!submgCoverage) return [];
-    return formatSampleMissingRequiredLabels(
-      submgCoverage.missingRequired,
-      submgCoverage.sampleMetadataMissingSummary
-        ? [submgCoverage.sampleMetadataMissingSummary]
-        : []
-    );
-  }, [submgCoverage]);
-
   const readinessIssues = getReadinessIssues({
     pipeline: selectedPipeline,
     samples: samplesWithAssemblySelection,
@@ -1111,13 +1060,6 @@ export function StudyPipelinesSection({
     [deletableFilteredRuns, selectedRunIds]
   );
 
-  const samplesWithAssemblies = useMemo(
-    () =>
-      samplesWithAssemblySelection.filter(
-        (sample) => getAvailableAssemblies(sample).length > 0
-      ),
-    [samplesWithAssemblySelection]
-  );
   const executionTargetBlockMessage = useMemo(
     () =>
       selectedPipeline && isFacilityAdmin
@@ -1180,13 +1122,18 @@ export function StudyPipelinesSection({
     setMetadataValidation(null);
 
     const load = async () => {
+      const selectedSampleIds = Array.from(eligibleSampleIds);
       try {
         const [prereqRes, metadataRes] = await Promise.all([
           fetch("/api/admin/settings/pipelines/check-prerequisites"),
           fetch("/api/pipelines/validate-metadata", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ studyId, pipelineId: selectedPipeline.pipelineId }),
+            body: JSON.stringify({
+              studyId,
+              pipelineId: selectedPipeline.pipelineId,
+              ...(selectedSampleIds.length > 0 ? { sampleIds: selectedSampleIds } : {}),
+            }),
           }),
         ]);
 
@@ -1210,7 +1157,7 @@ export function StudyPipelinesSection({
 
     void load();
     return () => { cancelled = true; };
-  }, [selectedPipeline, studyId]);
+  }, [eligibleSampleIds, selectedPipeline, studyId]);
 
   // Poll when active runs exist
   useEffect(() => {
@@ -1363,6 +1310,34 @@ export function StudyPipelinesSection({
       setShowBulkDeleteConfirm(false);
     } finally {
       setBulkDeleting(false);
+    }
+  };
+
+  const handleSetFinalRun = async (run: PipelineRun, selected: boolean) => {
+    if (!isFacilityAdmin) return;
+
+    setSelectionUpdatingRunId(run.id);
+    setError("");
+
+    try {
+      const res = await fetch(`/api/pipelines/runs/${run.id}/selection`, {
+        method: selected ? "PUT" : "DELETE",
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          getApiErrorMessage(payload as { error?: unknown } | null, "Failed to update final run selection")
+        );
+      }
+      await mutateRuns();
+    } catch (selectionError) {
+      setError(
+        selectionError instanceof Error
+          ? selectionError.message
+          : "Failed to update final run selection"
+      );
+    } finally {
+      setSelectionUpdatingRunId(null);
     }
   };
 
@@ -1811,123 +1786,23 @@ export function StudyPipelinesSection({
         />
       )}
 
-      {selectedPipeline?.configSchema?.properties &&
-        Object.entries(selectedPipeline.configSchema.properties).some(
-          ([, s]) => s.enum || s.type === "boolean" || s.type === "number"
-        ) && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <h3 className="mb-3 text-sm font-medium">Settings</h3>
-          {(() => {
-            const entries = Object.entries(selectedPipeline.configSchema.properties);
-            const booleanEntries = entries.filter(([, p]) => p.type === "boolean");
-            const otherEntries = entries.filter(([, p]) => p.type !== "boolean" && (Array.isArray(p.enum) || p.type === "number"));
-            return (
-              <div className="space-y-4">
-                {booleanEntries.length > 0 && (
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                    {booleanEntries.map(([key, property]) => {
-                      const fieldId = `config-${key}`;
-                      const rawValue = localConfig[key] ?? property.default;
-                      const isSkipKey = key.startsWith("skip");
-                      const checked = isSkipKey ? !rawValue : !!rawValue;
-                      const label = isSkipKey
-                        ? (property.title || key).replace(/^Skip\s+/i, "")
-                        : (property.title || key);
-                      return (
-                        <div key={key} className="flex items-center gap-2.5">
-                          <Switch
-                            id={fieldId}
-                            checked={checked}
-                            onCheckedChange={(c) =>
-                              setLocalConfig((prev) => ({
-                                ...prev,
-                                [key]: isSkipKey ? !c : !!c,
-                              }))
-                            }
-                          />
-                          <Label htmlFor={fieldId} className="text-xs text-muted-foreground cursor-pointer">
-                            {label}
-                          </Label>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {otherEntries.length > 0 && (
-                  <div className="flex flex-wrap items-end gap-4">
-                    {otherEntries.map(([key, property]) => {
-                      const fieldId = `config-${key}`;
-                      const value = localConfig[key] ?? property.default;
-                      if (Array.isArray(property.enum) && property.enum.length > 0) {
-                        return (
-                          <div key={key} className="space-y-1">
-                            <Label className="text-xs" htmlFor={fieldId}>
-                              {property.title || key}
-                            </Label>
-                            <Select
-                              value={String(value ?? property.enum[0] ?? "")}
-                              onValueChange={(v) =>
-                                setLocalConfig((prev) => ({ ...prev, [key]: v }))
-                              }
-                            >
-                              <SelectTrigger
-                                id={fieldId}
-                                aria-label={property.title || key}
-                                className="h-8 w-[160px] text-xs"
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {property.enum.map((opt) => (
-                                  <SelectItem key={String(opt)} value={String(opt)}>
-                                    {String(opt)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        );
-                      }
-                      if (property.type === "number") {
-                        return (
-                          <div key={key} className="space-y-1">
-                            <Label className="text-xs" htmlFor={fieldId}>
-                              {property.title || key}
-                            </Label>
-                            <Input
-                              id={fieldId}
-                              type="number"
-                              className="h-8 w-[120px] text-xs"
-                              value={value != null ? String(value) : ""}
-                              onChange={(e) =>
-                                setLocalConfig((prev) => ({
-                                  ...prev,
-                                  [key]: e.target.value ? Number(e.target.value) : undefined,
-                                }))
-                              }
-                            />
-                          </div>
-                        );
-                      }
-                      return null;
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          {/* SubMG ENA target info */}
-          {isSubmgSelected && enaSubmissionServer && (
-            <p
-              className={`mt-3 text-xs ${
-                enaSubmissionServer.isTestMode ? "text-amber-700" : "text-blue-700"
-              }`}
-            >
-              ENA target: {enaSubmissionServer.label} ({enaSubmissionServer.host})
-              {enaSubmissionServer.isTestMode ? " - test submission mode" : ""}
-            </p>
-          )}
-        </div>
+      <PipelineRunSettings
+        configSchema={selectedPipeline?.configSchema}
+        localConfig={localConfig}
+        setLocalConfig={setLocalConfig}
+        derivedSettings={metadataValidation?.derivedSettings}
+      />
+
+      {/* SubMG ENA target info */}
+      {isSubmgSelected && enaSubmissionServer && (
+        <p
+          className={`text-xs ${
+            enaSubmissionServer.isTestMode ? "text-amber-700" : "text-blue-700"
+          }`}
+        >
+          ENA target: {enaSubmissionServer.label} ({enaSubmissionServer.host})
+          {enaSubmissionServer.isTestMode ? " - test submission mode" : ""}
+        </p>
       )}
 
       {/* Section 4: Samples table */}
@@ -2323,7 +2198,7 @@ export function StudyPipelinesSection({
                       Details
                     </th>
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
-                      Report
+                      Results
                     </th>
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                       Samples
@@ -2347,7 +2222,6 @@ export function StudyPipelinesSection({
                     const displayStatus = getStudyPipelineRunDisplayStatus(run);
                     const details = getStudyPipelineRunDetails(run);
                     const sampleCount = getSampleCount(run);
-                    const reportPath = getStudyPipelineRunReportPath(run);
                     const hasOutputErrors = runHasOutputErrors(run);
                     const analysisRunHref =
                       `/analysis/${run.id}?studyId=${encodeURIComponent(studyId)}` +
@@ -2376,12 +2250,20 @@ export function StudyPipelinesSection({
                           </td>
                         )}
                         <td className="px-4 py-3 align-top">
-                          <code
-                            className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
-                            title={run.runNumber}
-                          >
-                            #{run.runNumber.split("-").pop()}
-                          </code>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <code
+                              className="rounded bg-muted px-2 py-0.5 text-xs font-mono"
+                              title={run.runNumber}
+                            >
+                              #{run.runNumber.split("-").pop()}
+                            </code>
+                            {run.isSelectedFinal && (
+                              <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Final
+                              </Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 align-top">
                           <div className="flex items-center gap-2">
@@ -2410,21 +2292,14 @@ export function StudyPipelinesSection({
                           )}
                         </td>
                         <td className="px-4 py-3 align-top" onClick={(e) => e.stopPropagation()}>
-                          {run.status === "completed" && reportPath ? (
-                            <a
-                              href={`/api/files/preview?path=${encodeURIComponent(reportPath)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                            >
-                              View report
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          ) : run.status === "completed" && hasOutputErrors ? (
-                            <span className="text-xs text-destructive">Output error</span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">-</span>
-                          )}
+                          <PipelineRunResultLinks
+                            status={run.status}
+                            resultFiles={run.resultFiles}
+                            primaryResultFile={run.primaryResultFile}
+                            omittedCount={run.resultFilesOmittedCount}
+                            omittedSampleFileCount={run.resultFilesOmittedSampleFileCount}
+                            hasOutputErrors={hasOutputErrors}
+                          />
                         </td>
                         <td className="px-4 py-3 align-top text-xs text-muted-foreground tabular-nums">
                           {sampleCount != null ? sampleCount : "-"}
@@ -2467,6 +2342,30 @@ export function StudyPipelinesSection({
                                 <ExternalLink className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
+                              {isFacilityAdmin && run.status === "completed" && !run.isSelectedFinal && (
+                                <DropdownMenuItem
+                                  disabled={selectionUpdatingRunId === run.id}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void handleSetFinalRun(run, true);
+                                  }}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Use as final
+                                </DropdownMenuItem>
+                              )}
+                              {isFacilityAdmin && run.isSelectedFinal && (
+                                <DropdownMenuItem
+                                  disabled={selectionUpdatingRunId === run.id}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void handleSetFinalRun(run, false);
+                                  }}
+                                >
+                                  <X className="h-4 w-4" />
+                                  Clear final
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 variant="destructive"
                                 disabled={displayStatus === "running" || deletingRun}

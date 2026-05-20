@@ -379,13 +379,21 @@ export async function notifyPipelineRunTerminalInApp(
         : normalizedNext === "cancelled"
           ? "warning"
           : "error";
+    const linkParams = new URLSearchParams();
+    if (run.study?.id) {
+      linkParams.set("studyId", run.study.id);
+    } else if (run.order?.id) {
+      linkParams.set("orderId", run.order.id);
+    }
+    linkParams.set("pipeline", run.pipelineId);
+    const linkQuery = linkParams.toString();
 
     await createNotifications(recipients, {
       eventType,
       severity,
       title: `Pipeline ${run.pipelineId} ${titleStatus}`,
       body: `Run ${run.runNumber} for ${targetLabel} ${titleStatus}.`,
-      linkPath: `/analysis/${run.id}`,
+      linkPath: `/analysis/${run.id}${linkQuery ? `?${linkQuery}` : ""}`,
       sourceType: "pipelineRun",
       sourceId: run.id,
       dedupeKey: (recipient) => `${eventType}:${run.id}:${recipient.id}`,

@@ -772,6 +772,7 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
           path: true,
           sampleId: true,
           size: true,
+          outputId: true,
           checksum: true,
           producedByStepId: true,
           metadata: true,

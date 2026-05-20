@@ -8,6 +8,7 @@ import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
+import { mergePipelineDerivedConfig } from '@/lib/pipelines/derived-config';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
@@ -26,6 +27,11 @@ import {
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
+import {
+  buildPipelineRunResultFileSummary,
+  getPipelineRunTargetKey,
+  getPrimaryPipelineRunResultFile,
+} from '@/lib/pipelines/result-files';
 import { summarizePipelineFailure } from '@/lib/pipelines/run-log-summary';
 import {
   detectRuntimePlatform,
@@ -86,6 +92,17 @@ function parseRunResults(rawResults: string | null | undefined): Record<string, 
   }
 }
 
+function normalizeArtifactSize(value: bigint | number | string | null | undefined): number | null {
+  if (value == null) return null;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
@@ -130,6 +147,36 @@ async function resolvePipelineRuntimeConfig(
   });
 
   return normalizePipelineRunConfig(pipelineId, mergedConfig);
+}
+
+async function resolvePipelineLaunchConfig(args: {
+  pipelineId: string;
+  runConfig: Record<string, unknown> | null;
+  target: PipelineTarget;
+}): Promise<{
+  config: Record<string, unknown>;
+  derivedIssues: string[];
+}> {
+  const baseConfig = await resolvePipelineRuntimeConfig(args.pipelineId, args.runConfig);
+  const derived = await mergePipelineDerivedConfig({
+    pipelineId: args.pipelineId,
+    target: args.target,
+    config: baseConfig,
+  });
+
+  if (derived.issues.length > 0) {
+    return {
+      config: baseConfig,
+      derivedIssues: derived.issues
+        .filter((issue) => issue.severity === 'error')
+        .map((issue) => issue.message),
+    };
+  }
+
+  return {
+    config: normalizePipelineRunConfig(args.pipelineId, derived.config),
+    derivedIssues: [],
+  };
 }
 
 async function commandExists(command: string): Promise<boolean> {
@@ -271,6 +318,8 @@ export async function listPipelineRunsForOperator(args: {
             path: true,
             type: true,
             sampleId: true,
+            outputId: true,
+            size: true,
           },
           orderBy: { createdAt: 'asc' },
         },
@@ -282,15 +331,72 @@ export async function listPipelineRunsForOperator(args: {
     db.pipelineRun.count({ where }),
   ]);
 
-  const enrichedRuns = runs.map((run) => {
+  const selectionLookupKeys = runs
+    .map((run) => {
+      const targetKey = getPipelineRunTargetKey(run);
+      return targetKey ? { pipelineId: run.pipelineId, targetKey } : null;
+    })
+    .filter((value): value is { pipelineId: string; targetKey: string } => Boolean(value));
+
+  const selections = selectionLookupKeys.length
+    ? await db.pipelineResultSelection.findMany({
+        where: {
+          OR: selectionLookupKeys.map((selection) => ({
+            pipelineId: selection.pipelineId,
+            targetKey: selection.targetKey,
+          })),
+        },
+        include: {
+          selectedBy: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+        },
+      })
+    : [];
+
+  const selectionByTarget = new Map(
+    selections.map((selection) => [
+      `${selection.pipelineId}:${selection.targetKey}`,
+      selection,
+    ])
+  );
+
+  const enrichedRuns = await Promise.all(runs.map(async (run) => {
     const definition = PIPELINE_REGISTRY[run.pipelineId];
+    const artifacts = run.artifacts.map((artifact) => ({
+      ...artifact,
+      size: normalizeArtifactSize(artifact.size),
+    }));
+    const resultFileSummary = await buildPipelineRunResultFileSummary({
+      pipelineId: run.pipelineId,
+      runId: run.id,
+      runFolder: run.runFolder,
+      artifacts,
+    });
+    const targetKey = getPipelineRunTargetKey(run);
+    const selection = targetKey
+      ? selectionByTarget.get(`${run.pipelineId}:${targetKey}`) ?? null
+      : null;
     return {
       ...run,
+      artifacts,
       pipelineName: definition?.name || run.pipelineId,
       pipelineIcon: definition?.icon || 'CircleDot',
       results: parseRunResults(run.results),
+      isSelectedFinal: selection?.selectedRunId === run.id,
+      selectedFinal: selection
+        ? {
+            selectedRunId: selection.selectedRunId,
+            selectedAt: selection.selectedAt,
+            selectedBy: selection.selectedBy,
+          }
+        : null,
+      resultFiles: resultFileSummary.files,
+      resultFilesOmittedCount: resultFileSummary.omittedCount,
+      resultFilesOmittedSampleFileCount: resultFileSummary.omittedSampleFileCount,
+      primaryResultFile: getPrimaryPipelineRunResultFile(resultFileSummary.files),
     };
-  });
+  }));
 
   return jsonResponse({
     runs: enrichedRuns,
@@ -413,7 +519,11 @@ export async function createPipelineRunForOperator({
     }
   }
 
-  const metadataValidation = await validatePipelineMetadata(target, pipelineId);
+  const validationTarget =
+    requestedSampleIds && requestedSampleIds.length > 0
+      ? { ...target, sampleIds: requestedSampleIds }
+      : target;
+  const metadataValidation = await validatePipelineMetadata(validationTarget, pipelineId);
   const metadataErrors = metadataValidation.issues
     .filter((issue) => issue.severity === 'error')
     .map((issue) => issue.message);
@@ -435,10 +545,6 @@ export async function createPipelineRunForOperator({
   }
 
   if (adapter) {
-    const validationTarget =
-      requestedSampleIds && requestedSampleIds.length > 0
-        ? { ...target, sampleIds: requestedSampleIds }
-        : target;
     const inputValidation = await adapter.validateInputs(validationTarget);
     if (!inputValidation.valid) {
       return jsonResponse(
@@ -448,7 +554,19 @@ export async function createPipelineRunForOperator({
     }
   }
 
-  const normalizedConfig = await resolvePipelineRuntimeConfig(pipelineId, asRecord(config));
+  const launchConfig = await resolvePipelineLaunchConfig({
+    pipelineId,
+    runConfig: asRecord(config),
+    target: validationTarget,
+  });
+  if (launchConfig.derivedIssues.length > 0) {
+    return jsonResponse(
+      { error: 'Pipeline metadata validation failed', details: launchConfig.derivedIssues },
+      400
+    );
+  }
+
+  const normalizedConfig = launchConfig.config;
   const configIssues = getPipelineRunConfigIssues(pipelineId, normalizedConfig);
   if (configIssues.length > 0) {
     return jsonResponse(
@@ -580,25 +698,6 @@ export async function startPipelineRunForOperator({
       return jsonResponse({ error: 'Run config is invalid JSON' }, 400);
     }
   }
-  config = await resolvePipelineRuntimeConfig(run.pipelineId, config);
-  const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
-  if (configIssues.length > 0) {
-    const message = configIssues.join('\n');
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
-    return jsonResponse(
-      { error: 'Pipeline config validation failed', details: configIssues },
-      400
-    );
-  }
 
   let selectedSampleIds: string[] | undefined;
   if (run.inputSampleIds) {
@@ -624,12 +723,11 @@ export async function startPipelineRunForOperator({
     selectedSampleIds = startBody.sampleIds;
   }
 
-  const metadataValidation = await validatePipelineMetadata(
+  const validationTarget =
     selectedSampleIds && selectedSampleIds.length > 0
       ? { ...target, sampleIds: selectedSampleIds }
-      : target,
-    run.pipelineId
-  );
+      : target;
+  const metadataValidation = await validatePipelineMetadata(validationTarget, run.pipelineId);
   const metadataErrors = metadataValidation.issues
     .filter((issue) => issue.severity === 'error')
     .map((issue) => issue.message);
@@ -639,6 +737,49 @@ export async function startPipelineRunForOperator({
         error: 'Pipeline metadata validation failed',
         details: metadataErrors,
       },
+      400
+    );
+  }
+
+  const launchConfig = await resolvePipelineLaunchConfig({
+    pipelineId: run.pipelineId,
+    runConfig: config,
+    target: validationTarget,
+  });
+  if (launchConfig.derivedIssues.length > 0) {
+    const message = launchConfig.derivedIssues.join('\n');
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'failed',
+        errorTail: message,
+        completedAt: new Date(),
+        statusSource: 'launcher',
+        lastEventAt: new Date(),
+      },
+    });
+    return jsonResponse(
+      { error: 'Pipeline metadata validation failed', details: launchConfig.derivedIssues },
+      400
+    );
+  }
+
+  config = launchConfig.config;
+  const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
+  if (configIssues.length > 0) {
+    const message = configIssues.join('\n');
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'failed',
+        errorTail: message,
+        completedAt: new Date(),
+        statusSource: 'launcher',
+        lastEventAt: new Date(),
+      },
+    });
+    return jsonResponse(
+      { error: 'Pipeline config validation failed', details: configIssues },
       400
     );
   }

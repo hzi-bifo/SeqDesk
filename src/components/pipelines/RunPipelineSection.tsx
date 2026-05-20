@@ -580,7 +580,15 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                       </p>
                       <div className="mt-4 flex flex-col gap-2">
                         <Link
-                          href={`/analysis/${runResult.runId}`}
+                          href={
+                            runResult.runId
+                              ? `/analysis/${runResult.runId}?studyId=${encodeURIComponent(studyId)}${
+                                  selectedPipelineId
+                                    ? `&pipeline=${encodeURIComponent(selectedPipelineId)}`
+                                    : ""
+                                }`
+                              : "/analysis"
+                          }
                           className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
                         >
                           <FlaskConical className="h-4 w-4" />

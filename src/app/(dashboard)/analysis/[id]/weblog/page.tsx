@@ -2,6 +2,7 @@
 
 import { use, useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   ArrowLeft,
@@ -352,6 +353,9 @@ export default function ProcessedWeblogPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
+  const runContextQuery = searchParams.toString();
+  const runHref = runContextQuery ? `/analysis/${id}?${runContextQuery}` : `/analysis/${id}`;
   const { data, error, isLoading, isValidating, mutate } = useSWR<WeblogData>(
     `/api/pipelines/runs/${id}/weblog?limit=500`,
     fetcher,
@@ -397,7 +401,7 @@ export default function ProcessedWeblogPage({
             {error instanceof Error ? error.message : "Failed to load weblog events"}
           </p>
           <Button variant="outline" className="mt-4" asChild>
-            <Link href={`/analysis/${id}`}>
+            <Link href={runHref}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to run
             </Link>
@@ -412,7 +416,7 @@ export default function ProcessedWeblogPage({
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <Button variant="ghost" size="sm" className="mb-3 px-0" asChild>
-            <Link href={`/analysis/${id}`}>
+            <Link href={runHref}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to run
             </Link>

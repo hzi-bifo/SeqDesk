@@ -25,7 +25,12 @@ import type {
   SeqDeskDestination,
   SeqDeskSource,
 } from './definitions';
-import type { PipelineReadMode, PipelineSampleResult } from './types';
+import type {
+  PipelineConfigProperty,
+  PipelineConfigSchema,
+  PipelineReadMode,
+  PipelineSampleResult,
+} from './types';
 
 // ============================================================================
 // Package Types
@@ -233,10 +238,7 @@ export interface RegistryConfig {
     format: string;
     generator: string;
   };
-  configSchema: {
-    type: string;
-    properties: Record<string, unknown>;
-  };
+  configSchema: PipelineConfigSchema;
   defaultConfig: Record<string, unknown>;
   icon: string;
 }
@@ -522,13 +524,235 @@ function validatePackageManifest(
   };
 }
 
-function normalizeMetaxPathCompatibility(manifest: PackageManifest): void {
+function mergeSeqDeskUi(
+  property: PipelineConfigProperty,
+  ui: NonNullable<PipelineConfigProperty['x-seqdesk']>
+): PipelineConfigProperty {
+  return {
+    ...property,
+    'x-seqdesk': {
+      ...(property['x-seqdesk'] || {}),
+      ...ui,
+      derive: ui.derive
+        ? {
+            ...(property['x-seqdesk']?.derive || {}),
+            ...ui.derive,
+          }
+        : property['x-seqdesk']?.derive,
+    },
+  };
+}
+
+function upsertConfigProperty(
+  registry: RegistryConfig,
+  key: string,
+  property: PipelineConfigProperty
+): void {
+  registry.configSchema.properties[key] = {
+    ...(registry.configSchema.properties[key] || {}),
+    ...property,
+    'x-seqdesk': {
+      ...(registry.configSchema.properties[key]?.['x-seqdesk'] || {}),
+      ...(property['x-seqdesk'] || {}),
+    },
+  };
+}
+
+function annotateConfigProperty(
+  registry: RegistryConfig,
+  key: string,
+  ui: NonNullable<PipelineConfigProperty['x-seqdesk']>,
+  overrides: Partial<PipelineConfigProperty> = {}
+): void {
+  const property = registry.configSchema.properties[key];
+  if (!property) return;
+  registry.configSchema.properties[key] = mergeSeqDeskUi(
+    {
+      ...property,
+      ...overrides,
+    },
+    ui
+  );
+}
+
+const METAXPATH_SEQUENCER_MODE_MAP: Record<string, string> = {
+  'oxford-nanopore': 'Nanopore',
+  oxford_nanopore: 'Nanopore',
+  'oxford nanopore': 'Nanopore',
+  nanopore: 'Nanopore',
+  ont: 'Nanopore',
+  'ont-minion': 'Nanopore',
+  'ont-gridion': 'Nanopore',
+  'ont-promethion': 'Nanopore',
+  minion: 'Nanopore',
+  gridion: 'Nanopore',
+  promethion: 'Nanopore',
+  pacbio: 'PacBio',
+  'pacbio-revio': 'PacBio',
+  'pacbio-sequel2': 'PacBio',
+  revio: 'PacBio',
+  sequel: 'PacBio',
+  sequel2: 'PacBio',
+  'sequel ii': 'PacBio',
+  'sequel ii/iie': 'PacBio',
+};
+
+function normalizeMetaxPathRegistry(registry?: RegistryConfig): void {
+  if (!registry) return;
+
+  upsertConfigProperty(registry, 'sequencer', {
+    type: 'string',
+    title: 'Sequencing Mode',
+    description: 'Derived from the selected order sequencing technology.',
+    enum: ['Nanopore', 'PacBio'],
+    default: 'Nanopore',
+    'x-seqdesk': {
+      placement: 'derived',
+      group: 'analysis',
+      derive: {
+        source: 'order.sequencingTechnology.platformFamily',
+        map: METAXPATH_SEQUENCER_MODE_MAP,
+        requireSingleValue: true,
+      },
+      helpText:
+        'SeqDesk derives this from the selected samples’ order sequencing technology. A run must contain only Nanopore samples or only PacBio samples.',
+    },
+  });
+
+  upsertConfigProperty(registry, 'skipSylph', {
+    type: 'boolean',
+    title: 'Sylph Profiling',
+    description: 'Add optional Sylph k-mer abundance profiling.',
+    default: false,
+    'x-seqdesk': {
+      placement: 'basic',
+      group: 'analysis',
+      booleanMode: 'inverse',
+      helpText:
+        'Runs Sylph k-mer based taxonomic abundance profiling as an additional evidence branch. Disable this only when the Sylph database is not installed or the extra profiling branch is not needed.',
+    },
+  });
+
+  upsertConfigProperty(registry, 'skipVirulence', {
+    type: 'boolean',
+    title: 'Virulence Search',
+    description: 'Search assemblies for virulence factors with VFDB/BLAST.',
+    default: false,
+    'x-seqdesk': {
+      placement: 'basic',
+      group: 'analysis',
+      booleanMode: 'inverse',
+      helpText:
+        'Searches assembled contigs against VFDB with BLAST to report virulence factor hits for profiled species.',
+    },
+  });
+
+  upsertConfigProperty(registry, 'skipAmr', {
+    type: 'boolean',
+    title: 'AMR Prediction',
+    description: 'Predict antimicrobial resistance markers for detected pathogens.',
+    default: false,
+    'x-seqdesk': {
+      placement: 'basic',
+      group: 'analysis',
+      booleanMode: 'inverse',
+      helpText:
+        'Predicts antimicrobial resistance markers with ResFinder/PointFinder and Kover where the required databases and species models are available.',
+    },
+  });
+
+  upsertConfigProperty(registry, 'assemblers', {
+    type: 'string',
+    title: 'Assemblers',
+    description: 'Comma-separated assembler list passed to MetaxPath.',
+    default: registry.defaultConfig.assemblers || 'metaflye',
+    'x-seqdesk': {
+      placement: 'advanced',
+      group: 'analysis',
+      helpText:
+        'Comma-separated assembler list passed to MetaxPath. Keep the default unless comparing assembler branches intentionally.',
+    },
+  });
+  upsertConfigProperty(registry, 'threads', {
+    type: 'number',
+    title: 'Threads',
+    description: 'CPU threads requested by compute-heavy pipeline steps.',
+    default: registry.defaultConfig.threads || 20,
+    minimum: 1,
+    'x-seqdesk': {
+      placement: 'advanced',
+      group: 'runtime',
+      helpText:
+        'CPU threads requested by compute-heavy pipeline steps. Slurm still controls scheduling and cluster resource allocation.',
+    },
+  });
+  upsertConfigProperty(registry, 'topn', {
+    type: 'number',
+    title: 'Top N Report Rows',
+    description: 'Number of top taxa included in final report tables.',
+    default: registry.defaultConfig.topn || 50,
+    minimum: 1,
+    'x-seqdesk': {
+      placement: 'advanced',
+      group: 'reporting',
+      helpText:
+        'Number of top taxa included in final combined report tables and HTML output.',
+    },
+  });
+
+  upsertConfigProperty(registry, 'kraken2MemoryMapping', {
+    type: 'boolean',
+    title: 'Kraken2 Memory Mapping',
+    description: 'Use Kraken2 memory mapping for large PlusPF databases.',
+    default: false,
+    'x-seqdesk': {
+      placement: 'advanced',
+      group: 'runtime',
+      helpText:
+        'Reduces Kraken2 startup memory pressure for large databases such as PlusPF. Recommended on Slurm systems with strict cgroup memory limits.',
+    },
+  });
+  if (!Object.prototype.hasOwnProperty.call(registry.defaultConfig, 'kraken2MemoryMapping')) {
+    registry.defaultConfig.kraken2MemoryMapping = false;
+  }
+
+  const adminKeys = [
+    'metaxDb',
+    'metaxDmpDir',
+    'kraken2Db',
+    'sylphDb',
+    'vfdbCore',
+    'resfinderDb',
+    'pointfinderDb',
+    'refIndex',
+    'notificationEmails',
+  ];
+  for (const key of adminKeys) {
+    annotateConfigProperty(registry, key, {
+      placement: key === 'refIndex' ? 'hidden' : 'admin',
+      group: 'databases',
+    });
+  }
+}
+
+function normalizeMetaxPathCompatibility(
+  manifest: PackageManifest,
+  registry?: RegistryConfig
+): void {
   if (manifest.package.id !== 'metaxpath') return;
 
   manifest.execution.paramMap = {
     ...manifest.execution.paramMap,
     paramsFile: '-params-file',
+    kraken2MemoryMapping:
+      manifest.execution.paramMap?.kraken2MemoryMapping || '--kraken2_memory_mapping',
   };
+  manifest.execution.defaultParams = {
+    ...manifest.execution.defaultParams,
+    kraken2MemoryMapping:
+      manifest.execution.defaultParams.kraken2MemoryMapping ?? false,
+  };
+  normalizeMetaxPathRegistry(registry);
 }
 
 /**
@@ -579,7 +803,7 @@ function loadPackage(packageDir: string): LoadedPackage | null {
     return null;
   }
 
-  normalizeMetaxPathCompatibility(manifest);
+  normalizeMetaxPathCompatibility(manifest, registry);
 
   // Load samplesheet (optional)
   let samplesheet: SamplesheetConfig | null = null;

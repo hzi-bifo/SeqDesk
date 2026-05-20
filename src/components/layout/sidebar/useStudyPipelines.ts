@@ -12,6 +12,7 @@ export interface StudyPipelineNavItem {
   name: string;
   category: string;
   status: PipelineProgressIndicatorStatus;
+  runIds: string[];
 }
 
 interface StudyPipelineDefinition {
@@ -21,6 +22,7 @@ interface StudyPipelineDefinition {
 }
 
 interface PipelineRunSummary {
+  id?: string;
   pipelineId: string;
   status: PipelineRunStatus;
   createdAt?: string | Date | null;
@@ -87,6 +89,13 @@ export function useStudyPipelines(
         const statusByPipeline = getPipelineProgressStatuses(
           runsPayload?.runs ?? []
         );
+        const runIdsByPipeline = new Map<string, string[]>();
+        for (const run of runsPayload?.runs ?? []) {
+          if (!run.id) continue;
+          const runIds = runIdsByPipeline.get(run.pipelineId) ?? [];
+          runIds.push(run.id);
+          runIdsByPipeline.set(run.pipelineId, runIds);
+        }
 
         if (!cancelled) {
           setFetchedPipelines(
@@ -95,6 +104,7 @@ export function useStudyPipelines(
               name: pipeline.name,
               category: pipeline.category,
               status: statusByPipeline[pipeline.pipelineId] ?? "empty",
+              runIds: runIdsByPipeline.get(pipeline.pipelineId) ?? [],
             }))
           );
         }

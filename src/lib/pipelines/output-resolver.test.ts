@@ -196,6 +196,48 @@ describe("output-resolver", () => {
     expect(mocks.db.assembly.create).toHaveBeenCalledTimes(1);
   });
 
+  it("persists artifact outputId and file size", async () => {
+    const artifactPath = path.join(tempDir, "report.html");
+    await fs.writeFile(artifactPath, "<html>ok</html>");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "combined-report",
+            scope: "study",
+            destination: "study_report",
+            type: "report",
+            discovery: { pattern: "report.html" },
+          },
+        ],
+      },
+    });
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    const result = await resolveOutputs("metaxpath", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "report",
+          name: "report.html",
+          path: artifactPath,
+          outputId: "combined-report",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.artifactsCreated).toBe(1);
+    expect(mocks.db.pipelineArtifact.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        outputId: "combined-report",
+        size: BigInt("<html>ok</html>".length),
+      }),
+    });
+  });
+
   it("warns when output destination is unknown", async () => {
     mocks.getPackage.mockReturnValue({
       manifest: {

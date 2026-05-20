@@ -57,6 +57,15 @@ interface ResolvedOutputContract {
 type ReadWritebackValue = string | number | null;
 type ReadWritebackData = Partial<Record<ReadWritebackField, ReadWritebackValue>>;
 
+async function getFileSizeBytes(filePath: string): Promise<bigint | null> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile() ? BigInt(stat.size) : null;
+  } catch {
+    return null;
+  }
+}
+
 function mergePipelineSource(
   existing: string | null | undefined,
   pipelineId: string,
@@ -331,11 +340,15 @@ async function createArtifact(
       return { success: true, skipped: true };
     }
 
+    const size = await getFileSizeBytes(file.path);
+
     await db.pipelineArtifact.create({
       data: {
         type: file.type === 'report' ? 'report' : file.type === 'qc' ? 'qc' : 'data',
         name: file.name,
         path: file.path,
+        size,
+        outputId: output.id,
         sampleId: file.sampleId || null,
         pipelineRunId: runId,
         producedByStepId: file.fromStep || output.fromStep,

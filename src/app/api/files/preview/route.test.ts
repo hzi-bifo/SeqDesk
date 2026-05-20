@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Readable } from "stream";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   fs: {
     stat: vi.fn(),
     readFile: vi.fn(),
+    createReadStream: vi.fn(),
   },
 }));
 
@@ -38,6 +40,10 @@ vi.mock("fs/promises", () => ({
   },
 }));
 
+vi.mock("fs", () => ({
+  createReadStream: mocks.fs.createReadStream,
+}));
+
 import { GET } from "./route";
 
 function makeRequest(params?: Record<string, string>) {
@@ -62,10 +68,12 @@ describe("GET /api/files/preview", () => {
         id: "run-1",
         runFolder: "/data/runs/run-1",
         study: { userId: "admin-1" },
+        order: null,
       },
     ]);
-    mocks.fs.stat.mockResolvedValue({ isFile: () => true });
+    mocks.fs.stat.mockResolvedValue({ isFile: () => true, size: 18 });
     mocks.fs.readFile.mockResolvedValue(Buffer.from("<html>report</html>"));
+    mocks.fs.createReadStream.mockReturnValue(Readable.from(["preview"]));
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -129,7 +137,7 @@ describe("GET /api/files/preview", () => {
 
   it("returns 400 for unsupported extension", async () => {
     const response = await GET(
-      makeRequest({ path: "/data/runs/run-1/output/file.pdf" })
+      makeRequest({ path: "/data/runs/run-1/output/file.exe" })
     );
 
     expect(response.status).toBe(400);
@@ -154,6 +162,7 @@ describe("GET /api/files/preview", () => {
         id: "run-1",
         runFolder: "/data/runs/run-1",
         study: { userId: "owner-user" },
+        order: null,
       },
     ]);
 
@@ -162,6 +171,27 @@ describe("GET /api/files/preview", () => {
     );
 
     expect(response.status).toBe(403);
+  });
+
+  it("allows non-admin order owners to preview order run outputs", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "owner-user", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      {
+        id: "run-1",
+        runFolder: "/data/runs/run-1",
+        study: null,
+        order: { userId: "owner-user" },
+      },
+    ]);
+
+    const response = await GET(
+      makeRequest({ path: "/data/runs/run-1/output/report.pdf" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/pdf");
   });
 
   it("returns 404 when file does not exist on disk", async () => {
@@ -186,7 +216,7 @@ describe("GET /api/files/preview", () => {
 
   it("serves HTML file with correct headers", async () => {
     const htmlContent = Buffer.from("<html><body>Report</body></html>");
-    mocks.fs.readFile.mockResolvedValue(htmlContent);
+    mocks.fs.stat.mockResolvedValue({ isFile: () => true, size: htmlContent.length });
 
     const response = await GET(
       makeRequest({ path: "/data/runs/run-1/output/report.html" })
@@ -201,6 +231,20 @@ describe("GET /api/files/preview", () => {
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "script-src"
     );
+  });
+
+  it("rejects files above the preview size limit", async () => {
+    mocks.fs.stat.mockResolvedValue({
+      isFile: () => true,
+      size: 101 * 1024 * 1024,
+    });
+
+    const response = await GET(
+      makeRequest({ path: "/data/runs/run-1/output/huge.log" })
+    );
+
+    expect(response.status).toBe(413);
+    expect(mocks.fs.createReadStream).not.toHaveBeenCalled();
   });
 
   it("returns 500 on unexpected error", async () => {

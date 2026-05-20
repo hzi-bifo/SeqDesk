@@ -47,8 +47,8 @@ describe("useStudyPipelines hook", () => {
       if (url === "/api/pipelines/runs?studyId=study-1&limit=200") {
         return jsonResponse({
           runs: [
-            { pipelineId: "mag", status: "completed" },
-            { pipelineId: "submg", status: "running" },
+            { id: "run-1", pipelineId: "mag", status: "completed" },
+            { id: "run-2", pipelineId: "submg", status: "running" },
           ],
         });
       }
@@ -65,12 +65,14 @@ describe("useStudyPipelines hook", () => {
           name: "MAG",
           category: "analysis",
           status: "complete",
+          runIds: ["run-1"],
         },
         {
           pipelineId: "submg",
           name: "SubMG",
           category: "analysis",
           status: "active",
+          runIds: ["run-2"],
         },
       ]);
     });
@@ -106,6 +108,7 @@ describe("useStudyPipelines hook", () => {
           name: "MAG",
           category: "analysis",
           status: "empty",
+          runIds: [],
         },
       ]);
     });
@@ -120,6 +123,7 @@ describe("useStudyPipelines hook", () => {
           name: "MAG",
           category: "analysis",
           status: "empty",
+          runIds: [],
         },
       ]);
     });

@@ -3,6 +3,10 @@
 
 import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
+import {
+  resolvePipelineDerivedConfig,
+  type DerivedPipelineSetting,
+} from '@/lib/pipelines/derived-config';
 import { getPackage } from '@/lib/pipelines/package-loader';
 import {
   resolveOrderPlatform,
@@ -28,6 +32,7 @@ export interface MetadataIssue {
 export interface MetadataValidationResult {
   valid: boolean;
   issues: MetadataIssue[];
+  derivedSettings: DerivedPipelineSetting[];
   metadata: {
     platform?: string;
     instrumentModel?: string;
@@ -122,6 +127,19 @@ const SUBMG_REQUIRED_SAMPLE_METADATA_FIELDS: SubmgRequiredSampleField[] = [
 ];
 
 const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function buildMetadataValidationResult(args: {
+  issues: MetadataIssue[];
+  metadata: MetadataValidationResult['metadata'];
+  derivedSettings?: DerivedPipelineSetting[];
+}): MetadataValidationResult {
+  return {
+    valid: args.issues.filter((issue) => issue.severity === 'error').length === 0,
+    issues: args.issues,
+    derivedSettings: args.derivedSettings || [],
+    metadata: args.metadata,
+  };
+}
 
 type RunAtMode = 'all' | 'selected-technologies';
 
@@ -339,6 +357,7 @@ export async function validatePipelineMetadata(
 ): Promise<MetadataValidationResult> {
   const target = normalizeValidationTarget(targetOrStudyId, sampleIds);
   const issues: MetadataIssue[] = [];
+  let derivedSettings: DerivedPipelineSetting[] = [];
   const metadata: MetadataValidationResult['metadata'] = {};
   const sampleFilter =
     Array.isArray(target.sampleIds) && target.sampleIds.length > 0
@@ -423,19 +442,17 @@ export async function validatePipelineMetadata(
   ]);
 
   if (isStudyTarget(target) && !study) {
-    return {
-      valid: false,
+    return buildMetadataValidationResult({
       issues: [{ field: 'study', message: 'Study not found', severity: 'error' }],
       metadata,
-    };
+    });
   }
 
   if (isOrderTarget(target) && !order) {
-    return {
-      valid: false,
+    return buildMetadataValidationResult({
       issues: [{ field: 'order', message: 'Order not found', severity: 'error' }],
       metadata,
-    };
+    });
   }
 
   const samples = isStudyTarget(target)
@@ -443,15 +460,14 @@ export async function validatePipelineMetadata(
     : order?.samples ?? [];
 
   if (samples.length === 0) {
-    return {
-      valid: false,
+    return buildMetadataValidationResult({
       issues: [{
         field: 'samples',
         message: isStudyTarget(target) ? 'No samples in study' : 'No samples in order',
         severity: 'error',
       }],
       metadata,
-    };
+    });
   }
 
   if (isOrderTarget(target)) {
@@ -467,13 +483,16 @@ export async function validatePipelineMetadata(
           severity: 'error',
         });
       }
-      return {
-        valid: false,
+      return buildMetadataValidationResult({
         issues,
         metadata,
-      };
+      });
     }
   }
+
+  const derivedConfig = await resolvePipelineDerivedConfig({ pipelineId, target });
+  derivedSettings = derivedConfig.settings;
+  issues.push(...derivedConfig.issues);
 
   // Collect metadata from all orders (with sample IDs for better error messages)
   const orders = new Map<
@@ -556,15 +575,15 @@ export async function validatePipelineMetadata(
 
   if (pipelineId === 'submg') {
     if (!study) {
-      return {
-        valid: false,
+      return buildMetadataValidationResult({
         issues: [{
           field: 'study',
           message: 'SubMG can only run on study targets',
           severity: 'error',
         }],
+        derivedSettings,
         metadata,
-      };
+      });
     }
 
     const enaTestMode =
@@ -668,11 +687,11 @@ export async function validatePipelineMetadata(
       }
     }
 
-    return {
-      valid: issues.filter((issue) => issue.severity === 'error').length === 0,
+    return buildMetadataValidationResult({
       issues,
+      derivedSettings,
       metadata,
-    };
+    });
   }
 
   let hasAnyResolvedPlatform = false;
@@ -812,11 +831,11 @@ export async function validatePipelineMetadata(
     });
   }
 
-  return {
-    valid: issues.filter(i => i.severity === 'error').length === 0,
+  return buildMetadataValidationResult({
     issues,
+    derivedSettings,
     metadata,
-  };
+  });
 }
 
 /**

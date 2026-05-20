@@ -36,6 +36,7 @@ model User {
   tickets          Ticket[]
   ticketMessages TicketMessage[]
   pipelineRuns   PipelineRun[]
+  pipelineResultSelectionsSelected PipelineResultSelection[] @relation("PipelineResultSelectedBy")
   inAppNotifications InAppNotification[]
   sequencingArtifactsCreated SequencingArtifact[] @relation("SequencingArtifactCreator")
   sequencingUploadsCreated   SequencingUpload[]   @relation("SequencingUploadCreator")
@@ -106,6 +107,7 @@ model Order {
   sequencingRuns      SequencingRun[]
   streamRuns          StreamRun[]
   pipelineRuns      PipelineRun[]
+  pipelineResultSelections PipelineResultSelection[]
   sampleset        Sampleset?
   statusNotes      StatusNote[]
   tickets          Ticket[]     @relation("TicketOrder")
@@ -133,6 +135,7 @@ model Study {
   userId             String
   samples            Sample[]
   pipelineRuns       PipelineRun[]
+  pipelineResultSelections PipelineResultSelection[]
   user               User          @relation("StudyOwner", fields: [userId], references: [id])
   notesEditedBy      User?         @relation("StudyNotesEditor", fields: [notesEditedById], references: [id])
   tickets            Ticket[]      @relation("TicketStudy")
@@ -497,6 +500,7 @@ model PipelineRun {
   steps             PipelineRunStep[]
   events            PipelineRunEvent[]
   artifacts         PipelineArtifact[]
+  selectedResultSelections PipelineResultSelection[] @relation("SelectedPipelineResultRun")
 
   @@index([studyId])
   @@index([orderId])
@@ -546,6 +550,7 @@ model PipelineArtifact {
   path             String // Absolute or relative path to artifact
   checksum         String? // MD5 or SHA256
   size             BigInt? // File size in bytes
+  outputId         String? // Manifest output id, when resolved from a package output
   studyId          String?
   sampleId         String?
   pipelineRunId    String?
@@ -553,6 +558,31 @@ model PipelineArtifact {
   producedByStepId String? // Which step produced this
   metadata         String? // JSON for tool-specific info
   createdAt        DateTime     @default(now())
+
+  @@index([outputId])
+}
+
+// Explicit final-result selection for one study/order target and pipeline.
+model PipelineResultSelection {
+  id            String      @id @default(cuid())
+  pipelineId    String
+  targetKey     String // study:<id> or order:<id>
+  studyId       String?
+  orderId       String?
+  selectedRunId String      @unique
+  selectedRun   PipelineRun @relation("SelectedPipelineResultRun", fields: [selectedRunId], references: [id], onDelete: Cascade)
+  selectedById  String?
+  selectedBy    User?       @relation("PipelineResultSelectedBy", fields: [selectedById], references: [id], onDelete: SetNull)
+  study         Study?      @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  order         Order?      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  selectedAt    DateTime    @default(now())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([pipelineId, targetKey])
+  @@index([studyId])
+  @@index([orderId])
+  @@index([selectedById])
 }
 
 model StatusNote {

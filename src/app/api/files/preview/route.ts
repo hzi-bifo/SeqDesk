@@ -3,15 +3,34 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
+import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
+import { Readable } from "stream";
 
-const ALLOWED_EXTENSIONS = new Set(["html", "htm"]);
+const ALLOWED_EXTENSIONS = new Set([
+  "html",
+  "htm",
+  "pdf",
+  "txt",
+  "tsv",
+  "csv",
+  "log",
+  "json",
+]);
 
 const MIME_TYPES: Record<string, string> = {
   html: "text/html",
   htm: "text/html",
+  pdf: "application/pdf",
+  txt: "text/plain; charset=utf-8",
+  tsv: "text/tab-separated-values; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  log: "text/plain; charset=utf-8",
+  json: "application/json; charset=utf-8",
 };
+
+const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
 
 /**
  * For demo sessions, serve a real FastQC report bundled in public/demo/.
@@ -103,6 +122,7 @@ export async function GET(request: NextRequest) {
         id: true,
         runFolder: true,
         study: { select: { userId: true } },
+        order: { select: { userId: true } },
       },
     });
 
@@ -120,31 +140,40 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Non-admins can only view files from their own studies
+    // Non-admins can only view files from their own studies or orders.
     if (
       session.user.role !== "FACILITY_ADMIN" &&
-      matchingRun.study?.userId !== session.user.id
+      matchingRun.study?.userId !== session.user.id &&
+      matchingRun.order?.userId !== session.user.id
     ) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 
-    // Check file exists
+    let fileSize = 0;
     try {
       const stat = await fs.stat(resolved);
       if (!stat.isFile()) {
         return new NextResponse("Not a file", { status: 400 });
       }
+      fileSize = Number.isFinite(stat.size) ? stat.size : 0;
     } catch {
       return new NextResponse("File not found", { status: 404 });
     }
 
-    const content = await fs.readFile(resolved);
-    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    if (fileSize > MAX_PREVIEW_BYTES) {
+      return new NextResponse(
+        `File is too large to preview (${Math.ceil(fileSize / 1024 / 1024)} MB).`,
+        { status: 413 }
+      );
+    }
 
-    return new NextResponse(content, {
+    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    const stream = Readable.toWeb(createReadStream(resolved)) as BodyInit;
+
+    return new NextResponse(stream, {
       headers: {
         "Content-Type": contentType,
-        "Content-Length": String(content.length),
+        "Content-Length": String(fileSize),
         // Prevent the browser from executing scripts in a different origin context
         "Content-Security-Policy": "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'",
         "X-Content-Type-Options": "nosniff",

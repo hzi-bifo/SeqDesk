@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   prepareSubmgRun: vi.fn(),
   processCompletedPipelineRun: vi.fn(),
   validatePipelineMetadata: vi.fn(),
+  mergePipelineDerivedConfig: vi.fn(),
   isDemoSession: vi.fn(),
   spawn: vi.fn(),
   exec: vi.fn(),
@@ -101,6 +102,10 @@ vi.mock("@/lib/pipelines/run-completion", () => ({
 
 vi.mock("@/lib/pipelines/metadata-validation", () => ({
   validatePipelineMetadata: mocks.validatePipelineMetadata,
+}));
+
+vi.mock("@/lib/pipelines/derived-config", () => ({
+  mergePipelineDerivedConfig: mocks.mergePipelineDerivedConfig,
 }));
 
 vi.mock("@/lib/demo/server", () => ({
@@ -204,6 +209,13 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     mocks.shouldSkipCondaOnMacArm.mockReturnValue(false);
     mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
     mocks.validatePipelineMetadata.mockResolvedValue({ issues: [] });
+    mocks.mergePipelineDerivedConfig.mockImplementation(
+      async ({ config }: { config: Record<string, unknown> }) => ({
+        config,
+        settings: [],
+        issues: [],
+      })
+    );
     mocks.prepareGenericRun.mockResolvedValue({
       success: true,
       runFolder: "/tmp/runs/run-1",
@@ -941,6 +953,85 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       customParam: "run-value",
     });
     expect(prepArgs.config).not.toHaveProperty("allowedSequencingTechnologies");
+  });
+
+  it("recomputes derived MetaxPath sequencer config when starting a run", async () => {
+    mocks.db.pipelineConfig.findUnique.mockResolvedValue({
+      enabled: true,
+      config: JSON.stringify({
+        topn: 50,
+      }),
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      pipelineId: "metaxpath",
+      config: JSON.stringify({
+        sequencer: "PacBio",
+        topn: 25,
+      }),
+      inputSampleIds: JSON.stringify(["s1"]),
+    });
+    mocks.getPackage.mockReturnValue({
+      basePath: "/tmp/packages/metaxpath",
+      manifest: {
+        package: {
+          id: "metaxpath",
+          name: "MetaxPath",
+          version: "0.1.5",
+          description: "MetaxPath",
+        },
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/metaxpath",
+          version: "Nextflow",
+        },
+        targets: {
+          supported: ["order"],
+        },
+      },
+    });
+    mocks.mergePipelineDerivedConfig.mockResolvedValueOnce({
+      config: {
+        sequencer: "Nanopore",
+        topn: 25,
+      },
+      settings: [
+        {
+          key: "sequencer",
+          title: "Sequencing Mode",
+          value: "Nanopore",
+          message: "MetaxPath will run in Nanopore mode.",
+          source: "order.sequencingTechnology.platformFamily",
+        },
+      ],
+      issues: [],
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    expect(mocks.mergePipelineDerivedConfig).toHaveBeenCalledWith({
+      pipelineId: "metaxpath",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: expect.objectContaining({
+        sequencer: "PacBio",
+        topn: 25,
+      }),
+    });
+    const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
+    expect(prepArgs.config).toEqual({
+      sequencer: "Nanopore",
+      topn: 25,
+    });
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        config: JSON.stringify({
+          sequencer: "Nanopore",
+          topn: 25,
+        }),
+      }),
+    });
   });
 
   it("resolves effective profile with multiple comma-separated values", async () => {

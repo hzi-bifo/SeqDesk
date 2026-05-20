@@ -92,10 +92,10 @@ describe("SidebarEntityNav", () => {
       ],
     });
     mocks.useOrderPipelines.mockReturnValue([
-      { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete" },
+      { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete", runIds: ["run-1"] },
     ]);
     mocks.useStudyPipelines.mockReturnValue([
-      { pipelineId: "mag", name: "MAG", status: "active" },
+      { pipelineId: "mag", name: "MAG", category: "analysis", status: "active", runIds: ["run-1"] },
     ]);
     mocks.progressClassName.mockImplementation((status: string) => {
       if (status === "complete") return "bg-emerald-500";
@@ -331,8 +331,31 @@ describe("SidebarEntityNav", () => {
     expect(pipelineLink.className).toContain("font-medium");
   });
 
-  it("marks study analysis active on analysis detail pages without selecting a pipeline", () => {
+  it("infers the selected study pipeline on analysis detail pages without a pipeline query param", () => {
     mocks.usePathname.mockReturnValue("/analysis/run-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("studyId=study-1"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "study",
+          entityId: "study-1",
+          entityData: { label: "Study 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    expect(analysisLink.className).toContain("font-medium");
+
+    const pipelineLink = screen.getByRole("link", { name: /MAG/i });
+    expect(pipelineLink.className).toContain("font-medium");
+  });
+
+  it("does not infer a study pipeline when the analysis run is not in the sidebar run list", () => {
+    mocks.usePathname.mockReturnValue("/analysis/other-run");
     mocks.useSearchParams.mockReturnValue(new URLSearchParams("studyId=study-1"));
 
     render(
@@ -359,6 +382,29 @@ describe("SidebarEntityNav", () => {
     mocks.useSearchParams.mockReturnValue(
       new URLSearchParams("orderId=order-1&pipeline=fastq-checksum")
     );
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          entityType: "order",
+          entityId: "order-1",
+          entityData: { label: "Order 1" },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+
+    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    expect(analysisLink.className).toContain("font-medium");
+
+    const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
+    expect(pipelineLink.className).toContain("font-medium");
+  });
+
+  it("infers the selected order pipeline on analysis detail pages without a pipeline query param", () => {
+    mocks.usePathname.mockReturnValue("/analysis/run-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("orderId=order-1"));
 
     render(
       <SidebarEntityNav

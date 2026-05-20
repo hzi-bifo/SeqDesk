@@ -25,15 +25,13 @@ import {
   RefreshCw,
   StopCircle,
   RotateCcw,
-  Dna,
-  FlaskConical,
   CheckCircle2,
   XCircle,
   Clock,
   ListTree,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { LiveLogViewer } from "@/components/pipelines/LiveLogViewer";
 import {
@@ -50,33 +48,6 @@ import {
 } from "@/components/pipelines/ExecutionTargetControl";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-function getStatusBadge(status: string) {
-  switch (status) {
-    case "completed":
-      return <Badge variant="default" className="bg-[#00BD7D]">Completed</Badge>;
-    case "running":
-      return (
-        <Badge variant="default" className="bg-blue-600">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-white/70 opacity-75 animate-ping" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
-          </span>
-          Running
-        </Badge>
-      );
-    case "queued":
-      return <Badge variant="secondary">Queued</Badge>;
-    case "pending":
-      return <Badge variant="outline">Pending</Badge>;
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>;
-    case "cancelled":
-      return <Badge variant="outline" className="text-muted-foreground">Cancelled</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
 
 function getStepIcon(status: string) {
   const bg = "rounded-full bg-white";
@@ -98,15 +69,6 @@ function normalizeStepStatus(status: string, completedAt?: string | null): strin
   if (!completedAt) return status;
   if (status === "running" || status === "pending") return "completed";
   return status;
-}
-
-function getPipelineIcon(icon: string) {
-  switch (icon) {
-    case "Dna":
-      return <Dna className="h-6 w-6" />;
-    default:
-      return <FlaskConical className="h-6 w-6" />;
-  }
 }
 
 function formatRelativeTime(timestamp?: string | null): string {
@@ -319,6 +281,22 @@ interface Run {
   }[];
 }
 
+function getRunContextQuery(run: Pick<Run, "pipelineId" | "study" | "order">): string {
+  const params = new URLSearchParams();
+  if (run.study?.id) {
+    params.set("studyId", run.study.id);
+  } else if (run.order?.id) {
+    params.set("orderId", run.order.id);
+  }
+  params.set("pipeline", run.pipelineId);
+  return params.toString();
+}
+
+function getAnalysisRunWeblogHref(run: Pick<Run, "id" | "pipelineId" | "study" | "order">): string {
+  const query = getRunContextQuery(run);
+  return query ? `/analysis/${run.id}/weblog?${query}` : `/analysis/${run.id}/weblog`;
+}
+
 interface AdminPipelineExecutionSummary {
   pipelineId: string;
   executionPolicy?: {
@@ -374,6 +352,8 @@ export default function AnalysisRunDetailPage({
   const [retryExecutionMode, setRetryExecutionMode] =
     useState<ExecutionModeRequest>("default");
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchParamString = searchParams.toString();
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
@@ -389,6 +369,47 @@ export default function AnalysisRunDetailPage({
   );
 
   const run: Run | undefined = data?.run;
+  useEffect(() => {
+    if (!run) return;
+
+    const nextParams = new URLSearchParams(searchParamString);
+    let changed = false;
+
+    const setParam = (key: string, value: string) => {
+      if (nextParams.get(key) !== value) {
+        nextParams.set(key, value);
+        changed = true;
+      }
+    };
+    const deleteParam = (key: string) => {
+      if (nextParams.has(key)) {
+        nextParams.delete(key);
+        changed = true;
+      }
+    };
+
+    if (run.study?.id) {
+      setParam("studyId", run.study.id);
+      deleteParam("orderId");
+    } else if (run.order?.id) {
+      setParam("orderId", run.order.id);
+      deleteParam("studyId");
+    }
+    setParam("pipeline", run.pipelineId);
+
+    if (changed) {
+      const query = nextParams.toString();
+      router.replace(`/analysis/${id}${query ? `?${query}` : ""}`, { scroll: false });
+    }
+  }, [
+    id,
+    router,
+    run,
+    run?.order?.id,
+    run?.pipelineId,
+    run?.study?.id,
+    searchParamString,
+  ]);
   const { data: pipelineSettingsData } = useSWR<{
     pipelines: AdminPipelineExecutionSummary[];
   }>(
@@ -806,7 +827,9 @@ export default function AnalysisRunDetailPage({
         return;
       }
 
-      router.push(`/analysis/${newRunId}`);
+      router.push(
+        `/analysis/${newRunId}?studyId=${encodeURIComponent(run.study.id)}&pipeline=${encodeURIComponent(run.pipelineId)}`
+      );
     } catch (err) {
       setRetryError(
         err instanceof Error ? err.message : "Failed to retry pipeline"
@@ -868,18 +891,6 @@ export default function AnalysisRunDetailPage({
       setOutputCopyError("Failed to copy file path");
     }
   };
-
-  const goToSection = useCallback((sectionId: string) => {
-    setActiveTab("activity");
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        document.getElementById(sectionId)?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
-    });
-  }, []);
 
   const fetchQueueStatus = useCallback(async () => {
     const runId = run?.id;
@@ -1323,7 +1334,7 @@ export default function AnalysisRunDetailPage({
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <h3 className="text-sm font-semibold text-muted-foreground">Recent Events ({recentEvents.length})</h3>
                   <Button variant="outline" size="sm" asChild>
-                    <Link href={`/analysis/${run.id}/weblog`}>
+                    <Link href={getAnalysisRunWeblogHref(run)}>
                       <ListTree className="h-3.5 w-3.5 mr-1.5" />
                       Processed weblog
                     </Link>

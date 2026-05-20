@@ -163,7 +163,8 @@ export function SidebarEntityNav({
       : "empty";
 
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
-  const isAnalysisDetailRoute = /^\/analysis\/[^/]+/.test(pathname);
+  const analysisRunId = pathname.match(/^\/analysis\/([^/]+)/)?.[1] ?? null;
+  const isAnalysisDetailRoute = analysisRunId !== null;
   const isStudyAnalysisContext = isAnalysisDetailRoute && entityType === "study";
   const isOrderAnalysisContext = isAnalysisDetailRoute && entityType === "order";
   const activeTab = pathname.startsWith("/studies")
@@ -198,6 +199,22 @@ export function SidebarEntityNav({
     currentStudyEditSection ?? (currentStudySection === "overview" ? currentStudySubsection : null);
   const currentStudyFacilitySubsection =
     currentStudySection === "facility" ? currentStudySubsection : null;
+  const requestedPipelineId = searchParams.get("pipeline")?.trim() || null;
+  const analysisPipelines = studyPipelines.filter(
+    (p) => p.category !== "submission"
+  );
+  const publishingPipelines = studyPipelines.filter(
+    (p) => p.category === "submission"
+  );
+  const activeStudyPipelineId =
+    currentStudyTab === "pipelines"
+      ? requestedPipelineId ??
+        (isStudyAnalysisContext && analysisRunId
+          ? analysisPipelines.find((pipeline) =>
+              pipeline.runIds.includes(analysisRunId)
+            )?.pipelineId ?? null
+          : null)
+      : null;
 
   // ── Study nav items ──
   const studyItems: NavItem[] = [
@@ -233,6 +250,13 @@ export function SidebarEntityNav({
     currentOrderSubview === "edit" ? searchParams.get("step") : null;
   const currentOrderEditScope =
     currentOrderSubview === "edit" ? searchParams.get("scope") : null;
+  const activeOrderPipelineId =
+    requestedPipelineId ??
+    (isOrderAnalysisContext && analysisRunId
+      ? orderPipelines.find((pipeline) =>
+          pipeline.runIds.includes(analysisRunId)
+        )?.pipelineId ?? null
+      : null);
 
   const orderItems: NavItem[] = [
     { key: "details", label: "Overview", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
@@ -292,7 +316,7 @@ export function SidebarEntityNav({
       );
     }
     if (item.key === "sequencing") {
-      const hasPipelineParam = !!searchParams.get("pipeline");
+      const hasPipelineParam = !!requestedPipelineId;
       const hasAnalysisView = searchParams.get("view") === "analysis";
       return (
         !isOrderAnalysisContext &&
@@ -305,7 +329,7 @@ export function SidebarEntityNav({
       return (
         isOrderAnalysisContext ||
         (currentOrderSubview === "sequencing" &&
-          (!!searchParams.get("pipeline") || searchParams.get("view") === "analysis"))
+          (!!requestedPipelineId || searchParams.get("view") === "analysis"))
       );
     }
     return false;
@@ -358,12 +382,6 @@ export function SidebarEntityNav({
             item.key === "analysis" &&
             !!entityId &&
             orderPipelines.length > 0;
-          const analysisPipelines = studyPipelines.filter(
-            (p) => p.category !== "submission"
-          );
-          const publishingPipelines = studyPipelines.filter(
-            (p) => p.category === "submission"
-          );
           const shouldShowStudyPipelineSubitems =
             !collapsed &&
             activeTab === "studies" &&
@@ -559,7 +577,7 @@ export function SidebarEntityNav({
                     href={`/studies/${entityId}?tab=publishing&publisher=ena`}
                     className={cn(
                       "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                      currentStudyPublishingTarget === "ena" && !searchParams.get("pipeline")
+                      currentStudyPublishingTarget === "ena" && !requestedPipelineId
                         ? "bg-secondary text-foreground font-medium"
                         : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                     )}
@@ -576,7 +594,7 @@ export function SidebarEntityNav({
                   {publishingPipelines.map((pipeline) => {
                     const isPipelineActive =
                       currentStudyTab === "publishing" &&
-                      (searchParams.get("publisher") === pipeline.pipelineId || searchParams.get("pipeline") === pipeline.pipelineId);
+                      (searchParams.get("publisher") === pipeline.pipelineId || requestedPipelineId === pipeline.pipelineId);
                     return (
                       <Link
                         key={pipeline.pipelineId}
@@ -711,7 +729,7 @@ export function SidebarEntityNav({
                           ? currentOrderSubview === "sequencing" && searchParams.get("view") === "discover"
                           : sub.id === "stream"
                             ? currentOrderSubview === "sequencing" && searchParams.get("view") === "stream"
-                            : currentOrderSubview === "sequencing" && !searchParams.get("view") && !searchParams.get("pipeline");
+                            : currentOrderSubview === "sequencing" && !searchParams.get("view") && !requestedPipelineId;
                       const indicatorStatus =
                         sub.id === "discover"
                           ? seqAssocStatus === "complete"
@@ -751,7 +769,7 @@ export function SidebarEntityNav({
                   {orderPipelines.map((pipeline) => {
                     const isPipelineActive =
                       (currentOrderSubview === "sequencing" || isOrderAnalysisContext) &&
-                      searchParams.get("pipeline") === pipeline.pipelineId;
+                      activeOrderPipelineId === pipeline.pipelineId;
                     return (
                       <Link
                         key={pipeline.pipelineId}
@@ -784,8 +802,7 @@ export function SidebarEntityNav({
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {analysisPipelines.map((pipeline) => {
                     const isPipelineActive =
-                      currentStudyTab === "pipelines" &&
-                      searchParams.get("pipeline") === pipeline.pipelineId;
+                      activeStudyPipelineId === pipeline.pipelineId;
                     return (
                       <Link
                         key={pipeline.pipelineId}

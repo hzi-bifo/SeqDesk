@@ -36,7 +36,9 @@ describe("POST /api/pipelines/validate-metadata", () => {
     });
     mocks.validatePipelineMetadata.mockResolvedValue({
       valid: true,
-      errors: [],
+      issues: [],
+      derivedSettings: [],
+      metadata: {},
     });
   });
 
@@ -100,8 +102,22 @@ describe("POST /api/pipelines/validate-metadata", () => {
     });
   });
 
-  it("validates with studyId and returns result", async () => {
-    const validationResult = { valid: true, errors: [], warnings: [] };
+  it("validates with studyId and returns derived settings", async () => {
+    const validationResult = {
+      valid: true,
+      issues: [],
+      warnings: [],
+      metadata: {},
+      derivedSettings: [
+        {
+          key: "sequencer",
+          title: "Sequencer",
+          value: "Nanopore",
+          message: "MetaxPath will run in Nanopore mode.",
+          source: "order.sequencingTechnology.platformFamily",
+        },
+      ],
+    };
     mocks.validatePipelineMetadata.mockResolvedValue(validationResult);
 
     const response = await POST(
