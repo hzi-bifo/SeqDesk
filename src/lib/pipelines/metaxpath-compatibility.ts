@@ -5,7 +5,7 @@ import type { LoadedPackage, PackageManifest } from './package-loader';
 import { deriveManifestTargets, type PackageTargetType } from './package-contracts';
 
 export const METAXPATH_MIN_COMPATIBLE_VERSION = '0.1.1';
-export const METAXPATH_SAFE_DEFAULTS_VERSION = '0.1.4';
+export const METAXPATH_SAFE_DEFAULTS_VERSION = '0.1.5';
 export const METAXPATH_RECOMMENDED_PRED_VFS_AMRS_MEMORY_GB = 96;
 export const METAXPATH_STALE_CHUNK_BREADTH_FLAG = '--chunk-breadth';
 
@@ -162,7 +162,7 @@ export function getMetaxPathRuntimeWarnings(input: MetaxPathRuntimeWarningInput)
   const versionComparison = comparePackageVersions(version, METAXPATH_SAFE_DEFAULTS_VERSION);
   if (versionComparison !== null && versionComparison < 0) {
     warnings.push(
-      `Installed MetaxPath package ${version} predates the Kraken2 safe defaults in ${METAXPATH_SAFE_DEFAULTS_VERSION}. Sync MetaxPath before relying on UI-launched PlusPF runs.`
+      `Installed MetaxPath package ${version} predates the Kraken2 PlusPF runtime hardening in ${METAXPATH_SAFE_DEFAULTS_VERSION}. Sync MetaxPath before relying on UI-launched PlusPF runs.`
     );
   }
 

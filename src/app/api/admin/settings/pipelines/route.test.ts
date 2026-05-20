@@ -236,7 +236,7 @@ describe("GET /api/admin/settings/pipelines", () => {
           package: {
             id: "metaxpath",
             name: "MetaXpath",
-            version: "0.1.4",
+            version: "0.1.5",
             description: "ONT metagenomics",
           },
           execution: {

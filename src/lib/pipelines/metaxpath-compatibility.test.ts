@@ -192,14 +192,14 @@ describe('metaxpath runtime warnings', () => {
     });
 
     expect(warnings).toEqual([
-      expect.stringContaining('predates the Kraken2 safe defaults in 0.1.4'),
+      expect.stringContaining('predates the Kraken2 PlusPF runtime hardening in 0.1.5'),
       expect.stringContaining('PlusPF is configured without memory mapping'),
       expect.stringContaining('PRED_VFS_AMRS memory is 64 GB'),
     ]);
   });
 
   it('detects PlusPF and memory mapping from params file content', () => {
-    const pkg = makePackage('/tmp/metaxpath', '0.1.4');
+    const pkg = makePackage('/tmp/metaxpath', '0.1.5');
     const warnings = getMetaxPathRuntimeWarnings({
       manifest: pkg.manifest,
       config: {
@@ -217,7 +217,7 @@ describe('metaxpath runtime warnings', () => {
   });
 
   it('does not warn for safe MetaxPath runtime defaults', () => {
-    const pkg = makePackage('/tmp/metaxpath', '0.1.4');
+    const pkg = makePackage('/tmp/metaxpath', '0.1.5');
     const warnings = getMetaxPathRuntimeWarnings({
       manifest: pkg.manifest,
       config: {

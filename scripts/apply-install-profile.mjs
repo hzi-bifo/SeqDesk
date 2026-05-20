@@ -166,16 +166,6 @@ function ensureDatabaseEnv() {
   }
 }
 
-function parseJsonObject(raw) {
-  if (!raw) return {};
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 function itemKey(item, fallbackPrefix) {
   if (typeof item.name === "string" && item.name.trim()) {
     return `name:${item.name.trim()}`;

@@ -320,6 +320,47 @@ describe("generic-executor", () => {
     expect(script).not.toContain("--paramsFile");
   });
 
+  it("passes params files before explicit mapped params so run config overrides file defaults", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "metaxpath",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {
+            kraken2MemoryMapping: "--kraken2_memory_mapping",
+            paramsFile: "-params-file",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-metaxpath-order",
+      pipelineId: "metaxpath",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {
+        paramsFile: "/shared/metaxpath/params.yaml",
+        kraken2MemoryMapping: true,
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script.indexOf("-params-file /shared/metaxpath/params.yaml")).toBeGreaterThan(-1);
+    expect(script.indexOf("--kraken2_memory_mapping")).toBeGreaterThan(-1);
+    expect(script.indexOf("-params-file /shared/metaxpath/params.yaml")).toBeLessThan(
+      script.indexOf("--kraken2_memory_mapping")
+    );
+  });
+
   it("caps MetaxPath local thread defaults to available local CPUs", async () => {
     vi.spyOn(os, "availableParallelism").mockReturnValue(4);
     const adapter = createAdapter();

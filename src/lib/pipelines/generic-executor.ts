@@ -467,7 +467,13 @@ function buildPipelineFlags(
       Object.values(execution.paramMap).map((flag) => normalizeParamKey(flag))
     );
 
-    for (const [uiKey, nfFlag] of Object.entries(execution.paramMap)) {
+    const paramEntries = Object.entries(execution.paramMap);
+    const orderedParamEntries = [
+      ...paramEntries.filter(([, nfFlag]) => nfFlag.trim() === "-params-file"),
+      ...paramEntries.filter(([, nfFlag]) => nfFlag.trim() !== "-params-file"),
+    ];
+
+    for (const [uiKey, nfFlag] of orderedParamEntries) {
       const value = merged[uiKey];
       const trimmedFlag = nfFlag.trim();
 
