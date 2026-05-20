@@ -145,27 +145,33 @@ function renderFilePreview(filename: string, content: string | null) {
 
   if (isMarkdownFile(filename)) {
     return (
-      <div className="p-4 text-sm leading-6">
+      <div className="min-w-0 max-w-full p-4 text-sm leading-6">
         <ReactMarkdown
           components={{
             h1: ({ children }) => <h1 className="text-xl font-semibold mb-3">{children}</h1>,
             h2: ({ children }) => <h2 className="text-lg font-semibold mt-4 mb-2">{children}</h2>,
             h3: ({ children }) => <h3 className="font-semibold mt-3 mb-1">{children}</h3>,
-            p: ({ children }) => <p className="mb-3">{children}</p>,
+            p: ({ children }) => <p className="mb-3 break-words">{children}</p>,
             ul: ({ children }) => <ul className="list-disc pl-5 mb-3">{children}</ul>,
             ol: ({ children }) => <ol className="list-decimal pl-5 mb-3">{children}</ol>,
             code: ({ children }) => (
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{children}</code>
+              <code className="break-all rounded bg-muted px-1 py-0.5 font-mono text-xs">{children}</code>
             ),
             table: ({ children }) => (
-              <div className="my-3 overflow-x-auto rounded-md border">
-                <table className="w-full border-collapse text-xs">{children}</table>
+              <div className="my-3 max-w-full overflow-auto rounded-md border">
+                <table className="min-w-full table-fixed border-collapse text-xs">{children}</table>
               </div>
             ),
             th: ({ children }) => (
-              <th className="border-b bg-muted px-3 py-2 text-left font-medium">{children}</th>
+              <th className="max-w-[18rem] break-all whitespace-normal border-b bg-muted px-3 py-2 text-left font-medium">
+                {children}
+              </th>
             ),
-            td: ({ children }) => <td className="border-b px-3 py-2">{children}</td>,
+            td: ({ children }) => (
+              <td className="max-w-[18rem] break-all whitespace-normal border-b px-3 py-2">
+                {children}
+              </td>
+            ),
           }}
         >
           {body}
@@ -180,13 +186,16 @@ function renderFilePreview(filename: string, content: string | null) {
     const [header, ...dataRows] = rows;
 
     return (
-      <div className="overflow-auto">
-        <table className="w-full border-collapse text-xs">
+      <div className="max-w-full overflow-auto" data-testid="pipeline-delimited-preview">
+        <table className="min-w-[48rem] w-full table-fixed border-collapse text-xs">
           {header && (
             <thead>
               <tr>
                 {header.map((cell, index) => (
-                  <th key={`${cell}-${index}`} className="sticky top-0 border-b bg-muted px-3 py-2 text-left font-medium">
+                  <th
+                    key={`${cell}-${index}`}
+                    className="sticky top-0 max-w-[18rem] break-all whitespace-normal border-b bg-muted px-3 py-2 text-left font-medium"
+                  >
                     {cell || "-"}
                   </th>
                 ))}
@@ -197,7 +206,10 @@ function renderFilePreview(filename: string, content: string | null) {
             {dataRows.map((row, rowIndex) => (
               <tr key={rowIndex}>
                 {row.map((cell, cellIndex) => (
-                  <td key={`${rowIndex}-${cellIndex}`} className="border-b px-3 py-2 font-mono">
+                  <td
+                    key={`${rowIndex}-${cellIndex}`}
+                    className="max-w-[18rem] break-all whitespace-normal border-b px-3 py-2 font-mono"
+                  >
                     {cell || "-"}
                   </td>
                 ))}
@@ -210,7 +222,7 @@ function renderFilePreview(filename: string, content: string | null) {
   }
 
   return (
-    <pre className="p-4 text-xs whitespace-pre-wrap font-mono">
+    <pre className="max-w-full break-all whitespace-pre-wrap p-4 text-xs font-mono">
       {body}
     </pre>
   );
@@ -323,54 +335,59 @@ function FilePreviewDialog({
 
   if (!file) return null;
 
+  const dialogClassName =
+    canPreview || canOpenInline
+      ? "flex max-h-[90vh] w-[min(96vw,80rem)] max-w-none flex-col overflow-hidden"
+      : "flex max-h-[90vh] w-[min(96vw,42rem)] max-w-none flex-col overflow-hidden";
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className={canOpenInline ? "max-w-5xl" : "max-w-2xl"}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {getFileIcon(file.name, file.type)}
-            {file.name}
+      <DialogContent className={dialogClassName} data-testid="pipeline-file-preview-dialog">
+        <DialogHeader className="shrink-0">
+          <DialogTitle className="flex min-w-0 items-center gap-2 pr-8">
+            <span className="shrink-0">{getFileIcon(file.name, file.type)}</span>
+            <span className="min-w-0 break-all">{file.name}</span>
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           {/* File Info */}
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
+          <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+            <div className="min-w-0">
               <div className="text-muted-foreground">Type</div>
               <div className="font-medium">{getTypeBadge(file.type)}</div>
             </div>
             {file.sampleId && (
-              <div>
+              <div className="min-w-0">
                 <div className="text-muted-foreground">Sample</div>
-                <div className="font-medium">{file.sampleId}</div>
+                <div className="break-all font-medium">{file.sampleId}</div>
               </div>
             )}
             {file.size && (
-              <div>
+              <div className="min-w-0">
                 <div className="text-muted-foreground">Size</div>
                 <div className="font-medium">{formatSize(file.size)}</div>
               </div>
             )}
             {file.checksum && (
-              <div>
+              <div className="min-w-0">
                 <div className="text-muted-foreground">Checksum</div>
-                <div className="font-mono text-xs truncate">{file.checksum}</div>
+                <div className="break-all font-mono text-xs">{file.checksum}</div>
               </div>
             )}
             {file.producedByStepId && (
-              <div>
+              <div className="min-w-0">
                 <div className="text-muted-foreground">Produced By</div>
-                <div className="font-medium">{file.producedByStepId}</div>
+                <div className="break-all font-medium">{file.producedByStepId}</div>
               </div>
             )}
           </div>
 
           {/* Path */}
-          <div>
+          <div className="min-w-0">
             <div className="text-sm text-muted-foreground mb-1">Full Path</div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-muted p-2 rounded font-mono break-all">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <code className="min-w-0 max-w-full flex-1 break-all rounded bg-muted p-2 text-xs font-mono">
                 {file.path}
               </code>
               <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={copyPath}>
@@ -380,9 +397,9 @@ function FilePreviewDialog({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-2 pt-2">
+          <div className="flex min-w-0 flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">
             {runId && (
-              <Button variant="outline" className="flex-1" asChild>
+              <Button variant="outline" className="min-w-0 justify-center sm:flex-1" asChild>
                 <a
                   href={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&download=1`}
                 >
@@ -391,12 +408,12 @@ function FilePreviewDialog({
                 </a>
               </Button>
             )}
-            <Button variant="outline" className="flex-1" onClick={copyPath}>
+            <Button variant="outline" className="min-w-0 justify-center sm:flex-1" onClick={copyPath}>
               <Copy className="h-4 w-4 mr-2" />
               Copy Path
             </Button>
             {canOpenInline && (
-              <Button variant="outline" className="flex-1" asChild>
+              <Button variant="outline" className="min-w-0 justify-center sm:flex-1" asChild>
                 <a
                   href={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
                   target="_blank"
@@ -410,7 +427,7 @@ function FilePreviewDialog({
           </div>
 
           {/* Preview */}
-          <div className="pt-2">
+          <div className="min-w-0 pt-2">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm text-muted-foreground">Preview</div>
               {canPreview && (
@@ -430,17 +447,20 @@ function FilePreviewDialog({
               <div className="text-xs text-destructive">{previewError}</div>
             )}
             {canOpenInline && (
-              <div className="overflow-hidden rounded-md border bg-background">
+              <div className="max-w-full overflow-hidden rounded-md border bg-background">
                 <iframe
                   title={`${file.name} preview`}
                   src={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
-                  className="h-[480px] w-full"
+                  className="h-[60vh] max-h-[640px] w-full"
                   sandbox="allow-downloads allow-popups"
                 />
               </div>
             )}
             {canPreview && !previewError && (
-              <div className="bg-muted rounded-md border max-h-[320px] overflow-auto">
+              <div
+                className="max-h-[60vh] max-w-full overflow-auto rounded-md border bg-muted"
+                data-testid="pipeline-file-preview-pane"
+              >
                 {previewLoading ? (
                   <div className="p-4 text-sm text-muted-foreground">Loading...</div>
                 ) : (
