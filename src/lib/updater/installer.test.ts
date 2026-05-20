@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   execMock: vi.fn(),
   platformMock: vi.fn(),
   releaseUpdateLockMock: vi.fn(),
+  readUpdateStateMock: vi.fn(),
+  writeUpdateStateMock: vi.fn(),
+  patchUpdateStateMock: vi.fn(),
   requirePostgresDatabaseUrlMock: vi.fn(),
   loadInstalledDatabaseConfigMock: vi.fn(),
   getDatabaseCompatibilityErrorMock: vi.fn(),
@@ -29,6 +32,9 @@ const {
   execMock,
   platformMock,
   releaseUpdateLockMock,
+  readUpdateStateMock,
+  writeUpdateStateMock,
+  patchUpdateStateMock,
   requirePostgresDatabaseUrlMock,
   loadInstalledDatabaseConfigMock,
   getDatabaseCompatibilityErrorMock,
@@ -77,7 +83,10 @@ vi.mock("os", () => ({
 }));
 
 vi.mock("./status", () => ({
+  patchUpdateState: mocks.patchUpdateStateMock,
+  readUpdateState: mocks.readUpdateStateMock,
   releaseUpdateLock: mocks.releaseUpdateLockMock,
+  writeUpdateState: mocks.writeUpdateStateMock,
 }));
 
 vi.mock("@/lib/database-url", () => ({
@@ -161,6 +170,35 @@ async function seedInstallDir(): Promise<void> {
   );
 }
 
+async function seedReleaseLayout(version = "1.1.80"): Promise<string> {
+  const releaseDir = path.join(tempDir, "releases", version);
+  await fs.mkdir(releaseDir, { recursive: true });
+  await fs.writeFile(
+    path.join(releaseDir, "package.json"),
+    JSON.stringify({ version }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(releaseDir, "package-lock.json"),
+    JSON.stringify({ name: "seqdesk", version, lockfileVersion: 3 }, null, 2),
+    "utf8"
+  );
+  await fs.writeFile(path.join(releaseDir, "server.js"), "console.log('release');\n", "utf8");
+  await fs.writeFile(path.join(releaseDir, "start.sh"), "#!/usr/bin/env bash\nnode server.js\n", "utf8");
+  await fs.symlink(path.join(tempDir, "seqdesk.config.json"), path.join(releaseDir, "seqdesk.config.json"), "file");
+  await fs.symlink(path.join(tempDir, "data"), path.join(releaseDir, "data"), "dir");
+  await fs.symlink(path.join(tempDir, "pipelines"), path.join(releaseDir, "pipelines"), "dir");
+  await fs.mkdir(path.join(tempDir, "pipeline_runs"), { recursive: true });
+  await fs.symlink(path.join(tempDir, "pipeline_runs"), path.join(releaseDir, "pipeline_runs"), "dir");
+  await fs.symlink(path.join("releases", version), path.join(tempDir, "current"), "dir");
+  await fs.writeFile(
+    path.join(tempDir, "start.sh"),
+    '#!/usr/bin/env bash\ncd "$(dirname "$0")/current"\nexec ./start.sh "$@"\n',
+    "utf8"
+  );
+  return releaseDir;
+}
+
 async function copyDirectoryContents(sourceDir: string, targetDir: string): Promise<void> {
   await fs.mkdir(targetDir, { recursive: true });
   for (const entry of await fs.readdir(sourceDir)) {
@@ -171,13 +209,24 @@ async function copyDirectoryContents(sourceDir: string, targetDir: string): Prom
   }
 }
 
+function expectUpdateExecOptions(execOptions: unknown): string {
+  const options = execOptions as { cwd?: string; maxBuffer?: number };
+  expect(options).toEqual(expect.objectContaining({ maxBuffer: UPDATE_COMMAND_MAX_BUFFER }));
+  if (options.cwd) {
+    expect(path.resolve(options.cwd).startsWith(tempDir)).toBe(true);
+  }
+  return options.cwd || tempDir;
+}
+
 function configureInstallerShell(options: {
   extractedVersion?: string;
+  includeExtractedLockfile?: boolean;
   restartMode?: "pm2" | "fallback";
   freeKB?: number;
 } = {}): void {
   const {
     extractedVersion = "1.2.0",
+    includeExtractedLockfile = true,
     restartMode = "pm2",
     freeKB = 200 * 1024,
   } = options;
@@ -204,6 +253,13 @@ function configureInstallerShell(options: {
         JSON.stringify({ version: extractedVersion }, null, 2),
         "utf8"
       );
+      if (includeExtractedLockfile) {
+        await fs.writeFile(
+          path.join(extractDir, "package-lock.json"),
+          JSON.stringify({ name: "seqdesk", version: extractedVersion, lockfileVersion: 3 }, null, 2),
+          "utf8"
+        );
+      }
       await fs.writeFile(
         path.join(extractDir, "seqdesk.config.json"),
         JSON.stringify(
@@ -240,10 +296,7 @@ function configureInstallerShell(options: {
     }
 
     if (command === "node scripts/run-prisma.mjs migrate deploy") {
-      expect(execOptions).toEqual({
-        cwd: tempDir,
-        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
-      });
+      expectUpdateExecOptions(execOptions);
       return { stdout: "" };
     }
 
@@ -251,21 +304,15 @@ function configureInstallerShell(options: {
       command === "npm ci --omit=dev --no-audit --no-fund" ||
       command === "npm install --omit=dev --no-audit --no-fund"
     ) {
-      expect(execOptions).toEqual({
-        cwd: tempDir,
-        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
-      });
-      await fs.mkdir(path.join(tempDir, "node_modules", ".bin"), { recursive: true });
-      await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
-      await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "prisma"), "#!/bin/sh\n", "utf8");
+      const commandCwd = expectUpdateExecOptions(execOptions);
+      await fs.mkdir(path.join(commandCwd, "node_modules", ".bin"), { recursive: true });
+      await fs.writeFile(path.join(commandCwd, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
+      await fs.writeFile(path.join(commandCwd, "node_modules", ".bin", "prisma"), "#!/bin/sh\n", "utf8");
       return { stdout: "" };
     }
 
     if (command === "node scripts/run-prisma.mjs generate") {
-      expect(execOptions).toEqual({
-        cwd: tempDir,
-        maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
-      });
+      expectUpdateExecOptions(execOptions);
       return { stdout: "" };
     }
 
@@ -340,6 +387,17 @@ beforeEach(async () => {
 
   platformMock.mockReturnValue("linux");
   releaseUpdateLockMock.mockResolvedValue(undefined);
+  readUpdateStateMock.mockResolvedValue(null);
+  writeUpdateStateMock.mockImplementation(async (state) => ({
+    ...state,
+    updatedAt: new Date().toISOString(),
+  }));
+  patchUpdateStateMock.mockImplementation(async (state) => ({
+    phase: state.phase || "preparing",
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...state,
+  }));
   requirePostgresDatabaseUrlMock.mockImplementation((value: string) => value);
   loadInstalledDatabaseConfigMock.mockResolvedValue({
     databaseUrl: "postgresql://installed.example/seqdesk",
@@ -352,6 +410,7 @@ beforeEach(async () => {
   mocks.dbMock.study.count.mockResolvedValue(2);
   mocks.dbMock.user.count.mockResolvedValue(3);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
 afterEach(async () => {
@@ -370,13 +429,20 @@ describe("installer", () => {
       progress.push(`${entry.status}:${entry.progress}`);
     });
 
-    await expect(fs.readFile(path.join(tempDir, "package.json"), "utf8")).resolves.toContain(
+    const releaseDir = path.join(tempDir, "releases", "1.2.0");
+    await expect(fs.readFile(path.join(releaseDir, "package.json"), "utf8")).resolves.toContain(
       '"version": "1.2.0"'
+    );
+    await expect(fs.readFile(path.join(tempDir, "package.json"), "utf8")).resolves.toContain(
+      '"version": "1.1.80"'
     );
     await expect(
       fs.readFile(path.join(tempDir, "seqdesk.config.json"), "utf8")
     ).resolves.toContain("preserved.example");
-    await expect(fs.readFile(path.join(tempDir, "public", "new.txt"), "utf8")).resolves.toBe(
+    await expect(fs.readFile(path.join(releaseDir, "seqdesk.config.json"), "utf8")).resolves.toContain(
+      "preserved.example"
+    );
+    await expect(fs.readFile(path.join(releaseDir, "public", "new.txt"), "utf8")).resolves.toBe(
       "new\n"
     );
     await expect(
@@ -386,8 +452,18 @@ describe("installer", () => {
       fs.readFile(path.join(tempDir, "pipelines", "fastqc", "manifest.json"), "utf8")
     ).resolves.toContain("public-release");
     await expect(
-      fs.readFile(path.join(tempDir, "scripts", "apply-install-profile.mjs"), "utf8")
+      fs.readFile(path.join(releaseDir, "scripts", "apply-install-profile.mjs"), "utf8")
     ).resolves.toContain("new profile applicator");
+    await expect(fs.readFile(path.join(tempDir, "current", "package.json"), "utf8")).resolves.toContain(
+      '"version": "1.2.0"'
+    );
+    await expect(fs.readlink(path.join(tempDir, "current"))).resolves.toBe("releases/1.2.0");
+    expect((await fs.lstat(path.join(releaseDir, "seqdesk.config.json"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(releaseDir, "data"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(releaseDir, "pipelines"))).isSymbolicLink()).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "start.sh"), "utf8")).resolves.toContain(
+      'cd "$ROOT_DIR/current"'
+    );
     await expect(fs.access(path.join(tempDir, ".update-temp"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -397,11 +473,10 @@ describe("installer", () => {
       "downloading:10",
       "downloading:30",
       "extracting:40",
-      "extracting:60",
-      "extracting:80",
-      "extracting:85",
-      "extracting:87",
-      "extracting:90",
+      "extracting:55",
+      "extracting:70",
+      "extracting:82",
+      "extracting:88",
       "extracting:93",
       "complete:100",
       "restarting:100",
@@ -417,12 +492,25 @@ describe("installer", () => {
         "node scripts/run-prisma.mjs migrate deploy",
       ])
     );
+    const npmCall = execMock.mock.calls.find((call) => call[0] === "npm ci --omit=dev --no-audit --no-fund");
+    const npmOptions = npmCall?.[1] as { cwd?: string };
+    expect(npmOptions.cwd).toContain(path.join(".update-temp", "staged-1.2.0"));
+    expect(writeUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "preparing",
+        targetVersion: "1.2.0",
+        targetRelease: path.join(tempDir, "releases", "1.2.0"),
+      })
+    );
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "staged" }));
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "activating" }));
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "migrating" }));
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "complete" }));
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to npm install only when package-lock.json is missing", async () => {
-    await fs.rm(path.join(tempDir, "package-lock.json"), { force: true });
-    configureInstallerShell();
+  it("falls back to npm install only when the staged package-lock.json is missing", async () => {
+    configureInstallerShell({ includeExtractedLockfile: false });
     const mod = await loadInstallerModule();
 
     await mod.installUpdate(createRelease());
@@ -430,6 +518,137 @@ describe("installer", () => {
     const commands = execMock.mock.calls.map((call) => call[0]);
     expect(commands).toContain("npm install --omit=dev --no-audit --no-fund");
     expect(commands).not.toContain("npm ci --omit=dev --no-audit --no-fund");
+  });
+
+  it("falls back to npm install when npm ci hits an NFS-held Prisma client file", async () => {
+    configureInstallerShell();
+    const baseResponder = execResponder;
+    execResponder = async (command: string, execOptions?: unknown) => {
+      if (command === "npm ci --omit=dev --no-audit --no-fund") {
+        const commandCwd = expectUpdateExecOptions(execOptions);
+        expect(commandCwd).toContain(path.join(".update-temp", "staged-1.2.0"));
+        return {
+          error: createExecError("Command failed: npm ci --omit=dev --no-audit --no-fund"),
+          stderr:
+            "npm error EBUSY: resource busy or locked, unlink '/net/broker/devphil/seqdesk/node_modules/.prisma/client/.nfs00000000868fed8800000039'",
+        };
+      }
+      return baseResponder(command, execOptions);
+    };
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease());
+
+    const commands = execMock.mock.calls.map((call) => call[0]);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        "npm ci --omit=dev --no-audit --no-fund",
+        "npm install --omit=dev --no-audit --no-fund",
+        "node scripts/run-prisma.mjs generate",
+      ])
+    );
+    expect(console.warn).toHaveBeenCalledWith(
+      "npm ci could not remove an NFS-held Prisma client artifact; retrying with npm install."
+    );
+  });
+
+  it("does not activate a release when staged dependency installation fails", async () => {
+    configureInstallerShell();
+    const baseResponder = execResponder;
+    execResponder = async (command: string, execOptions?: unknown) => {
+      if (command === "npm ci --omit=dev --no-audit --no-fund") {
+        expectUpdateExecOptions(execOptions);
+        return { error: createExecError("npm failed") };
+      }
+      return baseResponder(command, execOptions);
+    };
+    const mod = await loadInstallerModule();
+
+    await expect(mod.installUpdate(createRelease())).rejects.toThrow("npm failed");
+
+    await expect(fs.access(path.join(tempDir, "current"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(fs.access(path.join(tempDir, "releases", "1.2.0"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(fs.readFile(path.join(tempDir, "package.json"), "utf8")).resolves.toContain(
+      '"version": "1.1.80"'
+    );
+  });
+
+  it("rolls current back to the previous release when migrations fail after activation", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "current"));
+    configureInstallerShell();
+    const baseResponder = execResponder;
+    execResponder = async (command: string, execOptions?: unknown) => {
+      if (command === "node scripts/run-prisma.mjs migrate deploy") {
+        expectUpdateExecOptions(execOptions);
+        return { error: createExecError("migration failed") };
+      }
+      return baseResponder(command, execOptions);
+    };
+    const mod = await loadInstallerModule();
+
+    await expect(mod.installUpdate(createRelease())).rejects.toThrow("migration failed");
+
+    await expect(fs.readlink(path.join(tempDir, "current"))).resolves.toBe("releases/1.1.80");
+    await expect(fs.access(path.join(tempDir, "releases", "1.2.0"))).resolves.toBeUndefined();
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "error",
+        activeRelease: path.join(tempDir, "releases", "1.1.80"),
+      })
+    );
+  });
+
+  it("rolls back to the previous release recorded in update state", async () => {
+    await seedReleaseLayout("1.1.80");
+    const newReleaseDir = path.join(tempDir, "releases", "1.2.0");
+    await fs.mkdir(newReleaseDir, { recursive: true });
+    await fs.writeFile(
+      path.join(newReleaseDir, "package.json"),
+      JSON.stringify({ version: "1.2.0" }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(path.join(newReleaseDir, "start.sh"), "#!/usr/bin/env bash\nnode server.js\n", "utf8");
+    await fs.rm(path.join(tempDir, "current"));
+    await fs.symlink(path.join("releases", "1.2.0"), path.join(tempDir, "current"), "dir");
+    process.chdir(path.join(tempDir, "current"));
+    readUpdateStateMock.mockResolvedValue({
+      phase: "complete",
+      startedAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:01:00.000Z",
+      previousRelease: path.join(tempDir, "releases", "1.1.80"),
+      targetRelease: path.join(tempDir, "releases", "1.2.0"),
+      activeRelease: path.join(tempDir, "releases", "1.2.0"),
+      targetVersion: "1.2.0",
+    });
+    configureInstallerShell();
+    const progress: string[] = [];
+    const mod = await loadInstallerModule();
+
+    await mod.rollbackInstalledUpdate((entry) => {
+      progress.push(`${entry.status}:${entry.progress}`);
+    });
+
+    await expect(fs.readlink(path.join(tempDir, "current"))).resolves.toBe("releases/1.1.80");
+    expect(progress).toEqual(["checking:5", "extracting:60", "complete:100", "restarting:100"]);
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "rollback_started",
+        previousRelease: path.join(tempDir, "releases", "1.2.0"),
+        targetRelease: path.join(tempDir, "releases", "1.1.80"),
+      })
+    );
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "rolled_back",
+        activeRelease: path.join(tempDir, "releases", "1.1.80"),
+      })
+    );
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
   });
 
   it("repairs an already applied update without downloading a release", async () => {
@@ -444,11 +663,12 @@ describe("installer", () => {
     const commands = execMock.mock.calls.map((call) => call[0]);
     expect(commands).toEqual(
       expect.arrayContaining([
-        "npm ci --omit=dev --no-audit --no-fund",
+        "npm install --omit=dev --no-audit --no-fund",
         "node scripts/run-prisma.mjs generate",
         "node scripts/run-prisma.mjs migrate deploy",
       ])
     );
+    expect(commands).not.toContain("npm ci --omit=dev --no-audit --no-fund");
     expect(commands.some((command) => String(command).startsWith("curl -fsSL"))).toBe(false);
     expect(progress).toEqual([
       "extracting:20",
@@ -460,17 +680,32 @@ describe("installer", () => {
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs the active current release when the release layout is installed", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "releases", "1.1.80"));
+    configureInstallerShell();
+    const mod = await loadInstallerModule();
+
+    await mod.repairInstalledUpdate("1.1.80");
+
+    const npmCall = execMock.mock.calls.find(
+      (call) => call[0] === "npm install --omit=dev --no-audit --no-fund"
+    );
+    const generateCall = execMock.mock.calls.find(
+      (call) => call[0] === "node scripts/run-prisma.mjs generate"
+    );
+    expect((npmCall?.[1] as { cwd?: string }).cwd).toBe(path.join(tempDir, "current"));
+    expect((generateCall?.[1] as { cwd?: string }).cwd).toBe(path.join(tempDir, "current"));
+  });
+
   it("fails when runtime dependency install does not create a local Prisma CLI", async () => {
     configureInstallerShell();
     const baseResponder = execResponder;
     execResponder = async (command: string, execOptions?: unknown) => {
       if (command === "npm ci --omit=dev --no-audit --no-fund") {
-        expect(execOptions).toEqual({
-          cwd: tempDir,
-          maxBuffer: UPDATE_COMMAND_MAX_BUFFER,
-        });
-        await fs.mkdir(path.join(tempDir, "node_modules", ".bin"), { recursive: true });
-        await fs.writeFile(path.join(tempDir, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
+        const commandCwd = expectUpdateExecOptions(execOptions);
+        await fs.mkdir(path.join(commandCwd, "node_modules", ".bin"), { recursive: true });
+        await fs.writeFile(path.join(commandCwd, "node_modules", ".bin", "next"), "#!/bin/sh\n", "utf8");
         return { stdout: "" };
       }
       return baseResponder(command, execOptions);

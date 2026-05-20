@@ -22,6 +22,7 @@ import {
   KeyRound,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Send,
   Server,
   Settings2,
@@ -85,6 +86,15 @@ interface UpdateProgress {
   error?: string;
   updatedAt?: string;
   targetVersion?: string;
+}
+
+interface UpdateRecoveryState {
+  phase: string;
+  previousRelease?: string | null;
+  targetRelease?: string | null;
+  activeRelease?: string | null;
+  targetVersion?: string | null;
+  error?: string;
 }
 
 interface AccessSettingsResponse {
@@ -242,6 +252,8 @@ export default function SettingsPage() {
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateProgress | null>(null);
+  const [updateRecoveryState, setUpdateRecoveryState] =
+    useState<UpdateRecoveryState | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateLoaded, setUpdateLoaded] = useState(false);
   const [installProfileStatus, setInstallProfileStatus] =
@@ -295,6 +307,7 @@ export default function SettingsPage() {
 
   const updateInProgress =
     !!updateStatus && !["idle", "complete", "error"].includes(updateStatus.status);
+  const rollbackAvailable = !!updateRecoveryState?.previousRelease && !updateInProgress;
   const installedMatchesLatest = !!(
     updateInfo?.installedVersion &&
     updateInfo?.latest?.version &&
@@ -563,8 +576,12 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/admin/updates/progress");
       if (!res.ok) return;
-      const data = (await res.json()) as { status?: UpdateProgress | null };
+      const data = (await res.json()) as {
+        status?: UpdateProgress | null;
+        state?: UpdateRecoveryState | null;
+      };
       setUpdateStatus(data.status ?? null);
+      setUpdateRecoveryState(data.state ?? null);
     } catch (error) {
       console.error("Failed to load update status:", error);
     }
@@ -1325,6 +1342,60 @@ export default function SettingsPage() {
     }
   };
 
+  const performRollback = async () => {
+    const targetVersion =
+      updateRecoveryState?.targetVersion ||
+      updateStatus?.targetVersion ||
+      updateInfo?.installedVersion ||
+      updateInfo?.currentVersion ||
+      "unknown";
+
+    if (!rollbackAvailable) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Roll back to the previous SeqDesk release?\n\n` +
+      `This switches the active release pointer back and restarts SeqDesk. ` +
+      `Database migrations are not rolled back.`
+    );
+    if (!confirmed) return;
+
+    setUpdateStatus({
+      status: "checking",
+      progress: 0,
+      message: "Starting release rollback...",
+      targetVersion,
+    });
+
+    try {
+      const res = await fetch("/api/admin/updates/rollback", {
+        method: "POST",
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to start rollback");
+      }
+
+      refreshPanelNotifications();
+      await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
+    } catch (error) {
+      console.error("Rollback failed:", error);
+      const message = error instanceof Error ? error.message : "Rollback failed";
+      notifyPanel.error(message);
+      setUpdateStatus({
+        status: "error",
+        progress: 0,
+        message: "Release rollback failed",
+        error: message,
+        targetVersion,
+      });
+    }
+  };
+
   return (
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
@@ -1932,6 +2003,17 @@ export default function SettingsPage() {
                     </div>
                     {updateStatus.status === "error" && (
                       <div className="mt-3 flex flex-wrap gap-2">
+                        {rollbackAvailable && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-white"
+                            onClick={() => void performRollback()}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            Roll back release
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="destructive"

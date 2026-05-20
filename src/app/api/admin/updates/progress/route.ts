@@ -5,6 +5,7 @@ import { notifyAppUpdateProgressInApp } from "@/lib/notifications/in-app";
 import { getCurrentVersion, getInstalledVersion } from "@/lib/updater";
 import {
   clearUpdateStatus,
+  readUpdateState,
   readUpdateStatus,
   releaseUpdateLock,
   writeUpdateStatus,
@@ -18,6 +19,7 @@ export async function GET() {
   }
 
   const status = await readUpdateStatus();
+  const state = await readUpdateState();
   const runningVersion = getCurrentVersion();
   const installedVersion = await getInstalledVersion();
 
@@ -41,6 +43,7 @@ export async function GET() {
     });
     return NextResponse.json({
       status: nextStatus,
+      state,
       runningVersion,
       installedVersion,
     });
@@ -56,6 +59,7 @@ export async function GET() {
     await clearUpdateStatus();
     return NextResponse.json({
       status: null,
+      state,
       runningVersion,
       installedVersion,
     });
@@ -63,6 +67,7 @@ export async function GET() {
 
   return NextResponse.json({
     status,
+    state,
     runningVersion,
     installedVersion,
   });

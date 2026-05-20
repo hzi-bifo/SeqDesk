@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
   releaseUpdateLock: vi.fn(),
   writeUpdateStatus: vi.fn(),
   readUpdateStatus: vi.fn(),
+  readUpdateState: vi.fn(),
   clearUpdateStatus: vi.fn(),
+  notifyAppUpdateStartedInApp: vi.fn(),
+  notifyAppUpdateProgressInApp: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -55,7 +58,13 @@ vi.mock("@/lib/updater/status", () => ({
   releaseUpdateLock: mocks.releaseUpdateLock,
   writeUpdateStatus: mocks.writeUpdateStatus,
   readUpdateStatus: mocks.readUpdateStatus,
+  readUpdateState: mocks.readUpdateState,
   clearUpdateStatus: mocks.clearUpdateStatus,
+}));
+
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyAppUpdateStartedInApp: mocks.notifyAppUpdateStartedInApp,
+  notifyAppUpdateProgressInApp: mocks.notifyAppUpdateProgressInApp,
 }));
 
 import { GET as getPrerequisites } from "./settings/pipelines/check-prerequisites/route";
@@ -63,6 +72,12 @@ import { GET as getUpdates } from "./updates/route";
 import { GET as getUpdateProgress } from "./updates/progress/route";
 import { POST as installUpdates } from "./updates/install/route";
 import { GET as getInfrastructureReadiness } from "./infrastructure/readiness/route";
+
+function makeInstallRequest() {
+  return new Request("http://localhost/api/admin/updates/install", {
+    method: "POST",
+  });
+}
 
 describe("admin route coverage quick wins", () => {
   beforeEach(() => {
@@ -112,7 +127,10 @@ describe("admin route coverage quick wins", () => {
     mocks.releaseUpdateLock.mockResolvedValue(undefined);
     mocks.writeUpdateStatus.mockResolvedValue(undefined);
     mocks.readUpdateStatus.mockResolvedValue(null);
+    mocks.readUpdateState.mockResolvedValue(null);
     mocks.clearUpdateStatus.mockResolvedValue(undefined);
+    mocks.notifyAppUpdateStartedInApp.mockResolvedValue(undefined);
+    mocks.notifyAppUpdateProgressInApp.mockResolvedValue(undefined);
   });
 
   it("checks prerequisites in quick and full modes and rejects unauthorized callers", async () => {
@@ -245,6 +263,7 @@ describe("admin route coverage quick wins", () => {
         message: "Downloading",
         targetVersion: "1.2.0",
       },
+      state: null,
       runningVersion: "1.1.80",
       installedVersion: "1.1.80",
     });
@@ -276,6 +295,7 @@ describe("admin route coverage quick wins", () => {
         message: "Update complete.",
         targetVersion: "1.2.0",
       },
+      state: null,
       runningVersion: "1.2.0",
       installedVersion: "1.2.0",
     });
@@ -294,6 +314,7 @@ describe("admin route coverage quick wins", () => {
     expect(mocks.clearUpdateStatus).toHaveBeenCalledTimes(1);
     expect(await cleared.json()).toEqual({
       status: null,
+      state: null,
       runningVersion: "1.2.0",
       installedVersion: "1.2.0",
     });
@@ -310,19 +331,19 @@ describe("admin route coverage quick wins", () => {
 
   it("handles update installation preconditions and successful startup", async () => {
     mocks.getServerSession.mockResolvedValueOnce(null);
-    const unauthorized = await installUpdates();
+    const unauthorized = await installUpdates(makeInstallRequest());
     expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
     mocks.isUpdateInProgress.mockResolvedValueOnce(true);
-    const alreadyRunning = await installUpdates();
+    const alreadyRunning = await installUpdates(makeInstallRequest());
     expect(alreadyRunning.status).toBe(409);
     expect(await alreadyRunning.json()).toEqual({
       error: "Update already in progress",
     });
 
     mocks.acquireUpdateLock.mockResolvedValueOnce(false);
-    const lockFailure = await installUpdates();
+    const lockFailure = await installUpdates(makeInstallRequest());
     expect(lockFailure.status).toBe(409);
     expect(await lockFailure.json()).toEqual({
       error: "Update already in progress",
@@ -332,7 +353,7 @@ describe("admin route coverage quick wins", () => {
       updateAvailable: false,
       latest: null,
     });
-    const noUpdate = await installUpdates();
+    const noUpdate = await installUpdates(makeInstallRequest());
     expect(noUpdate.status).toBe(200);
     expect(mocks.releaseUpdateLock).toHaveBeenCalledTimes(1);
     expect(await noUpdate.json()).toEqual({
@@ -346,7 +367,7 @@ describe("admin route coverage quick wins", () => {
       databaseCompatible: false,
       databaseCompatibilityError: "Requires PostgreSQL",
     });
-    const incompatible = await installUpdates();
+    const incompatible = await installUpdates(makeInstallRequest());
     expect(incompatible.status).toBe(409);
     expect(await incompatible.json()).toEqual({
       error: "Requires PostgreSQL",
@@ -357,7 +378,7 @@ describe("admin route coverage quick wins", () => {
       latest: { version: "1.2.0" },
       databaseCompatible: true,
     });
-    const success = await installUpdates();
+    const success = await installUpdates(makeInstallRequest());
     expect(success.status).toBe(200);
     expect(mocks.writeUpdateStatus).toHaveBeenCalledWith(
       { status: "checking", progress: 0, message: "Preparing update..." },
@@ -375,7 +396,7 @@ describe("admin route coverage quick wins", () => {
   it("maps update installation failures", async () => {
     mocks.acquireUpdateLock.mockRejectedValueOnce(new Error("lock error"));
 
-    const response = await installUpdates();
+    const response = await installUpdates(makeInstallRequest());
 
     expect(response.status).toBe(500);
     expect(mocks.releaseUpdateLock).toHaveBeenCalledTimes(1);

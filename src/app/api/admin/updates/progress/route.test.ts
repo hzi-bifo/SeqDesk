@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentVersion: vi.fn(),
   getInstalledVersion: vi.fn(),
   readUpdateStatus: vi.fn(),
+  readUpdateState: vi.fn(),
   writeUpdateStatus: vi.fn(),
   clearUpdateStatus: vi.fn(),
   releaseUpdateLock: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("@/lib/updater", () => ({
 }));
 
 vi.mock("@/lib/updater/status", () => ({
+  readUpdateState: mocks.readUpdateState,
   readUpdateStatus: mocks.readUpdateStatus,
   writeUpdateStatus: mocks.writeUpdateStatus,
   clearUpdateStatus: mocks.clearUpdateStatus,
@@ -46,6 +48,7 @@ describe("GET /api/admin/updates/progress", () => {
     mocks.getCurrentVersion.mockReturnValue("1.0.0");
     mocks.getInstalledVersion.mockResolvedValue("1.0.0");
     mocks.readUpdateStatus.mockResolvedValue(null);
+    mocks.readUpdateState.mockResolvedValue(null);
     mocks.writeUpdateStatus.mockResolvedValue(undefined);
     mocks.clearUpdateStatus.mockResolvedValue(undefined);
     mocks.releaseUpdateLock.mockResolvedValue(undefined);
@@ -78,6 +81,7 @@ describe("GET /api/admin/updates/progress", () => {
     expect(response.status).toBe(200);
     expect(data).toEqual({
       status: null,
+      state: null,
       runningVersion: "1.0.0",
       installedVersion: "1.0.0",
     });
@@ -101,6 +105,32 @@ describe("GET /api/admin/updates/progress", () => {
       message: "Downloading update...",
       targetVersion: "2.0.0",
     });
+    expect(data.state).toBeNull();
+  });
+
+  it("returns recorded update recovery state", async () => {
+    mocks.readUpdateState.mockResolvedValue({
+      phase: "error",
+      startedAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:01:00.000Z",
+      previousRelease: "/srv/seqdesk/releases/1.1.80",
+      targetRelease: "/srv/seqdesk/releases/1.2.0",
+      activeRelease: "/srv/seqdesk/releases/1.1.80",
+      targetVersion: "1.2.0",
+      error: "migration failed",
+    });
+
+    const response = await GET();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.state).toEqual(
+      expect.objectContaining({
+        phase: "error",
+        previousRelease: "/srv/seqdesk/releases/1.1.80",
+        targetVersion: "1.2.0",
+      })
+    );
   });
 
   it("marks update complete when target matches running and installed versions", async () => {
@@ -118,6 +148,7 @@ describe("GET /api/admin/updates/progress", () => {
 
     expect(response.status).toBe(200);
     expect(data.status.status).toBe("complete");
+    expect(data.state).toBeNull();
     expect(data.status.progress).toBe(100);
     expect(data.status.message).toBe("Update complete.");
     expect(mocks.writeUpdateStatus).toHaveBeenCalledWith(

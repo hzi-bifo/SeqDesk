@@ -5,10 +5,10 @@
  * The update process:
  * 1. Download new version tarball
  * 2. Verify checksum
- * 3. Extract to temp directory
- * 4. Backup current installation
- * 5. Replace files
- * 6. Run migrations
+ * 3. Extract to a staged release directory
+ * 4. Install dependencies and generate Prisma client in staging
+ * 5. Publish staged release and switch current symlink
+ * 6. Run migrations from the activated release
  * 7. Restart application
  */
 
@@ -20,7 +20,12 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import type { ReleaseInfo, UpdateProgress } from './types';
-import { releaseUpdateLock } from './status';
+import {
+  patchUpdateState,
+  readUpdateState,
+  releaseUpdateLock,
+  writeUpdateState,
+} from './status';
 import { requirePostgresDatabaseUrl } from '@/lib/database-url';
 import {
   getDatabaseCompatibilityError,
@@ -53,6 +58,9 @@ function describeDataLoss(before: DataSnapshot, after: DataSnapshot): string | n
 const execAsync = promisify(exec);
 
 const UPDATE_COMMAND_MAX_BUFFER = 128 * 1024 * 1024;
+const NPM_CI_COMMAND = 'npm ci --omit=dev --no-audit --no-fund';
+const NPM_INSTALL_COMMAND = 'npm install --omit=dev --no-audit --no-fund';
+type RuntimeDependencyInstallMode = 'clean' | 'in-place';
 
 function runUpdateCommand(command: string, options: ExecOptions = {}) {
   return execAsync(command, {
@@ -61,28 +69,77 @@ function runUpdateCommand(command: string, options: ExecOptions = {}) {
   });
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  return fs.access(filePath).then(() => true).catch(() => false);
+}
+
+async function resolveInstallLayout(appDir: string = INSTALL_DIR): Promise<InstallLayout> {
+  const parentDir = path.dirname(appDir);
+  const grandparentDir = path.dirname(parentDir);
+  let rootDir = appDir;
+
+  if (
+    path.basename(appDir) === CURRENT_LINK_NAME &&
+    await pathExists(path.join(parentDir, RELEASES_DIR_NAME))
+  ) {
+    rootDir = parentDir;
+  } else if (path.basename(parentDir) === RELEASES_DIR_NAME) {
+    rootDir = grandparentDir;
+  } else if (
+    await pathExists(path.join(appDir, CURRENT_LINK_NAME)) ||
+    await pathExists(path.join(appDir, RELEASES_DIR_NAME))
+  ) {
+    rootDir = appDir;
+  }
+
+  const currentLinkPath = path.join(rootDir, CURRENT_LINK_NAME);
+  return {
+    appDir,
+    rootDir,
+    releasesDir: path.join(rootDir, RELEASES_DIR_NAME),
+    currentLinkPath,
+    tempDir: path.join(rootDir, TEMP_DIR_NAME),
+    hasCurrentLink: await pathExists(currentLinkPath),
+  };
+}
+
+function getActiveRuntimeDir(layout: InstallLayout): string {
+  return layout.hasCurrentLink ? layout.currentLinkPath : layout.appDir;
+}
+
 // Minimum required disk space in bytes (150MB)
 const MIN_DISK_SPACE = 150 * 1024 * 1024;
 
 // Progress callback type
 type ProgressCallback = (progress: UpdateProgress) => void;
 
-// Installation directory (where SeqDesk is installed)
+// Active application directory. In release-layout installs this may be
+// <root>/current or <root>/releases/<version>; flat installs use <root>.
 const INSTALL_DIR = process.cwd();
-const BACKUP_DIR = path.join(INSTALL_DIR, '.update-backup');
-const TEMP_DIR = path.join(INSTALL_DIR, '.update-temp');
-const BACKUP_DIRS = ['.next', 'data', 'node_modules', 'pipelines', 'prisma', 'public', 'scripts'];
-const BACKUP_FILES = ['package.json', 'seqdesk.config.json', 'server.js', 'start.sh'];
+const RELEASES_DIR_NAME = 'releases';
+const CURRENT_LINK_NAME = 'current';
+const TEMP_DIR_NAME = '.update-temp';
+const SHARED_DIR_NAMES = ['data', 'pipelines', 'pipeline_runs'];
+const SHARED_FILE_NAMES = ['seqdesk.config.json'];
 const SAFE_RELEASE_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
+
+interface InstallLayout {
+  appDir: string;
+  rootDir: string;
+  releasesDir: string;
+  currentLinkPath: string;
+  tempDir: string;
+  hasCurrentLink: boolean;
+}
 
 /**
  * Check available disk space
  */
-async function checkDiskSpace(): Promise<{ free: number; required: number; sufficient: boolean }> {
+async function checkDiskSpace(baseDir: string): Promise<{ free: number; required: number; sufficient: boolean }> {
   try {
     if (os.platform() === 'darwin' || os.platform() === 'linux') {
       const { stdout } = await runUpdateCommand(
-        `df -k "${INSTALL_DIR}" | tail -1 | awk '{print $4}'`
+        `df -k "${baseDir}" | tail -1 | awk '{print $4}'`
       );
       const freeKB = parseInt(String(stdout).trim(), 10);
       const freeBytes = freeKB * 1024;
@@ -110,11 +167,28 @@ export async function installUpdate(
   const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
     onProgress?.({ status, progress, message, error });
   };
+  let layout: InstallLayout | null = null;
+  let previousCurrentTarget: string | null = null;
+  let activatedRelease = false;
+  let targetReleasePath: string | null = null;
 
   try {
     validateReleaseForInstall(release);
 
-    const installedDatabase = await loadInstalledDatabaseConfig(INSTALL_DIR);
+    layout = await resolveInstallLayout();
+    previousCurrentTarget = await readCurrentReleaseTarget(layout);
+    targetReleasePath = getReleaseDir(layout, release.version);
+    const startedAt = new Date().toISOString();
+    await writeUpdateState({
+      phase: 'preparing',
+      startedAt,
+      previousRelease: previousCurrentTarget,
+      targetRelease: targetReleasePath,
+      activeRelease: previousCurrentTarget,
+      targetVersion: release.version,
+    });
+
+    const installedDatabase = await loadInstalledDatabaseConfig(layout.rootDir);
     requirePostgresDatabaseUrl(installedDatabase.databaseUrl);
     const databaseCompatibilityError = getDatabaseCompatibilityError(
       installedDatabase.provider,
@@ -126,7 +200,7 @@ export async function installUpdate(
 
     // Step 0: Check disk space
     report('downloading', 5, 'Checking disk space...');
-    const diskSpace = await checkDiskSpace();
+    const diskSpace = await checkDiskSpace(layout.rootDir);
     if (!diskSpace.sufficient) {
       const freeMB = Math.round(diskSpace.free / 1024 / 1024);
       const requiredMB = Math.round(diskSpace.required / 1024 / 1024);
@@ -135,48 +209,64 @@ export async function installUpdate(
 
     // Step 1: Download
     report('downloading', 10, `Downloading SeqDesk ${release.version}...`);
-    const tarballPath = await downloadRelease(release);
+    const tarballPath = await downloadRelease(release, layout.tempDir);
 
     // Step 2: Verify checksum
     report('downloading', 30, 'Verifying download...');
     await verifyChecksum(tarballPath, release.checksum);
 
-    // Step 3: Extract to temp
-    report('extracting', 40, 'Extracting update...');
-    await extractRelease(tarballPath);
+    // Step 3: Extract to staged release directory
+    report('extracting', 40, 'Preparing staged release...');
+    const stagedDir = getStagedReleaseDir(layout, release.version);
+    await fs.rm(stagedDir, { recursive: true, force: true });
+    await extractRelease(tarballPath, stagedDir);
+    await patchUpdateState({ phase: 'staged' });
 
-    // Step 4: Backup current
-    report('extracting', 60, 'Creating backup...');
-    await createBackup();
+    // Step 4: Verify staged version
+    report('extracting', 55, 'Verifying staged release...');
+    await verifyInstalledVersion(release.version, stagedDir);
+    await linkSharedRuntimePaths(layout, stagedDir, { configOnly: true });
 
-    // Step 5: Apply update
-    report('extracting', 80, 'Applying update...');
-    await applyUpdate();
+    // Step 5: Install dependencies in staging, away from the live tree
+    report('extracting', 70, 'Installing staged dependencies...');
+    await installRuntimeDependencies(stagedDir);
 
-    // Step 5b: Verify version
-    report('extracting', 85, 'Verifying update...');
-    await verifyInstalledVersion(release.version);
+    report('extracting', 82, 'Generating staged Prisma client...');
+    await generatePrismaClient(stagedDir);
 
-    // Step 6: Refresh runtime dependencies and Prisma client
-    report('extracting', 87, 'Installing runtime dependencies...');
-    await installRuntimeDependencies();
+    // Step 6: Publish and activate staged release
+    report('extracting', 88, 'Activating staged release...');
+    await patchUpdateState({ phase: 'activating' });
+    await syncSharedRuntimePaths(layout, stagedDir);
+    await linkSharedRuntimePaths(layout, stagedDir);
+    await writeRootStartWrapper(layout.rootDir);
+    await publishStagedRelease(layout, stagedDir, release.version);
+    await switchCurrentRelease(layout, release.version);
+    activatedRelease = true;
 
-    report('extracting', 90, 'Generating Prisma client...');
-    await generatePrismaClient();
-
-    // Step 7: Run migrations (snapshot row counts to guard against silent data loss)
+    // Step 7: Run migrations from the activated release
     report('extracting', 93, 'Running database migrations...');
+    await patchUpdateState({
+      phase: 'migrating',
+      activeRelease: targetReleasePath,
+    });
     const before = await snapshotDataCounts();
-    await runMigrations();
+    await runMigrations(layout.currentLinkPath);
     const after = await snapshotDataCounts();
     const loss = describeDataLoss(before, after);
     if (loss) {
-      throw new Error(`Aborting update: data loss detected after migrations (${loss}). Backup will be restored.`);
+      throw new Error(`Aborting update: data loss detected after migrations (${loss}). Previous release will remain active when available.`);
     }
 
     // Step 8: Cleanup
     report('complete', 100, 'Update complete! Restarting...');
-    await cleanup();
+    await patchUpdateState({
+      phase: 'complete',
+      activeRelease: targetReleasePath,
+      finishedAt: new Date().toISOString(),
+      error: undefined,
+    });
+    await cleanup(layout);
 
     // Step 9: Restart
     report('restarting', 100, 'Restarting application...');
@@ -187,11 +277,25 @@ export async function installUpdate(
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     report('error', 0, 'Update failed', errorMessage);
 
-    // Try to restore backup
-    try {
-      await restoreBackup();
-    } catch {
-      // Backup restore failed - manual intervention needed
+    if (layout && activatedRelease && previousCurrentTarget) {
+      try {
+        await switchCurrentReleaseToTarget(layout, previousCurrentTarget);
+        await patchUpdateState({ activeRelease: previousCurrentTarget });
+      } catch {
+        // Keep the original update error; manual restart/repair may be needed.
+      }
+    }
+
+    if (layout) {
+      await patchUpdateState({
+        phase: 'error',
+        error: errorMessage,
+        finishedAt: new Date().toISOString(),
+        activeRelease:
+          activatedRelease && previousCurrentTarget
+            ? previousCurrentTarget
+            : await readCurrentReleaseTarget(layout),
+      });
     }
 
     await releaseUpdateLock();
@@ -243,11 +347,11 @@ function validateChecksumFormat(checksum: string): void {
 /**
  * Download the release tarball
  */
-async function downloadRelease(release: ReleaseInfo): Promise<string> {
-  const tarballPath = path.join(TEMP_DIR, `seqdesk-${release.version}.tar.gz`);
+async function downloadRelease(release: ReleaseInfo, tempDir: string): Promise<string> {
+  const tarballPath = path.join(tempDir, `seqdesk-${release.version}.tar.gz`);
 
   // Create temp directory
-  await fs.mkdir(TEMP_DIR, { recursive: true });
+  await fs.mkdir(tempDir, { recursive: true });
 
   // Download using curl (more reliable than fetch for large files)
   await runUpdateCommand(`curl -fsSL "${parseDownloadUrl(release.downloadUrl).href}" -o "${tarballPath}"`);
@@ -287,79 +391,14 @@ async function hashFile(filePath: string, algorithm: string): Promise<string> {
 /**
  * Extract the release tarball
  */
-async function extractRelease(tarballPath: string): Promise<void> {
-  const extractDir = path.join(TEMP_DIR, 'extracted');
+async function extractRelease(tarballPath: string, extractDir: string): Promise<void> {
   await fs.mkdir(extractDir, { recursive: true });
   await runUpdateCommand(`tar -xzf "${tarballPath}" -C "${extractDir}" --strip-components=1`);
 }
 
-/**
- * Create a backup of the current installation
- */
-async function createBackup(): Promise<void> {
-  // Remove old backup if exists
-  await fs.rm(BACKUP_DIR, { recursive: true, force: true });
-  await fs.mkdir(BACKUP_DIR, { recursive: true });
-
-  // Backup important directories
-  for (const dir of BACKUP_DIRS) {
-    const srcPath = path.join(INSTALL_DIR, dir);
-    const destPath = path.join(BACKUP_DIR, dir);
-
-    try {
-      await fs.access(srcPath);
-      await fs.cp(srcPath, destPath, { recursive: true, force: true });
-    } catch {
-      // Directory doesn't exist, skip
-    }
-  }
-
-  // Backup key files
-  for (const file of BACKUP_FILES) {
-    const srcPath = path.join(INSTALL_DIR, file);
-    const destPath = path.join(BACKUP_DIR, file);
-
-    try {
-      await fs.access(srcPath);
-      await fs.copyFile(srcPath, destPath);
-    } catch {
-      // File doesn't exist, skip
-    }
-  }
-}
-
-/**
- * Apply the update
- */
-async function applyUpdate(): Promise<void> {
-  const extractDir = path.join(TEMP_DIR, 'extracted');
-
-  // Copy new files, preserving runtime config
-  const preserveFiles = ['seqdesk.config.json'];
-
-  // Backup preserved files
-  const preserved: Record<string, Buffer> = {};
-  for (const file of preserveFiles) {
-    const filePath = path.join(INSTALL_DIR, file);
-    try {
-      preserved[file] = await fs.readFile(filePath);
-    } catch {
-      // File doesn't exist
-    }
-  }
-
-  // Copy new files
-  await runUpdateCommand(`cp -R "${extractDir}/." "${INSTALL_DIR}/"`);
-
-  // Restore preserved files
-  for (const [file, content] of Object.entries(preserved)) {
-    await fs.writeFile(path.join(INSTALL_DIR, file), content);
-  }
-}
-
-async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
+async function verifyInstalledVersion(expectedVersion: string, baseDir: string): Promise<void> {
   try {
-    const pkgPath = path.join(INSTALL_DIR, 'package.json');
+    const pkgPath = path.join(baseDir, 'package.json');
     const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
     if (pkg.version !== expectedVersion) {
       throw new Error(`Expected ${expectedVersion}, found ${pkg.version || 'unknown'}`);
@@ -370,41 +409,197 @@ async function verifyInstalledVersion(expectedVersion: string): Promise<void> {
   }
 }
 
-async function installRuntimeDependencies(): Promise<void> {
+function getStagedReleaseDir(layout: InstallLayout, version: string): string {
+  return path.join(layout.tempDir, `staged-${version}`);
+}
+
+function getReleaseDir(layout: InstallLayout, version: string): string {
+  return path.join(layout.releasesDir, version);
+}
+
+function relativeLinkTarget(fromPath: string, targetPath: string): string {
+  return path.relative(path.dirname(fromPath), targetPath) || '.';
+}
+
+async function replaceWithSymlink(linkPath: string, targetPath: string, type: 'file' | 'dir'): Promise<void> {
+  await fs.rm(linkPath, { recursive: true, force: true });
+  await fs.symlink(relativeLinkTarget(linkPath, targetPath), linkPath, type);
+}
+
+async function linkSharedRuntimePaths(
+  layout: InstallLayout,
+  releaseDir: string,
+  options: { configOnly?: boolean } = {}
+): Promise<void> {
+  for (const fileName of SHARED_FILE_NAMES) {
+    const rootPath = path.join(layout.rootDir, fileName);
+    const releasePath = path.join(releaseDir, fileName);
+
+    if (!(await pathExists(rootPath)) && await pathExists(releasePath)) {
+      await fs.copyFile(releasePath, rootPath);
+    }
+
+    await replaceWithSymlink(releasePath, rootPath, 'file');
+  }
+
+  if (options.configOnly) {
+    return;
+  }
+
+  for (const dirName of SHARED_DIR_NAMES) {
+    const rootPath = path.join(layout.rootDir, dirName);
+    const releasePath = path.join(releaseDir, dirName);
+    await fs.mkdir(rootPath, { recursive: true });
+    await replaceWithSymlink(releasePath, rootPath, 'dir');
+  }
+}
+
+async function syncSharedRuntimePaths(layout: InstallLayout, releaseDir: string): Promise<void> {
+  const stagedDataDir = path.join(releaseDir, 'data');
+  if (await pathExists(stagedDataDir)) {
+    await fs.mkdir(path.join(layout.rootDir, 'data'), { recursive: true });
+    await fs.cp(stagedDataDir, path.join(layout.rootDir, 'data'), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  const stagedPipelinesDir = path.join(releaseDir, 'pipelines');
+  if (await pathExists(stagedPipelinesDir)) {
+    const rootPipelinesDir = path.join(layout.rootDir, 'pipelines');
+    await fs.mkdir(rootPipelinesDir, { recursive: true });
+    for (const entry of await fs.readdir(stagedPipelinesDir)) {
+      await fs.cp(path.join(stagedPipelinesDir, entry), path.join(rootPipelinesDir, entry), {
+        recursive: true,
+        force: true,
+      });
+    }
+  }
+
+  await fs.mkdir(path.join(layout.rootDir, 'pipeline_runs'), { recursive: true });
+}
+
+async function publishStagedRelease(
+  layout: InstallLayout,
+  stagedDir: string,
+  version: string
+): Promise<void> {
+  const releaseDir = getReleaseDir(layout, version);
+  const currentTarget = await readCurrentReleaseTarget(layout);
+
+  if (currentTarget && path.resolve(currentTarget) === path.resolve(releaseDir)) {
+    throw new Error(`Release ${version} is already active`);
+  }
+
+  await fs.mkdir(layout.releasesDir, { recursive: true });
+  await fs.rm(releaseDir, { recursive: true, force: true });
+  await fs.rename(stagedDir, releaseDir);
+}
+
+async function readCurrentReleaseTarget(layout: InstallLayout): Promise<string | null> {
+  try {
+    const stat = await fs.lstat(layout.currentLinkPath);
+    if (!stat.isSymbolicLink()) {
+      return null;
+    }
+    const target = await fs.readlink(layout.currentLinkPath);
+    return path.resolve(layout.rootDir, target);
+  } catch {
+    return null;
+  }
+}
+
+async function switchCurrentRelease(layout: InstallLayout, version: string): Promise<void> {
+  await switchCurrentReleaseToTarget(layout, getReleaseDir(layout, version));
+}
+
+async function switchCurrentReleaseToTarget(layout: InstallLayout, targetPath: string): Promise<void> {
+  const tempLinkPath = path.join(
+    layout.rootDir,
+    `.current-next-${process.pid}-${Date.now()}`
+  );
+  await fs.rm(tempLinkPath, { recursive: true, force: true });
+  await fs.symlink(relativeLinkTarget(layout.currentLinkPath, targetPath), tempLinkPath, 'dir');
+  await fs.rename(tempLinkPath, layout.currentLinkPath);
+  layout.hasCurrentLink = true;
+}
+
+async function writeRootStartWrapper(rootDir: string): Promise<void> {
+  const wrapper = `#!/usr/bin/env bash
+set -e
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR/${CURRENT_LINK_NAME}"
+exec ./start.sh "$@"
+`;
+  const wrapperPath = path.join(rootDir, 'start.sh');
+  await fs.writeFile(wrapperPath, wrapper, { mode: 0o755 });
+  await fs.chmod(wrapperPath, 0o755);
+}
+
+async function installRuntimeDependencies(
+  baseDir: string,
+  mode: RuntimeDependencyInstallMode = 'clean'
+): Promise<void> {
   const hasLockfile = await fs
-    .access(path.join(INSTALL_DIR, 'package-lock.json'))
+    .access(path.join(baseDir, 'package-lock.json'))
     .then(() => true)
     .catch(() => false);
-  const installCommand = hasLockfile
-    ? 'npm ci --omit=dev --no-audit --no-fund'
-    : 'npm install --omit=dev --no-audit --no-fund';
-
-  await runUpdateCommand(installCommand, {
-    cwd: INSTALL_DIR,
-  });
+  const installCommand =
+    hasLockfile && mode === 'clean' ? NPM_CI_COMMAND : NPM_INSTALL_COMMAND;
 
   try {
-    await fs.access(path.join(INSTALL_DIR, 'node_modules', '.bin', 'next'));
+    await runUpdateCommand(installCommand, {
+      cwd: baseDir,
+    });
+  } catch (error) {
+    if (installCommand === NPM_CI_COMMAND && isNfsPrismaBusyUnlinkError(error)) {
+      console.warn(
+        'npm ci could not remove an NFS-held Prisma client artifact; retrying with npm install.'
+      );
+      await runUpdateCommand(NPM_INSTALL_COMMAND, {
+        cwd: baseDir,
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    await fs.access(path.join(baseDir, 'node_modules', '.bin', 'next'));
   } catch {
     throw new Error('Runtime dependency install did not create node_modules/.bin/next');
   }
 
   try {
-    await fs.access(path.join(INSTALL_DIR, 'node_modules', '.bin', 'prisma'));
+    await fs.access(path.join(baseDir, 'node_modules', '.bin', 'prisma'));
   } catch {
     throw new Error('Runtime dependency install did not create node_modules/.bin/prisma');
   }
 }
 
-async function generatePrismaClient(): Promise<void> {
-  await runUpdateCommand('node scripts/run-prisma.mjs generate', { cwd: INSTALL_DIR });
+function isNfsPrismaBusyUnlinkError(error: unknown): boolean {
+  const details = [
+    error instanceof Error ? error.message : '',
+    typeof error === 'object' && error && 'stdout' in error ? String(error.stdout || '') : '',
+    typeof error === 'object' && error && 'stderr' in error ? String(error.stderr || '') : '',
+  ].join('\n');
+
+  return (
+    /\bEBUSY\b/.test(details) &&
+    /\bunlink\b/i.test(details) &&
+    /node_modules[\/\\]\.prisma[\/\\]client[\/\\]\.nfs/i.test(details)
+  );
+}
+
+async function generatePrismaClient(baseDir: string): Promise<void> {
+  await runUpdateCommand('node scripts/run-prisma.mjs generate', { cwd: baseDir });
 }
 
 /**
  * Run database migrations
  */
-async function runMigrations(): Promise<void> {
-  await runUpdateCommand('node scripts/run-prisma.mjs migrate deploy', { cwd: INSTALL_DIR });
+async function runMigrations(baseDir: string): Promise<void> {
+  await runUpdateCommand('node scripts/run-prisma.mjs migrate deploy', { cwd: baseDir });
 }
 
 export async function repairInstalledUpdate(
@@ -416,18 +611,20 @@ export async function repairInstalledUpdate(
   };
 
   try {
-    const installedDatabase = await loadInstalledDatabaseConfig(INSTALL_DIR);
+    const layout = await resolveInstallLayout();
+    const runtimeDir = getActiveRuntimeDir(layout);
+    const installedDatabase = await loadInstalledDatabaseConfig(layout.rootDir);
     requirePostgresDatabaseUrl(installedDatabase.databaseUrl);
 
     report('extracting', 20, 'Repairing runtime dependencies...');
-    await installRuntimeDependencies();
+    await installRuntimeDependencies(runtimeDir, 'in-place');
 
     report('extracting', 45, 'Regenerating Prisma client...');
-    await generatePrismaClient();
+    await generatePrismaClient(runtimeDir);
 
     report('extracting', 70, 'Running database migrations...');
     const before = await snapshotDataCounts();
-    await runMigrations();
+    await runMigrations(runtimeDir);
     const after = await snapshotDataCounts();
     const loss = describeDataLoss(before, after);
     if (loss) {
@@ -447,47 +644,81 @@ export async function repairInstalledUpdate(
   }
 }
 
-/**
- * Restore from backup
- */
-async function restoreBackup(): Promise<void> {
-  await fs.access(BACKUP_DIR);
+export async function rollbackInstalledUpdate(
+  onProgress?: ProgressCallback
+): Promise<{ fromRelease: string; toRelease: string }> {
+  const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
+    onProgress?.({ status, progress, message, error });
+  };
 
-  for (const dir of BACKUP_DIRS) {
-    const backupPath = path.join(BACKUP_DIR, dir);
-    const installPath = path.join(INSTALL_DIR, dir);
+  try {
+    const layout = await resolveInstallLayout();
+    const state = await readUpdateState();
+    const rollbackTarget = state?.previousRelease || null;
+    const currentTarget = await readCurrentReleaseTarget(layout);
 
-    try {
-      await fs.access(backupPath);
-    } catch {
-      continue;
+    if (!layout.hasCurrentLink || !currentTarget) {
+      throw new Error('Rollback is only available for release-layout installations.');
     }
 
-    await fs.rm(installPath, { recursive: true, force: true });
-    await fs.cp(backupPath, installPath, { recursive: true, force: true });
-  }
-
-  for (const file of BACKUP_FILES) {
-    const backupPath = path.join(BACKUP_DIR, file);
-    const installPath = path.join(INSTALL_DIR, file);
-
-    try {
-      await fs.access(backupPath);
-    } catch {
-      continue;
+    if (!rollbackTarget) {
+      throw new Error('No previous release is recorded for rollback.');
     }
 
-    await fs.rm(installPath, { force: true });
-    await fs.copyFile(backupPath, installPath);
+    if (!(await pathExists(rollbackTarget))) {
+      throw new Error(`Previous release is missing: ${rollbackTarget}`);
+    }
+
+    if (path.resolve(currentTarget) === path.resolve(rollbackTarget)) {
+      throw new Error('SeqDesk is already running the recorded previous release.');
+    }
+
+    report('checking', 5, 'Preparing release rollback...');
+    await patchUpdateState({
+      phase: 'rollback_started',
+      previousRelease: currentTarget,
+      targetRelease: rollbackTarget,
+      activeRelease: currentTarget,
+      finishedAt: undefined,
+      error: undefined,
+    });
+
+    report('extracting', 60, 'Activating previous release...');
+    await switchCurrentReleaseToTarget(layout, rollbackTarget);
+
+    report('complete', 100, 'Rollback complete! Restarting...');
+    await patchUpdateState({
+      phase: 'rolled_back',
+      previousRelease: currentTarget,
+      targetRelease: rollbackTarget,
+      activeRelease: rollbackTarget,
+      finishedAt: new Date().toISOString(),
+      error: undefined,
+    });
+
+    report('restarting', 100, 'Restarting application...');
+    await releaseUpdateLock();
+    await restartApplication();
+
+    return { fromRelease: currentTarget, toRelease: rollbackTarget };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    report('error', 0, 'Release rollback failed', errorMessage);
+    await patchUpdateState({
+      phase: 'error',
+      error: errorMessage,
+      finishedAt: new Date().toISOString(),
+    });
+    await releaseUpdateLock();
+    throw error;
   }
 }
 
 /**
  * Cleanup temp files
  */
-async function cleanup(): Promise<void> {
-  await fs.rm(TEMP_DIR, { recursive: true, force: true });
-  // Keep backup for a while in case of issues
+async function cleanup(layout: InstallLayout): Promise<void> {
+  await fs.rm(layout.tempDir, { recursive: true, force: true });
 }
 
 /**

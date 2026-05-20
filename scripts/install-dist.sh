@@ -2486,6 +2486,53 @@ install_runtime_node_modules() {
     fi
 }
 
+write_root_start_wrapper() {
+    mkdir -p "$SEQDESK_DIR"
+    cat > "$SEQDESK_DIR/start.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR/current"
+exec ./start.sh "$@"
+EOF
+    chmod +x "$SEQDESK_DIR/start.sh"
+}
+
+sync_release_shared_paths() {
+    local release_dir="$1"
+
+    mkdir -p "$SEQDESK_DIR/data" "$SEQDESK_DIR/pipelines" "$SEQDESK_DIR/pipeline_runs"
+
+    if [ -f "$release_dir/seqdesk.config.json" ] && [ ! -e "$SEQDESK_DIR/seqdesk.config.json" ]; then
+        cp "$release_dir/seqdesk.config.json" "$SEQDESK_DIR/seqdesk.config.json"
+    fi
+
+    if [ -d "$release_dir/data" ]; then
+        cp -R "$release_dir/data/." "$SEQDESK_DIR/data/"
+    fi
+
+    if [ -d "$release_dir/pipelines" ]; then
+        cp -R "$release_dir/pipelines/." "$SEQDESK_DIR/pipelines/"
+    fi
+
+    rm -f "$release_dir/seqdesk.config.json"
+    ln -s "../../seqdesk.config.json" "$release_dir/seqdesk.config.json"
+
+    rm -rf "$release_dir/data" "$release_dir/pipelines" "$release_dir/pipeline_runs"
+    ln -s "../../data" "$release_dir/data"
+    ln -s "../../pipelines" "$release_dir/pipelines"
+    ln -s "../../pipeline_runs" "$release_dir/pipeline_runs"
+}
+
+activate_current_release() {
+    local version="$1"
+    local next_link="$SEQDESK_DIR/.current-next-$$"
+
+    rm -f "$next_link"
+    ln -s "releases/$version" "$next_link"
+    mv -f "$next_link" "$SEQDESK_DIR/current"
+}
+
 run_wizard() {
     if ! command_exists node; then
         return 1
@@ -3414,12 +3461,18 @@ fi
 # Extract
 print_step "Extract package"
 
+APP_DIR=""
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     if [ ! -d "$SEQDESK_DIR" ]; then
         print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
         exit 1
     fi
     print_success "Using existing installation: $SEQDESK_DIR"
+    if [ -e "$SEQDESK_DIR/current" ]; then
+        APP_DIR="$SEQDESK_DIR/current"
+    else
+        APP_DIR="$SEQDESK_DIR"
+    fi
 else
     if [ -d "$SEQDESK_DIR" ]; then
         if is_truthy "$SEQDESK_YES"; then
@@ -3437,12 +3490,17 @@ else
         mv "$SEQDESK_DIR" "${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
     fi
 
-    mkdir -p "$SEQDESK_DIR"
-    run_with_spinner "Package extraction" tar -xzf "$TEMP_FILE" -C "$SEQDESK_DIR" --strip-components=1
+    RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"
+    mkdir -p "$RELEASE_DIR"
+    run_with_spinner "Package extraction" tar -xzf "$TEMP_FILE" -C "$RELEASE_DIR" --strip-components=1
     rm "$TEMP_FILE"
+    sync_release_shared_paths "$RELEASE_DIR"
+    write_root_start_wrapper
+    activate_current_release "$LATEST_VERSION"
+    APP_DIR="$SEQDESK_DIR/current"
 fi
 
-cd "$SEQDESK_DIR"
+cd "$APP_DIR"
 
 INSTALLED_VERSION="$LATEST_VERSION"
 if command_exists node && [ -f package.json ]; then

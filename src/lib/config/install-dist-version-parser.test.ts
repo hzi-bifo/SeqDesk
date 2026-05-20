@@ -113,3 +113,18 @@ describe("install-dist release parser", () => {
     expect(result.stderr).toMatch(/version must be a non-empty string/i);
   });
 });
+
+describe("install-dist release layout", () => {
+  it("extracts fresh installs into a versioned release and activates current", () => {
+    expect(installDistSource).toContain('RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"');
+    expect(installDistSource).toContain('sync_release_shared_paths "$RELEASE_DIR"');
+    expect(installDistSource).toContain('activate_current_release "$LATEST_VERSION"');
+    expect(installDistSource).toContain('APP_DIR="$SEQDESK_DIR/current"');
+  });
+
+  it("keeps startup and private pipeline installs anchored to stable paths", () => {
+    expect(installDistSource).toContain('pm2_exec start "$SEQDESK_DIR/start.sh" --name seqdesk');
+    expect(installDistSource).toContain('cd "$ROOT_DIR/current"');
+    expect(installDistSource).toContain('--dir "$(pwd)"');
+  });
+});

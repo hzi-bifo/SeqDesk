@@ -299,12 +299,24 @@ describe("admin settings seed status", () => {
             error: "Prisma CLI Version : 7.8.0",
             targetVersion: "1.1.105",
           },
+          state: {
+            phase: "error",
+            startedAt: "2026-05-20T10:00:00.000Z",
+            updatedAt: "2026-05-20T10:01:00.000Z",
+            previousRelease: "/srv/seqdesk/releases/1.1.104",
+            targetRelease: "/srv/seqdesk/releases/1.1.105",
+            activeRelease: "/srv/seqdesk/releases/1.1.105",
+            targetVersion: "1.1.105",
+          },
           runningVersion: "1.1.104",
           installedVersion: "1.1.105",
         });
       }
       if (url === "/api/admin/updates/install") {
         return jsonResponse({ success: true, repair: true, version: "1.1.105" });
+      }
+      if (url === "/api/admin/updates/rollback") {
+        return jsonResponse({ success: true, rollback: true });
       }
       if (url.startsWith("/api/admin/updates")) {
         return jsonResponse({
@@ -328,7 +340,16 @@ describe("admin settings seed status", () => {
     await waitFor(() => {
       expect(screen.getByText("Retry update")).toBeTruthy();
     });
+    expect(screen.getByText("Roll back release")).toBeTruthy();
     expect(screen.getByText("Prisma CLI Version : 7.8.0")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Roll back release"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/updates/rollback", {
+        method: "POST",
+      });
+    });
 
     fireEvent.click(screen.getByText("Retry update"));
 
