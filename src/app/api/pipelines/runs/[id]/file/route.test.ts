@@ -275,6 +275,30 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     expect(await response.text()).toBe("<h1>ok</h1>");
   });
 
+  it("streams PDF reports inline through the run file endpoint", async () => {
+    mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/output/dotplot.pdf");
+    mocks.fs.stat.mockResolvedValue({
+      size: 8,
+      isFile: () => true,
+    });
+    mocks.createReadStream.mockReturnValue(Readable.from([Buffer.from("%PDF-1.7")]));
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/pipelines/runs/run-1/file?path=output/dotplot.pdf&inline=1"
+      ),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/pdf");
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'inline; filename="dotplot.pdf"'
+    );
+    expect(response.headers.get("Content-Length")).toBe("8");
+    expect(await response.text()).toBe("%PDF-1.7");
+  });
+
   it("rejects inline preview for unsupported binary files", async () => {
     mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/output/data.bin");
     mocks.fs.stat.mockResolvedValue({

@@ -339,6 +339,11 @@ function FilePreviewDialog({
     canPreview || canOpenInline
       ? "flex max-h-[90vh] w-[min(96vw,80rem)] max-w-none flex-col overflow-hidden"
       : "flex max-h-[90vh] w-[min(96vw,42rem)] max-w-none flex-col overflow-hidden";
+  const inlinePreviewUrl =
+    runId && canOpenInline
+      ? `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`
+      : null;
+  const inlinePreviewExtension = getExtension(file.name);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -415,7 +420,7 @@ function FilePreviewDialog({
             {canOpenInline && (
               <Button variant="outline" className="min-w-0 justify-center sm:flex-1" asChild>
                 <a
-                  href={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
+                  href={inlinePreviewUrl ?? undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -446,12 +451,36 @@ function FilePreviewDialog({
             {previewError && (
               <div className="text-xs text-destructive">{previewError}</div>
             )}
-            {canOpenInline && (
+            {inlinePreviewUrl && inlinePreviewExtension === "pdf" && (
+              <div className="max-w-full overflow-hidden rounded-md border bg-background">
+                <object
+                  aria-label={`${file.name} preview`}
+                  className="h-[60vh] max-h-[640px] w-full"
+                  data={inlinePreviewUrl}
+                  data-testid="pipeline-pdf-preview"
+                  type="application/pdf"
+                >
+                  <div className="p-4 text-sm text-muted-foreground">
+                    PDF preview unavailable.{" "}
+                    <a
+                      href={inlinePreviewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      Open PDF in a new tab.
+                    </a>
+                  </div>
+                </object>
+              </div>
+            )}
+            {inlinePreviewUrl && inlinePreviewExtension !== "pdf" && (
               <div className="max-w-full overflow-hidden rounded-md border bg-background">
                 <iframe
                   title={`${file.name} preview`}
-                  src={`/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(file.path)}&inline=1`}
+                  src={inlinePreviewUrl}
                   className="h-[60vh] max-h-[640px] w-full"
+                  data-testid="pipeline-html-preview"
                   sandbox="allow-downloads allow-popups"
                 />
               </div>

@@ -132,4 +132,66 @@ describe("PipelineFileBrowser", () => {
     expect(longPathCell?.className).toContain("break-all");
     expect(longPathCell?.className).toContain("whitespace-normal");
   });
+
+  it("renders PDF inline previews with an unsandboxed object", () => {
+    const pdfPath =
+      "/net/broker/devphil/pipeline/METAXPATH-20260520-001/output/run_20260520/final/flye/metaxpath.combined_report.simple.dotplot.pdf";
+    const expectedUrl = `/api/pipelines/runs/run-1/file?path=${encodeURIComponent(pdfPath)}&inline=1`;
+
+    render(
+      <PipelineFileBrowser
+        inputFiles={[]}
+        outputFiles={[
+          {
+            id: "dotplot",
+            name: "metaxpath.combined_report.simple.dotplot.pdf",
+            path: pdfPath,
+            type: "report",
+            size: 8600,
+          },
+        ]}
+        runId="run-1"
+        runFolder="/net/broker/devphil/pipeline/METAXPATH-20260520-001"
+      />
+    );
+
+    fireEvent.click(screen.getByText("metaxpath.combined_report.simple.dotplot.pdf"));
+
+    const pdfPreview = screen.getByTestId("pipeline-pdf-preview");
+    expect(pdfPreview.tagName).toBe("OBJECT");
+    expect(pdfPreview.getAttribute("type")).toBe("application/pdf");
+    expect(pdfPreview.getAttribute("data")).toBe(expectedUrl);
+    expect(screen.queryByTestId("pipeline-html-preview")).toBeNull();
+  });
+
+  it("keeps HTML inline previews in a sandboxed iframe", () => {
+    const htmlPath =
+      "/net/broker/devphil/pipeline/METAXPATH-20260520-001/report.html";
+    const expectedUrl = `/api/pipelines/runs/run-1/file?path=${encodeURIComponent(htmlPath)}&inline=1`;
+
+    render(
+      <PipelineFileBrowser
+        inputFiles={[]}
+        outputFiles={[
+          {
+            id: "report",
+            name: "report.html",
+            path: htmlPath,
+            type: "report",
+            size: 2048,
+          },
+        ]}
+        runId="run-1"
+        runFolder="/net/broker/devphil/pipeline/METAXPATH-20260520-001"
+      />
+    );
+
+    fireEvent.click(screen.getByText("report.html"));
+
+    const htmlPreview = screen.getByTestId("pipeline-html-preview");
+    expect(htmlPreview.tagName).toBe("IFRAME");
+    expect(htmlPreview.getAttribute("src")).toBe(expectedUrl);
+    expect(htmlPreview.getAttribute("sandbox")).toBe("allow-downloads allow-popups");
+    expect(screen.queryByTestId("pipeline-pdf-preview")).toBeNull();
+  });
 });
