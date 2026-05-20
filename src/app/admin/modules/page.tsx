@@ -20,7 +20,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import {
   type AccountValidationSettings,
   type BillingSettings,
@@ -159,7 +159,7 @@ export default function ModulesPage() {
         groups: Array.isArray(studyData.groups) ? studyData.groups : [],
       });
     } catch {
-      toast.error("Failed to load form builder configuration");
+      notifyPanel.error("Failed to load form builder configuration");
     } finally {
       setLoadingFormConfigs(false);
     }
@@ -173,9 +173,9 @@ export default function ModulesPage() {
     setUpdating(moduleId);
     try {
       await setModuleEnabled(moduleId, enabled);
-      toast.success(`${enabled ? "Enabled" : "Disabled"} module successfully`);
+      notifyPanel.success(`${enabled ? "Enabled" : "Disabled"} module successfully`);
     } catch {
-      toast.error("Failed to update module");
+      notifyPanel.error("Failed to update module");
     } finally {
       setUpdating(null);
     }
@@ -246,7 +246,7 @@ export default function ModulesPage() {
     try {
       await action();
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to update form configuration"
       );
     } finally {
@@ -257,7 +257,7 @@ export default function ModulesPage() {
   const addStudyMixsField = async () => {
     if (!studyFormConfig) return;
     if (studyFormConfig.fields.some((f) => f.type === "mixs")) {
-      toast.message("MIxS field is already added to Study Form Builder");
+      notifyPanel.message("MIxS field is already added to Study Form Builder");
       return;
     }
 
@@ -278,13 +278,13 @@ export default function ModulesPage() {
     };
 
     await persistStudyFormConfig([...studyFormConfig.fields, newField]);
-    toast.success("Added MIxS field to Study Form Builder");
+    notifyPanel.success("Added MIxS field to Study Form Builder");
   };
 
   const addStudyFundingField = async () => {
     if (!studyFormConfig) return;
     if (studyFormConfig.fields.some((f) => f.type === "funding")) {
-      toast.message("Funding field is already added to Study Form Builder");
+      notifyPanel.message("Funding field is already added to Study Form Builder");
       return;
     }
 
@@ -305,13 +305,13 @@ export default function ModulesPage() {
     };
 
     await persistStudyFormConfig([...studyFormConfig.fields, newField]);
-    toast.success("Added Funding field to Study Form Builder");
+    notifyPanel.success("Added Funding field to Study Form Builder");
   };
 
   const addSequencingTechField = async () => {
     if (!orderFormConfig) return;
     if (orderFormConfig.fields.some((f) => f.type === "sequencing-tech")) {
-      toast.message(
+      notifyPanel.message(
         "Sequencing Technology field is already added to Order Form Builder"
       );
       return;
@@ -331,7 +331,7 @@ export default function ModulesPage() {
     };
 
     await persistOrderFormConfig([...orderFormConfig.fields, newField]);
-    toast.success("Added Sequencing Technology field to Order Form Builder");
+    notifyPanel.success("Added Sequencing Technology field to Order Form Builder");
   };
 
   const addBarcodeField = async () => {
@@ -340,7 +340,7 @@ export default function ModulesPage() {
       (f) => f.type === "sequencing-tech"
     );
     if (!hasSequencingTech) {
-      toast.error("Add Sequencing Technology first");
+      notifyPanel.error("Add Sequencing Technology first");
       return;
     }
 
@@ -349,7 +349,7 @@ export default function ModulesPage() {
         (f) => f.type === "barcode" || f.name === "_barcode"
       )
     ) {
-      toast.message("Barcode field is already added to Order Form Builder");
+      notifyPanel.message("Barcode field is already added to Order Form Builder");
       return;
     }
 
@@ -368,7 +368,7 @@ export default function ModulesPage() {
     };
 
     await persistOrderFormConfig([...orderFormConfig.fields, newField]);
-    toast.success("Added Barcode field to Order Form Builder");
+    notifyPanel.success("Added Barcode field to Order Form Builder");
   };
 
   const applyOntRunPlanPreset = async () => {
@@ -388,7 +388,7 @@ export default function ModulesPage() {
     }
 
     await fetchFormConfigs();
-    toast.success(
+    notifyPanel.success(
       `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
     );
   };
@@ -400,7 +400,7 @@ export default function ModulesPage() {
         (f) => f.type === "organism" || f.name === "_organism"
       )
     ) {
-      toast.message("ENA sample fields are already added to Order Form Builder");
+      notifyPanel.message("ENA sample fields are already added to Order Form Builder");
       return;
     }
 
@@ -452,7 +452,7 @@ export default function ModulesPage() {
     ];
 
     await persistOrderFormConfig([...orderFormConfig.fields, ...newFields]);
-    toast.success("Added ENA sample fields to Order Form Builder");
+    notifyPanel.success("Added ENA sample fields to Order Form Builder");
   };
 
   const hasStudyMixsField = studyFormConfig?.fields.some(
@@ -477,12 +477,12 @@ export default function ModulesPage() {
 
     // Basic validation
     if (!domain.includes(".")) {
-      toast.error("Please enter a valid domain (e.g., youruniversity.edu)");
+      notifyPanel.error("Please enter a valid domain (e.g., youruniversity.edu)");
       return;
     }
 
     if (accountValidationSettings.allowedDomains.includes(domain)) {
-      toast.error("This domain is already in the list");
+      notifyPanel.error("This domain is already in the list");
       return;
     }
 
@@ -513,9 +513,9 @@ export default function ModulesPage() {
         throw new Error("Failed to save");
       }
 
-      toast.success("Settings saved successfully");
+      notifyPanel.success("Settings saved successfully");
     } catch {
-      toast.error("Failed to save settings");
+      notifyPanel.error("Failed to save settings");
     } finally {
       setSavingSettings(false);
     }
@@ -534,9 +534,9 @@ export default function ModulesPage() {
         throw new Error("Failed to save");
       }
 
-      toast.success("Billing settings saved successfully");
+      notifyPanel.success("Billing settings saved successfully");
     } catch {
-      toast.error("Failed to save billing settings");
+      notifyPanel.error("Failed to save billing settings");
     } finally {
       setSavingBillingSettings(false);
     }

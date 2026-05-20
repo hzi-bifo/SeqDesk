@@ -31,7 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface Study {
@@ -252,13 +252,13 @@ export default function StudiesPage() {
       }
 
       if (failed.length > 0) {
-        toast.error(failed[0].error || "Failed to delete some studies");
+        notifyPanel.error(failed[0].error || "Failed to delete some studies");
         return;
       }
 
-      toast.success(targetStudies.length === 1 ? "Study deleted" : "Studies deleted");
+      notifyPanel.success(targetStudies.length === 1 ? "Study deleted" : "Studies deleted");
     } catch {
-      toast.error("Failed to delete study");
+      notifyPanel.error("Failed to delete study");
     } finally {
       setDeleting(false);
       setDeleteDialogOpen(false);

@@ -60,7 +60,7 @@ import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { OrganismCell } from "@/lib/field-types/organism";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { PageNotice } from "@/components/ui/page-notice";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 // Generate unique sample ID like v1: S-{timestamp}-{random}
 function generateSampleId(): string {
@@ -1262,7 +1262,7 @@ export default function SamplesPage({
         setSamples((prev) => [...prev, ...newSamples]);
       }
       setHasChanges(true);
-      toast.success(
+      notifyPanel.success(
         `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""}`
       );
     },

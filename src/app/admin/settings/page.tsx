@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { toast } from "sonner";
+import { notifyPanel, refreshPanelNotifications } from "@/lib/notifications/client";
 import {
   AlertTriangle,
   ArrowRight,
@@ -471,7 +471,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to load configuration status";
       setConfigError(message);
       if (showToast) {
-        toast.error(message);
+        notifyPanel.error(message);
       }
     } finally {
       setConfigLoaded(true);
@@ -499,7 +499,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to load hosted profile status";
       setInstallProfileStatusError(message);
       if (showToast) {
-        toast.error(message);
+        notifyPanel.error(message);
       }
     } finally {
       setInstallProfileLoaded(true);
@@ -527,7 +527,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to load workspace settings";
       setAccessError(message);
       if (showToast) {
-        toast.error(message);
+        notifyPanel.error(message);
       }
     } finally {
       setAccessLoaded(true);
@@ -554,7 +554,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to load telemetry settings";
       setTelemetryError(message);
       if (showToast) {
-        toast.error(message);
+        notifyPanel.error(message);
       }
     }
   }, []);
@@ -598,7 +598,7 @@ export default function SettingsPage() {
               }
         );
         if (showToast) {
-          toast.error(message);
+          notifyPanel.error(message);
         }
         setUpdateLoaded(true);
       } finally {
@@ -628,7 +628,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to detect tool versions";
       setVersionsError(message);
       if (showToast) {
-        toast.error(message);
+        notifyPanel.error(message);
       }
     } finally {
       setVersionsLoaded(true);
@@ -660,11 +660,11 @@ export default function SettingsPage() {
           throw new Error(payload?.error || "Failed to save workspace settings");
         }
 
-        toast.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
+        notifyPanel.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
       } catch (error) {
         console.error("Failed to save workspace settings:", error);
         setOrderNotesEnabled(previousValue);
-        toast.error(
+        notifyPanel.error(
           error instanceof Error ? error.message : "Failed to save workspace settings"
         );
       } finally {
@@ -710,11 +710,11 @@ export default function SettingsPage() {
         const data = (await res.json()) as TelemetrySettingsResponse;
         setTelemetrySettings(data);
         setTelemetryError(null);
-        toast.success(`Telemetry ${enabled ? "enabled" : "disabled"}`);
+        notifyPanel.success(`Telemetry ${enabled ? "enabled" : "disabled"}`);
       } catch (error) {
         console.error("Failed to save telemetry settings:", error);
         setTelemetrySettings(previousValue);
-        toast.error(
+        notifyPanel.error(
           error instanceof Error ? error.message : "Failed to save telemetry settings"
         );
       } finally {
@@ -750,11 +750,11 @@ export default function SettingsPage() {
       const data = (await res.json()) as TelemetrySettingsResponse;
       setTelemetrySettings(data);
       setTelemetryError(null);
-      toast.success("Telemetry kept disabled");
+      notifyPanel.success("Telemetry kept disabled");
     } catch (error) {
       console.error("Failed to save telemetry settings:", error);
       setTelemetrySettings(previousValue);
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to save telemetry settings"
       );
     } finally {
@@ -774,11 +774,11 @@ export default function SettingsPage() {
       if (!res.ok || payload?.success === false) {
         throw new Error(payload?.error || payload?.reason || "Failed to send telemetry");
       }
-      toast.success("Telemetry heartbeat sent");
+      notifyPanel.success("Telemetry heartbeat sent");
       await fetchTelemetrySettings();
     } catch (error) {
       console.error("Failed to send telemetry:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to send telemetry");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to send telemetry");
       await fetchTelemetrySettings();
     } finally {
       setTestingTelemetry(false);
@@ -865,12 +865,12 @@ export default function SettingsPage() {
             platform.fromConfiguredDevice ? "" : " (default)"
           }`
         : "";
-      toast.success(
+      notifyPanel.success(
         `Seeded ${payload?.ordersCreated ?? 0} orders, ${payload?.samplesCreated ?? 0} samples, ${payload?.readsCreated ?? 0} reads (${payload?.filesCreated ?? 0} FASTQ files)${platformLabel}`
       );
       await fetchSeedStatus();
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to seed dummy data"
       );
     } finally {
@@ -897,15 +897,15 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to seed Gemma dataset");
       }
       if (payload?.started) {
-        toast.success("Gemma MetaxPath dataset load started");
+        notifyPanel.success("Gemma MetaxPath dataset load started");
       } else {
-        toast.success(
+        notifyPanel.success(
           `Gemma MetaxPath dataset loaded: ${payload?.samplesCount ?? 0} samples, ${payload?.readsCount ?? 0} read sets`
         );
       }
       await fetchGemmaSeedStatus();
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to seed Gemma dataset"
       );
     } finally {
@@ -923,7 +923,7 @@ export default function SettingsPage() {
       if (!res.ok) {
         throw new Error(payload?.error || "Failed to wipe seeded data");
       }
-      toast.success(
+      notifyPanel.success(
         `Removed ${payload?.ordersDeleted ?? 0} seeded order${
           payload?.ordersDeleted === 1 ? "" : "s"
         } and the seeded study + files`
@@ -931,7 +931,7 @@ export default function SettingsPage() {
       setWipeDialogOpen(false);
       await fetchSeedStatus();
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to wipe seeded data"
       );
     } finally {
@@ -965,7 +965,7 @@ export default function SettingsPage() {
       setProfileReloadResult(payload);
       setProfileAccessCode("");
       setProfileReloadDialogOpen(false);
-      toast.success(
+      notifyPanel.success(
         `Hosted profile ${payload?.profile?.id || currentInstallProfile.id} applied`
       );
       await Promise.all([
@@ -981,7 +981,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to reload hosted profile";
       console.error("Failed to reload hosted profile:", error);
       setProfileReloadResult({ success: false, error: message });
-      toast.error(message);
+      notifyPanel.error(message);
     } finally {
       setReloadingHostedProfile(false);
     }
@@ -1135,15 +1135,15 @@ export default function SettingsPage() {
       }
       await navigator.clipboard.writeText(text);
       setDiagnosticsText(null);
-      toast.success("Diagnostics copied");
+      notifyPanel.success("Diagnostics copied");
     } catch {
       if (fallbackCopyText(text)) {
         setDiagnosticsText(null);
-        toast.success("Diagnostics copied");
+        notifyPanel.success("Diagnostics copied");
         return;
       }
       setDiagnosticsText(text);
-      toast.info("Clipboard blocked. Diagnostics are shown below.");
+      notifyPanel.info("Clipboard blocked. Diagnostics are shown below.");
     }
   }, [
     accessError,
@@ -1288,16 +1288,12 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to start update");
       }
 
-      toast.success(
-        repair
-          ? "Update repair started. SeqDesk will attempt restart; if it does not return, restart it manually."
-          : "Update started. SeqDesk will attempt restart; if it does not return, restart it manually."
-      );
+      refreshPanelNotifications();
       await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
     } catch (error) {
       console.error("Update failed:", error);
       const message = error instanceof Error ? error.message : "Update failed";
-      toast.error(message);
+      notifyPanel.error(message);
       setUpdateStatus({
         status: "error",
         progress: 0,
@@ -1320,12 +1316,12 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to clear update status");
       }
       setUpdateStatus(null);
-      toast.success("Failed update status cleared");
+      notifyPanel.success("Failed update status cleared");
       await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to clear update status";
-      toast.error(message);
+      notifyPanel.error(message);
     }
   };
 

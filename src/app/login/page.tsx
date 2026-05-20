@@ -15,10 +15,18 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [checkingDb, setCheckingDb] = useState(true);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("registered") === "true") {
+        setNotice("Account created. Please log in.");
+      }
+    }
+
     if (isPublicDemoEnabledClient()) {
       router.replace("/demo");
       return;
@@ -46,6 +54,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setNotice("");
     setIsLoading(true);
 
     try {
@@ -132,6 +141,19 @@ export default function LoginPage() {
                 }}
               >
                 {error}
+              </div>
+            )}
+
+            {notice && (
+              <div
+                className="mb-6 p-3 rounded-xl text-sm"
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#166534'
+                }}
+              >
+                {notice}
               </div>
             )}
 

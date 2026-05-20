@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   ArrowLeft,
 } from "lucide-react";
-import { toast } from "sonner";
 
 function AdminRegisterContent() {
   const router = useRouter();
@@ -33,6 +32,10 @@ function AdminRegisterContent() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submitNotice, setSubmitNotice] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Auto-verify if code is in URL
   useEffect(() => {
@@ -78,19 +81,20 @@ function AdminRegisterContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitNotice(null);
 
     if (!codeVerified) {
-      toast.error("Please verify your invite code first");
+      setSubmitNotice({ type: "error", message: "Please verify your invite code first" });
       return;
     }
 
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
+      setSubmitNotice({ type: "error", message: "Passwords do not match" });
       return;
     }
 
     if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+      setSubmitNotice({ type: "error", message: "Password must be at least 6 characters" });
       return;
     }
 
@@ -116,10 +120,13 @@ function AdminRegisterContent() {
         throw new Error(data.error || "Registration failed");
       }
 
-      toast.success("Account created! Please log in.");
-      router.push("/login");
+      setSubmitNotice({ type: "success", message: "Account created. Please log in." });
+      router.push("/login?registered=true");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Registration failed");
+      setSubmitNotice({
+        type: "error",
+        message: error instanceof Error ? error.message : "Registration failed",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -198,6 +205,23 @@ function AdminRegisterContent() {
                   Invite code <code className="font-mono font-semibold">{inviteCode}</code> verified
                 </span>
               </div>
+
+              {submitNotice && (
+                <div
+                  className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
+                    submitNotice.type === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-destructive/20 bg-destructive/10 text-destructive"
+                  }`}
+                >
+                  {submitNotice.type === "success" ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4" />
+                  )}
+                  <span>{submitNotice.message}</span>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">

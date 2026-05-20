@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  createUserInAppNotification: vi.fn(),
   listInAppNotifications: vi.fn(),
 }));
 
@@ -15,10 +16,11 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/notifications/in-app", () => ({
+  createUserInAppNotification: mocks.createUserInAppNotification,
   listInAppNotifications: mocks.listInAppNotifications,
 }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 describe("GET /api/notifications", () => {
   beforeEach(() => {
@@ -30,6 +32,7 @@ describe("GET /api/notifications", () => {
       notifications: [],
       unreadCount: 0,
     });
+    mocks.createUserInAppNotification.mockResolvedValue(1);
   });
 
   it("returns notifications for the signed-in user", async () => {
@@ -55,5 +58,96 @@ describe("GET /api/notifications", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.listInAppNotifications).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/notifications", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.createUserInAppNotification.mockResolvedValue(1);
+  });
+
+  it("creates a notification for the signed-in user", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({
+          severity: "success",
+          title: "Saved settings",
+          body: "The new settings were saved.",
+          linkPath: "/settings",
+          sourceType: "settings",
+          sourceId: "profile",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.createUserInAppNotification).toHaveBeenCalledWith("user-1", {
+      severity: "success",
+      title: "Saved settings",
+      body: "The new settings were saved.",
+      linkPath: "/settings",
+      sourceType: "settings",
+      sourceId: "profile",
+    });
+    await expect(response.json()).resolves.toEqual({ success: true });
+  });
+
+  it("rejects unauthenticated users", async () => {
+    mocks.getServerSession.mockResolvedValue(null);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ severity: "info", title: "Hello" }),
+      })
+    );
+
+    expect(response.status).toBe(401);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid severity", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ severity: "critical", title: "Hello" }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty titles", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ severity: "info", title: "   " }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe link paths", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({
+          severity: "info",
+          title: "External",
+          linkPath: "https://example.com",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { FastqcMetricBadges } from "@/components/orders/FastqcMetricBadges";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
@@ -561,7 +561,7 @@ export default function OrderSequencingPage({
         setAssignmentRunId(runs[0].id);
       }
     } catch (runPlanError) {
-      toast.error(
+      notifyPanel.error(
         runPlanError instanceof Error ? runPlanError.message : "Failed to load run plans"
       );
       setRunPlans([]);
@@ -848,7 +848,7 @@ export default function OrderSequencingPage({
 
       await refreshSummary({ silent: true });
     } catch (statusError) {
-      toast.error(
+      notifyPanel.error(
         statusError instanceof Error ? statusError.message : "Failed to update status"
       );
     } finally {
@@ -908,10 +908,10 @@ export default function OrderSequencingPage({
       if (!response.ok || payload?.success === false) {
         throw new Error(payload?.error || "Failed to update read classification");
       }
-      toast.success(`Marked reads as ${READ_DATA_CLASS_LABELS[dataClass].toLowerCase()}`);
+      notifyPanel.success(`Marked reads as ${READ_DATA_CLASS_LABELS[dataClass].toLowerCase()}`);
       await refreshSummary({ silent: true });
     } catch (classificationError) {
-      toast.error(
+      notifyPanel.error(
         classificationError instanceof Error
           ? classificationError.message
           : "Failed to update read classification"
@@ -924,7 +924,7 @@ export default function OrderSequencingPage({
   const handleCreateRunPlan = async () => {
     const trimmedRunId = newRunId.trim();
     if (!trimmedRunId) {
-      toast.error("Run ID is required");
+      notifyPanel.error("Run ID is required");
       return;
     }
     setCreatingRun(true);
@@ -944,10 +944,10 @@ export default function OrderSequencingPage({
       }
       setNewRunId("");
       setNewRunDate("");
-      toast.success("Created sequencing run");
+      notifyPanel.success("Created sequencing run");
       await refreshRunPlans();
     } catch (createError) {
-      toast.error(createError instanceof Error ? createError.message : "Failed to create run");
+      notifyPanel.error(createError instanceof Error ? createError.message : "Failed to create run");
     } finally {
       setCreatingRun(false);
     }
@@ -955,7 +955,7 @@ export default function OrderSequencingPage({
 
   const handleSaveRunAssignment = async () => {
     if (!assignmentRunId || !assignmentSampleId) {
-      toast.error("Choose a run and sample");
+      notifyPanel.error("Choose a run and sample");
       return;
     }
     setSavingAssignment(true);
@@ -980,10 +980,10 @@ export default function OrderSequencingPage({
         throw new Error(payload?.error || "Failed to save assignment");
       }
       setAssignmentBarcode("");
-      toast.success("Saved run assignment");
+      notifyPanel.success("Saved run assignment");
       await refreshRunPlans();
     } catch (saveError) {
-      toast.error(saveError instanceof Error ? saveError.message : "Failed to save assignment");
+      notifyPanel.error(saveError instanceof Error ? saveError.message : "Failed to save assignment");
     } finally {
       setSavingAssignment(false);
     }
@@ -1030,7 +1030,7 @@ export default function OrderSequencingPage({
 
   const handleSaveRunAssignments = async (run: RunPlan) => {
     if (run.samples.length === 0) {
-      toast.message("No samples assigned to this run");
+      notifyPanel.message("No samples assigned to this run");
       return;
     }
     setSavingRunAssignmentsId(run.id);
@@ -1064,10 +1064,10 @@ export default function OrderSequencingPage({
       if (!response.ok) {
         throw new Error(payload?.error || "Failed to save run assignments");
       }
-      toast.success("Saved run assignments");
+      notifyPanel.success("Saved run assignments");
       await refreshRunPlans();
     } catch (saveError) {
-      toast.error(
+      notifyPanel.error(
         saveError instanceof Error ? saveError.message : "Failed to save run assignments"
       );
     } finally {
@@ -1093,7 +1093,7 @@ export default function OrderSequencingPage({
       setRunPlanImportPreview(preview as RunPlanImportPreview);
       setRunPlanImportDialogOpen(true);
     } catch (importError) {
-      toast.error(importError instanceof Error ? importError.message : "Failed to preview run plan");
+      notifyPanel.error(importError instanceof Error ? importError.message : "Failed to preview run plan");
     } finally {
       setImportingRunPlan(false);
       if (runPlanImportRef.current) {
@@ -1116,13 +1116,13 @@ export default function OrderSequencingPage({
       if (!applyResponse.ok) {
         throw new Error(payload?.error || "Failed to import run plan");
       }
-      toast.success(`Imported ${payload.rowCount} run assignment${payload.rowCount === 1 ? "" : "s"}`);
+      notifyPanel.success(`Imported ${payload.rowCount} run assignment${payload.rowCount === 1 ? "" : "s"}`);
       setRunPlanImportDialogOpen(false);
       setRunPlanImportFile(null);
       setRunPlanImportPreview(null);
       await refreshRunPlans();
     } catch (importError) {
-      toast.error(importError instanceof Error ? importError.message : "Failed to import run plan");
+      notifyPanel.error(importError instanceof Error ? importError.message : "Failed to import run plan");
     } finally {
       setApplyingRunPlanImport(false);
     }
@@ -1143,7 +1143,7 @@ export default function OrderSequencingPage({
         const nextRead2 =
           pickerReadRole === "R2" ? relativePath : sample.read?.file2 ?? null;
         await handleApplyReadAssignment(sample, nextRead1, nextRead2, pickerReadDataClass);
-        toast.success(`Linked ${pickerReadRole} for ${sample.sampleId}`);
+        notifyPanel.success(`Linked ${pickerReadRole} for ${sample.sampleId}`);
       } else {
         const response = await fetch(`/api/orders/${orderId}/sequencing/artifacts/link`, {
           method: "POST",
@@ -1159,23 +1159,23 @@ export default function OrderSequencingPage({
         if (!response.ok) {
           throw new Error(payload?.error || "Failed to link artifact");
         }
-        toast.success("Linked artifact");
+        notifyPanel.success("Linked artifact");
       }
 
       setPickerOpen(false);
       await refreshSummary({ silent: true });
     } catch (pickError) {
-      toast.error(pickError instanceof Error ? pickError.message : "Failed to add data");
+      notifyPanel.error(pickError instanceof Error ? pickError.message : "Failed to add data");
     }
   };
 
   const handleUpload = async () => {
     if (!uploadFile) {
-      toast.error("Choose a file first");
+      notifyPanel.error("Choose a file first");
       return;
     }
     if (uploadMode === "read" && !uploadTargetSampleId) {
-      toast.error("Choose a target sample");
+      notifyPanel.error("Choose a target sample");
       return;
     }
 
@@ -1246,11 +1246,11 @@ export default function OrderSequencingPage({
         throw new Error(completePayload?.error || "Failed to finalize upload");
       }
 
-      toast.success("Upload completed");
+      notifyPanel.success("Upload completed");
       setUploadOpen(false);
       await refreshSummary({ silent: true });
     } catch (uploadError) {
-      toast.error(uploadError instanceof Error ? uploadError.message : "Failed to upload file");
+      notifyPanel.error(uploadError instanceof Error ? uploadError.message : "Failed to upload file");
     } finally {
       setUploading(false);
       setUploadProgress(0);

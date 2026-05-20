@@ -22,7 +22,7 @@ import {
   Loader2,
   MessageSquare,
 } from "lucide-react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 interface OrderOption {
   id: string;
@@ -68,7 +68,7 @@ export default function NewMessagePage() {
         setOrders(data.orders || []);
         setStudies(data.studies || []);
       } catch {
-        toast.error("Failed to load related orders and studies");
+        notifyPanel.error("Failed to load related orders and studies");
       } finally {
         setLoadingReferences(false);
       }
@@ -96,7 +96,7 @@ export default function NewMessagePage() {
     e.preventDefault();
 
     if (!subject.trim() || !message.trim()) {
-      toast.error("Please fill in all fields");
+      notifyPanel.error("Please fill in all fields");
       return;
     }
 
@@ -118,10 +118,10 @@ export default function NewMessagePage() {
       }
 
       const ticket = await res.json();
-      toast.success("Message sent successfully");
+      notifyPanel.success("Message sent successfully");
       router.push(`/messages/${ticket.id}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to send message");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to send message");
     } finally {
       setSubmitting(false);
     }

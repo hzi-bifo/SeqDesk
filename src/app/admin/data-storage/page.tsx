@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
@@ -79,7 +79,7 @@ export default function DataStoragePage() {
       }
     } catch (error) {
       console.error("Failed to load sequencing files settings:", error);
-      toast.error("Failed to load data storage settings");
+      notifyPanel.error("Failed to load data storage settings");
     } finally {
       setLoading(false);
     }
@@ -87,7 +87,7 @@ export default function DataStoragePage() {
 
   const handleTestPath = async () => {
     if (!dataBasePath.trim()) {
-      toast.error("Please enter a directory path first");
+      notifyPanel.error("Please enter a directory path first");
       return;
     }
 
@@ -146,11 +146,11 @@ export default function DataStoragePage() {
 
       setSaved(true);
       setPathTestResult(null);
-      toast.success("Data storage settings saved");
+      notifyPanel.success("Data storage settings saved");
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error("Failed to save sequencing files settings:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to save settings");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }

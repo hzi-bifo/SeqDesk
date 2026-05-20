@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   usePathname: vi.fn(),
-  toastSuccess: vi.fn(),
-  toastError: vi.fn(),
+  panelSuccess: vi.fn(),
+  panelError: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -29,10 +29,10 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("sonner", () => ({
-  toast: {
-    success: mocks.toastSuccess,
-    error: mocks.toastError,
+vi.mock("@/lib/notifications/client", () => ({
+  notifyPanel: {
+    success: mocks.panelSuccess,
+    error: mocks.panelError,
   },
 }));
 
@@ -207,7 +207,7 @@ describe("EntityNotesPanel", () => {
         })
       );
     });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Order notepad saved");
+    expect(mocks.panelSuccess).toHaveBeenCalledWith("Order notepad saved");
     expect(await screen.findByText(/writer@example.test/)).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText("Hide order notepad"));

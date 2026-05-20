@@ -32,7 +32,7 @@ import {
   AlertCircle,
   ExternalLink,
 } from "lucide-react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import {
   FlowCell,
   SequencerDevice,
@@ -209,9 +209,9 @@ export default function SequencingTechPage() {
       if (!res.ok) throw new Error("Failed to save");
       const data = await res.json();
       setConfig(data.config);
-      toast.success("Configuration saved");
+      notifyPanel.success("Configuration saved");
     } catch {
-      toast.error("Failed to save configuration");
+      notifyPanel.error("Failed to save configuration");
     } finally {
       setSaving(false);
     }
@@ -233,9 +233,9 @@ export default function SequencingTechPage() {
       if (!res.ok) throw new Error("Failed to reset");
       const data = await res.json();
       setConfig(data.config);
-      toast.success("Reset to defaults");
+      notifyPanel.success("Reset to defaults");
     } catch {
-      toast.error("Failed to reset");
+      notifyPanel.error("Failed to reset");
     } finally {
       setResetting(false);
     }
@@ -391,7 +391,7 @@ export default function SequencingTechPage() {
     });
     setEditDialog(false);
     setEditingTech(null);
-    toast.success("Technology updated. Remember to save changes.");
+    notifyPanel.success("Technology updated. Remember to save changes.");
   };
 
   const openDeleteDialog = (target: DeleteTarget) => {
@@ -407,35 +407,35 @@ export default function SequencingTechPage() {
           ...config,
           technologies: technologies.filter((t) => t.id !== deleteTarget.item.id),
         });
-        toast.success("Technology removed. Remember to save changes.");
+        notifyPanel.success("Technology removed. Remember to save changes.");
         break;
       case "device":
         setConfig({
           ...config,
           devices: devices.filter((d) => d.id !== deleteTarget.item.id),
         });
-        toast.success("Device removed. Remember to save changes.");
+        notifyPanel.success("Device removed. Remember to save changes.");
         break;
       case "flowCell":
         setConfig({
           ...config,
           flowCells: flowCells.filter((fc) => fc.id !== deleteTarget.item.id),
         });
-        toast.success("Flow cell removed. Remember to save changes.");
+        notifyPanel.success("Flow cell removed. Remember to save changes.");
         break;
       case "kit":
         setConfig({
           ...config,
           kits: kits.filter((kit) => kit.id !== deleteTarget.item.id),
         });
-        toast.success("Kit removed. Remember to save changes.");
+        notifyPanel.success("Kit removed. Remember to save changes.");
         break;
       case "software":
         setConfig({
           ...config,
           software: software.filter((tool) => tool.id !== deleteTarget.item.id),
         });
-        toast.success("Software removed. Remember to save changes.");
+        notifyPanel.success("Software removed. Remember to save changes.");
         break;
       default:
         break;
@@ -468,7 +468,7 @@ export default function SequencingTechPage() {
     });
     setEditDialog(false);
     setEditingTech(null);
-    toast.success("Technology added. Remember to save changes.");
+    notifyPanel.success("Technology added. Remember to save changes.");
   };
 
   const openDeviceDialog = (device: SequencerDevice) => {
@@ -517,7 +517,7 @@ export default function SequencingTechPage() {
     });
     setDeviceDialogOpen(false);
     setEditingDevice(null);
-    toast.success("Device saved. Remember to save changes.");
+    notifyPanel.success("Device saved. Remember to save changes.");
   };
 
   const toggleDeviceCompatibility = (
@@ -569,7 +569,7 @@ export default function SequencingTechPage() {
     });
     setFlowCellDialogOpen(false);
     setEditingFlowCell(null);
-    toast.success("Flow cell saved. Remember to save changes.");
+    notifyPanel.success("Flow cell saved. Remember to save changes.");
   };
 
   const openKitDialog = (kit: SequencingKit) => {
@@ -611,7 +611,7 @@ export default function SequencingTechPage() {
     });
     setKitDialogOpen(false);
     setEditingKit(null);
-    toast.success("Kit saved. Remember to save changes.");
+    notifyPanel.success("Kit saved. Remember to save changes.");
   };
 
   const openSoftwareDialog = (tool: SequencingSoftware) => {
@@ -648,7 +648,7 @@ export default function SequencingTechPage() {
     });
     setSoftwareDialogOpen(false);
     setEditingSoftware(null);
-    toast.success("Software saved. Remember to save changes.");
+    notifyPanel.success("Software saved. Remember to save changes.");
   };
 
   const getFlowCellUsage = (id: string) =>

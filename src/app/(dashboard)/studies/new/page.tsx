@@ -55,7 +55,7 @@ import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRender
 import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 // Note: TanStack Table meta types are extended globally in orders/new/page.tsx
 // PerSampleField extends FormFieldDefinition properties for compatibility
@@ -1493,7 +1493,7 @@ export default function NewStudyPage() {
           return updated;
         });
       }
-      toast.success(
+      notifyPanel.success(
         `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""} metadata`
       );
     },

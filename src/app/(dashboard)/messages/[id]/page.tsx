@@ -29,7 +29,7 @@ import {
   User,
   Shield,
 } from "lucide-react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 interface Message {
   id: string;
@@ -104,7 +104,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
         const res = await fetch(`/api/tickets/${id}`);
         if (!res.ok) {
           if (res.status === 404) {
-            toast.error("Ticket not found");
+            notifyPanel.error("Ticket not found");
             router.push("/messages");
             return;
           }
@@ -113,7 +113,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
         const data = await res.json();
         setTicket(data);
       } catch {
-        toast.error("Failed to load ticket");
+        notifyPanel.error("Failed to load ticket");
       } finally {
         setLoading(false);
       }
@@ -154,7 +154,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       });
       setNewMessage("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to send message");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to send message");
     } finally {
       setSending(false);
     }
@@ -180,9 +180,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       const updatedTicket = await res.json();
       setTicket({ ...ticket, ...updatedTicket });
       setStatusDialogOpen(false);
-      toast.success(`Ticket marked as ${STATUS_CONFIG[selectedStatus]?.label}`);
+      notifyPanel.success(`Ticket marked as ${STATUS_CONFIG[selectedStatus]?.label}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update status");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to update status");
     } finally {
       setUpdatingStatus(false);
     }

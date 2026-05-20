@@ -20,7 +20,7 @@ import {
   EditorProvider,
   Toolbar,
 } from "react-simple-wysiwyg";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import {
   Bold,
   ChevronLeft,
@@ -1028,7 +1028,7 @@ export function EntityNotesPanel({
         setSaveState("saved");
 
         if (showToast) {
-          toast.success(`${entityLabelTitle} notepad saved`);
+          notifyPanel.success(`${entityLabelTitle} notepad saved`);
         }
 
         return true;
@@ -1036,7 +1036,7 @@ export function EntityNotesPanel({
         setSaveState("error");
 
         if (showToast) {
-          toast.error(
+          notifyPanel.error(
             saveError instanceof Error ? saveError.message : `Failed to save ${entityLabel} notes`
           );
         }

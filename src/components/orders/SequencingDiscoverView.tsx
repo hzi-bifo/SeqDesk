@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpBox } from "@/components/ui/help-box";
@@ -494,11 +494,11 @@ export function SequencingDiscoverView({
         (payload.scanWarnings as SequencingDiscoveryScanWarnings | undefined) ?? null
       );
       setHasDiscovered(true);
-      toast.success(
+      notifyPanel.success(
         `Scanned ${payload.scannedFiles ?? 0} files, found ${payload.summary?.exactMatches ?? 0} exact matches`
       );
     } catch (err) {
-      toast.error(
+      notifyPanel.error(
         err instanceof Error ? err.message : "Failed to discover files"
       );
     } finally {
@@ -535,10 +535,10 @@ export function SequencingDiscoverView({
         if (!response.ok || failureMessage) {
           throw new Error(failureMessage || "Failed to apply match");
         }
-        toast.success(`Linked reads for ${sample.sampleId}`);
+        notifyPanel.success(`Linked reads for ${sample.sampleId}`);
         onDataChanged();
       } catch (err) {
-        toast.error(
+        notifyPanel.error(
           err instanceof Error ? err.message : "Failed to apply match"
         );
       } finally {
@@ -573,7 +573,7 @@ export function SequencingDiscoverView({
       );
 
     if (assignments.length === 0) {
-      toast.message("No exact matches to apply");
+      notifyPanel.message("No exact matches to apply");
       return;
     }
 
@@ -591,10 +591,10 @@ export function SequencingDiscoverView({
       if (!response.ok || failureMessage) {
         throw new Error(failureMessage || "Failed to apply matches");
       }
-      toast.success(`Linked reads for ${assignments.length} samples`);
+      notifyPanel.success(`Linked reads for ${assignments.length} samples`);
       onDataChanged();
     } catch (err) {
-      toast.error(
+      notifyPanel.error(
         err instanceof Error ? err.message : "Failed to apply matches"
       );
     }
@@ -656,13 +656,13 @@ export function SequencingDiscoverView({
         if (!response.ok || failureMessage) {
           throw new Error(failureMessage || "Failed to assign file");
         }
-        toast.success(
+        notifyPanel.success(
           `Assigned ${pickerRole} for ${sample.sampleId}`
         );
         setPickerOpen(false);
         onDataChanged();
       } catch (err) {
-        toast.error(
+        notifyPanel.error(
           err instanceof Error ? err.message : "Failed to assign file"
         );
       }
@@ -696,10 +696,10 @@ export function SequencingDiscoverView({
         if (!response.ok || failureMessage) {
           throw new Error(failureMessage || "Failed to unlink read");
         }
-        toast.success(`Unlinked ${role === "both" ? "reads" : role} for ${sample.sampleId}`);
+        notifyPanel.success(`Unlinked ${role === "both" ? "reads" : role} for ${sample.sampleId}`);
         onDataChanged();
       } catch (err) {
-        toast.error(
+        notifyPanel.error(
           err instanceof Error ? err.message : "Failed to unlink read"
         );
       }
@@ -740,10 +740,10 @@ export function SequencingDiscoverView({
         if (!response.ok || failureMessage) {
           throw new Error(failureMessage || "Failed to associate file");
         }
-        toast.success(`Assigned ${role} of ${file.filename} to ${sample.sampleId}`);
+        notifyPanel.success(`Assigned ${role} of ${file.filename} to ${sample.sampleId}`);
         onDataChanged();
       } catch (err) {
-        toast.error(
+        notifyPanel.error(
           err instanceof Error ? err.message : "Failed to associate file"
         );
       }

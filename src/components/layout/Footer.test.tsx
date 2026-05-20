@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
 import { Footer } from "./Footer";
 
 vi.mock("@/lib/useHelpText", () => ({
@@ -553,6 +554,11 @@ describe("Footer admin activity", () => {
         screen.getByRole("button", { name: /notifications, 2 unread/i })
       ).toBeTruthy();
     });
+    const unreadBadge = screen.getByText("2");
+    expect(unreadBadge.className).toContain("bg-destructive");
+    expect(unreadBadge.className).toContain("text-white");
+    expect(unreadBadge.className).toContain("min-w-4");
+
     fireEvent.click(screen.getByRole("button", { name: /notifications/i }));
     expect(screen.getByText("Order ORD-20260519-0001 updated")).toBeTruthy();
     expect(screen.queryByText("Ada Lovelace updated order details.")).toBeNull();
@@ -643,6 +649,44 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
 
     expect(screen.getByText("No notifications.")).toBeTruthy();
+  });
+
+  it("refreshes notification count on panel notification events without opening the panel", async () => {
+    let notificationRequests = 0;
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/notifications?limit=20&archived=false") {
+        notificationRequests += 1;
+        return jsonResponse(
+          notificationRequests > 1
+            ? { notifications: [makeNotification()], unreadCount: 1 }
+            : { notifications: [], unreadCount: 0 }
+        );
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({ workers: [] });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/notifications?limit=20&archived=false",
+        { cache: "no-store" }
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(PANEL_NOTIFICATIONS_REFRESH_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /notifications, 1 unread/i })).toBeTruthy();
+    });
+    expect(screen.queryByText("Order ORD-20260519-0001 updated")).toBeNull();
   });
 
   it("expands worker log output from the footer details panel", async () => {

@@ -26,7 +26,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { PageNotice } from "@/components/ui/page-notice";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import {
   ArrowLeft,
   Loader2,
@@ -452,7 +452,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
         });
       });
       setHasChanges(true);
-      toast.success(
+      notifyPanel.success(
         `Imported metadata for ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""}`
       );
     },

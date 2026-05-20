@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
@@ -210,7 +210,7 @@ export default function PipelineRuntimePage() {
       }
     } catch (error) {
       console.error("Failed to load pipeline execution settings:", error);
-      toast.error("Failed to load pipeline runtime settings");
+      notifyPanel.error("Failed to load pipeline runtime settings");
     } finally {
       setLoading(false);
     }
@@ -305,11 +305,11 @@ export default function PipelineRuntimePage() {
       }
 
       setSaved(true);
-      toast.success("Pipeline runtime settings saved");
+      notifyPanel.success("Pipeline runtime settings saved");
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error("Failed to save execution settings:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to save settings");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }

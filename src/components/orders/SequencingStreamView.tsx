@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -290,10 +290,10 @@ export function SequencingStreamView({
       if (!res.ok && res.status !== 409) {
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
-      toast.success("Stream monitor started");
+      notifyPanel.success("Stream monitor started");
       await refreshDaemon();
     } catch (error) {
-      toast.error(`Failed to start daemon: ${(error as Error).message}`);
+      notifyPanel.error(`Failed to start daemon: ${(error as Error).message}`);
     } finally {
       setStartingDaemon(false);
     }
@@ -357,7 +357,7 @@ export function SequencingStreamView({
 
   const handleStart = async () => {
     if (!outputDir.trim()) {
-      toast.error("Output directory is required");
+      notifyPanel.error("Output directory is required");
       return;
     }
     setStarting(true);
@@ -374,12 +374,12 @@ export function SequencingStreamView({
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error ?? `HTTP ${res.status}`);
       }
-      toast.success("Stream started");
+      notifyPanel.success("Stream started");
       setOutputDir("");
       setBarcodeMapDraft({});
       await refreshRuns();
     } catch (error) {
-      toast.error(`Failed to start stream: ${(error as Error).message}`);
+      notifyPanel.error(`Failed to start stream: ${(error as Error).message}`);
     } finally {
       setStarting(false);
     }
@@ -392,10 +392,10 @@ export function SequencingStreamView({
         method: "POST",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success("Stream stopped");
+      notifyPanel.success("Stream stopped");
       await refreshRuns();
     } catch (error) {
-      toast.error(`Failed to stop stream: ${(error as Error).message}`);
+      notifyPanel.error(`Failed to stop stream: ${(error as Error).message}`);
     } finally {
       setStopping(false);
     }
@@ -900,7 +900,7 @@ function BarcodeMapEditor({ samples, value, onChange }: BarcodeMapEditorProps) {
     const key = newBarcode.trim().toLowerCase();
     if (!key) return;
     if (value[key]) {
-      toast.error(`${key} is already mapped`);
+      notifyPanel.error(`${key} is already mapped`);
       return;
     }
     onChange({ ...value, [key]: samples[0]?.id ?? "" });

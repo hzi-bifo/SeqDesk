@@ -47,6 +47,15 @@ interface NotificationContent {
   dedupeKey: (recipient: Recipient) => string;
 }
 
+export interface CreateUserInAppNotificationInput {
+  severity: InAppNotificationSeverity;
+  title: string;
+  body?: string | null;
+  linkPath?: string | null;
+  sourceType?: string | null;
+  sourceId?: string | null;
+}
+
 type NotificationRow = {
   id: string;
   eventType: string;
@@ -158,6 +167,28 @@ async function bestEffort(label: string, work: () => Promise<void>): Promise<voi
   } catch (error) {
     console.warn(`[in-app notifications] Failed to create ${label} notification`, error);
   }
+}
+
+export async function createUserInAppNotification(
+  userId: string,
+  input: CreateUserInAppNotificationInput
+): Promise<number> {
+  return createNotifications(
+    [{ id: userId }],
+    {
+      eventType: `client.${input.severity}`,
+      severity: input.severity,
+      title: input.title,
+      body: input.body ?? null,
+      linkPath: input.linkPath ?? null,
+      sourceType: input.sourceType || "client",
+      sourceId: input.sourceId ?? null,
+      dedupeKey: (recipient) =>
+        `client:${input.severity}:${Date.now()}:${Math.random()
+          .toString(36)
+          .slice(2)}:${recipient.id}`,
+    }
+  );
 }
 
 export async function listInAppNotifications(

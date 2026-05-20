@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import {
   Globe,
   Loader2,
@@ -190,7 +190,7 @@ export default function ENASettingsPage() {
       setSubmissions(data);
     } catch (error) {
       console.error("Failed to load submissions:", error);
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to load submissions"
       );
     } finally {
@@ -235,7 +235,7 @@ export default function ENASettingsPage() {
       setEnaTestResult(null);
     } catch (error) {
       console.error("Failed to load ENA settings:", error);
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to load ENA settings"
       );
     }
@@ -261,11 +261,11 @@ export default function ENASettingsPage() {
   const handleSaveEnaSettings = async () => {
     if (!canSave) {
       if (credentialsDirty && !enaTestResult?.success) {
-        toast.error("Test credentials before saving changes");
+        notifyPanel.error("Test credentials before saving changes");
       } else if (!brokerConfigured) {
-        toast.error("Enter a center name or disable broker account mode");
+        notifyPanel.error("Enter a center name or disable broker account mode");
       } else {
-        toast.error("No changes to save");
+        notifyPanel.error("No changes to save");
       }
       return;
     }
@@ -308,10 +308,10 @@ export default function ENASettingsPage() {
       setEnaPassword("");
       setEnaSaved(true);
       setTimeout(() => setEnaSaved(false), 2500);
-      toast.success("ENA settings saved");
+      notifyPanel.success("ENA settings saved");
     } catch (error) {
       console.error("Failed to save ENA settings:", error);
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to save ENA settings"
       );
     } finally {
@@ -321,7 +321,7 @@ export default function ENASettingsPage() {
 
   const handleTestEnaConnection = async () => {
     if (!credentialsReady) {
-      toast.error("Enter username and password before testing");
+      notifyPanel.error("Enter username and password before testing");
       return;
     }
 
@@ -348,7 +348,7 @@ export default function ENASettingsPage() {
       const result = (await res.json()) as EnaTestResult;
       setEnaTestResult(result);
       if (result.success) {
-        toast.success("ENA connection verified");
+        notifyPanel.success("ENA connection verified");
       }
     } catch (error) {
       console.error("Failed to test ENA connection:", error);
@@ -392,10 +392,10 @@ export default function ENASettingsPage() {
       setEnaHasPassword(false);
       setEnaConfigured(false);
       setEnaTestResult(null);
-      toast.success("ENA credentials cleared");
+      notifyPanel.success("ENA credentials cleared");
     } catch (error) {
       console.error("Failed to clear ENA credentials:", error);
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to clear credentials"
       );
     } finally {

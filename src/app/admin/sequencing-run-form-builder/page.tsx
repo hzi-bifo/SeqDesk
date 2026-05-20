@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -117,7 +117,7 @@ export default function SequencingRunFormBuilderPage() {
       setFields((payload?.fields ?? []) as FormFieldDefinition[]);
       setGroups((payload?.groups ?? []) as FormFieldGroup[]);
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to load run-assignment fields"
       );
     } finally {
@@ -163,9 +163,9 @@ export default function SequencingRunFormBuilderPage() {
       }
       setFields((payload?.fields ?? []) as FormFieldDefinition[]);
       setGroups((payload?.groups ?? []) as FormFieldGroup[]);
-      toast.success("Saved run-assignment fields");
+      notifyPanel.success("Saved run-assignment fields");
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to save run-assignment fields"
       );
     } finally {

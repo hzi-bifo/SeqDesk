@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { useHelpText } from "@/lib/useHelpText";
+import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
 import { SidebarContext } from "./SidebarContext";
 
 interface AdminActivityJob {
@@ -791,6 +792,14 @@ export function Footer() {
     };
   }, [refreshNotifications]);
 
+  useEffect(() => {
+    const handleNotificationRefresh = () => void refreshNotifications();
+    window.addEventListener(PANEL_NOTIFICATIONS_REFRESH_EVENT, handleNotificationRefresh);
+    return () => {
+      window.removeEventListener(PANEL_NOTIFICATIONS_REFRESH_EVENT, handleNotificationRefresh);
+    };
+  }, [refreshNotifications]);
+
   const visibleJobs = useMemo(
     () =>
       activityJobs.filter(
@@ -1363,7 +1372,7 @@ export function Footer() {
               <Bell className="h-3.5 w-3.5" aria-hidden="true" />
               <span className="hidden sm:inline">Notifications</span>
               {unreadNotificationCount > 0 && (
-                <span className="ml-0.5 rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-medium leading-none text-destructive-foreground">
+                <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold leading-none text-white">
                   {formatUnreadCount(unreadNotificationCount)}
                 </span>
               )}

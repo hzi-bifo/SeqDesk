@@ -41,7 +41,7 @@ import {
   Users,
   RefreshCw,
 } from "lucide-react";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 interface Admin {
   id: string;
@@ -155,10 +155,10 @@ export default function AdminAccountsPage() {
       }
 
       if (hasPartialError) {
-        toast.error("Some account data could not be loaded");
+        notifyPanel.error("Some account data could not be loaded");
       }
     } catch {
-      toast.error("Failed to load account data");
+      notifyPanel.error("Failed to load account data");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -193,13 +193,13 @@ export default function AdminAccountsPage() {
   const handleCreateInvite = async () => {
     const trimmedEmail = inviteEmail.trim().toLowerCase();
     if (trimmedEmail && !EMAIL_PATTERN.test(trimmedEmail)) {
-      toast.error("Please enter a valid email address");
+      notifyPanel.error("Please enter a valid email address");
       return;
     }
 
     const expiresInDays = Number.parseInt(inviteExpires, 10);
     if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 30) {
-      toast.error("Please select a valid expiration period");
+      notifyPanel.error("Please select a valid expiration period");
       return;
     }
 
@@ -231,9 +231,9 @@ export default function AdminAccountsPage() {
       setCreateDialogOpen(false);
       setInviteEmail("");
       setInviteExpires("7");
-      toast.success("Invite created successfully");
+      notifyPanel.success("Invite created successfully");
     } catch (error) {
-      toast.error(
+      notifyPanel.error(
         error instanceof Error ? error.message : "Failed to create invite"
       );
     } finally {
@@ -261,9 +261,9 @@ export default function AdminAccountsPage() {
       setInvites((prev) => prev.filter((invite) => invite.id !== inviteToDelete.id));
       setDeleteDialogOpen(false);
       setInviteToDelete(null);
-      toast.success("Invite revoked");
+      notifyPanel.success("Invite revoked");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to revoke invite");
+      notifyPanel.error(error instanceof Error ? error.message : "Failed to revoke invite");
     } finally {
       setDeleting(false);
     }
@@ -273,12 +273,12 @@ export default function AdminAccountsPage() {
     const link = `${window.location.origin}/register/admin?code=${code}`;
     try {
       await navigator.clipboard.writeText(link);
-      toast.success("Invite link copied");
+      notifyPanel.success("Invite link copied");
     } catch {
       if (fallbackCopyText(link)) {
-        toast.success("Invite link copied");
+        notifyPanel.success("Invite link copied");
       } else {
-        toast.error("Failed to copy invite link");
+        notifyPanel.error("Failed to copy invite link");
       }
     }
   };
@@ -286,12 +286,12 @@ export default function AdminAccountsPage() {
   const copyInviteCode = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
-      toast.success("Invite code copied");
+      notifyPanel.success("Invite code copied");
     } catch {
       if (fallbackCopyText(code)) {
-        toast.success("Invite code copied");
+        notifyPanel.success("Invite code copied");
       } else {
-        toast.error("Failed to copy invite code");
+        notifyPanel.error("Failed to copy invite code");
       }
     }
   };
@@ -313,7 +313,7 @@ export default function AdminAccountsPage() {
     } catch (error) {
       console.error("Failed to save setting:", error);
       setDepartmentSharing(!enabled);
-      toast.error("Failed to save setting");
+      notifyPanel.error("Failed to save setting");
     } finally {
       setSavingAccess(false);
     }
@@ -336,7 +336,7 @@ export default function AdminAccountsPage() {
     } catch (error) {
       console.error("Failed to save setting:", error);
       setAllowUserAssemblyDownload(!enabled);
-      toast.error("Failed to save setting");
+      notifyPanel.error("Failed to save setting");
     } finally {
       setSavingAccess(false);
     }

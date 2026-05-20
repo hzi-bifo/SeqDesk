@@ -5,16 +5,16 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  toastSuccess: vi.fn(),
-  toastError: vi.fn(),
-  toastMessage: vi.fn(),
+  panelSuccess: vi.fn(),
+  panelError: vi.fn(),
+  panelMessage: vi.fn(),
 }));
 
-vi.mock("sonner", () => ({
-  toast: {
-    success: mocks.toastSuccess,
-    error: mocks.toastError,
-    message: mocks.toastMessage,
+vi.mock("@/lib/notifications/client", () => ({
+  notifyPanel: {
+    success: mocks.panelSuccess,
+    error: mocks.panelError,
+    message: mocks.panelMessage,
   },
 }));
 
@@ -170,11 +170,11 @@ describe("SequencingDiscoverView", () => {
     await waitFor(() => {
       expect(onDataChanged).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Linked reads for SAMPLE_A");
+    expect(mocks.panelSuccess).toHaveBeenCalledWith("Linked reads for SAMPLE_A");
 
     fireEvent.click(screen.getByTitle("Unlink R1"));
     await waitFor(() => {
-      expect(mocks.toastSuccess).toHaveBeenCalledWith("Unlinked R1 for SAMPLE_A");
+      expect(mocks.panelSuccess).toHaveBeenCalledWith("Unlinked R1 for SAMPLE_A");
     });
 
     const selectButtons = screen.getAllByRole("button", { name: /Select file/i });
@@ -184,7 +184,7 @@ describe("SequencingDiscoverView", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /SAMPLE_A_R2.fastq.gz/i }).at(-1)!);
 
     await waitFor(() => {
-      expect(mocks.toastSuccess).toHaveBeenCalledWith("Assigned R1 for SAMPLE_B");
+      expect(mocks.panelSuccess).toHaveBeenCalledWith("Assigned R1 for SAMPLE_B");
     });
 
     fireEvent.change(screen.getByPlaceholderText("Filter files..."), {
@@ -220,7 +220,7 @@ describe("SequencingDiscoverView", () => {
     });
   });
 
-  it("reports partial read-assignment failures without a success toast", async () => {
+  it("reports partial read-assignment failures without a success notification", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/browse")) {
@@ -274,11 +274,11 @@ describe("SequencingDiscoverView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Link" }));
 
     await waitFor(() => {
-      expect(mocks.toastError).toHaveBeenCalledWith(
+      expect(mocks.panelError).toHaveBeenCalledWith(
         "SAMPLE_A: Read 1 file not found"
       );
     });
-    expect(mocks.toastSuccess).not.toHaveBeenCalledWith("Linked reads for SAMPLE_A");
+    expect(mocks.panelSuccess).not.toHaveBeenCalledWith("Linked reads for SAMPLE_A");
     expect(onDataChanged).not.toHaveBeenCalled();
   });
 });

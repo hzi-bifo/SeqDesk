@@ -60,7 +60,7 @@ import {
   isStudyChecklistTypeId,
   normalizeStudyChecklistType,
 } from "@/lib/studies/checklist-types";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 
 // Per-sample field definition
 interface PerSampleField extends Omit<FormFieldDefinition, 'options'> {
@@ -1422,7 +1422,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           return updated;
         });
       }
-      toast.success(
+      notifyPanel.success(
         `Imported ${importedRows.length} sample${importedRows.length !== 1 ? "s" : ""} metadata`
       );
     },

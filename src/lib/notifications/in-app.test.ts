@@ -26,6 +26,7 @@ vi.mock("@/lib/db", () => ({
 
 import {
   archiveInAppNotification,
+  createUserInAppNotification,
   listInAppNotifications,
   markAllInAppNotificationsRead,
   markInAppNotificationRead,
@@ -90,6 +91,31 @@ describe("in-app notifications", () => {
       id: "n-1",
       createdAt: "2026-05-19T10:00:00.000Z",
     });
+  });
+
+  it("creates user-scoped client notifications", async () => {
+    await createUserInAppNotification("user-1", {
+      severity: "success",
+      title: "Saved settings",
+      body: "The new settings were saved.",
+      linkPath: "/settings",
+      sourceType: "settings",
+      sourceId: "profile",
+    });
+
+    const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
+    expect(data).toHaveLength(1);
+    expect(data[0]).toMatchObject({
+      userId: "user-1",
+      eventType: "client.success",
+      severity: "success",
+      title: "Saved settings",
+      body: "The new settings were saved.",
+      linkPath: "/settings",
+      sourceType: "settings",
+      sourceId: "profile",
+    });
+    expect(data[0].dedupeKey).toContain("client:success:");
   });
 
   it("creates order-created notifications for admins and excludes the actor", async () => {

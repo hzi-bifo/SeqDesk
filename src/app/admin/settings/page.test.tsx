@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsPage from "./page";
 
-vi.mock("sonner", () => ({
-  toast: {
+vi.mock("@/lib/notifications/client", () => ({
+  notifyPanel: {
     error: vi.fn(),
     success: vi.fn(),
     info: vi.fn(),
   },
+  refreshPanelNotifications: vi.fn(),
 }));
 
 function jsonResponse(body: unknown, init?: ResponseInit) {

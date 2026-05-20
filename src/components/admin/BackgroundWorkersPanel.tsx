@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { notifyPanel } from "@/lib/notifications/client";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -136,10 +136,10 @@ export function BackgroundWorkersPanel() {
       const res = await fetch(`/api/admin/workers/${name}/${action}`, { method: "POST" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      toast.success(`${action} sent to ${name}`);
+      notifyPanel.success(`${action} sent to ${name}`);
       await refresh();
     } catch (error) {
-      toast.error(`${action} failed: ${(error as Error).message}`);
+      notifyPanel.error(`${action} failed: ${(error as Error).message}`);
     } finally {
       setBusyName(null);
     }
