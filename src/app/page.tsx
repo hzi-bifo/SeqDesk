@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Loader2,
 } from "lucide-react";
+import { isWorkbenchAppSurface } from "@/lib/app-surface";
 import { isPublicDemoEnabledClient } from "@/lib/demo/client";
 
 export default function HomePage() {
@@ -74,7 +75,7 @@ export default function HomePage() {
       if (result?.error) {
         setError("Invalid email or password");
       } else if (result?.ok) {
-        router.push("/orders");
+        router.push(isWorkbenchAppSurface() ? "/workbench/data" : "/orders");
         router.refresh();
       }
     } catch {

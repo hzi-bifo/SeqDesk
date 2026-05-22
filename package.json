@@ -5,6 +5,9 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
+    "lab": "SEQDESK_APP_SURFACE=lab npm run dev:mac -- --restart",
+    "workbench": "SEQDESK_APP_SURFACE=workbench npm run dev:mac -- --restart",
+    "dev:workbench": "npm run workbench",
     "dev:mac": "node scripts/dev-mac.mjs",
     "build": "node scripts/run-prisma.mjs generate && next build",
     "start": "next start",
@@ -35,6 +38,8 @@
     "test:risk": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=risk vitest run",
     "test:live": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=live vitest run",
     "test:all": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=all vitest run",
+    "test:workbench": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run src/lib/workbench src/app/api/workbench src/components/workbench",
+    "test:workbench:live": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=live SEQDESK_WORKBENCH_LIVE=1 vitest run src/lib/workbench src/app/api/workbench src/components/workbench",
     "test:dashboard": "node --no-warnings scripts/test-dashboard.ts --tier fast",
     "test:dashboard:watch": "node --no-warnings scripts/test-dashboard.ts --tier fast --watch",
     "test:dashboard:risk": "node --no-warnings scripts/test-dashboard.ts --tier risk",

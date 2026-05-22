@@ -1,8 +1,12 @@
 "use client";
 
-import { ReactNode, useEffect, useSyncExternalStore } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
-import { SidebarProvider, useSidebar } from "./SidebarContext";
+import { ReactNode, useEffect, useSyncExternalStore, type CSSProperties } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SidebarProvider,
+  useSidebar,
+} from "./SidebarContext";
 import { FieldHelpProvider } from "@/lib/contexts/FieldHelpContext";
 import { Sidebar } from "./sidebar";
 import { UpdateBanner } from "@/components/admin/UpdateBanner";
@@ -13,6 +17,7 @@ import { DEMO_READY_MESSAGE, isEmbeddedFrame, postDemoFrameMessage } from "@/lib
 import { StudySelector } from "./StudySelector";
 import { OrderSelector } from "./OrderSelector";
 import { useSidebarEntity } from "./sidebar/useSidebarEntity";
+import { isWorkbenchAppSurface } from "@/lib/app-surface";
 
 interface DashboardShellProps {
   children: ReactNode;
@@ -29,6 +34,12 @@ interface DashboardShellProps {
 const subscribeToEmbedState = () => () => {};
 
 function derivePageTitle(pathname: string, section: string | null): string | null {
+  if (pathname === "/workbench" || pathname === "/workbench/data") return "Workbench Canvas";
+  if (pathname === "/workbench/imports") return "Workbench Imports";
+  if (pathname === "/workbench/pipelines") return "Workbench Pipelines";
+  if (pathname === "/workbench/runs") return "Workbench Runs";
+  if (pathname === "/workbench/results") return "Workbench Results";
+
   // Orders
   if (pathname === "/orders") return null; // list page, no title needed
   if (pathname.match(/^\/orders\/new/)) return "New Order";
@@ -74,22 +85,37 @@ function DashboardContent({
   version,
   embeddedMode,
 }: DashboardShellProps & { embeddedMode: boolean }) {
-  const { collapsed, mobileOpen, setMobileOpen } = useSidebar();
+  const { collapsed, mobileOpen, setMobileOpen, sidebarWidth } = useSidebar();
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const entityContext = useSidebarEntity();
+  const workbenchAppMode = isWorkbenchAppSurface();
 
   const isOrdersView = pathname.startsWith("/orders");
   const isStudiesView = pathname.startsWith("/studies");
-  const isAdminView = pathname.startsWith("/admin") || pathname.startsWith("/messages");
+  const isAdminView = !workbenchAppMode && (pathname.startsWith("/admin") || pathname.startsWith("/messages"));
+  const appMode = workbenchAppMode ? "workbench" : "lab";
+  const isWorkbenchMode = appMode === "workbench";
   const currentStudyId = entityContext.entityType === "study" ? entityContext.entityId : null;
   const currentOrderId = entityContext.entityType === "order" ? entityContext.entityId : null;
   const currentStudyTitle = entityContext.entityType === "study" ? entityContext.entityData?.label ?? null : null;
   const currentOrderName = entityContext.entityType === "order" ? entityContext.entityData?.label ?? null : null;
 
   const section = searchParams.get("section") || searchParams.get("tab");
-  const pageTitle = derivePageTitle(pathname, section);
-  const selectorType = isOrdersView ? "orders" : isStudiesView ? "studies" : null;
+  const pageTitle =
+    !workbenchAppMode && pathname.startsWith("/workbench")
+      ? null
+      : derivePageTitle(pathname, section);
+  const selectorType = isWorkbenchMode ? null : isOrdersView ? "orders" : isStudiesView ? "studies" : null;
+  const sidebarOffset = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+
+  useEffect(() => {
+    if (!workbenchAppMode || pathname.startsWith("/workbench")) {
+      return;
+    }
+    router.replace("/workbench/data");
+  }, [pathname, router, workbenchAppMode]);
 
   // In embedded demo mode, reclaim the session cookie when the iframe becomes
   // visible again.  The other demo tab may have overwritten the shared
@@ -140,8 +166,13 @@ function DashboardContent({
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="inline-flex items-center px-2 py-0.5 bg-foreground text-background text-xs font-semibold rounded-md">
-          SeqDesk
+        <span
+          className={cn(
+            "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold",
+            isWorkbenchMode ? "bg-teal-700 text-white" : "bg-foreground text-background",
+          )}
+        >
+          {isWorkbenchMode ? "SeqDesk Bench" : "SeqDesk"}
         </span>
       </div>
 
@@ -149,15 +180,16 @@ function DashboardContent({
         className={cn(
           "min-h-screen pb-8 transition-all duration-300",
           // Desktop: offset by sidebar width
-          "md:transition-[margin-left]",
-          collapsed ? "md:ml-16" : "md:ml-64"
+          "md:ml-[var(--sidebar-offset)] md:transition-[margin-left]",
         )}
+        style={{ "--sidebar-offset": `${sidebarOffset}px` } as CSSProperties}
       >
         {/* Desktop top bar with entity selector + page title */}
         {!isAdminView && (selectorType || pageTitle) && (
           <div
             className={cn(
               "sticky top-0 z-20 hidden h-10 border-b border-border bg-card px-4 md:flex",
+              isWorkbenchMode && "border-teal-100",
               selectorType ? "items-center" : "items-center justify-center",
             )}
           >
@@ -190,7 +222,7 @@ function DashboardContent({
           </div>
         )}
 
-        {!user.isDemo ? <UpdateBanner /> : null}
+        {!user.isDemo && !workbenchAppMode ? <UpdateBanner /> : null}
         {user.isDemo && !embeddedMode ? (
           <DemoBanner
             embeddedMode={false}

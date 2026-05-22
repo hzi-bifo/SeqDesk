@@ -8,12 +8,17 @@ const toggleHelpText = vi.fn();
 
 const mocks = vi.hoisted(() => ({
   usePathname: vi.fn(),
+  useRouter: vi.fn(),
+  useSearchParams: vi.fn(),
   signOut: vi.fn(),
   useHelpText: vi.fn(),
+  useSidebarEntity: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: mocks.usePathname,
+  useRouter: mocks.useRouter,
+  useSearchParams: mocks.useSearchParams,
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -39,18 +44,33 @@ vi.mock("@/lib/useHelpText", () => ({
   useHelpText: mocks.useHelpText,
 }));
 
+vi.mock("@/lib/contexts/FieldHelpContext", () => ({
+  useFieldHelp: () => ({ focusedField: null }),
+}));
+
+vi.mock("./useSidebarEntity", () => ({
+  useSidebarEntity: mocks.useSidebarEntity,
+}));
+
 import { Footer } from "../Footer";
-import { SidebarContext } from "../SidebarContext";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+  SidebarContext,
+} from "../SidebarContext";
+import { Sidebar } from "./Sidebar";
 import { SidebarSupportNav } from "./SidebarSupportNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
 
-function sidebarValue(collapsed: boolean) {
+function sidebarValue(collapsed: boolean, sidebarWidth = SIDEBAR_DEFAULT_WIDTH) {
   return {
     collapsed,
     setCollapsed: vi.fn(),
     toggle: vi.fn(),
     mobileOpen: false,
     setMobileOpen: vi.fn(),
+    sidebarWidth,
+    setSidebarWidth: vi.fn(),
   };
 }
 
@@ -61,19 +81,34 @@ describe("sidebar shell quick wins", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T15:45:00.000Z"));
     window.history.pushState({}, "", "/");
+    delete process.env.SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
 
     mocks.usePathname.mockReturnValue("/messages");
+    mocks.useRouter.mockReturnValue({ push: vi.fn() });
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams());
     mocks.signOut.mockResolvedValue(undefined);
     mocks.useHelpText.mockReturnValue({
       showHelpText: false,
       isLoaded: true,
       toggleHelpText,
     });
+    mocks.useSidebarEntity.mockReturnValue({
+      entityType: null,
+      entityId: null,
+      entityData: null,
+      isLoading: false,
+      currentSubPage: "overview",
+    });
   });
 
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    delete process.env.SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
   });
 
   it("renders support nav in expanded and collapsed modes", () => {
@@ -147,7 +182,7 @@ describe("sidebar shell quick wins", () => {
   });
 
   it("renders footer layout, toggles help text, and reflects collapsed width", () => {
-    const expandedValue = sidebarValue(false);
+    const expandedValue = sidebarValue(false, 312);
     const collapsedValue = sidebarValue(true);
     const expectedDate = new Date("2026-03-25T15:45:00.000Z").toLocaleDateString("en-US", {
       weekday: "short",
@@ -166,7 +201,7 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(container.querySelector("footer")?.style.left).toBe("256px");
+    expect(container.querySelector("footer")?.style.left).toBe("312px");
     expect(screen.getByRole("button", { name: /Help tips off/i })).toBeTruthy();
     expect(screen.getByText(expectedDate)).toBeTruthy();
     expect(screen.getByText(expectedTime)).toBeTruthy();
@@ -180,6 +215,64 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(container.querySelector("footer")?.style.left).toBe("64px");
+    expect(container.querySelector("footer")?.style.left).toBe(`${SIDEBAR_COLLAPSED_WIDTH}px`);
+  });
+
+  it("renders the resize handle only for the expanded sidebar", () => {
+    mocks.usePathname.mockReturnValue("/workbench/data");
+    const expandedValue = sidebarValue(false, 300);
+    const collapsedValue = sidebarValue(true, 300);
+
+    const { rerender, container } = render(
+      <SidebarContext.Provider value={expandedValue}>
+        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+      </SidebarContext.Provider>
+    );
+
+    expect(container.querySelector("aside")?.style.width).toBe("300px");
+    const handle = screen.getByRole("separator", { name: "Resize sidebar" });
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(expandedValue.setSidebarWidth).toHaveBeenCalledWith(316);
+
+    rerender(
+      <SidebarContext.Provider value={collapsedValue}>
+        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+      </SidebarContext.Provider>
+    );
+
+    expect(container.querySelector("aside")?.style.width).toBe(`${SIDEBAR_COLLAPSED_WIDTH}px`);
+    expect(screen.queryByRole("separator", { name: "Resize sidebar" })).toBeNull();
+  });
+
+  it("does not show Workbench navigation in Lab mode", () => {
+    mocks.usePathname.mockReturnValue("/orders");
+
+    render(
+      <SidebarContext.Provider value={sidebarValue(false, 300)}>
+        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+      </SidebarContext.Provider>
+    );
+
+    expect(screen.queryByText("Private Workbench")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Workbench/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Canvas/i })).toBeNull();
+  });
+
+  it("hides lab and admin navigation in Workbench app mode", () => {
+    process.env.SEQDESK_APP_SURFACE = "workbench";
+    mocks.usePathname.mockReturnValue("/orders");
+
+    render(
+      <SidebarContext.Provider value={sidebarValue(false, 300)}>
+        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+      </SidebarContext.Provider>
+    );
+
+    expect(screen.getByText("Private Workbench")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Canvas/i }).getAttribute("href")).toBe(
+      "/workbench/data"
+    );
+    expect(screen.queryByRole("link", { name: /Lab/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Application Settings/i })).toBeNull();
   });
 });

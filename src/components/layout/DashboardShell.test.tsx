@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   usePathname: vi.fn(),
+  useRouter: vi.fn(),
   useSearchParams: vi.fn(),
   useSidebar: vi.fn(),
   useSidebarEntity: vi.fn(),
@@ -15,10 +16,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: mocks.usePathname,
+  useRouter: mocks.useRouter,
   useSearchParams: mocks.useSearchParams,
 }));
 
 vi.mock("./SidebarContext", () => ({
+  SIDEBAR_COLLAPSED_WIDTH: 64,
   SidebarProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useSidebar: mocks.useSidebar,
 }));
@@ -82,12 +85,19 @@ describe("DashboardShell", () => {
     vi.clearAllMocks();
     cleanup();
     delete document.body.dataset.demoEmbedded;
+    delete process.env.SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
     mocks.usePathname.mockReturnValue("/orders/order-1/sequencing");
+    mocks.useRouter.mockReturnValue({
+      replace: vi.fn(),
+    });
     mocks.useSearchParams.mockReturnValue(new URLSearchParams());
     mocks.useSidebar.mockReturnValue({
       collapsed: false,
       mobileOpen: false,
       setMobileOpen: vi.fn(),
+      sidebarWidth: 312,
     });
     mocks.useSidebarEntity.mockReturnValue({
       entityType: "order",
@@ -102,6 +112,9 @@ describe("DashboardShell", () => {
   afterEach(() => {
     cleanup();
     delete document.body.dataset.demoEmbedded;
+    delete process.env.SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
+    delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
   });
 
   it("renders the order selector and derived page title for order sequencing views", () => {
@@ -119,6 +132,9 @@ describe("DashboardShell", () => {
     expect(screen.getByText("Sequencing Data")).toBeTruthy();
     expect(screen.getByTestId("update-banner")).toBeTruthy();
     expect(screen.queryByTestId("demo-banner")).toBeNull();
+    expect(
+      screen.getByText("content").closest("main")?.parentElement?.style.getPropertyValue("--sidebar-offset")
+    ).toBe("312px");
   });
 
   it("renders demo embedded mode and posts a ready message", () => {
@@ -147,6 +163,7 @@ describe("DashboardShell", () => {
       collapsed: true,
       mobileOpen: true,
       setMobileOpen,
+      sidebarWidth: 312,
     });
 
     const { container } = render(
@@ -159,6 +176,9 @@ describe("DashboardShell", () => {
 
     const backdrop = container.querySelector(".fixed.inset-0");
     expect(backdrop).not.toBeNull();
+    expect(
+      screen.getByText("content").closest("main")?.parentElement?.style.getPropertyValue("--sidebar-offset")
+    ).toBe("64px");
     fireEvent.click(backdrop as HTMLElement);
     expect(setMobileOpen).toHaveBeenCalledWith(false);
   });
@@ -184,5 +204,42 @@ describe("DashboardShell", () => {
 
     expect(screen.getByTestId("study-selector").textContent).toContain("Study One");
     expect(screen.getByText("Analysis")).toBeTruthy();
+  });
+
+  it("renders Workbench pages without the lab entity selector", () => {
+    process.env.SEQDESK_APP_SURFACE = "workbench";
+    mocks.usePathname.mockReturnValue("/workbench/data");
+
+    render(
+      <DashboardShell
+        user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+      >
+        <div>content</div>
+      </DashboardShell>
+    );
+
+    expect(screen.getByText("Workbench Canvas")).toBeTruthy();
+    expect(screen.queryByTestId("order-selector")).toBeNull();
+    expect(screen.queryByTestId("study-selector")).toBeNull();
+  });
+
+  it("redirects dashboard routes to Workbench in Workbench app mode", () => {
+    process.env.SEQDESK_APP_SURFACE = "workbench";
+    const replace = vi.fn();
+    mocks.useRouter.mockReturnValue({ replace });
+    mocks.usePathname.mockReturnValue("/orders");
+
+    render(
+      <DashboardShell
+        user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+      >
+        <div>content</div>
+      </DashboardShell>
+    );
+
+    expect(replace).toHaveBeenCalledWith("/workbench/data");
+    expect(screen.queryByTestId("update-banner")).toBeNull();
+    expect(screen.queryByTestId("order-selector")).toBeNull();
+    expect(screen.queryByTestId("study-selector")).toBeNull();
   });
 });

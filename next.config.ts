@@ -18,6 +18,22 @@ function getDemoFrameAncestors() {
   ].join(" ");
 }
 
+function getPublicAppSurface() {
+  if (process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE === "workbench") {
+    return "workbench";
+  }
+
+  if (process.env.SEQDESK_APP_SURFACE === "workbench") {
+    return "workbench";
+  }
+
+  if (process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY === "1") {
+    return "workbench";
+  }
+
+  return "lab";
+}
+
 const nextConfig: NextConfig = {
   // Standalone output for distribution
   // Creates minimal deployment without node_modules
@@ -27,6 +43,7 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_SEQDESK_ENABLE_PUBLIC_DEMO ??
       process.env.SEQDESK_ENABLE_PUBLIC_DEMO ??
       "",
+    NEXT_PUBLIC_SEQDESK_APP_SURFACE: getPublicAppSurface(),
   },
   async redirects() {
     return [

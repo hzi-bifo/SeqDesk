@@ -41,6 +41,8 @@ model User {
   sequencingArtifactsCreated SequencingArtifact[] @relation("SequencingArtifactCreator")
   sequencingUploadsCreated   SequencingUpload[]   @relation("SequencingUploadCreator")
   backgroundWorkersStarted   BackgroundWorkerProcess[] @relation("BackgroundWorkerStartedBy")
+  workbenchWorkspace WorkbenchWorkspace? @relation("WorkbenchWorkspaceOwner")
+  workbenchImportJobsCreated WorkbenchImportJob[] @relation("WorkbenchImportJobCreator")
   department     Department?     @relation(fields: [departmentId], references: [id])
 }
 
@@ -583,6 +585,118 @@ model PipelineResultSelection {
   @@index([studyId])
   @@index([orderId])
   @@index([selectedById])
+}
+
+// ============================================================================
+// WORKBENCH DATA IMPORTS
+// ============================================================================
+
+model WorkbenchWorkspace {
+  id        String   @id @default(cuid())
+  name      String   @default("Private Workbench")
+  ownerId   String   @unique
+  isDefault Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner      User                         @relation("WorkbenchWorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  datasets   WorkbenchWorkspaceDataset[]
+  importJobs WorkbenchImportJob[]
+  analyses   WorkbenchAnalysis[]
+
+  @@index([ownerId])
+}
+
+model WorkbenchAnalysis {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String   @default("Untitled analysis")
+  description String?
+  canvas      String
+  revision    Int      @default(1)
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace  WorkbenchWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  importJobs WorkbenchImportJob[]
+
+  @@index([workspaceId, updatedAt])
+  @@index([workspaceId, isDefault])
+}
+
+model WorkbenchDataset {
+  id             String   @id @default(cuid())
+  providerId     String
+  cacheKey       String   @unique
+  name           String
+  description    String?
+  sourceType     String
+  sourceMetadata String?
+  storagePath    String?
+  sizeBytes      BigInt?
+  checksumSha256 String?
+  genomeCount    Int?
+  status         String   @default("ready")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspaces WorkbenchWorkspaceDataset[]
+  importJobs  WorkbenchImportJob[]
+
+  @@index([providerId])
+  @@index([status])
+}
+
+model WorkbenchWorkspaceDataset {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  datasetId            String
+  createdByImportJobId String?
+  linkedAt             DateTime @default(now())
+
+  workspace          WorkbenchWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  dataset            WorkbenchDataset   @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  createdByImportJob WorkbenchImportJob? @relation(fields: [createdByImportJobId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, datasetId])
+  @@index([datasetId])
+  @@index([createdByImportJobId])
+}
+
+model WorkbenchImportJob {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  providerId      String
+  status          String   @default("queued")
+  phase           String?
+  request         String
+  preview         String?
+  progress        Int?
+  logPath         String?
+  targetPath      String?
+  error           String?
+  createdById     String
+  resultDatasetId String?
+  analysisId      String?
+  analysisNodeId  String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace       WorkbenchWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy       User               @relation("WorkbenchImportJobCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  resultDataset   WorkbenchDataset?  @relation(fields: [resultDatasetId], references: [id], onDelete: SetNull)
+  analysis        WorkbenchAnalysis? @relation(fields: [analysisId], references: [id], onDelete: SetNull)
+  workspaceLinks  WorkbenchWorkspaceDataset[]
+
+  @@index([workspaceId, createdAt])
+  @@index([providerId])
+  @@index([status])
+  @@index([createdById])
+  @@index([resultDatasetId])
+  @@index([analysisId])
 }
 
 model StatusNote {

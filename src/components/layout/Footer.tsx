@@ -15,7 +15,11 @@ import {
 import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { useHelpText } from "@/lib/useHelpText";
 import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
-import { SidebarContext } from "./SidebarContext";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+  SidebarContext,
+} from "./SidebarContext";
 
 interface AdminActivityJob {
   id: string;
@@ -472,6 +476,9 @@ export function Footer() {
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
   const collapsed = sidebarContext?.collapsed ?? false;
+  const footerOffset = collapsed
+    ? SIDEBAR_COLLAPSED_WIDTH
+    : sidebarContext?.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
 
   const refreshActivity = useCallback(async () => {
     const response = await fetch("/api/admin/activity", { cache: "no-store" });
@@ -888,7 +895,7 @@ export function Footer() {
   return (
     <footer
       className="fixed bottom-0 right-0 border-t border-border bg-background px-4 py-1.5 z-30 transition-all duration-300"
-      style={{ left: collapsed ? '64px' : '256px' }}
+      style={{ left: `${footerOffset}px` }}
     >
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <div className="relative flex min-w-0 items-center gap-4">
