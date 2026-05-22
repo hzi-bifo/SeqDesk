@@ -12,7 +12,15 @@ import {
   Play,
   Square,
 } from "lucide-react";
-import { useState, useEffect, useContext, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useContext,
+  useMemo,
+  useCallback,
+  useRef,
+  type CSSProperties,
+} from "react";
 import { useHelpText } from "@/lib/useHelpText";
 import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
 import {
@@ -21,9 +29,11 @@ import {
   SidebarContext,
 } from "./SidebarContext";
 
+const FOOTER_HEIGHT_PROPERTY = "--seqdesk-footer-height";
+
 interface AdminActivityJob {
   id: string;
-  type?: "pipeline-db-download" | "dummy-seed" | "example-dataset";
+  type?: "pipeline-db-download" | "dummy-seed" | "example-dataset" | "install-profile-reload";
   label: string;
   state: "running" | "success" | "error";
   phase?: string;
@@ -475,12 +485,45 @@ export function Footer() {
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [expandedNotificationIds, setExpandedNotificationIds] = useState<Record<string, boolean>>({});
   const [busyNotificationId, setBusyNotificationId] = useState<string | null>(null);
+  const footerRef = useRef<HTMLElement | null>(null);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
   const collapsed = sidebarContext?.collapsed ?? false;
   const footerOffset = collapsed
     ? SIDEBAR_COLLAPSED_WIDTH
     : sidebarContext?.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH;
+
+  useEffect(() => {
+    const footer = footerRef.current;
+    if (!footer) {
+      return;
+    }
+
+    const root = document.documentElement;
+    const syncFooterHeight = () => {
+      const height = Math.ceil(footer.getBoundingClientRect().height);
+      root.style.setProperty(FOOTER_HEIGHT_PROPERTY, `${height}px`);
+    };
+
+    syncFooterHeight();
+    window.addEventListener("resize", syncFooterHeight);
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        window.removeEventListener("resize", syncFooterHeight);
+        root.style.removeProperty(FOOTER_HEIGHT_PROPERTY);
+      };
+    }
+
+    const observer = new ResizeObserver(syncFooterHeight);
+    observer.observe(footer);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", syncFooterHeight);
+      root.style.removeProperty(FOOTER_HEIGHT_PROPERTY);
+    };
+  }, []);
 
   const refreshActivity = useCallback(async () => {
     const response = await fetch("/api/admin/activity", { cache: "no-store" });
@@ -904,21 +947,27 @@ export function Footer() {
 
   return (
     <footer
-      className="fixed bottom-0 right-0 border-t border-border bg-background px-4 py-1.5 z-30 transition-all duration-300"
-      style={{ left: `${footerOffset}px` }}
+      ref={footerRef}
+      className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background px-2 py-1 transition-all duration-300 md:left-[var(--seqdesk-sidebar-offset)] sm:px-4 sm:py-1.5"
+      style={{
+        "--seqdesk-sidebar-offset": `${footerOffset}px`,
+        right: "var(--entity-notes-sidebar-offset, 0px)",
+      } as CSSProperties}
     >
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <div className="relative flex min-w-0 items-center gap-4">
+      <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <div className="relative flex min-w-0 items-center gap-2 sm:gap-4">
           {isLoaded && (
             <button
               onClick={toggleHelpText}
-              className={`flex items-center gap-1.5 hover:text-foreground transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 hover:text-foreground transition-colors ${
                 showHelpText ? "text-foreground" : ""
               }`}
+              aria-label={`Help tips ${showHelpText ? "on" : "off"}`}
               title={showHelpText ? "Hide help text" : "Show help text"}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${showHelpText ? "bg-foreground" : "bg-muted-foreground"}`} />
-              <span>Help tips {showHelpText ? "on" : "off"}</span>
+              <span className="hidden sm:inline">Help tips {showHelpText ? "on" : "off"}</span>
+              <span className="sm:hidden">Tips {showHelpText ? "on" : "off"}</span>
             </button>
           )}
           {primarySummary && (
@@ -978,7 +1027,7 @@ export function Footer() {
             </div>
           )}
           {pipelineLoadOpen && activePipelineLoad && (
-            <div className="absolute bottom-7 left-0 z-50 max-h-[70vh] w-[min(480px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 max-h-[70vh] w-[min(480px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
                   <span className="font-medium text-foreground">Pipeline jobs</span>
@@ -1136,7 +1185,7 @@ export function Footer() {
             </div>
           )}
           {detailsOpen && hasDetails && (
-            <div className="absolute bottom-7 left-0 z-50 max-h-[70vh] w-[min(860px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 max-h-[70vh] w-[min(860px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-medium text-foreground">Admin status</span>
                 <button
@@ -1377,7 +1426,7 @@ export function Footer() {
             </div>
           )}
         </div>
-        <div className="relative flex items-center gap-3">
+        <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
           {notificationsEnabled && (
             <div className="relative">
               <button
@@ -1396,8 +1445,8 @@ export function Footer() {
                 )}
               </button>
               {notificationsOpen && (
-                <div className="absolute bottom-7 right-0 z-50 max-h-[70vh] w-[min(420px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
-                <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="fixed bottom-[calc(var(--seqdesk-footer-height,2.5rem)+0.5rem)] left-2 right-2 z-50 max-h-[70vh] w-auto overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg sm:absolute sm:bottom-[calc(100%+0.5rem)] sm:left-auto sm:right-0 sm:w-[min(420px,calc(100vw-2rem))]">
+                  <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <span className="font-medium text-foreground">Notifications</span>
                     {unreadNotificationCount > 0 && (
@@ -1529,7 +1578,7 @@ export function Footer() {
           )}
           {currentTime && (
             <>
-              <span>{formatDate(currentTime)}</span>
+              <span className="hidden sm:inline">{formatDate(currentTime)}</span>
               <span className="font-mono">{formatTime(currentTime)}</span>
             </>
           )}

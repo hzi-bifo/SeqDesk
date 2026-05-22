@@ -408,7 +408,7 @@ describe("Footer admin activity", () => {
       })
     );
 
-    render(<Footer />);
+    const { container } = render(<Footer />);
 
     await waitFor(() => {
       expect(screen.getByText("8 jobs active · 6 on SLURM · 1 local · 1 unknown")).toBeTruthy();
@@ -416,6 +416,11 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 8 jobs active/i }));
 
     expect(screen.getByText("Pipeline jobs")).toBeTruthy();
+    expect(
+      Array.from(container.querySelectorAll("div")).some((element) =>
+        element.className.includes("bottom-[calc(100%+0.5rem)]")
+      )
+    ).toBe(true);
     expect(screen.getByText("8 jobs active")).toBeTruthy();
     expect(screen.getByText("2 stale jobs")).toBeTruthy();
     expect(screen.getByText("1 running · 1 pending")).toBeTruthy();
@@ -439,7 +444,7 @@ describe("Footer admin activity", () => {
       })
     );
 
-    render(<Footer />);
+    const { container } = render(<Footer />);
 
     await waitFor(() => {
       expect(screen.getByText("Admin status: partial data unavailable")).toBeTruthy();
@@ -447,6 +452,11 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /details/i }));
 
     expect(screen.getByText("Status warnings")).toBeTruthy();
+    expect(
+      Array.from(container.querySelectorAll("div")).some((element) =>
+        element.className.includes("bottom-[calc(100%+0.5rem)]")
+      )
+    ).toBe(true);
     expect(screen.getByText("Some background worker status could not be loaded.")).toBeTruthy();
     expect(screen.getByText("Pipeline load could not be loaded.")).toBeTruthy();
   });
@@ -642,7 +652,7 @@ describe("Footer admin activity", () => {
       })
     );
 
-    render(<Footer />);
+    const { container } = render(<Footer />);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Notifications" })).toBeTruthy();
@@ -650,6 +660,11 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
 
     expect(screen.getByText("No notifications.")).toBeTruthy();
+    expect(
+      Array.from(container.querySelectorAll("div")).some((element) =>
+        element.className.includes("bottom-[calc(100%+0.5rem)]")
+      )
+    ).toBe(true);
   });
 
   it("hides the notification panel when in-app notifications are disabled", async () => {

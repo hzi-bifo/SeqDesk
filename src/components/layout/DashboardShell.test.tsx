@@ -30,6 +30,10 @@ vi.mock("@/lib/contexts/FieldHelpContext", () => ({
   FieldHelpProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+vi.mock("./Footer", () => ({
+  Footer: () => <footer data-testid="footer" />,
+}));
+
 vi.mock("./sidebar", () => ({
   Sidebar: ({ user, version }: { user: { name?: string | null }; version?: string }) => (
     <div data-testid="sidebar">
@@ -135,6 +139,9 @@ describe("DashboardShell", () => {
     expect(
       screen.getByText("content").closest("main")?.parentElement?.style.getPropertyValue("--sidebar-offset")
     ).toBe("312px");
+    expect(screen.getByText("content").closest("main")?.parentElement?.className).toContain(
+      "pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)]"
+    );
   });
 
   it("renders demo embedded mode and posts a ready message", () => {

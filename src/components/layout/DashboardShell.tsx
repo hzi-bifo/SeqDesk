@@ -9,6 +9,7 @@ import {
 } from "./SidebarContext";
 import { FieldHelpProvider } from "@/lib/contexts/FieldHelpContext";
 import { Sidebar } from "./sidebar";
+import { Footer } from "./Footer";
 import { UpdateBanner } from "@/components/admin/UpdateBanner";
 import { cn } from "@/lib/utils";
 import { Menu } from "lucide-react";
@@ -108,6 +109,8 @@ function DashboardContent({
       ? null
       : derivePageTitle(pathname, section);
   const selectorType = isWorkbenchMode ? null : isOrdersView ? "orders" : isStudiesView ? "studies" : null;
+  const hasTopbarSelector = Boolean(selectorType);
+  const centerTopbarTitle = Boolean(hasTopbarSelector && pageTitle);
   const sidebarOffset = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   useEffect(() => {
@@ -178,7 +181,7 @@ function DashboardContent({
 
       <div
         className={cn(
-          "min-h-screen pb-8 transition-all duration-300",
+          "min-h-screen pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)] transition-all duration-300",
           // Desktop: offset by sidebar width
           "md:ml-[var(--sidebar-offset)] md:transition-[margin-left]",
         )}
@@ -188,13 +191,20 @@ function DashboardContent({
         {!isAdminView && (selectorType || pageTitle) && (
           <div
             className={cn(
-              "sticky top-0 z-20 hidden h-10 border-b border-border bg-card px-4 md:flex",
+              "sticky top-0 z-20 hidden h-10 border-b border-border bg-card px-4",
               isWorkbenchMode && "border-teal-100",
-              selectorType ? "items-center" : "items-center justify-center",
+              centerTopbarTitle
+                ? "md:grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
+                : selectorType
+                  ? "md:flex items-center"
+                  : "md:flex items-center justify-center",
             )}
+            style={{
+              paddingRight: "calc(1rem + var(--entity-notes-sidebar-offset, 0px))",
+            }}
           >
             {selectorType === "orders" && (
-              <div className="flex-shrink-0">
+              <div className={cn(centerTopbarTitle ? "min-w-0 w-fit max-w-full" : "flex-shrink-0")}>
                 <OrderSelector
                   currentOrderId={currentOrderId}
                   currentOrderName={currentOrderName}
@@ -203,7 +213,7 @@ function DashboardContent({
               </div>
             )}
             {selectorType === "studies" && (
-              <div className="flex-shrink-0">
+              <div className={cn(centerTopbarTitle ? "min-w-0 w-fit max-w-full" : "flex-shrink-0")}>
                 <StudySelector
                   currentStudyId={currentStudyId}
                   currentStudyTitle={currentStudyTitle}
@@ -212,13 +222,17 @@ function DashboardContent({
               </div>
             )}
             {pageTitle && (
-              <div className={cn("min-w-0", selectorType ? "flex-1 text-center" : "text-center")}>
+              <div
+                className={cn(
+                  "min-w-0 text-center",
+                  centerTopbarTitle ? "col-start-2" : selectorType && "flex-1",
+                )}
+              >
                 <span className="text-sm font-medium text-foreground">
                   {pageTitle}
                 </span>
               </div>
             )}
-            {selectorType && pageTitle && <div className="flex-shrink-0 w-0" />}
           </div>
         )}
 
@@ -276,6 +290,7 @@ export function DashboardShell({ children, user, version }: DashboardShellProps)
         >
           {children}
         </DashboardContent>
+        <Footer />
       </FieldHelpProvider>
     </SidebarProvider>
   );

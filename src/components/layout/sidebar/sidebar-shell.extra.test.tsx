@@ -201,7 +201,12 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(container.querySelector("footer")?.style.left).toBe("312px");
+    const footer = container.querySelector("footer");
+    expect(footer?.className).toContain("left-0");
+    expect(footer?.className).toContain("right-0");
+    expect(footer?.className).toContain("md:left-[var(--seqdesk-sidebar-offset)]");
+    expect(footer?.style.getPropertyValue("--seqdesk-sidebar-offset")).toBe("312px");
+    expect(footer?.style.right).toBe("var(--entity-notes-sidebar-offset, 0px)");
     expect(screen.getByRole("button", { name: /Help tips off/i })).toBeTruthy();
     expect(screen.getByText(expectedDate)).toBeTruthy();
     expect(screen.getByText(expectedTime)).toBeTruthy();
@@ -215,7 +220,7 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(container.querySelector("footer")?.style.left).toBe(`${SIDEBAR_COLLAPSED_WIDTH}px`);
+    expect(footer?.style.getPropertyValue("--seqdesk-sidebar-offset")).toBe(`${SIDEBAR_COLLAPSED_WIDTH}px`);
   });
 
   it("renders the resize handle only for the expanded sidebar", () => {
