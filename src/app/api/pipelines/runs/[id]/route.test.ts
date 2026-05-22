@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    pipelineResultSelection: {
+      findUnique: vi.fn(),
+    },
   },
   pipelineRegistry: {
     "simulate-reads": {
@@ -77,10 +80,22 @@ describe("GET /api/pipelines/runs/[id]", () => {
       size: filePath.endsWith("samplesheet.csv") ? 33 : 101,
       isFile: () => !filePath.endsWith("/missing"),
     }));
+    mocks.db.pipelineResultSelection.findUnique.mockResolvedValue({
+      selectedRunId: "run-1",
+      selectedAt: new Date("2026-05-20T10:00:00.000Z"),
+      selectedBy: {
+        id: "admin-1",
+        firstName: "Ada",
+        lastName: "Admin",
+        email: "ada@example.com",
+      },
+    });
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       pipelineId: "simulate-reads",
       targetType: "order",
+      orderId: "order-1",
+      studyId: null,
       inputSampleIds: JSON.stringify(["sample-db-1"]),
       config: JSON.stringify({ replaceExisting: true }),
       results: JSON.stringify({ warnings: ["ok"] }),
@@ -147,6 +162,7 @@ describe("GET /api/pipelines/runs/[id]", () => {
         },
       ],
       events: [],
+      selectedResultSelections: [{ id: "selection-1" }],
     });
   });
 
@@ -179,6 +195,24 @@ describe("GET /api/pipelines/runs/[id]", () => {
       id: "run-1",
       study: { userId: "other-user" },
       order: { userId: "different-user" },
+      selectedResultSelections: [{ id: "selection-1" }],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("blocks owners from unselected runs", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      study: null,
+      order: { userId: "user-1" },
+      selectedResultSelections: [],
     });
 
     const response = await GET(
@@ -198,6 +232,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
       id: "run-1",
       pipelineId: "unknown-pipeline",
       targetType: "study",
+      orderId: null,
+      studyId: "study-1",
       inputSampleIds: null,
       config: null,
       results: null,
@@ -219,6 +255,7 @@ describe("GET /api/pipelines/runs/[id]", () => {
       binsCreated: [],
       artifacts: [],
       events: [],
+      selectedResultSelections: [{ id: "selection-1" }],
     });
 
     const response = await GET(
@@ -239,6 +276,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
       id: "run-1",
       pipelineId: "simulate-reads",
       targetType: "study",
+      orderId: null,
+      studyId: "study-1",
       inputSampleIds: null,
       config: null,
       results: null,
@@ -268,6 +307,7 @@ describe("GET /api/pipelines/runs/[id]", () => {
       binsCreated: [],
       artifacts: [],
       events: [],
+      selectedResultSelections: [{ id: "selection-1" }],
     });
 
     const response = await GET(
@@ -290,6 +330,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
       id: "run-1",
       pipelineId: "simulate-reads",
       targetType: "order",
+      orderId: "order-1",
+      studyId: null,
       inputSampleIds: null,
       config: null,
       results: null,
@@ -312,6 +354,7 @@ describe("GET /api/pipelines/runs/[id]", () => {
       binsCreated: [],
       artifacts: [],
       events: [],
+      selectedResultSelections: [{ id: "selection-1" }],
     });
 
     const response = await GET(
@@ -414,6 +457,18 @@ describe("GET /api/pipelines/runs/[id]", () => {
       pipelineDescription: "Generate synthetic sequencing reads",
       config: { replaceExisting: true },
       results: { warnings: ["ok"] },
+      isSelectedFinal: true,
+      isUserVisible: true,
+      selectedFinal: {
+        selectedRunId: "run-1",
+        selectedAt: "2026-05-20T10:00:00.000Z",
+        selectedBy: {
+          id: "admin-1",
+          firstName: "Ada",
+          lastName: "Admin",
+          email: "ada@example.com",
+        },
+      },
       inputSampleIds: ["sample-db-1"],
       outputPathSize: 101,
       errorPathSize: 101,

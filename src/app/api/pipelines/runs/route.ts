@@ -18,6 +18,10 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
+    const publishedOnly =
+      searchParams.get('publishedOnly') === 'true' ||
+      searchParams.get('userVisible') === 'true' ||
+      searchParams.get('visible') === 'user';
     const result = await listPipelineRunsForOperator({
       userId: session.user.id,
       role: session.user.role,
@@ -25,6 +29,7 @@ export async function GET(request: NextRequest) {
       status: searchParams.get('status'),
       studyId: searchParams.get('studyId'),
       orderId: searchParams.get('orderId'),
+      publishedOnly,
       limit: parseInt(searchParams.get('limit') || '50', 10),
       offset: parseInt(searchParams.get('offset') || '0', 10),
     });

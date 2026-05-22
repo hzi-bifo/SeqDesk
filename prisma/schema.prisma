@@ -30,6 +30,7 @@ model User {
   createdInvites AdminInvite[]   @relation("InviteCreator")
   orders         Order[]
   orderNotesEdited Order[]       @relation("OrderNotesEditor")
+  sequencingFilesPublishedOrders Order[] @relation("OrderSequencingFilesPublisher")
   statusNotes    StatusNote[]
   studies          Study[]         @relation("StudyOwner")
   studyNotesEdited Study[]         @relation("StudyNotesEditor")
@@ -87,6 +88,8 @@ model Order {
   notes            String?
   notesEditedAt    DateTime?
   notesEditedById  String?
+  sequencingFilesPublishedAt DateTime?
+  sequencingFilesPublishedById String?
   numberOfSamples  Int?
   contactName      String?
   contactEmail     String?
@@ -103,6 +106,7 @@ model Order {
   userId           String
   user             User         @relation(fields: [userId], references: [id])
   notesEditedBy    User?        @relation("OrderNotesEditor", fields: [notesEditedById], references: [id])
+  sequencingFilesPublishedBy User? @relation("OrderSequencingFilesPublisher", fields: [sequencingFilesPublishedById], references: [id], onDelete: SetNull)
   samples          Sample[]
   sequencingArtifacts SequencingArtifact[]
   sequencingUploads   SequencingUpload[]

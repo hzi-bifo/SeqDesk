@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
       findMany: vi.fn(),
     },
   },
+  getSequencingFilesConfig: vi.fn(),
+  safeJoin: vi.fn(),
+  findSequencingDeliveryArtifactByPath: vi.fn(),
   isDemoSession: vi.fn(),
   fs: {
     stat: vi.fn(),
@@ -32,6 +35,22 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
 }));
+
+vi.mock("@/lib/files/sequencing-config", () => ({
+  getSequencingFilesConfig: mocks.getSequencingFilesConfig,
+}));
+
+vi.mock("@/lib/files/paths", () => ({
+  safeJoin: mocks.safeJoin,
+}));
+
+vi.mock("@/lib/sequencing/delivery", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/sequencing/delivery")>();
+  return {
+    ...actual,
+    findSequencingDeliveryArtifactByPath: mocks.findSequencingDeliveryArtifactByPath,
+  };
+});
 
 vi.mock("fs/promises", () => ({
   default: {
@@ -63,12 +82,38 @@ describe("GET /api/files/preview", () => {
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.isDemoSession.mockReturnValue(false);
+    mocks.getSequencingFilesConfig.mockResolvedValue({
+      dataBasePath: "/data/sequencing",
+      config: { allowedExtensions: [".fastq"] },
+    });
+    mocks.safeJoin.mockImplementation((basePath: string, relativePath: string) =>
+      `${basePath}/${relativePath}`
+    );
+    mocks.findSequencingDeliveryArtifactByPath.mockResolvedValue({
+      id: "artifact-1",
+      orderId: "order-1",
+      sampleId: null,
+      stage: "qc",
+      artifactType: "qc_report",
+      visibility: "customer",
+      path: "reports/customer.html",
+      originalName: "customer.html",
+      size: 18,
+      checksum: null,
+      order: {
+        id: "order-1",
+        userId: "admin-1",
+        sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+      },
+      sample: null,
+    });
     mocks.db.pipelineRun.findMany.mockResolvedValue([
       {
         id: "run-1",
         runFolder: "/data/runs/run-1",
         study: { userId: "admin-1" },
         order: null,
+        selectedResultSelections: [{ id: "selection-1" }],
       },
     ]);
     mocks.fs.stat.mockResolvedValue({ isFile: () => true, size: 18 });
@@ -129,10 +174,64 @@ describe("GET /api/files/preview", () => {
     expect(response.status).toBe(400);
   });
 
-  it("returns 400 for relative path", async () => {
-    const response = await GET(makeRequest({ path: "relative/path.html" }));
+  it("allows published customer artifacts to be previewed by relative path", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "owner-user", role: "RESEARCHER" },
+    });
+    mocks.findSequencingDeliveryArtifactByPath.mockResolvedValue({
+      id: "artifact-1",
+      orderId: "order-1",
+      sampleId: null,
+      stage: "qc",
+      artifactType: "qc_report",
+      visibility: "customer",
+      path: "reports/customer.html",
+      originalName: "customer.html",
+      size: 18,
+      checksum: null,
+      order: {
+        id: "order-1",
+        userId: "owner-user",
+        sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+      },
+      sample: null,
+    });
 
-    expect(response.status).toBe(400);
+    const response = await GET(makeRequest({ path: "reports/customer.html" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.safeJoin).toHaveBeenCalledWith(
+      "/data/sequencing",
+      "reports/customer.html"
+    );
+  });
+
+  it("blocks owners from relative artifact previews before publication", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "owner-user", role: "RESEARCHER" },
+    });
+    mocks.findSequencingDeliveryArtifactByPath.mockResolvedValue({
+      id: "artifact-1",
+      orderId: "order-1",
+      sampleId: null,
+      stage: "qc",
+      artifactType: "qc_report",
+      visibility: "customer",
+      path: "reports/customer.html",
+      originalName: "customer.html",
+      size: 18,
+      checksum: null,
+      order: {
+        id: "order-1",
+        userId: "owner-user",
+        sequencingFilesPublishedAt: null,
+      },
+      sample: null,
+    });
+
+    const response = await GET(makeRequest({ path: "reports/customer.html" }));
+
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 for unsupported extension", async () => {
@@ -163,6 +262,7 @@ describe("GET /api/files/preview", () => {
         runFolder: "/data/runs/run-1",
         study: { userId: "owner-user" },
         order: null,
+        selectedResultSelections: [{ id: "selection-1" }],
       },
     ]);
 
@@ -183,6 +283,7 @@ describe("GET /api/files/preview", () => {
         runFolder: "/data/runs/run-1",
         study: null,
         order: { userId: "owner-user" },
+        selectedResultSelections: [{ id: "selection-1" }],
       },
     ]);
 
@@ -192,6 +293,27 @@ describe("GET /api/files/preview", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
+  });
+
+  it("blocks non-admin order owners from unselected run outputs", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "owner-user", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      {
+        id: "run-1",
+        runFolder: "/data/runs/run-1",
+        study: null,
+        order: { userId: "owner-user" },
+        selectedResultSelections: [],
+      },
+    ]);
+
+    const response = await GET(
+      makeRequest({ path: "/data/runs/run-1/output/report.pdf" })
+    );
+
+    expect(response.status).toBe(403);
   });
 
   it("returns 404 when file does not exist on disk", async () => {

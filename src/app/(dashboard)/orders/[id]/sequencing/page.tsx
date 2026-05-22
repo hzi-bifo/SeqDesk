@@ -119,6 +119,7 @@ function confirmCleanClassification(): boolean {
 import type {
   OrderSequencingSummaryResponse,
   SequencingArtifactSummary,
+  SequencingDeliverySummary,
   SequencingSampleRow,
 } from "@/lib/sequencing/types";
 import {
@@ -296,20 +297,48 @@ function copyToClipboard(value: string) {
   return navigator.clipboard.writeText(value);
 }
 
-function getAssignmentFailureMessage(payload: any, fallback: string): string | null {
-  if (payload?.error) return String(payload.error);
-  if (payload?.success === false) {
-    const failures = Array.isArray(payload.results)
-      ? payload.results.filter((result: any) => result && result.success === false)
+type AssignmentFailurePayload = {
+  error?: unknown;
+  success?: unknown;
+  results?: unknown;
+};
+
+type AssignmentFailureResult = {
+  success?: unknown;
+  sampleId?: unknown;
+  error?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function toAssignmentFailurePayload(value: unknown): AssignmentFailurePayload | null {
+  return isRecord(value) ? value : null;
+}
+
+function toAssignmentFailureResult(value: unknown): AssignmentFailureResult | null {
+  return isRecord(value) ? value : null;
+}
+
+function getAssignmentFailureMessage(payload: unknown, fallback: string): string | null {
+  const payloadRecord = toAssignmentFailurePayload(payload);
+  if (payloadRecord?.error) return String(payloadRecord.error);
+  if (payloadRecord?.success === false) {
+    const failures = Array.isArray(payloadRecord.results)
+      ? payloadRecord.results
+          .map(toAssignmentFailureResult)
+          .filter((result): result is AssignmentFailureResult => result?.success === false)
       : [];
     if (failures.length > 0) {
       return failures
         .slice(0, 3)
-        .map((failure: any) =>
-          failure?.sampleId && failure?.error
-            ? `${failure.sampleId}: ${failure.error}`
-            : failure?.error || fallback
-        )
+        .map((failure) => {
+          const message = failure.error ? String(failure.error) : fallback;
+          return failure.sampleId && failure.error
+            ? `${String(failure.sampleId)}: ${message}`
+            : message;
+        })
         .join("; ");
     }
     return fallback;
@@ -363,6 +392,12 @@ export default function OrderSequencingPage({
   const [, setRelativeTimeTick] = useState(0);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [inspectLoading, setInspectLoading] = useState(false);
+  const [delivery, setDelivery] = useState<SequencingDeliverySummary | null>(null);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
+  const [deliveryUpdating, setDeliveryUpdating] = useState(false);
+  const [artifactVisibilityUpdatingId, setArtifactVisibilityUpdatingId] =
+    useState<string | null>(null);
 
   const [inspectFilePath, setInspectFilePath] = useState<string>("");
   const [inspectData, setInspectData] = useState<{
@@ -469,6 +504,28 @@ export default function OrderSequencingPage({
       }
     }
   }, [orderId]);
+
+  const refreshDelivery = useCallback(async () => {
+    if (!isFacilityAdmin) {
+      setDelivery(null);
+      return;
+    }
+
+    setDeliveryLoading(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/delivery`);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load delivery status");
+      }
+      setDelivery((payload?.delivery ?? null) as SequencingDeliverySummary | null);
+    } catch (deliveryError) {
+      console.error("[Order Sequencing] Failed to load delivery status:", deliveryError);
+      setDelivery(null);
+    } finally {
+      setDeliveryLoading(false);
+    }
+  }, [isFacilityAdmin, orderId]);
 
   const getSampleForReadPath = useCallback(
     (filePath: string) =>
@@ -582,6 +639,14 @@ export default function OrderSequencingPage({
 
     void refreshSummary();
   }, [isFacilityAdmin, refreshSummary, sessionStatus]);
+
+  useEffect(() => {
+    if (sessionStatus === "loading" || !isFacilityAdmin) {
+      return;
+    }
+
+    void refreshDelivery();
+  }, [isFacilityAdmin, refreshDelivery, sessionStatus]);
 
   useEffect(() => {
     if (sessionStatus === "loading") {
@@ -910,6 +975,7 @@ export default function OrderSequencingPage({
       }
       notifyPanel.success(`Marked reads as ${READ_DATA_CLASS_LABELS[dataClass].toLowerCase()}`);
       await refreshSummary({ silent: true });
+      await refreshDelivery();
     } catch (classificationError) {
       notifyPanel.error(
         classificationError instanceof Error
@@ -1164,8 +1230,90 @@ export default function OrderSequencingPage({
 
       setPickerOpen(false);
       await refreshSummary({ silent: true });
+      await refreshDelivery();
     } catch (pickError) {
       notifyPanel.error(pickError instanceof Error ? pickError.message : "Failed to add data");
+    }
+  };
+
+  const handlePublishDelivery = async () => {
+    setDeliveryUpdating(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/delivery/publication`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to publish sequencing files");
+      }
+      setDelivery((payload?.delivery ?? null) as SequencingDeliverySummary | null);
+      setDeliveryDialogOpen(false);
+      notifyPanel.success("Sequencing files are downloadable to the user");
+    } catch (publishError) {
+      notifyPanel.error(
+        publishError instanceof Error
+          ? publishError.message
+          : "Failed to publish sequencing files"
+      );
+    } finally {
+      setDeliveryUpdating(false);
+    }
+  };
+
+  const handleHideDelivery = async () => {
+    setDeliveryUpdating(true);
+    try {
+      const response = await fetch(`/api/orders/${orderId}/sequencing/delivery/publication`, {
+        method: "DELETE",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to hide sequencing files");
+      }
+      setDelivery((payload?.delivery ?? null) as SequencingDeliverySummary | null);
+      notifyPanel.success("Sequencing files are hidden from the user");
+    } catch (hideError) {
+      notifyPanel.error(
+        hideError instanceof Error ? hideError.message : "Failed to hide sequencing files"
+      );
+    } finally {
+      setDeliveryUpdating(false);
+    }
+  };
+
+  const handleSetArtifactVisibility = async (
+    artifact: SequencingArtifactSummary,
+    visibility: "customer" | "facility"
+  ) => {
+    setArtifactVisibilityUpdatingId(artifact.id);
+    try {
+      const response = await fetch(
+        `/api/orders/${orderId}/sequencing/artifacts/${artifact.id}/visibility`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visibility }),
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to update report visibility");
+      }
+      notifyPanel.success(
+        visibility === "customer"
+          ? "Marked report as customer-facing"
+          : "Marked report as facility-only"
+      );
+      await refreshSummary({ silent: true });
+      await refreshDelivery();
+    } catch (visibilityError) {
+      notifyPanel.error(
+        visibilityError instanceof Error
+          ? visibilityError.message
+          : "Failed to update report visibility"
+      );
+    } finally {
+      setArtifactVisibilityUpdatingId(null);
     }
   };
 
@@ -1249,6 +1397,7 @@ export default function OrderSequencingPage({
       notifyPanel.success("Upload completed");
       setUploadOpen(false);
       await refreshSummary({ silent: true });
+      await refreshDelivery();
     } catch (uploadError) {
       notifyPanel.error(uploadError instanceof Error ? uploadError.message : "Failed to upload file");
     } finally {
@@ -1258,6 +1407,42 @@ export default function OrderSequencingPage({
   };
 
   const isDemo = !!session?.user?.isDemo;
+  const deliveryReadCount = delivery?.readFiles.length ?? 0;
+  const deliveryReportCount = delivery?.artifactFiles.length ?? 0;
+  const deliveryIncludedCount = deliveryReadCount + deliveryReportCount;
+  const deliveryMissingCount =
+    (delivery?.excluded.missingCleanedReadFiles ?? 0) +
+    (delivery?.excluded.missingCustomerArtifacts ?? 0);
+  const deliveryExcludedCount = delivery
+    ? Object.values(delivery.excluded).reduce((total, count) => total + count, 0)
+    : 0;
+  const canPublishDelivery = Boolean(
+    canManage &&
+      !isDemo &&
+      delivery?.dataBasePathConfigured &&
+      deliveryIncludedCount > 0 &&
+      !deliveryUpdating
+  );
+
+  const renderArtifactVisibilityControl = (artifact: SequencingArtifactSummary) => {
+    const isCustomerFacing = artifact.visibility === "customer";
+    const nextVisibility = isCustomerFacing ? "facility" : "customer";
+    const updating = artifactVisibilityUpdatingId === artifact.id;
+
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mt-3"
+        onClick={() => void handleSetArtifactVisibility(artifact, nextVisibility)}
+        disabled={isDemo || !canManage || updating}
+      >
+        {updating ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+        {isCustomerFacing ? "Make facility-only" : "Make customer-facing"}
+      </Button>
+    );
+  };
 
   const renderRunAssignmentFieldInput = (
     assignmentId: string,
@@ -1382,7 +1567,10 @@ export default function OrderSequencingPage({
           samples={data.samples}
           canManage={canManage}
           dataBasePathConfigured={data.dataBasePathConfigured}
-          onDataChanged={() => void refreshSummary({ silent: true })}
+          onDataChanged={() => {
+            void refreshSummary({ silent: true });
+            void refreshDelivery();
+          }}
         />
       </PageContainer>
     );
@@ -1395,7 +1583,10 @@ export default function OrderSequencingPage({
           orderId={orderId}
           samples={data.samples}
           canManage={canManage}
-          onDataChanged={() => void refreshSummary({ silent: true })}
+          onDataChanged={() => {
+            void refreshSummary({ silent: true });
+            void refreshDelivery();
+          }}
         />
       </PageContainer>
     );
@@ -1529,7 +1720,10 @@ export default function OrderSequencingPage({
           pipelineId={activePipelineId}
           samples={data.samples}
           onRunCompleted={() => void refreshSummary({ silent: true })}
-          onSampleDataChanged={() => void refreshSummary({ silent: true })}
+          onSampleDataChanged={() => {
+            void refreshSummary({ silent: true });
+            void refreshDelivery();
+          }}
           isDemo={isDemo}
           isFacilityAdmin={isFacilityAdmin}
         />
@@ -1569,12 +1763,13 @@ export default function OrderSequencingPage({
                   variant="outline"
                   onClick={() => {
                     void refreshSummary({ silent: true });
+                    void refreshDelivery();
                     void refreshOrderPipelines();
                     void refreshRunPlans();
                   }}
-                  disabled={refreshing}
+                  disabled={refreshing || deliveryLoading}
                 >
-                  {refreshing ? (
+                  {refreshing || deliveryLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <RefreshCw className="mr-2 h-4 w-4" />
@@ -1590,6 +1785,124 @@ export default function OrderSequencingPage({
             and generated QC or report artifacts. Use it to quickly see which samples are ready,
             missing data, or need facility review.
           </HelpBox>
+
+          {(delivery || deliveryLoading) && (
+            <Card className="rounded-xl border bg-card shadow-none">
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Download className="h-4 w-4 text-muted-foreground" />
+                    Delivery to user
+                  </CardTitle>
+                  <CardDescription>
+                    Publish cleaned active reads and customer-facing sequencing reports to the order owner.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  {delivery?.isPublished ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleHideDelivery()}
+                      disabled={isDemo || !canManage || deliveryUpdating}
+                    >
+                      {deliveryUpdating ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      Hide from user
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setDeliveryDialogOpen(true)}
+                      disabled={!canPublishDelivery}
+                    >
+                      Make downloadable to user
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {deliveryLoading && !delivery ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading delivery status...
+                  </div>
+                ) : delivery ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {[
+                        {
+                          label: "Cleaned reads present",
+                          ready: deliveryReadCount > 0,
+                          detail: `${deliveryReadCount} file${deliveryReadCount === 1 ? "" : "s"}`,
+                        },
+                        {
+                          label: "Missing files",
+                          ready: deliveryMissingCount === 0,
+                          detail:
+                            deliveryMissingCount === 0
+                              ? "None missing"
+                              : `${deliveryMissingCount} missing`,
+                        },
+                        {
+                          label: "Customer reports",
+                          ready: deliveryReportCount > 0,
+                          detail: `${deliveryReportCount} file${deliveryReportCount === 1 ? "" : "s"}`,
+                        },
+                        {
+                          label: "Published state",
+                          ready: delivery.isPublished,
+                          detail: delivery.isPublished
+                            ? delivery.publishedAt
+                              ? `Released ${formatDateTime(delivery.publishedAt)}`
+                              : "Released"
+                            : "Hidden",
+                        },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-lg border px-3 py-2">
+                          <div className="flex items-center gap-2 text-sm font-medium">
+                            <span
+                              className={cn(
+                                "h-2.5 w-2.5 rounded-full",
+                                item.ready ? "bg-emerald-500" : "bg-amber-500"
+                              )}
+                            />
+                            {item.label}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {item.detail}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <Badge
+                        variant="outline"
+                        className={
+                          delivery.isPublished
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : undefined
+                        }
+                      >
+                        {delivery.isPublished ? "Downloadable to user" : "Not visible to user"}
+                      </Badge>
+                      <span>{deliveryIncludedCount} included</span>
+                      <span>{deliveryExcludedCount} excluded</span>
+                      {delivery.publishedBy ? (
+                        <span>
+                          Published by {delivery.publishedBy.firstName}{" "}
+                          {delivery.publishedBy.lastName}
+                        </span>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
 
           {protectedReadSamples.length > 0 ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-900">
@@ -2439,6 +2752,18 @@ export default function OrderSequencingPage({
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <Badge variant="outline">{artifactStageLabel(artifact.stage)}</Badge>
                             <Badge variant="outline">{artifactTypeLabel(artifact.artifactType)}</Badge>
+                            <Badge
+                              variant="outline"
+                              className={
+                                artifact.visibility === "customer"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : undefined
+                              }
+                            >
+                              {artifact.visibility === "customer"
+                                ? "Customer-facing"
+                                : "Facility only"}
+                            </Badge>
                             <span>{formatFileSize(artifact.size)}</span>
                           </div>
                           <div className="mt-2 break-all text-xs text-muted-foreground">
@@ -2460,6 +2785,7 @@ export default function OrderSequencingPage({
                               "no hash"
                             )}
                           </div>
+                          {renderArtifactVisibilityControl(artifact)}
                         </div>
                       </div>
                     </div>
@@ -2470,6 +2796,90 @@ export default function OrderSequencingPage({
           </Card>
         </div>
       </PageContainer>
+
+      <Dialog open={deliveryDialogOpen} onOpenChange={setDeliveryDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Make sequencing files downloadable?</DialogTitle>
+            <DialogDescription>
+              The order owner will be able to inspect cleaned reads and download the listed files.
+            </DialogDescription>
+          </DialogHeader>
+
+          {delivery ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Cleaned reads</div>
+                  <div className="mt-1 font-medium">{deliveryReadCount}</div>
+                </div>
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Customer reports</div>
+                  <div className="mt-1 font-medium">{deliveryReportCount}</div>
+                </div>
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Excluded files</div>
+                  <div className="mt-1 font-medium">{deliveryExcludedCount}</div>
+                </div>
+              </div>
+
+              <ScrollArea className="max-h-[280px] rounded-lg border">
+                <div className="divide-y">
+                  {delivery.readFiles.map((file) => (
+                    <div key={file.id} className="px-3 py-2 text-sm">
+                      <div className="font-medium">
+                        {file.sampleCode ?? "Sample"} {file.readDirection ?? "read"}
+                      </div>
+                      <div className="break-all text-xs text-muted-foreground">
+                        {file.path}
+                      </div>
+                    </div>
+                  ))}
+                  {delivery.artifactFiles.map((file) => (
+                    <div key={file.id} className="px-3 py-2 text-sm">
+                      <div className="font-medium">{file.label}</div>
+                      <div className="break-all text-xs text-muted-foreground">
+                        {file.path}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Excluded: {delivery.excluded.rawOrUnknownReadFiles} raw or unknown reads,{" "}
+                {delivery.excluded.missingCleanedReadFiles} missing cleaned reads,{" "}
+                {delivery.excluded.facilityArtifacts} facility-only reports,{" "}
+                {delivery.excluded.missingCustomerArtifacts} missing customer reports,{" "}
+                {delivery.excluded.unsupportedCustomerArtifacts} unsupported customer reports.
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeliveryDialogOpen(false)}
+              disabled={deliveryUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handlePublishDelivery()}
+              disabled={!canPublishDelivery}
+            >
+              {deliveryUpdating ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Make downloadable
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={runPlanImportDialogOpen} onOpenChange={setRunPlanImportDialogOpen}>
         <DialogContent className="max-w-4xl">
@@ -2891,6 +3301,18 @@ export default function OrderSequencingPage({
                                 <Badge variant="outline">
                                   {artifactTypeLabel(artifact.artifactType)}
                                 </Badge>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    artifact.visibility === "customer"
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : undefined
+                                  }
+                                >
+                                  {artifact.visibility === "customer"
+                                    ? "Customer-facing"
+                                    : "Facility only"}
+                                </Badge>
                                 <span>{formatFileSize(artifact.size)}</span>
                               </div>
                               <div className="mt-2 break-all text-xs text-muted-foreground">
@@ -2912,6 +3334,7 @@ export default function OrderSequencingPage({
                                   "no hash"
                                 )}
                               </div>
+                              {renderArtifactVisibilityControl(artifact)}
                             </div>
                           </div>
                         </div>

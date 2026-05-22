@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
+import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
 import fs from "fs/promises";
 import { createReadStream } from "fs";
 import path from "path";
@@ -83,6 +84,10 @@ export async function GET(
         runFolder: true,
         study: { select: { userId: true } },
         order: { select: { userId: true } },
+        selectedResultSelections: {
+          select: { id: true },
+          take: 1,
+        },
       },
     });
 
@@ -90,11 +95,7 @@ export async function GET(
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
 
-    if (
-      session.user.role !== "FACILITY_ADMIN" &&
-      run.study?.userId !== session.user.id &&
-      run.order?.userId !== session.user.id
-    ) {
+    if (!canReadPipelineRun(session.user, run)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

@@ -57,6 +57,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
       runFolder: "/tmp/run-1",
       study: null,
       order: null,
+      selectedResultSelections: [],
     });
     mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/logs/run.log");
     mocks.fs.stat.mockResolvedValue({
@@ -139,6 +140,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
       runFolder: "/tmp/run-1",
       study: { userId: "user-owner" },
       order: null,
+      selectedResultSelections: [{ id: "selection-1" }],
     });
 
     const response = await GET(
@@ -158,6 +160,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
       runFolder: "/tmp/run-1",
       study: null,
       order: { userId: "user-owner" },
+      selectedResultSelections: [{ id: "selection-1" }],
     });
 
     const response = await GET(
@@ -166,6 +169,26 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it("returns 403 when the order owner requests an unselected run file", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-owner", role: "USER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      runFolder: "/tmp/run-1",
+      study: null,
+      order: { userId: "user-owner" },
+      selectedResultSelections: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/file?path=run.log"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 
   it("returns 400 when run folder is not set", async () => {

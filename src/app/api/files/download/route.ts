@@ -5,6 +5,11 @@ import { db } from "@/lib/db";
 import { safeJoin, hasAllowedExtension } from "@/lib/files/paths";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { isDemoSession } from "@/lib/demo/server";
+import {
+  canUserAccessDeliveryArtifact,
+  canUserAccessDeliveryRead,
+  CUSTOMER_ARTIFACT_EXTENSIONS,
+} from "@/lib/sequencing/delivery";
 import * as fs from "fs";
 import * as path from "path";
 import { Readable } from "stream";
@@ -62,24 +67,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const [readRecord, assemblyRecord] = await Promise.all([
+    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const [readRecord, assemblyRecord, artifactRecord] = await Promise.all([
       db.read.findFirst({
         where: {
           OR: [{ file1: filePath }, { file2: filePath }],
         },
         select: {
+          id: true,
+          file1: true,
+          file2: true,
           dataClass: true,
+          isActive: true,
+          checksum1: true,
+          checksum2: true,
+          readCount1: true,
+          readCount2: true,
           sample: {
             select: {
+              id: true,
+              sampleId: true,
+              sampleTitle: true,
               order: {
                 select: {
+                  id: true,
                   userId: true,
                   status: true,
-                },
-              },
-              study: {
-                select: {
-                  userId: true,
+                  sequencingFilesPublishedAt: true,
                 },
               },
             },
@@ -108,12 +122,46 @@ export async function GET(request: NextRequest) {
           },
         },
       }),
+      db.sequencingArtifact.findFirst({
+        where: { path: filePath },
+        select: {
+          id: true,
+          orderId: true,
+          sampleId: true,
+          stage: true,
+          artifactType: true,
+          visibility: true,
+          path: true,
+          originalName: true,
+          size: true,
+          checksum: true,
+          order: {
+            select: {
+              id: true,
+              userId: true,
+              sequencingFilesPublishedAt: true,
+            },
+          },
+          sample: {
+            select: {
+              id: true,
+              sampleId: true,
+              sampleTitle: true,
+            },
+          },
+        },
+      }),
     ]);
 
     const isRegisteredAssemblyFile = Boolean(assemblyRecord);
+    const isRegisteredArtifactFile = Boolean(artifactRecord);
     const hasValidExtension = isRegisteredAssemblyFile
       ? hasAllowedExtension(filePath, ALLOWED_ASSEMBLY_EXTENSIONS)
-      : hasAllowedExtension(filePath, config.allowedExtensions);
+      : isRegisteredArtifactFile
+        ? hasAllowedExtension(filePath, CUSTOMER_ARTIFACT_EXTENSIONS)
+        : isFacilityAdmin && hasAllowedExtension(filePath, CUSTOMER_ARTIFACT_EXTENSIONS)
+          ? true
+          : hasAllowedExtension(filePath, config.allowedExtensions);
 
     if (!hasValidExtension) {
       return NextResponse.json(
@@ -123,7 +171,6 @@ export async function GET(request: NextRequest) {
     }
 
     // Permission check
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const siteSettings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
       select: { extraSettings: true },
@@ -148,9 +195,10 @@ export async function GET(request: NextRequest) {
       }
 
       const hasReadAccess = Boolean(
-        readRecord &&
-          readRecord.sample.order.userId === session.user.id &&
-          readRecord.sample.order.status === "COMPLETED"
+        readRecord && canUserAccessDeliveryRead(session.user, readRecord)
+      );
+      const hasArtifactAccess = Boolean(
+        artifactRecord && canUserAccessDeliveryArtifact(session.user, artifactRecord)
       );
       const hasAssemblyAccess = Boolean(
         assemblyRecord &&
@@ -160,7 +208,7 @@ export async function GET(request: NextRequest) {
           assemblyRecord.sample.order.status === "COMPLETED"
       );
 
-      if (!hasReadAccess && !hasAssemblyAccess) {
+      if (!hasReadAccess && !hasAssemblyAccess && !hasArtifactAccess) {
         return NextResponse.json(
           { error: "Access denied" },
           { status: 403 }

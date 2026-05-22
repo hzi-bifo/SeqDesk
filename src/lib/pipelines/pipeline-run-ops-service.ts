@@ -13,6 +13,7 @@ import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getAllPackages } from '@/lib/pipelines/package-loader';
 import { inferPipelineExitCode, processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
+import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
 
 const spawn = childProcess.spawn;
 const unavailableExecFile = (((
@@ -802,6 +803,23 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
   const selectedSampleIds = parseSampleIds(run.inputSampleIds);
   const selectedSampleIdSet = selectedSampleIds ? new Set(selectedSampleIds) : null;
   const definition = PIPELINE_REGISTRY[run.pipelineId];
+  const targetKey = getPipelineRunTargetKey(run);
+  const selection = targetKey
+    ? await db.pipelineResultSelection.findUnique({
+        where: {
+          pipelineId_targetKey: {
+            pipelineId: run.pipelineId,
+            targetKey,
+          },
+        },
+        include: {
+          selectedBy: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+        },
+      })
+    : null;
+  const isSelectedFinal = selection?.selectedRunId === run.id;
   const inputFiles: {
     id: string;
     name: string;
@@ -930,6 +948,15 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
       pipelineName: definition?.name || run.pipelineId,
       pipelineIcon: definition?.icon || 'CircleDot',
       pipelineDescription: definition?.description,
+      isSelectedFinal,
+      isUserVisible: isSelectedFinal,
+      selectedFinal: selection
+        ? {
+            selectedRunId: selection.selectedRunId,
+            selectedAt: selection.selectedAt,
+            selectedBy: selection.selectedBy,
+          }
+        : null,
       config: parseJson<Record<string, unknown>>(run.config),
       results: parseJson<Record<string, unknown>>(run.results),
       inputSampleIds: selectedSampleIds,

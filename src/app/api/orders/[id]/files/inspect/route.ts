@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { hasAllowedExtension, safeJoin } from "@/lib/files/paths";
 import { isDemoSession } from "@/lib/demo/server";
+import { canUserAccessDeliveryRead } from "@/lib/sequencing/delivery";
 
 const DEFAULT_PREVIEW_LINES = 12;
 const MAX_PREVIEW_LINES = 40;
@@ -161,28 +162,37 @@ export async function GET(
         OR: [{ file1: filePath }, { file2: filePath }],
         sample: {
           orderId: id,
-          ...(isFacilityAdmin
-            ? {}
-            : {
-                order: {
-                  userId: session.user.id,
-                  status: "COMPLETED",
-                },
-              }),
         },
       },
       select: {
         id: true,
         file1: true,
         file2: true,
+        checksum1: true,
+        checksum2: true,
         readCount1: true,
         readCount2: true,
         dataClass: true,
         dataClassSource: true,
+        isActive: true,
+        sample: {
+          select: {
+            id: true,
+            sampleId: true,
+            sampleTitle: true,
+            order: {
+              select: {
+                id: true,
+                userId: true,
+                sequencingFilesPublishedAt: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    if (!read) {
+    if (!read || (!isFacilityAdmin && !canUserAccessDeliveryRead(session.user, read))) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 

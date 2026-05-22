@@ -75,6 +75,48 @@ export interface SequencingArtifactSummary {
   updatedAt: string;
 }
 
+export interface SequencingDeliveryFileSummary {
+  id: string;
+  kind: "read" | "artifact";
+  label: string;
+  path: string;
+  fileName: string;
+  sampleId: string | null;
+  sampleCode: string | null;
+  sampleTitle: string | null;
+  size: number | null;
+  checksum: string | null;
+  readId?: string;
+  readDirection?: "R1" | "R2";
+  readCount?: number | null;
+  artifactId?: string;
+  stage?: string;
+  artifactType?: string;
+}
+
+export interface SequencingDeliverySummary {
+  orderId: string;
+  orderName: string | null;
+  isPublished: boolean;
+  publishedAt: string | null;
+  publishedBy: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null;
+  dataBasePathConfigured: boolean;
+  readFiles: SequencingDeliveryFileSummary[];
+  artifactFiles: SequencingDeliveryFileSummary[];
+  excluded: {
+    missingCleanedReadFiles: number;
+    rawOrUnknownReadFiles: number;
+    missingCustomerArtifacts: number;
+    unsupportedCustomerArtifacts: number;
+    facilityArtifacts: number;
+  };
+}
+
 export interface SequencingSampleRow {
   id: string;
   sampleId: string;

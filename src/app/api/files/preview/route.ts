@@ -3,6 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
+import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
+import { safeJoin } from "@/lib/files/paths";
+import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
+import {
+  canUserAccessDeliveryArtifact,
+  findSequencingDeliveryArtifactByPath,
+} from "@/lib/sequencing/delivery";
 import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
@@ -92,15 +99,24 @@ export async function GET(request: NextRequest) {
       return new NextResponse("Missing path parameter", { status: 400 });
     }
 
-    // Must be an absolute path
-    if (!path.isAbsolute(filePath)) {
-      return new NextResponse("Path must be absolute", { status: 400 });
-    }
+    let resolved: string;
+    if (path.isAbsolute(filePath)) {
+      // Block path traversal
+      resolved = path.resolve(filePath);
+      if (resolved !== filePath && resolved !== path.normalize(filePath)) {
+        return new NextResponse("Invalid path", { status: 400 });
+      }
+    } else {
+      const { dataBasePath } = await getSequencingFilesConfig();
+      if (!dataBasePath) {
+        return new NextResponse("Data base path not configured", { status: 400 });
+      }
 
-    // Block path traversal
-    const resolved = path.resolve(filePath);
-    if (resolved !== filePath && resolved !== path.normalize(filePath)) {
-      return new NextResponse("Invalid path", { status: 400 });
+      try {
+        resolved = safeJoin(dataBasePath, filePath);
+      } catch {
+        return new NextResponse("Invalid path", { status: 400 });
+      }
     }
 
     // Check extension
@@ -112,41 +128,52 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Find a pipeline run whose runFolder is a parent of this file path.
-    // This ensures users can only preview files from pipeline runs they own.
-    const runs = await db.pipelineRun.findMany({
-      where: {
-        runFolder: { not: null },
-      },
-      select: {
-        id: true,
-        runFolder: true,
-        study: { select: { userId: true } },
-        order: { select: { userId: true } },
-      },
-    });
-
-    const matchingRun = runs.find((run) => {
-      if (!run.runFolder) return false;
-      const folder = run.runFolder.endsWith("/")
-        ? run.runFolder
-        : run.runFolder + "/";
-      return resolved.startsWith(folder) || resolved === run.runFolder;
-    });
-
-    if (!matchingRun) {
-      return new NextResponse("File not found or access denied", {
-        status: 404,
+    if (path.isAbsolute(filePath)) {
+      // Find a pipeline run whose runFolder is a parent of this file path.
+      // This ensures users can only preview files from pipeline runs they own.
+      const runs = await db.pipelineRun.findMany({
+        where: {
+          runFolder: { not: null },
+        },
+        select: {
+          id: true,
+          runFolder: true,
+          study: { select: { userId: true } },
+          order: { select: { userId: true } },
+          selectedResultSelections: {
+            select: { id: true },
+            take: 1,
+          },
+        },
       });
-    }
 
-    // Non-admins can only view files from their own studies or orders.
-    if (
-      session.user.role !== "FACILITY_ADMIN" &&
-      matchingRun.study?.userId !== session.user.id &&
-      matchingRun.order?.userId !== session.user.id
-    ) {
-      return new NextResponse("Forbidden", { status: 403 });
+      const matchingRun = runs.find((run) => {
+        if (!run.runFolder) return false;
+        const folder = run.runFolder.endsWith("/")
+          ? run.runFolder
+          : run.runFolder + "/";
+        return resolved.startsWith(folder) || resolved === run.runFolder;
+      });
+
+      if (!matchingRun) {
+        return new NextResponse("File not found or access denied", {
+          status: 404,
+        });
+      }
+
+      // Non-admins can only view files from their own studies or orders.
+      if (!canReadPipelineRun(session.user, matchingRun)) {
+        return new NextResponse("Forbidden", { status: 403 });
+      }
+    } else {
+      const artifact = await findSequencingDeliveryArtifactByPath(filePath);
+      const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+      if (!artifact && !isFacilityAdmin) {
+        return new NextResponse("File not found or access denied", { status: 404 });
+      }
+      if (artifact && !isFacilityAdmin && !canUserAccessDeliveryArtifact(session.user, artifact)) {
+        return new NextResponse("Forbidden", { status: 403 });
+      }
     }
 
     let fileSize = 0;

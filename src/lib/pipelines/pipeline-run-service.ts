@@ -268,18 +268,25 @@ export async function listPipelineRunsForOperator(args: {
   status?: string | null;
   studyId?: string | null;
   orderId?: string | null;
+  publishedOnly?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<PipelineServiceResponse> {
   const limit = Number.isFinite(args.limit) ? Number(args.limit) : 50;
   const offset = Number.isFinite(args.offset) ? Number(args.offset) : 0;
   const where: Record<string, unknown> = {};
+  const andFilters: Record<string, unknown>[] = [];
 
   if (args.role !== 'FACILITY_ADMIN') {
-    where.OR = [
-      { study: { userId: args.userId } },
-      { order: { userId: args.userId } },
-    ];
+    andFilters.push({
+      OR: [
+        { study: { userId: args.userId } },
+        { order: { userId: args.userId } },
+      ],
+    });
+    andFilters.push({ selectedResultSelections: { some: {} } });
+  } else if (args.publishedOnly) {
+    andFilters.push({ selectedResultSelections: { some: {} } });
   }
 
   if (args.pipelineId) {
@@ -293,6 +300,9 @@ export async function listPipelineRunsForOperator(args: {
   }
   if (args.orderId) {
     where.orderId = args.orderId;
+  }
+  if (andFilters.length > 0) {
+    where.AND = andFilters;
   }
 
   const [runs, total] = await Promise.all([
@@ -377,13 +387,15 @@ export async function listPipelineRunsForOperator(args: {
     const selection = targetKey
       ? selectionByTarget.get(`${run.pipelineId}:${targetKey}`) ?? null
       : null;
+    const isSelectedFinal = selection?.selectedRunId === run.id;
     return {
       ...run,
       artifacts,
       pipelineName: definition?.name || run.pipelineId,
       pipelineIcon: definition?.icon || 'CircleDot',
       results: parseRunResults(run.results),
-      isSelectedFinal: selection?.selectedRunId === run.id,
+      isSelectedFinal,
+      isUserVisible: isSelectedFinal,
       selectedFinal: selection
         ? {
             selectedRunId: selection.selectedRunId,

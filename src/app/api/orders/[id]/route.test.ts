@@ -75,6 +75,8 @@ describe("GET /api/orders/[id]", () => {
       libraryStrategy: null,
       librarySource: null,
       customFields: null,
+      sequencingFilesPublishedAt: null,
+      sequencingFilesPublishedById: null,
       userId: "user-1",
       _count: { samples: 1 },
     });
@@ -129,6 +131,8 @@ describe("GET /api/orders/[id]", () => {
       libraryStrategy: null,
       librarySource: null,
       customFields: null,
+      sequencingFilesPublishedAt: null,
+      sequencingFilesPublishedById: null,
       userId: "other-user",
       _count: { samples: 0 },
     });
@@ -162,6 +166,65 @@ describe("GET /api/orders/[id]", () => {
     expect(data.user.firstName).toBe("Test");
     expect(data.samples).toEqual([]);
     expect(data.statusNotes).toEqual([]);
+    expect(data.sequencingFilesPublishedAt).toBeNull();
+  });
+
+  it("does not expose unreleased read paths to order owners", async () => {
+    await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          reads: expect.objectContaining({
+            where: { id: "__no_released_reads__" },
+          }),
+        }),
+      })
+    );
+  });
+
+  it("exposes only active cleaned read paths to owners after sequencing delivery is published", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      name: "Test Order",
+      status: "COMPLETED",
+      statusUpdatedAt: new Date("2024-01-01"),
+      createdAt: new Date("2024-01-01"),
+      numberOfSamples: 1,
+      contactName: null,
+      contactEmail: null,
+      contactPhone: null,
+      billingAddress: null,
+      platform: null,
+      instrumentModel: null,
+      librarySelection: null,
+      libraryStrategy: null,
+      librarySource: null,
+      customFields: null,
+      sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+      sequencingFilesPublishedById: "admin-1",
+      userId: "user-1",
+      _count: { samples: 1 },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1", { method: "GET" }),
+      { params: Promise.resolve({ id: "order-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          reads: expect.objectContaining({
+            where: { isActive: true, dataClass: "cleaned" },
+          }),
+        }),
+      })
+    );
   });
 
   it("returns fallback user when user lookup returns null", async () => {
@@ -190,6 +253,15 @@ describe("GET /api/orders/[id]", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          reads: expect.not.objectContaining({
+            where: expect.anything(),
+          }),
+        }),
+      })
+    );
   });
 });
 

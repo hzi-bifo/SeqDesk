@@ -10,6 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageNotice } from "@/components/ui/page-notice";
 import { Input } from "@/components/ui/input";
+import { PipelineRunResultLinks } from "@/components/pipelines/PipelineRunResultLinks";
+import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
+import type {
+  SequencingDeliveryFileSummary,
+  SequencingDeliverySummary,
+} from "@/lib/sequencing/types";
 import {
   Dialog,
   DialogContent,
@@ -247,6 +253,8 @@ interface Order {
   libraryStrategy: string | null;
   librarySource: string | null;
   customFields: string | null;
+  sequencingFilesPublishedAt: string | null;
+  sequencingFilesPublishedById: string | null;
   user: {
     id: string;
     firstName: string;
@@ -288,6 +296,28 @@ interface Order {
   };
 }
 
+interface PublishedPipelineRun {
+  id: string;
+  runNumber: string;
+  pipelineId: string;
+  pipelineName: string;
+  status: string;
+  runFolder?: string | null;
+  results?: {
+    errors?: string[];
+    warnings?: string[];
+  } | null;
+  resultFiles?: PipelineRunResultFile[];
+  resultFilesOmittedCount?: number;
+  resultFilesOmittedSampleFileCount?: number;
+  primaryResultFile?: PipelineRunResultFile | null;
+  createdAt: string;
+  completedAt: string | null;
+  selectedFinal?: {
+    selectedAt: string;
+  } | null;
+}
+
 interface FileInspectionResponse {
   filePath: string;
   fileName: string;
@@ -302,6 +332,16 @@ interface FileInspectionResponse {
     supported: boolean;
     error: string | null;
   };
+}
+
+function pipelineRunHasOutputErrors(run: PublishedPipelineRun): boolean {
+  return Array.isArray(run.results?.errors) && run.results.errors.length > 0;
+}
+
+function isPathWithinRunFolder(filePath: string, runFolder?: string | null): boolean {
+  if (!runFolder) return false;
+  const normalizedFolder = runFolder.endsWith("/") ? runFolder : `${runFolder}/`;
+  return filePath === runFolder || filePath.startsWith(normalizedFolder);
 }
 
 export default function OrderDetailPage({
@@ -339,6 +379,11 @@ export default function OrderDetailPage({
   const [inspectError, setInspectError] = useState("");
   const [inspectedFile, setInspectedFile] = useState<FileInspectionResponse | null>(null);
   const [inspectionCache, setInspectionCache] = useState<Record<string, FileInspectionResponse>>({});
+  const [publishedRuns, setPublishedRuns] = useState<PublishedPipelineRun[]>([]);
+  const [publishedRunsLoading, setPublishedRunsLoading] = useState(false);
+  const [sequencingDelivery, setSequencingDelivery] =
+    useState<SequencingDeliverySummary | null>(null);
+  const [sequencingDeliveryLoading, setSequencingDeliveryLoading] = useState(false);
 
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isDemoUser = session?.user?.isDemo === true;
@@ -388,6 +433,42 @@ export default function OrderDetailPage({
     }
   }, [orderId, router]);
 
+  const fetchPublishedRuns = useCallback(async () => {
+    setPublishedRunsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/pipelines/runs?orderId=${orderId}&publishedOnly=true&limit=50`
+      );
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setPublishedRuns([]);
+        return;
+      }
+      setPublishedRuns((payload?.runs ?? []) as PublishedPipelineRun[]);
+    } catch {
+      setPublishedRuns([]);
+    } finally {
+      setPublishedRunsLoading(false);
+    }
+  }, [orderId]);
+
+  const fetchSequencingDelivery = useCallback(async () => {
+    setSequencingDeliveryLoading(true);
+    try {
+      const res = await fetch(`/api/orders/${orderId}/sequencing/delivery`);
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setSequencingDelivery(null);
+        return;
+      }
+      setSequencingDelivery((payload?.delivery ?? null) as SequencingDeliverySummary | null);
+    } catch {
+      setSequencingDelivery(null);
+    } finally {
+      setSequencingDeliveryLoading(false);
+    }
+  }, [orderId]);
+
   useEffect(() => {
     void fetchOrder();
 
@@ -423,6 +504,28 @@ export default function OrderDetailPage({
         setEnabledMixsChecklists([]);
       });
   }, [fetchOrder, orderId]);
+
+  useEffect(() => {
+    if (sessionStatus === "loading" || !order) return;
+    if (!isOwner || isFacilityAdmin) {
+      setPublishedRuns([]);
+      setPublishedRunsLoading(false);
+      return;
+    }
+
+    void fetchPublishedRuns();
+  }, [fetchPublishedRuns, isFacilityAdmin, isOwner, order, sessionStatus]);
+
+  useEffect(() => {
+    if (sessionStatus === "loading" || !order) return;
+    if (!isOwner || isFacilityAdmin || !order.sequencingFilesPublishedAt) {
+      setSequencingDelivery(null);
+      setSequencingDeliveryLoading(false);
+      return;
+    }
+
+    void fetchSequencingDelivery();
+  }, [fetchSequencingDelivery, isFacilityAdmin, isOwner, order, sessionStatus]);
 
   const orderStatus = order?.status;
 
@@ -587,6 +690,35 @@ export default function OrderDetailPage({
     if (value === null) return "Unknown";
     return `${value.toLocaleString("en-US")} reads`;
   };
+
+  const sequencingReadGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        sampleCode: string | null;
+        sampleTitle: string | null;
+        files: SequencingDeliveryFileSummary[];
+      }
+    >();
+
+    for (const file of sequencingDelivery?.readFiles ?? []) {
+      const key = file.sampleId ?? file.sampleCode ?? "order";
+      const existing = groups.get(key);
+      if (existing) {
+        existing.files.push(file);
+      } else {
+        groups.set(key, {
+          key,
+          sampleCode: file.sampleCode,
+          sampleTitle: file.sampleTitle,
+          files: [file],
+        });
+      }
+    }
+
+    return Array.from(groups.values());
+  }, [sequencingDelivery?.readFiles]);
 
   const parsedOrderCustomFields = useMemo(
     () => parseJsonObject(order?.customFields),
@@ -1035,6 +1167,258 @@ export default function OrderDetailPage({
               </div>
             );
           })()}
+
+          {activeSection === "overview" && !isFacilityAdmin && isOwner && (publishedRunsLoading || publishedRuns.length > 0) && (
+            <div className="mb-4 rounded-lg border bg-card">
+              <div className="flex items-center justify-between gap-3 px-5 py-4">
+                <div>
+                  <h2 className="text-sm font-semibold">Analysis results</h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Pipeline outputs released by the facility for this order.
+                  </p>
+                </div>
+                {publishedRunsLoading && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+              </div>
+              {publishedRuns.length > 0 && (
+                <div className="divide-y border-t">
+                  {publishedRuns.map((run) => {
+                    const primaryFile =
+                      run.primaryResultFile ?? run.resultFiles?.[0] ?? null;
+                    const canDownloadPrimary = primaryFile
+                      ? isPathWithinRunFolder(primaryFile.path, run.runFolder)
+                      : false;
+
+                    return (
+                      <div
+                        key={run.id}
+                        className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <FlaskConical className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-medium">{run.pipelineName}</span>
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                            >
+                              Visible to you
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                              {run.runNumber}
+                            </code>
+                            {run.completedAt ? (
+                              <span>Completed {formatDateTime(run.completedAt)}</span>
+                            ) : null}
+                            {run.selectedFinal?.selectedAt ? (
+                              <span>Released {formatDateTime(run.selectedFinal.selectedAt)}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <PipelineRunResultLinks
+                            status={run.status}
+                            resultFiles={run.resultFiles}
+                            primaryResultFile={run.primaryResultFile}
+                            omittedCount={run.resultFilesOmittedCount}
+                            omittedSampleFileCount={run.resultFilesOmittedSampleFileCount}
+                            hasOutputErrors={pipelineRunHasOutputErrors(run)}
+                          />
+                          {canDownloadPrimary && primaryFile && (
+                            <Button variant="outline" size="sm" asChild>
+                              <a
+                                href={`/api/pipelines/runs/${run.id}/file?path=${encodeURIComponent(
+                                  primaryFile.path
+                                )}&download=1`}
+                              >
+                                <Download className="mr-1.5 h-3.5 w-3.5" />
+                                Download
+                              </a>
+                            </Button>
+                          )}
+                          <Button variant="outline" size="sm" asChild>
+                            <Link
+                              href={`/analysis/${run.id}?orderId=${encodeURIComponent(
+                                order.id
+                              )}&pipeline=${encodeURIComponent(run.pipelineId)}`}
+                            >
+                              <Eye className="mr-1.5 h-3.5 w-3.5" />
+                              Inspect files
+                            </Link>
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === "overview" &&
+            !isFacilityAdmin &&
+            isOwner &&
+            (sequencingDeliveryLoading ||
+              (sequencingDelivery?.isPublished &&
+                (sequencingDelivery.readFiles.length > 0 ||
+                  sequencingDelivery.artifactFiles.length > 0))) && (
+              <div className="mb-4 rounded-lg border bg-card">
+                <div className="flex items-center justify-between gap-3 px-5 py-4">
+                  <div>
+                    <h2 className="text-sm font-semibold">Sequencing files</h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Cleaned reads and customer-facing reports released by the facility.
+                    </p>
+                  </div>
+                  {sequencingDeliveryLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                    >
+                      Downloadable
+                    </Badge>
+                  )}
+                </div>
+                {sequencingDelivery ? (
+                  <div className="divide-y border-t">
+                    {sequencingReadGroups.map((group) => (
+                      <div
+                        key={group.key}
+                        className="px-5 py-4"
+                      >
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <HardDrive className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">
+                            {group.sampleCode ?? "Order reads"}
+                          </span>
+                          {group.sampleTitle ? (
+                            <span className="text-sm text-muted-foreground">
+                              {group.sampleTitle}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="space-y-2">
+                          {group.files.map((file) => (
+                            <div
+                              key={file.id}
+                              className="flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">
+                                    {file.readDirection ?? "Read"}
+                                  </Badge>
+                                  <span className="truncate text-sm font-medium">
+                                    {file.fileName}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <span>
+                                    {file.size === null
+                                      ? "Size unknown"
+                                      : formatFileSize(file.size)}
+                                  </span>
+                                  {file.readCount != null ? (
+                                    <span>{formatReadCount(file.readCount)}</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleInspectFile(file.path)}
+                                >
+                                  <Eye className="mr-1.5 h-3.5 w-3.5" />
+                                  Inspect
+                                </Button>
+                                <Button variant="outline" size="sm" asChild>
+                                  <a
+                                    href={`/api/files/download?path=${encodeURIComponent(
+                                      file.path
+                                    )}`}
+                                  >
+                                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                                    Download
+                                  </a>
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+
+                    {sequencingDelivery.artifactFiles.length > 0 ? (
+                      <div className="px-5 py-4">
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">Reports</span>
+                        </div>
+                        <div className="space-y-2">
+                          {sequencingDelivery.artifactFiles.map((file) => (
+                            <div
+                              key={file.id}
+                              className="flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">
+                                    {file.sampleCode ?? "Order"}
+                                  </Badge>
+                                  <span className="truncate text-sm font-medium">
+                                    {file.label}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <span>
+                                    {file.size === null
+                                      ? "Size unknown"
+                                      : formatFileSize(file.size)}
+                                  </span>
+                                  {file.artifactType ? (
+                                    <span>{file.artifactType}</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button variant="outline" size="sm" asChild>
+                                  <a
+                                    href={`/api/files/preview?path=${encodeURIComponent(
+                                      file.path
+                                    )}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <Eye className="mr-1.5 h-3.5 w-3.5" />
+                                    Inspect
+                                  </a>
+                                </Button>
+                                <Button variant="outline" size="sm" asChild>
+                                  <a
+                                    href={`/api/files/download?path=${encodeURIComponent(
+                                      file.path
+                                    )}`}
+                                  >
+                                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                                    Download
+                                  </a>
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            )}
 
           {activeSection === "overview" && (
             <>

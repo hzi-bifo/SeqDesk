@@ -137,6 +137,10 @@ vi.mock("@/components/ui/switch", () => ({
 }));
 
 import { OrderPipelineView } from "./OrderPipelineView";
+import type {
+  SequencingReadSummary,
+  SequencingSampleRow,
+} from "@/lib/sequencing/types";
 
 function jsonResponse(payload: unknown, ok = true) {
   return {
@@ -319,6 +323,7 @@ const runs = [
     config: JSON.stringify({ readCount: 12, replaceExisting: false }),
     results: null,
     isSelectedFinal: true,
+    isUserVisible: true,
     selectedFinal: {
       selectedRunId: "run-1",
       selectedAt: "2026-04-01T10:03:00.000Z",
@@ -390,25 +395,68 @@ const runs = [
   },
 ];
 
+const readA: SequencingReadSummary = {
+  id: "read-a",
+  file1: "/data/SAMPLE_A_R1.fastq.gz",
+  file2: "/data/SAMPLE_A_R2.fastq.gz",
+  checksum1: null,
+  checksum2: null,
+  readCount1: null,
+  readCount2: null,
+  fileSize1: null,
+  fileSize2: null,
+  fastqcReport1: null,
+  fastqcReport2: null,
+  pipelineRunId: "run-1",
+  pipelineRunNumber: "RUN-2026-001",
+  pipelineSources: { "simulate-reads": "run-1" },
+  dataClass: "cleaned",
+  dataClassLabel: "Cleaned",
+  dataClassSource: "pipeline",
+  readOrigin: "pipeline",
+  readOriginLabel: "Pipeline",
+  isSimulated: true,
+  isProtectedRaw: false,
+  isActive: true,
+  supersededByReadId: null,
+  classifiedAt: null,
+  classifiedById: null,
+  classificationNote: null,
+  filesMissing: false,
+};
+
+const sampleBase = {
+  sampleTitle: null,
+  facilityStatus: "READY",
+  facilityStatusUpdatedAt: null,
+  updatedAt: "2026-04-01T10:00:00.000Z",
+  integrityStatus: "complete",
+  hasReads: true,
+  protectedProvenanceCount: 0,
+  protectedProvenance: [],
+  sequencingRun: null,
+  artifactCount: 0,
+  qcArtifactCount: 0,
+  latestArtifactStage: null,
+  artifacts: [],
+  stream: null,
+} satisfies Omit<SequencingSampleRow, "id" | "sampleId" | "sampleAlias" | "read">;
+
 const samples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
   {
+    ...sampleBase,
     id: "sample-a",
     sampleId: "SAMPLE_A",
     sampleAlias: "Alpha",
-    read: {
-      id: "read-a",
-      file1: "/data/SAMPLE_A_R1.fastq.gz",
-      file2: "/data/SAMPLE_A_R2.fastq.gz",
-      filesMissing: false,
-      pipelineRunId: "run-1",
-      pipelineRunNumber: "RUN-2026-001",
-      pipelineSources: { "simulate-reads": "run-1" },
-    },
+    read: readA,
   },
   {
+    ...sampleBase,
     id: "sample-b",
     sampleId: "SAMPLE_B",
     sampleAlias: null,
+    integrityStatus: "empty",
+    hasReads: false,
     read: null,
   },
 ];
@@ -504,7 +552,7 @@ describe("OrderPipelineView", () => {
     expect(screen.getByText("1 active")).toBeTruthy();
     expect(screen.getByText("1 completed")).toBeTruthy();
     expect(screen.getByText("1 failed")).toBeTruthy();
-    expect(screen.getByText("Final")).toBeTruthy();
+    expect(screen.getByText("Visible to user")).toBeTruthy();
     expect(screen.getByRole("link", { name: /combined report/i })).toBeTruthy();
     expect(screen.getByText("SAMPLE_A")).toBeTruthy();
     expect(screen.getByText("SAMPLE_B")).toBeTruthy();
@@ -562,7 +610,7 @@ describe("OrderPipelineView", () => {
 
     fireEvent.click(screen.getByLabelText("View details for RUN-2026-001"));
     expect(screen.getByText("Run Details")).toBeTruthy();
-    expect(screen.getByText(/Selected by Ada Admin/i)).toBeTruthy();
+    expect(screen.getByText(/Published by Ada Admin/i)).toBeTruthy();
     expect(screen.getByText("Read count:")).toBeTruthy();
     expect(screen.getByText("No")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -584,12 +632,70 @@ describe("OrderPipelineView", () => {
     });
   });
 
+  it("lets admins publish and hide completed runs for the order owner", async () => {
+    const unpublishedRun = {
+      ...runs[0],
+      id: "run-unpublished",
+      runNumber: "RUN-2026-004",
+      isSelectedFinal: false,
+      isUserVisible: false,
+      selectedFinal: null,
+    };
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return {
+          data: { runs: [runs[0], unpublishedRun], total: 2 },
+          mutate: mocks.mutateRuns,
+        };
+      }
+      return { data: undefined, mutate: vi.fn() };
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Make visible to user/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs/run-unpublished/selection",
+        { method: "PUT" }
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Hide from user/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs/run-1/selection",
+        { method: "DELETE" }
+      );
+    });
+  });
+
   it("warns when simulate reads would preserve stale linked reads", () => {
     const staleSamples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
       {
         ...samples[0],
         read: {
-          ...samples[0].read,
+          ...samples[0].read!,
           filesMissing: true,
           fileSize1: null,
           fileSize2: null,

@@ -29,6 +29,8 @@ type OrderDetailResponse = {
   libraryStrategy: string | null;
   librarySource: string | null;
   customFields: string | null;
+  sequencingFilesPublishedAt: Date | null;
+  sequencingFilesPublishedById: string | null;
   userId: string;
   user: {
     id: string;
@@ -89,7 +91,10 @@ type OrderUpdateBody = {
   markSamplesSent?: boolean;
 };
 
-async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailResponse | null> {
+async function getOrderWithResolvedRelations(
+  id: string,
+  options?: { isFacilityAdmin?: boolean }
+): Promise<OrderDetailResponse | null> {
   const order = await db.order.findUnique({
     where: { id },
     select: {
@@ -109,6 +114,8 @@ async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailRes
       libraryStrategy: true,
       librarySource: true,
       customFields: true,
+      sequencingFilesPublishedAt: true,
+      sequencingFilesPublishedById: true,
       userId: true,
       _count: {
         select: { samples: true },
@@ -117,6 +124,12 @@ async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailRes
   });
 
   if (!order) return null;
+
+  const readWhere = options?.isFacilityAdmin
+    ? undefined
+    : order.sequencingFilesPublishedAt
+      ? { isActive: true, dataClass: "cleaned" }
+      : { id: "__no_released_reads__" };
 
   const [user, samples, statusNotes] = await Promise.all([
     db.user.findUnique({
@@ -143,6 +156,7 @@ async function getOrderWithResolvedRelations(id: string): Promise<OrderDetailRes
         taxId: true,
         customFields: true,
         reads: {
+          ...(readWhere ? { where: readWhere } : {}),
           select: {
             id: true,
             file1: true,
@@ -210,7 +224,7 @@ export async function GET(
     const { id } = await params;
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
 
-    const order = await getOrderWithResolvedRelations(id);
+    const order = await getOrderWithResolvedRelations(id, { isFacilityAdmin });
 
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });

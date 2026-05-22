@@ -65,8 +65,23 @@ describe("GET /api/orders/[id]/files/inspect", () => {
       id: "read-1",
       file1: "sample_R1.fastq",
       file2: null,
+      checksum1: null,
+      checksum2: null,
       readCount1: null,
       readCount2: null,
+      dataClass: "cleaned",
+      dataClassSource: "manual",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "user-1",
+          sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+        },
+      },
     });
     mocks.getSequencingFilesConfig.mockResolvedValue({
       dataBasePath: "/data/base",
@@ -125,6 +140,88 @@ describe("GET /api/orders/[id]/files/inspect", () => {
 
   it("rejects reads outside the caller's accessible order scope", async () => {
     mocks.db.read.findFirst.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/orders/order-1/files/inspect?path=sample_R1.fastq"
+      ),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Access denied" });
+  });
+
+  it("blocks owners from inspecting unpublished sequencing reads", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "user-1",
+        role: "RESEARCHER",
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "cleaned",
+      dataClassSource: "manual",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "user-1",
+          sequencingFilesPublishedAt: null,
+        },
+      },
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/orders/order-1/files/inspect?path=sample_R1.fastq"
+      ),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Access denied" });
+  });
+
+  it("blocks owners from inspecting published raw or unknown reads", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "user-1",
+        role: "RESEARCHER",
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "raw",
+      dataClassSource: "manual",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "user-1",
+          sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+        },
+      },
+    });
 
     const response = await GET(
       new NextRequest(
@@ -237,8 +334,23 @@ describe("GET /api/orders/[id]/files/inspect", () => {
       id: "read-1",
       file1: relativePath,
       file2: null,
+      checksum1: null,
+      checksum2: null,
       readCount1: null,
       readCount2: null,
+      dataClass: "cleaned",
+      dataClassSource: "manual",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "user-1",
+          sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+        },
+      },
     });
 
     const response = await GET(

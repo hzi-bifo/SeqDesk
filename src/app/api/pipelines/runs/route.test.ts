@@ -146,9 +146,14 @@ describe("GET /api/pipelines/runs", () => {
     expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          OR: [
-            { study: { userId: "user-1" } },
-            { order: { userId: "user-1" } },
+          AND: [
+            {
+              OR: [
+                { study: { userId: "user-1" } },
+                { order: { userId: "user-1" } },
+              ],
+            },
+            { selectedResultSelections: { some: {} } },
           ],
           pipelineId: "simulate-reads",
           status: "completed",
@@ -184,6 +189,7 @@ describe("GET /api/pipelines/runs", () => {
             },
           ],
           isSelectedFinal: false,
+          isUserVisible: false,
           selectedFinal: null,
           resultFiles: [
             {
@@ -240,6 +246,7 @@ describe("GET /api/pipelines/runs", () => {
 
     const body = await response.json();
     expect(body.runs[0].isSelectedFinal).toBe(true);
+    expect(body.runs[0].isUserVisible).toBe(true);
     expect(body.runs[0].selectedFinal).toEqual({
       selectedRunId: "run-1",
       selectedAt: selectedAt.toISOString(),
@@ -250,6 +257,51 @@ describe("GET /api/pipelines/runs", () => {
         email: "ada@example.org",
       },
     });
+  });
+
+  it("does not add visibility filters for admins unless requested", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "admin-1",
+        role: "FACILITY_ADMIN",
+      },
+    });
+
+    await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs?orderId=order-1")
+    );
+
+    expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          orderId: "order-1",
+        },
+      })
+    );
+  });
+
+  it("lets admins request only user-visible runs", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "admin-1",
+        role: "FACILITY_ADMIN",
+      },
+    });
+
+    await GET(
+      new NextRequest(
+        "http://localhost:3000/api/pipelines/runs?orderId=order-1&publishedOnly=true"
+      )
+    );
+
+    expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          orderId: "order-1",
+          AND: [{ selectedResultSelections: { some: {} } }],
+        },
+      })
+    );
   });
 });
 

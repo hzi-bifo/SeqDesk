@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
     assembly: {
       findFirst: vi.fn(),
     },
+    sequencingArtifact: {
+      findFirst: vi.fn(),
+    },
     siteSettings: {
       findUnique: vi.fn(),
     },
@@ -76,15 +79,29 @@ describe("GET /api/files/download", () => {
     mocks.safeJoin.mockReturnValue("/data/base/reads/sample_R1.fastq");
     mocks.hasAllowedExtension.mockReturnValue(true);
     mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "reads/sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "cleaned",
+      isActive: true,
       sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
         order: {
+          id: "order-1",
           userId: "user-1",
           status: "COMPLETED",
+          sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
         },
-        study: null,
       },
     });
     mocks.db.assembly.findFirst.mockResolvedValue(null);
+    mocks.db.sequencingArtifact.findFirst.mockResolvedValue(null);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.fs.statSync.mockReturnValue({
       size: 3,
@@ -157,6 +174,99 @@ describe("GET /api/files/download", () => {
       'attachment; filename="sample_R1.fastq"'
     );
     expect(response.headers.get("Content-Length")).toBe("3");
+    expect(await response.text()).toBe("abc");
+  });
+
+  it("blocks owners from unpublished read files", async () => {
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "reads/sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "cleaned",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "user-1",
+          status: "COMPLETED",
+          sequencingFilesPublishedAt: null,
+        },
+      },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/files/download?path=reads/sample_R1.fastq")
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Access denied" });
+  });
+
+  it("blocks non-owners and raw reads even when sequencing delivery is published", async () => {
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "reads/sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "raw",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "other-user",
+          status: "COMPLETED",
+          sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+        },
+      },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/files/download?path=reads/sample_R1.fastq")
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Access denied" });
+  });
+
+  it("allows owners to download published customer-facing artifacts", async () => {
+    mocks.db.read.findFirst.mockResolvedValue(null);
+    mocks.db.sequencingArtifact.findFirst.mockResolvedValue({
+      id: "artifact-1",
+      orderId: "order-1",
+      sampleId: null,
+      stage: "qc",
+      artifactType: "qc_report",
+      visibility: "customer",
+      path: "reports/customer-report.pdf",
+      originalName: "customer-report.pdf",
+      size: 3,
+      checksum: null,
+      order: {
+        id: "order-1",
+        userId: "user-1",
+        sequencingFilesPublishedAt: new Date("2026-05-22T10:00:00.000Z"),
+      },
+      sample: null,
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/files/download?path=reports/customer-report.pdf")
+    );
+
+    expect(response.status).toBe(200);
     expect(await response.text()).toBe("abc");
   });
 

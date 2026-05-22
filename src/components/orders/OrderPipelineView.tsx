@@ -170,6 +170,7 @@ type PipelineRun = {
     warnings?: string[];
   } | null;
   isSelectedFinal?: boolean;
+  isUserVisible?: boolean;
   selectedFinal?: {
     selectedRunId: string;
     selectedAt: string;
@@ -284,6 +285,10 @@ function getSelectedByDisplay(run: PipelineRun): string {
   if (!selectedBy) return "Unknown user";
   const name = [selectedBy.firstName, selectedBy.lastName].filter(Boolean).join(" ");
   return name || selectedBy.email;
+}
+
+function isRunVisibleToUser(run: PipelineRun): boolean {
+  return run.isUserVisible ?? run.isSelectedFinal ?? false;
 }
 
 function getReadinessProblemText(reason?: string): string {
@@ -855,7 +860,7 @@ export function OrderPipelineView({
     }
   }, [selectedRunIds, runsResponse, onSampleDataChanged]);
 
-  const handleSetFinalRun = useCallback(
+  const handleSetVisibleRun = useCallback(
     async (run: PipelineRun, selected: boolean) => {
       if (!isFacilityAdmin || isDemo) return;
 
@@ -869,13 +874,13 @@ export function OrderPipelineView({
         const payload = await res.json().catch(() => null);
         if (!res.ok) {
           throw new Error(
-            getApiErrorMessage(payload, "Failed to update final run selection")
+            getApiErrorMessage(payload, "Failed to update result visibility")
           );
         }
         await runsResponse.mutate();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to update final run selection"
+          err instanceof Error ? err.message : "Failed to update result visibility"
         );
       } finally {
         setSelectionUpdatingRunId(null);
@@ -2056,10 +2061,10 @@ export function OrderPipelineView({
                             >
                               {run.runNumber}
                             </code>
-                            {run.isSelectedFinal && (
+                            {isRunVisibleToUser(run) && (
                               <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
                                 <CheckCircle2 className="h-3 w-3" />
-                                Final
+                                Visible to user
                               </Badge>
                             )}
                           </div>
@@ -2145,28 +2150,28 @@ export function OrderPipelineView({
                                 <Info className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
-                              {isFacilityAdmin && !isDemo && run.status === "completed" && !run.isSelectedFinal && (
+                              {isFacilityAdmin && !isDemo && run.status === "completed" && !isRunVisibleToUser(run) && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
                                     event.preventDefault();
-                                    void handleSetFinalRun(run, true);
+                                    void handleSetVisibleRun(run, true);
                                   }}
                                 >
                                   <CheckCircle2 className="h-4 w-4" />
-                                  Use as final
+                                  Make visible to user
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin && !isDemo && run.isSelectedFinal && (
+                              {isFacilityAdmin && !isDemo && isRunVisibleToUser(run) && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
                                     event.preventDefault();
-                                    void handleSetFinalRun(run, false);
+                                    void handleSetVisibleRun(run, false);
                                   }}
                                 >
                                   <X className="h-4 w-4" />
-                                  Clear final
+                                  Hide from user
                                 </DropdownMenuItem>
                               )}
                               {!isDemo && (
@@ -2264,18 +2269,18 @@ export function OrderPipelineView({
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Status:</span>
                   {getStatusBadge(detailRun.status)}
-                  {detailRun.isSelectedFinal && (
+                  {isRunVisibleToUser(detailRun) && (
                     <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
                       <CheckCircle2 className="h-3 w-3" />
-                      Final
+                      Visible to user
                     </Badge>
                   )}
                 </div>
-                {detailRun.isSelectedFinal && detailRun.selectedFinal && (
+                {isRunVisibleToUser(detailRun) && detailRun.selectedFinal && (
                   <div className="flex gap-2">
-                    <span className="text-muted-foreground">Final result:</span>
+                    <span className="text-muted-foreground">User visibility:</span>
                     <span>
-                      Selected by {getSelectedByDisplay(detailRun)} at{" "}
+                      Published by {getSelectedByDisplay(detailRun)} at{" "}
                       {formatDateTime(detailRun.selectedFinal.selectedAt)}
                     </span>
                   </div>

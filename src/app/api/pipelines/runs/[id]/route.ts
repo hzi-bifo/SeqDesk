@@ -2,36 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
 import { isDemoSession } from '@/lib/demo/server';
 import {
   cancelPipelineRunForOperator,
   getPipelineRunDetailsForOperator,
 } from '@/lib/pipelines/pipeline-run-ops-service';
-
-async function assertRunAccess(runId: string, session: { user: { id: string; role: string } }) {
-  const run = await db.pipelineRun.findUnique({
-    where: { id: runId },
-    select: {
-      study: { select: { userId: true } },
-      order: { select: { userId: true } },
-    },
-  });
-
-  if (!run) {
-    return { status: 404 as const, body: { error: 'Run not found' } };
-  }
-
-  if (
-    session.user.role !== 'FACILITY_ADMIN' &&
-    run.study?.userId !== session.user.id &&
-    run.order?.userId !== session.user.id
-  ) {
-    return { status: 403 as const, body: { error: 'Forbidden' } };
-  }
-
-  return null;
-}
+import { assertPipelineRunReadAccess } from '@/lib/pipelines/run-visibility';
 
 // GET - Get run details
 export async function GET(
@@ -46,7 +22,7 @@ export async function GET(
     }
 
     const { id } = await params;
-    const accessError = await assertRunAccess(id, session);
+    const accessError = await assertPipelineRunReadAccess(id, session);
     if (accessError) {
       return NextResponse.json(accessError.body, { status: accessError.status });
     }
