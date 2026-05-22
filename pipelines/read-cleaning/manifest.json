@@ -81,6 +81,13 @@
       "destination": "run_artifact",
       "type": "artifact",
       "fromStep": "filter",
+      "result": {
+        "kind": "sample_read_candidate",
+        "writebackPolicy": "admin_review",
+        "preview": {
+          "label": "Cleaned read candidate"
+        }
+      },
       "discovery": {
         "pattern": "filter/filtered/*_filtered.fastq.gz",
         "matchSampleBy": "filename"
@@ -113,6 +120,15 @@
       "destination": "run_artifact",
       "type": "report",
       "fromStep": "multiqc",
+      "result": {
+        "kind": "run_artifact",
+        "writebackPolicy": "none",
+        "preview": {
+          "label": "MultiQC report",
+          "primary": true,
+          "previewable": true
+        }
+      },
       "discovery": {
         "pattern": "multiqc/multiqc_report.html"
       }

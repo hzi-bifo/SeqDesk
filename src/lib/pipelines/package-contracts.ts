@@ -42,10 +42,51 @@ export interface PackageOutputWriteback {
   fields: Record<string, ReadWritebackField>;
 }
 
+export const PIPELINE_RESULT_KINDS = [
+  "run_artifact",
+  "study_report",
+  "order_report",
+  "order_file",
+  "download",
+  "sample_assembly",
+  "sample_bin",
+  "sample_annotation",
+  "sample_qc",
+  "sample_metadata",
+  "sample_read_metadata",
+  "sample_read_candidate",
+  "sample_read_replace",
+] as const;
+export type PipelineResultKind = (typeof PIPELINE_RESULT_KINDS)[number];
+
+export const PIPELINE_WRITEBACK_POLICIES = [
+  "none",
+  "metadata_only",
+  "stage_only",
+  "admin_review",
+  "promote_on_success",
+  "replace_on_success",
+] as const;
+export type PipelineWritebackPolicy = (typeof PIPELINE_WRITEBACK_POLICIES)[number];
+
+export interface PackageOutputResultPreview {
+  label?: string;
+  primary?: boolean;
+  previewable?: boolean;
+}
+
+export interface PackageOutputResultContract {
+  kind: PipelineResultKind;
+  writebackPolicy?: PipelineWritebackPolicy;
+  preview?: PackageOutputResultPreview;
+}
+
 export interface PipelineCapabilities {
   requiresLinkedReads: boolean;
   writesCanonicalReadMetadata: boolean;
   writesCanonicalReadFiles: boolean;
+  stagesReadCandidates: boolean;
+  requiresAdminReadPromotion: boolean;
 }
 
 type CompatibleSupportedScope = "study" | "order" | "samples" | "sample";
@@ -59,7 +100,10 @@ interface ManifestLike {
     source?: string;
   }>;
   outputs?: Array<{
+    destination?: string;
+    type?: string;
     writeback?: PackageOutputWriteback;
+    result?: PackageOutputResultContract;
   }>;
 }
 
@@ -158,6 +202,7 @@ export function derivePipelineCapabilities(
       ? Object.values(output.writeback.fields ?? {})
       : []
   );
+  const resultContracts = manifestOutputs.map(inferPipelineResultContract);
 
   const writesCanonicalReadFiles = readWritebackFields.some(
     (field) => field === "file1" || field === "file2"
@@ -165,12 +210,98 @@ export function derivePipelineCapabilities(
   const writesCanonicalReadMetadata = readWritebackFields.some(
     (field) => field !== "file1" && field !== "file2"
   );
+  const stagesReadCandidates = resultContracts.some(
+    (result) => result.kind === "sample_read_candidate"
+  );
+  const requiresAdminReadPromotion = resultContracts.some(
+    (result) => result.writebackPolicy === "admin_review"
+  );
 
   return {
     requiresLinkedReads,
     writesCanonicalReadMetadata,
     writesCanonicalReadFiles,
+    stagesReadCandidates,
+    requiresAdminReadPromotion,
   };
+}
+
+type OutputContractLike = {
+  destination?: string;
+  type?: string;
+  writeback?: PackageOutputWriteback;
+  result?: PackageOutputResultContract;
+};
+
+function hasReadFileWriteback(output: OutputContractLike): boolean {
+  return output.writeback?.target === "Read"
+    ? Object.values(output.writeback.fields ?? {}).some(
+        (field) => field === "file1" || field === "file2"
+      )
+    : false;
+}
+
+function hasReadMetadataWriteback(output: OutputContractLike): boolean {
+  return output.writeback?.target === "Read"
+    ? Object.values(output.writeback.fields ?? {}).some(
+        (field) => field !== "file1" && field !== "file2"
+      )
+    : false;
+}
+
+export function inferPipelineResultContract(
+  output: OutputContractLike
+): PackageOutputResultContract {
+  if (output.result) {
+    return output.result;
+  }
+
+  if (output.writeback?.target === "Read") {
+    if (hasReadFileWriteback(output)) {
+      return {
+        kind: "sample_read_replace",
+        writebackPolicy:
+          output.writeback.mode === "replace"
+            ? "replace_on_success"
+            : "promote_on_success",
+      };
+    }
+
+    if (hasReadMetadataWriteback(output)) {
+      return {
+        kind: "sample_read_metadata",
+        writebackPolicy: "metadata_only",
+      };
+    }
+  }
+
+  switch (output.destination) {
+    case "sample_assemblies":
+      return { kind: "sample_assembly", writebackPolicy: "promote_on_success" };
+    case "sample_bins":
+      return { kind: "sample_bin", writebackPolicy: "promote_on_success" };
+    case "sample_annotations":
+      return { kind: "sample_annotation", writebackPolicy: "promote_on_success" };
+    case "sample_qc":
+      return { kind: "sample_qc", writebackPolicy: "promote_on_success" };
+    case "sample_metadata":
+      return { kind: "sample_metadata", writebackPolicy: "promote_on_success" };
+    case "study_report":
+      return { kind: "study_report", writebackPolicy: "none" };
+    case "order_report":
+      return { kind: "order_report", writebackPolicy: "none" };
+    case "order_files":
+      return { kind: "order_file", writebackPolicy: "none" };
+    case "download_only":
+      return { kind: "download", writebackPolicy: "none" };
+    case "run_artifact":
+    default:
+      return {
+        kind: "run_artifact",
+        writebackPolicy: "none",
+        preview: output.type === "report" ? { previewable: true } : undefined,
+      };
+  }
 }
 
 export function matchesPipelineCatalog(

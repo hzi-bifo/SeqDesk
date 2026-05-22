@@ -58,6 +58,7 @@ import {
   MoreHorizontal,
   Play,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -169,6 +170,7 @@ type PipelineRun = {
   results?: {
     errors?: string[];
     warnings?: string[];
+    pendingWritebacks?: number;
   } | null;
   isSelectedFinal?: boolean;
   isUserVisible?: boolean;
@@ -292,6 +294,13 @@ function getRunDetails(run: PipelineRun): string {
 
 function runHasOutputErrors(run: PipelineRun): boolean {
   return Array.isArray(run.results?.errors) && run.results.errors.length > 0;
+}
+
+function getPendingWritebackCount(run: PipelineRun): number {
+  const value = run.results?.pendingWritebacks;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : 0;
 }
 
 function getSampleCount(run: PipelineRun): number | null {
@@ -2497,14 +2506,25 @@ export function OrderPipelineView({
                           className="px-4 py-3 align-top"
                           onClick={(event) => event.stopPropagation()}
                         >
-                          <PipelineRunResultLinks
-                            status={run.status}
-                            resultFiles={run.resultFiles}
-                            primaryResultFile={run.primaryResultFile}
-                            omittedCount={run.resultFilesOmittedCount}
-                            omittedSampleFileCount={run.resultFilesOmittedSampleFileCount}
-                            hasOutputErrors={runHasOutputErrors(run)}
-                          />
+                          <div className="space-y-1.5">
+                            <PipelineRunResultLinks
+                              status={run.status}
+                              resultFiles={run.resultFiles}
+                              primaryResultFile={run.primaryResultFile}
+                              omittedCount={run.resultFilesOmittedCount}
+                              omittedSampleFileCount={run.resultFilesOmittedSampleFileCount}
+                              hasOutputErrors={runHasOutputErrors(run)}
+                            />
+                            {getPendingWritebackCount(run) > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="gap-1 border-amber-200 bg-amber-50 text-amber-700"
+                              >
+                                <ShieldCheck className="h-3 w-3" />
+                                {getPendingWritebackCount(run)} pending review
+                              </Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 align-top text-xs text-muted-foreground tabular-nums">
                           {sampleCount != null ? sampleCount : "-"}
@@ -2678,6 +2698,15 @@ export function OrderPipelineView({
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Status:</span>
                   {getStatusBadge(detailRun.status)}
+                  {getPendingWritebackCount(detailRun) > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-amber-200 bg-amber-50 text-amber-700"
+                    >
+                      <ShieldCheck className="h-3 w-3" />
+                      {getPendingWritebackCount(detailRun)} pending review
+                    </Badge>
+                  )}
                   {isRunVisibleToUser(detailRun) && (
                     <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
                       <CheckCircle2 className="h-3 w-3" />

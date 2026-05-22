@@ -238,6 +238,49 @@ describe("output-resolver", () => {
     });
   });
 
+  it("counts staged read candidates as pending writebacks", async () => {
+    const candidatePath = path.join(tempDir, "sample-1_filtered.fastq.gz");
+    await fs.writeFile(candidatePath, "reads");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "cleaned_read_candidates",
+            scope: "sample",
+            destination: "run_artifact",
+            type: "artifact",
+            result: {
+              kind: "sample_read_candidate",
+              writebackPolicy: "admin_review",
+            },
+            discovery: { pattern: "filter/filtered/*_filtered.fastq.gz" },
+          },
+        ],
+      },
+    });
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    const result = await resolveOutputs("read-cleaning", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1 cleaned reads",
+          path: candidatePath,
+          sampleId: "sample-1",
+          outputId: "cleaned_read_candidates",
+          metadata: { sourceFile1: candidatePath },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.artifactsCreated).toBe(1);
+    expect(result.pendingWritebacks).toBe(1);
+  });
+
   it("warns when output destination is unknown", async () => {
     mocks.getPackage.mockReturnValue({
       manifest: {
@@ -2025,8 +2068,37 @@ describe("output-resolver", () => {
           assembliesCreated: 0,
           binsCreated: 1,
           artifactsCreated: 0,
+          pendingWritebacks: undefined,
           errors: ["assembly failed"],
           warnings: ["partial data"],
+        }),
+      },
+    });
+  });
+
+  it("saves pending writeback counts in run results", async () => {
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    await saveRunResults("run-id", {
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 1,
+      pendingWritebacks: 1,
+      errors: [],
+      warnings: [],
+    });
+
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-id" },
+      data: {
+        results: JSON.stringify({
+          assembliesCreated: 0,
+          binsCreated: 0,
+          artifactsCreated: 1,
+          pendingWritebacks: 1,
+          errors: undefined,
+          warnings: undefined,
         }),
       },
     });

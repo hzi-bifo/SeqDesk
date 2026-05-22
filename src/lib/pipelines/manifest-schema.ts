@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   PACKAGE_TARGET_TYPES,
+  PIPELINE_RESULT_KINDS,
+  PIPELINE_WRITEBACK_POLICIES,
   READ_WRITEBACK_FIELDS,
 } from "./package-contracts";
 
@@ -30,6 +32,23 @@ export const OutputType = z.enum([
 ]);
 
 const ReadWritebackField = z.enum(READ_WRITEBACK_FIELDS);
+const PipelineResultKind = z.enum(PIPELINE_RESULT_KINDS);
+const PipelineWritebackPolicy = z.enum(PIPELINE_WRITEBACK_POLICIES);
+
+const PipelineResultContractSchema = z
+  .object({
+    kind: PipelineResultKind,
+    writebackPolicy: PipelineWritebackPolicy.optional(),
+    preview: z
+      .object({
+        label: z.string().min(1).optional(),
+        primary: z.boolean().optional(),
+        previewable: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 const PipelineSampleResultValueSchema = z
   .object({
@@ -164,6 +183,7 @@ export const ManifestSchema = z
             })
             .strict()
             .optional(),
+          result: PipelineResultContractSchema.optional(),
           writeback: z
             .object({
               target: z.literal("Read"),

@@ -119,6 +119,85 @@ describe("pipeline result files", () => {
     expect(files).toEqual([]);
   });
 
+  it("uses manifest preview metadata for primary result ranking and preview disabling", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "summary",
+            scope: "run",
+            destination: "run_artifact",
+            type: "report",
+          },
+          {
+            id: "multiqc_report",
+            scope: "run",
+            destination: "run_artifact",
+            type: "report",
+            result: {
+              kind: "run_artifact",
+              writebackPolicy: "none",
+              preview: { primary: true, previewable: true },
+            },
+          },
+          {
+            id: "raw_html",
+            scope: "run",
+            destination: "run_artifact",
+            type: "report",
+            result: {
+              kind: "run_artifact",
+              writebackPolicy: "none",
+              preview: { previewable: false },
+            },
+          },
+        ],
+      },
+      definition: {
+        outputs: [
+          { id: "summary", name: "Summary" },
+          { id: "multiqc_report", name: "MultiQC" },
+          { id: "raw_html", name: "Raw HTML" },
+        ],
+      },
+    });
+
+    const files = await buildPipelineRunResultFiles({
+      pipelineId: "read-cleaning",
+      runId: "run-1",
+      runFolder: tempDir,
+      artifacts: [
+        {
+          id: "summary",
+          name: "summary.html",
+          path: path.join(tempDir, "summary.html"),
+          type: "report",
+          outputId: "summary",
+          size: 10,
+        },
+        {
+          id: "multiqc",
+          name: "multiqc_report.html",
+          path: path.join(tempDir, "multiqc_report.html"),
+          type: "report",
+          outputId: "multiqc_report",
+          size: 20,
+        },
+        {
+          id: "raw",
+          name: "raw.html",
+          path: path.join(tempDir, "raw.html"),
+          type: "report",
+          outputId: "raw_html",
+          size: 30,
+        },
+      ],
+    });
+
+    expect(files.map((file) => file.id)).toEqual(["multiqc", "summary", "raw"]);
+    expect(files.find((file) => file.id === "raw")?.previewable).toBe(false);
+  });
+
   it("omits per-sample artifacts and caps noisy run file lists", async () => {
     const artifacts = Array.from({ length: MAX_RUN_RESULT_FILES + 3 }, (_, index) => ({
       id: `run-file-${index}`,

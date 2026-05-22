@@ -97,6 +97,39 @@ describe("descriptor-linter", () => {
     );
   });
 
+  it("enforces staged read candidate result scope and destination", async () => {
+    await writeValidPackage(
+      baseManifest({
+        outputs: [
+          {
+            id: "candidate",
+            scope: "run",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: {
+              pattern: "cleaned/*.fastq.gz",
+            },
+            result: {
+              kind: "sample_read_candidate",
+              writebackPolicy: "stage_only",
+            },
+          },
+        ],
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "read-candidate-scope" }),
+        expect.objectContaining({ code: "read-candidate-destination" }),
+        expect.objectContaining({ code: "read-candidate-review-policy" }),
+      ])
+    );
+  });
+
   it("enforces the MetaxPath params file mapping", async () => {
     await writeValidPackage(
       baseManifest({

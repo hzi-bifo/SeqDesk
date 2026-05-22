@@ -5,6 +5,7 @@ import {
   deriveManifestTargets,
   derivePipelineCapabilities,
   derivePipelineCatalogs,
+  inferPipelineResultContract,
   matchesPipelineCatalog,
 } from "./package-contracts";
 
@@ -134,6 +135,8 @@ describe("derivePipelineCapabilities", () => {
       requiresLinkedReads: false,
       writesCanonicalReadMetadata: false,
       writesCanonicalReadFiles: false,
+      stagesReadCandidates: false,
+      requiresAdminReadPromotion: false,
     });
   });
 
@@ -232,6 +235,73 @@ describe("derivePipelineCapabilities", () => {
     const result = derivePipelineCapabilities(manifest);
     expect(result.writesCanonicalReadFiles).toBe(true);
     expect(result.writesCanonicalReadMetadata).toBe(true);
+  });
+
+  it("detects staged read candidates and admin promotion requirements", () => {
+    const manifest = {
+      outputs: [
+        {
+          destination: "run_artifact",
+          result: {
+            kind: "sample_read_candidate" as const,
+            writebackPolicy: "admin_review" as const,
+          },
+        },
+      ],
+    };
+    const result = derivePipelineCapabilities(manifest);
+    expect(result.stagesReadCandidates).toBe(true);
+    expect(result.requiresAdminReadPromotion).toBe(true);
+    expect(result.writesCanonicalReadFiles).toBe(false);
+  });
+});
+
+describe("inferPipelineResultContract", () => {
+  it("uses explicit result contracts", () => {
+    expect(
+      inferPipelineResultContract({
+        destination: "run_artifact",
+        result: {
+          kind: "sample_read_candidate",
+          writebackPolicy: "admin_review",
+        },
+      })
+    ).toEqual({
+      kind: "sample_read_candidate",
+      writebackPolicy: "admin_review",
+    });
+  });
+
+  it("infers metadata-only read writeback", () => {
+    expect(
+      inferPipelineResultContract({
+        destination: "sample_reads",
+        writeback: {
+          target: "Read",
+          mode: "merge",
+          fields: { checksum: "checksum1" },
+        },
+      })
+    ).toEqual({
+      kind: "sample_read_metadata",
+      writebackPolicy: "metadata_only",
+    });
+  });
+
+  it("infers replacing read file writeback", () => {
+    expect(
+      inferPipelineResultContract({
+        destination: "sample_reads",
+        writeback: {
+          target: "Read",
+          mode: "replace",
+          fields: { outputFile: "file1" },
+        },
+      })
+    ).toEqual({
+      kind: "sample_read_replace",
+      writebackPolicy: "replace_on_success",
+    });
   });
 });
 

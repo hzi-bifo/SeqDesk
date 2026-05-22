@@ -133,6 +133,42 @@ describe("manifest-schema", () => {
     });
   });
 
+  it("accepts explicit result contracts for staged read candidates", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      outputs: [
+        {
+          id: "cleaned_read_candidates",
+          scope: "sample",
+          destination: "run_artifact",
+          type: "artifact",
+          discovery: {
+            pattern: "filter/filtered/*_filtered.fastq.gz",
+            matchSampleBy: "filename",
+          },
+          result: {
+            kind: "sample_read_candidate",
+            writebackPolicy: "admin_review",
+            preview: {
+              label: "Cleaned reads",
+              previewable: false,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.outputs[0].result).toEqual({
+      kind: "sample_read_candidate",
+      writebackPolicy: "admin_review",
+      preview: {
+        label: "Cleaned reads",
+        previewable: false,
+      },
+    });
+  });
+
   it("rejects unsupported Read writeback fields", () => {
     const result = ManifestSchema.safeParse({
       ...baseManifest,

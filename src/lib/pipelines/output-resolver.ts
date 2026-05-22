@@ -15,6 +15,7 @@ import { getResolvedDataBasePath } from '@/lib/files/data-base-path';
 import { getPackage, PackageOutput } from './package-loader';
 import { DiscoveredFile, DiscoverOutputsResult } from './adapters/types';
 import {
+  inferPipelineResultContract,
   READ_NUMBER_WRITEBACK_FIELDS,
   READ_STRING_WRITEBACK_FIELDS,
   type PackageOutputWriteback,
@@ -33,6 +34,7 @@ export interface ResolveResult {
   assembliesCreated: number;
   binsCreated: number;
   artifactsCreated: number;
+  pendingWritebacks?: number;
   errors: string[];
   warnings: string[];
 }
@@ -827,8 +829,13 @@ export async function resolveOutputs(
 
     // Execute the handler
     const handlerResult = await handler(file, runId, output, pipelineId);
+    const resultContract = inferPipelineResultContract(output);
 
     if (handlerResult.success) {
+      if (resultContract.kind === 'sample_read_candidate') {
+        result.pendingWritebacks = (result.pendingWritebacks ?? 0) + 1;
+      }
+
       switch (destination) {
         case 'sample_assemblies':
           result.assembliesCreated++;
@@ -868,6 +875,7 @@ export async function saveRunResults(
     assembliesCreated: result.assembliesCreated,
     binsCreated: result.binsCreated,
     artifactsCreated: result.artifactsCreated,
+    pendingWritebacks: result.pendingWritebacks,
     errors: result.errors.length > 0 ? result.errors : undefined,
     warnings: result.warnings.length > 0 ? result.warnings : undefined,
   };

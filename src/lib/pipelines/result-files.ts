@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import { getPackage } from "@/lib/pipelines/package-loader";
+import type { PackageOutputResultContract } from "@/lib/pipelines/package-contracts";
 
 type ArtifactLike = {
   id: string;
@@ -30,6 +31,7 @@ interface OutputMeta {
   destination?: string;
   scope?: string;
   type?: string;
+  result?: PackageOutputResultContract;
 }
 
 export const MAX_RUN_RESULT_FILES = 12;
@@ -106,6 +108,7 @@ function buildOutputMeta(pipelineId: string): Map<string, OutputMeta> {
       destination: output.destination,
       scope: output.scope,
       type: output.type,
+      result: output.result,
     });
   });
 
@@ -129,6 +132,7 @@ function scoreResultFile(file: PipelineRunResultFile, meta?: OutputMeta): number
   if (meta?.destination === "study_report" || meta?.destination === "order_report") {
     score += 450;
   }
+  if (meta?.result?.preview?.primary) score += 700;
   if (file.type === "report") score += 350;
   if (ext === ".html" || ext === ".htm") score += 320;
   if (haystack.includes("combined") && haystack.includes("report")) score += 220;
@@ -201,6 +205,7 @@ export async function buildPipelineRunResultFileSummary({
       continue;
     }
     const name = artifact.name?.trim() || meta?.name || fallbackName(artifact.path, artifact.outputId);
+    const previewEnabled = meta?.result?.preview?.previewable !== false;
     filesByPath.set(artifact.path, {
       id: artifact.id,
       name,
@@ -209,7 +214,8 @@ export async function buildPipelineRunResultFileSummary({
       outputId: artifact.outputId ?? null,
       source: "artifact",
       size: toNumberSize(artifact.size),
-      previewable: isPreviewable(artifact.path) && isUnderRunFolder(artifact.path, runFolder),
+      previewable:
+        previewEnabled && isPreviewable(artifact.path) && isUnderRunFolder(artifact.path, runFolder),
     });
   }
 

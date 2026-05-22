@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import yaml from "js-yaml";
 import { ManifestSchema, type Manifest } from "./manifest-schema";
+import { inferPipelineResultContract } from "./package-contracts";
 
 export type DescriptorLintLevel = "error" | "warning";
 
@@ -332,6 +333,39 @@ function validateOutputs(
         `Output "${output.id}" uses Read writeback but destination is "${output.destination}" instead of "sample_reads".`,
         "manifest.json"
       );
+    }
+
+    const result = inferPipelineResultContract(output);
+    if (result.kind === "sample_read_candidate") {
+      if (output.scope !== "sample") {
+        addIssue(
+          issues,
+          "error",
+          "read-candidate-scope",
+          `Output "${output.id}" stages read candidates but scope is "${output.scope}" instead of "sample".`,
+          "manifest.json"
+        );
+      }
+
+      if (output.destination !== "run_artifact") {
+        addIssue(
+          issues,
+          "error",
+          "read-candidate-destination",
+          `Output "${output.id}" stages read candidates but destination is "${output.destination}" instead of "run_artifact".`,
+          "manifest.json"
+        );
+      }
+
+      if (result.writebackPolicy !== "admin_review") {
+        addIssue(
+          issues,
+          "warning",
+          "read-candidate-review-policy",
+          `Output "${output.id}" stages read candidates without an explicit admin_review writeback policy.`,
+          "manifest.json"
+        );
+      }
     }
   }
 

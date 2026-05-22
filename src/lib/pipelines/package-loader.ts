@@ -16,9 +16,11 @@ import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
 import { normalizePipelinePerSampleInput } from './read-mode';
 import {
+  type PackageOutputResultContract,
   type PackageOutputWriteback,
   type PackageTargetType,
   deriveCompatibleInputScopes,
+  inferPipelineResultContract,
 } from './package-contracts';
 import type {
   PipelineParameterGroup,
@@ -89,6 +91,7 @@ export interface PackageOutput {
   fromStep?: string;
   discovery: PackageOutputDiscovery;
   parsed?: PackageOutputParsed;
+  result?: PackageOutputResultContract;
   writeback?: PackageOutputWriteback;
 }
 
@@ -512,6 +515,27 @@ function validatePackageManifest(
       if (output.scope !== 'sample') {
         errors.push(
           `Output "${output.id}" uses Read writeback but scope is "${output.scope}" instead of "sample"`
+        );
+      }
+    }
+
+    const result = inferPipelineResultContract(output);
+    if (result.kind === 'sample_read_candidate') {
+      if (output.destination !== 'run_artifact') {
+        errors.push(
+          `Output "${output.id}" stages read candidates but destination is "${output.destination}" instead of "run_artifact"`
+        );
+      }
+
+      if (output.scope !== 'sample') {
+        errors.push(
+          `Output "${output.id}" stages read candidates but scope is "${output.scope}" instead of "sample"`
+        );
+      }
+
+      if (result.writebackPolicy !== 'admin_review') {
+        warnings.push(
+          `Output "${output.id}" stages read candidates without an explicit admin_review writeback policy`
         );
       }
     }
