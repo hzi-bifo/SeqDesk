@@ -557,7 +557,8 @@ describe("Footer admin activity", () => {
     const unreadBadge = screen.getByText("2");
     expect(unreadBadge.className).toContain("bg-destructive");
     expect(unreadBadge.className).toContain("text-white");
-    expect(unreadBadge.className).toContain("min-w-4");
+    expect(unreadBadge.className).toContain("font-bold");
+    expect(unreadBadge.className).toContain("min-w-5");
 
     fireEvent.click(screen.getByRole("button", { name: /notifications/i }));
     expect(screen.getByText("Order ORD-20260519-0001 updated")).toBeTruthy();

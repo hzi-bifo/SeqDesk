@@ -1379,7 +1379,7 @@ export function Footer() {
               <Bell className="h-3.5 w-3.5" aria-hidden="true" />
               <span className="hidden sm:inline">Notifications</span>
               {unreadNotificationCount > 0 && (
-                <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold leading-none text-white">
+                <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold leading-none text-white shadow-[0_0_0_1px_rgba(255,255,255,0.55)]">
                   {formatUnreadCount(unreadNotificationCount)}
                 </span>
               )}
