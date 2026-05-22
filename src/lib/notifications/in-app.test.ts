@@ -18,10 +18,15 @@ const mocks = vi.hoisted(() => ({
       updateMany: vi.fn(),
     },
   },
+  getInAppNotificationSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("./settings", () => ({
+  getInAppNotificationSettings: mocks.getInAppNotificationSettings,
 }));
 
 import {
@@ -57,6 +62,7 @@ describe("in-app notifications", () => {
     mocks.db.user.findMany.mockResolvedValue([admin]);
     mocks.db.inAppNotification.createMany.mockResolvedValue({ count: 1 });
     mocks.db.inAppNotification.updateMany.mockResolvedValue({ count: 1 });
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: true });
   });
 
   it("lists visible notifications with unread counts", async () => {
@@ -93,6 +99,16 @@ describe("in-app notifications", () => {
     });
   });
 
+  it("returns an empty list when in-app notifications are disabled", async () => {
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: false });
+
+    const result = await listInAppNotifications("user-1", { limit: 5 });
+
+    expect(result).toEqual({ notifications: [], unreadCount: 0 });
+    expect(mocks.db.inAppNotification.findMany).not.toHaveBeenCalled();
+    expect(mocks.db.inAppNotification.count).not.toHaveBeenCalled();
+  });
+
   it("creates user-scoped client notifications", async () => {
     await createUserInAppNotification("user-1", {
       severity: "success",
@@ -116,6 +132,17 @@ describe("in-app notifications", () => {
       sourceId: "profile",
     });
     expect(data[0].dedupeKey).toContain("client:success:");
+  });
+
+  it("skips creating rows when in-app notifications are disabled", async () => {
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: false });
+
+    await createUserInAppNotification("user-1", {
+      severity: "success",
+      title: "Saved settings",
+    });
+
+    expect(mocks.db.inAppNotification.createMany).not.toHaveBeenCalled();
   });
 
   it("creates order-created notifications for admins and excludes the actor", async () => {

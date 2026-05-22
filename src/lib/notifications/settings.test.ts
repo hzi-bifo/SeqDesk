@@ -23,13 +23,17 @@ vi.mock("@/lib/modules/form-integration", () => ({
 }));
 
 import {
+  DEFAULT_IN_APP_NOTIFICATION_SETTINGS,
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_RELAY_URL,
   DEFAULT_USER_NOTIFICATION_PREFERENCES,
+  getAdminNotificationSettings,
+  getInAppNotificationSettings,
   getNotificationRelayCredentials,
   getNotificationSettings,
   isEventEnabled,
   isPreferenceEnabled,
+  saveAdminNotificationSettings,
   saveNotificationSettings,
 } from "./settings";
 import type {
@@ -185,6 +189,55 @@ describe("getNotificationSettings", () => {
   });
 });
 
+describe("getInAppNotificationSettings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("defaults in-app notifications to enabled", async () => {
+    mocks.getEffectiveConfig.mockResolvedValue({ config: {} });
+
+    await expect(getInAppNotificationSettings()).resolves.toEqual(
+      DEFAULT_IN_APP_NOTIFICATION_SETTINGS,
+    );
+  });
+
+  it("returns the configured disabled state", async () => {
+    mocks.getEffectiveConfig.mockResolvedValue({
+      config: { notifications: { inApp: { enabled: false } } },
+    });
+
+    await expect(getInAppNotificationSettings()).resolves.toEqual({ enabled: false });
+  });
+});
+
+describe("getAdminNotificationSettings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.parseModulesConfig.mockReturnValue({});
+    mocks.isModuleEnabled.mockReturnValue(true);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: null });
+  });
+
+  it("returns separate in-app and email channel settings", async () => {
+    mocks.getEffectiveConfig.mockResolvedValue({
+      config: {
+        notifications: {
+          enabled: true,
+          inApp: { enabled: false },
+          provider: "seqdesk-relay",
+          relayToken: "tok",
+        },
+      },
+    });
+
+    const settings = await getAdminNotificationSettings();
+    expect(settings.inApp).toEqual({ enabled: false });
+    expect(settings.email.enabled).toBe(true);
+    expect(settings.email.hasRelayToken).toBe(true);
+  });
+});
+
 describe("getNotificationRelayCredentials", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -282,5 +335,48 @@ describe("saveNotificationSettings", () => {
   it("returns the refreshed settings after saving", async () => {
     const result = await saveNotificationSettings({ enabled: false });
     expect(result.provider).toBe("seqdesk-relay");
+  });
+});
+
+describe("saveAdminNotificationSettings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.saveConfigToDatabase.mockResolvedValue(undefined);
+    mocks.parseModulesConfig.mockReturnValue({});
+    mocks.isModuleEnabled.mockReturnValue(true);
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: null });
+    mocks.getEffectiveConfig.mockResolvedValue({
+      config: {
+        notifications: {
+          enabled: true,
+          inApp: { enabled: false },
+          provider: "seqdesk-relay",
+        },
+      },
+    });
+  });
+
+  it("saves both in-app and email channel settings", async () => {
+    const events = {
+      order: { submitted: false, statusChanged: true, samplesSent: true },
+      ticket: { created: true, reply: false },
+    };
+    const userDefaults = { orders: true, support: false };
+
+    await saveAdminNotificationSettings({
+      inApp: { enabled: false },
+      email: { enabled: true, events, userDefaults },
+    });
+
+    expect(mocks.saveConfigToDatabase).toHaveBeenCalledWith({
+      notifications: {
+        inApp: { enabled: false },
+        provider: "seqdesk-relay",
+        relayUrl: DEFAULT_RELAY_URL,
+        enabled: true,
+        events,
+        userDefaults,
+      },
+    });
   });
 });

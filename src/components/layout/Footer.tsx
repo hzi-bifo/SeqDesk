@@ -157,6 +157,7 @@ interface FooterNotification {
 }
 
 interface NotificationPayload {
+  enabled?: boolean;
   notifications?: FooterNotification[];
   unreadCount?: number;
 }
@@ -469,6 +470,7 @@ export function Footer() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [pipelineLoadOpen, setPipelineLoadOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [notifications, setNotifications] = useState<FooterNotification[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [expandedNotificationIds, setExpandedNotificationIds] = useState<Record<string, boolean>>({});
@@ -577,6 +579,14 @@ export function Footer() {
         return;
       }
       const payload = (await response.json()) as NotificationPayload;
+      const enabled = payload.enabled !== false;
+      setNotificationsEnabled(enabled);
+      if (!enabled) {
+        setNotificationsOpen(false);
+        setNotifications([]);
+        setUnreadNotificationCount(0);
+        return;
+      }
       setNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
       setUnreadNotificationCount(
         typeof payload.unreadCount === "number" ? payload.unreadCount : 0
@@ -1368,24 +1378,25 @@ export function Footer() {
           )}
         </div>
         <div className="relative flex items-center gap-3">
-          <div className="relative">
-            <button
-              type="button"
-              aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ""}`}
-              title="Notifications"
-              className="relative inline-flex h-6 items-center gap-1.5 rounded border border-transparent px-1.5 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
-              onClick={() => setNotificationsOpen((open) => !open)}
-            >
-              <Bell className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="hidden sm:inline">Notifications</span>
-              {unreadNotificationCount > 0 && (
-                <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold leading-none text-white shadow-[0_0_0_1px_rgba(255,255,255,0.55)]">
-                  {formatUnreadCount(unreadNotificationCount)}
-                </span>
-              )}
-            </button>
-            {notificationsOpen && (
-              <div className="absolute bottom-7 right-0 z-50 max-h-[70vh] w-[min(420px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+          {notificationsEnabled && (
+            <div className="relative">
+              <button
+                type="button"
+                aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ""}`}
+                title="Notifications"
+                className="relative inline-flex h-6 items-center gap-1.5 rounded border border-transparent px-1.5 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
+                onClick={() => setNotificationsOpen((open) => !open)}
+              >
+                <Bell className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Notifications</span>
+                {unreadNotificationCount > 0 && (
+                  <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold leading-none text-white shadow-[0_0_0_1px_rgba(255,255,255,0.55)]">
+                    {formatUnreadCount(unreadNotificationCount)}
+                  </span>
+                )}
+              </button>
+              {notificationsOpen && (
+                <div className="absolute bottom-7 right-0 z-50 max-h-[70vh] w-[min(420px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <span className="font-medium text-foreground">Notifications</span>
@@ -1512,9 +1523,10 @@ export function Footer() {
                     })}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
           {currentTime && (
             <>
               <span>{formatDate(currentTime)}</span>

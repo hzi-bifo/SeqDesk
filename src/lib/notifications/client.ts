@@ -34,6 +34,11 @@ async function createPanelNotification(input: NotifyPanelInput): Promise<boolean
       body: JSON.stringify(input),
     });
     if (!response.ok) return false;
+    const payload = (await response.json().catch(() => ({}))) as {
+      success?: boolean;
+      disabled?: boolean;
+    };
+    if (payload.disabled || payload.success === false) return false;
     refreshPanelNotifications();
     return true;
   } catch (error) {

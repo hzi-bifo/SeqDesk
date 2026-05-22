@@ -652,6 +652,32 @@ describe("Footer admin activity", () => {
     expect(screen.getByText("No notifications.")).toBeTruthy();
   });
 
+  it("hides the notification panel when in-app notifications are disabled", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/notifications?limit=20&archived=false") {
+        return jsonResponse({ enabled: false, notifications: [], unreadCount: 0 });
+      }
+      if (url === "/api/admin/workers") {
+        return jsonResponse({ workers: [] });
+      }
+      return jsonResponse({ jobs: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/notifications?limit=20&archived=false",
+        { cache: "no-store" }
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /notifications/i })).toBeNull();
+    });
+  });
+
   it("refreshes notification count on panel notification events without opening the panel", async () => {
     let notificationRequests = 0;
     const fetchMock = vi.fn(async (input: unknown) => {

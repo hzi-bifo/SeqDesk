@@ -33,6 +33,15 @@ export interface NotificationSettings {
   userDefaults: NotificationUserPreferences;
 }
 
+export interface InAppNotificationSettings {
+  enabled: boolean;
+}
+
+export interface AdminNotificationSettings {
+  inApp: InAppNotificationSettings;
+  email: NotificationSettings;
+}
+
 export interface NotificationRecipient {
   email: string;
   name?: string | null;

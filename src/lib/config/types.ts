@@ -140,9 +140,15 @@ export interface NotificationUserDefaults {
   support?: boolean;
 }
 
-export interface NotificationConfig {
-  /** Master switch for hosted SeqDesk notification relay */
+export interface InAppNotificationConfig {
+  /** Master switch for the in-app notification panel/channel */
   enabled?: boolean;
+}
+
+export interface NotificationConfig {
+  /** Master switch for hosted SeqDesk email notification relay */
+  enabled?: boolean;
+  inApp?: InAppNotificationConfig;
   provider?: NotificationProvider;
   relayUrl?: string;
   /** Scoped hosted profile token. Never expose through client APIs. */

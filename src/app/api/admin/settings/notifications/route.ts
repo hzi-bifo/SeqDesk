@@ -4,8 +4,8 @@ import { authOptions } from "@/lib/auth";
 import {
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_USER_NOTIFICATION_PREFERENCES,
-  getNotificationSettings,
-  saveNotificationSettings,
+  getAdminNotificationSettings,
+  saveAdminNotificationSettings,
 } from "@/lib/notifications/settings";
 import type { NotificationEventSettings, NotificationUserPreferences } from "@/lib/notifications/types";
 
@@ -15,7 +15,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json(await getNotificationSettings());
+  return NextResponse.json(await getAdminNotificationSettings());
 }
 
 export async function PUT(request: NextRequest) {
@@ -25,14 +25,29 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
-  const events = normalizeEvents(body.events);
-  const userDefaults = normalizeUserDefaults(body.userDefaults);
+  const bodyRecord = toRecord(body);
+  const email = toRecord(bodyRecord.email ?? bodyRecord);
+  const inApp = toRecord(bodyRecord.inApp);
+  const hasEmailSettings =
+    "email" in bodyRecord ||
+    "enabled" in bodyRecord ||
+    "events" in bodyRecord ||
+    "userDefaults" in bodyRecord;
+  const inAppEnabled =
+    typeof inApp.enabled === "boolean" ? inApp.enabled : undefined;
+  const emailEnabled = typeof email.enabled === "boolean" ? email.enabled : undefined;
+  const events = normalizeEvents(email.events);
+  const userDefaults = normalizeUserDefaults(email.userDefaults);
 
-  const settings = await saveNotificationSettings({
-    enabled,
-    events,
-    userDefaults,
+  const settings = await saveAdminNotificationSettings({
+    inApp: inAppEnabled !== undefined ? { enabled: inAppEnabled } : undefined,
+    email: hasEmailSettings
+      ? {
+          enabled: emailEnabled,
+          events,
+          userDefaults,
+        }
+      : undefined,
   });
 
   return NextResponse.json(settings);

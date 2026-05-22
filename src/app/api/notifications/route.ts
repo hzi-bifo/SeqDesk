@@ -6,6 +6,7 @@ import {
   listInAppNotifications,
   type InAppNotificationSeverity,
 } from "@/lib/notifications/in-app";
+import { getInAppNotificationSettings } from "@/lib/notifications/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,16 +32,29 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const limit = Number.parseInt(searchParams.get("limit") || "20", 10);
   const archived = searchParams.get("archived") === "true";
+  const settings = await getInAppNotificationSettings();
 
-  return NextResponse.json(
-    await listInAppNotifications(session.user.id, { limit, archived })
-  );
+  if (!settings.enabled) {
+    return NextResponse.json({
+      enabled: false,
+      notifications: [],
+      unreadCount: 0,
+    });
+  }
+
+  const payload = await listInAppNotifications(session.user.id, { limit, archived });
+  return NextResponse.json({ enabled: true, ...payload });
 }
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const settings = await getInAppNotificationSettings();
+  if (!settings.enabled) {
+    return NextResponse.json({ success: false, disabled: true });
   }
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;

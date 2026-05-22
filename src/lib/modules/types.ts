@@ -113,8 +113,8 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   // Communication
   {
     id: "notifications",
-    name: "Notifications",
-    description: "Send hosted email notifications for order updates and support messages through the SeqDesk notification relay.",
+    name: "Email Notifications",
+    description: "Send hosted email notifications for order updates and support messages through the SeqDesk notification relay. In-app notifications are controlled separately in settings.",
     category: "communication",
     featureLocation: "Settings > Notifications",
     hasSettings: true,

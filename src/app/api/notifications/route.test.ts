@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   createUserInAppNotification: vi.fn(),
   listInAppNotifications: vi.fn(),
+  getInAppNotificationSettings: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -20,6 +21,10 @@ vi.mock("@/lib/notifications/in-app", () => ({
   listInAppNotifications: mocks.listInAppNotifications,
 }));
 
+vi.mock("@/lib/notifications/settings", () => ({
+  getInAppNotificationSettings: mocks.getInAppNotificationSettings,
+}));
+
 import { GET, POST } from "./route";
 
 describe("GET /api/notifications", () => {
@@ -33,6 +38,7 @@ describe("GET /api/notifications", () => {
       unreadCount: 0,
     });
     mocks.createUserInAppNotification.mockResolvedValue(1);
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: true });
   });
 
   it("returns notifications for the signed-in user", async () => {
@@ -46,6 +52,21 @@ describe("GET /api/notifications", () => {
       archived: false,
     });
     await expect(response.json()).resolves.toEqual({
+      enabled: true,
+      notifications: [],
+      unreadCount: 0,
+    });
+  });
+
+  it("returns an empty disabled payload when in-app notifications are disabled", async () => {
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: false });
+
+    const response = await GET(new NextRequest("http://localhost:3000/api/notifications"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listInAppNotifications).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      enabled: false,
       notifications: [],
       unreadCount: 0,
     });
@@ -68,6 +89,7 @@ describe("POST /api/notifications", () => {
       user: { id: "user-1", role: "RESEARCHER" },
     });
     mocks.createUserInAppNotification.mockResolvedValue(1);
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: true });
   });
 
   it("creates a notification for the signed-in user", async () => {
@@ -109,6 +131,24 @@ describe("POST /api/notifications", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+  });
+
+  it("skips creation when in-app notifications are disabled", async () => {
+    mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: false });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ severity: "info", title: "Hello" }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      disabled: true,
+    });
   });
 
   it("rejects invalid severity", async () => {

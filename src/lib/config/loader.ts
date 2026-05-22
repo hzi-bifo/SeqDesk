@@ -74,6 +74,9 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   },
   notifications: {
     enabled: false,
+    inApp: {
+      enabled: true,
+    },
     provider: 'seqdesk-relay',
     relayUrl: 'https://www.seqdesk.com/api/notifications/relay',
     events: {
@@ -151,6 +154,7 @@ const ENV_MAPPINGS: Record<string, string> = {
 
   // Notifications
   SEQDESK_NOTIFICATIONS_ENABLED: 'notifications.enabled',
+  SEQDESK_IN_APP_NOTIFICATIONS_ENABLED: 'notifications.inApp.enabled',
   SEQDESK_NOTIFICATION_PROVIDER: 'notifications.provider',
   SEQDESK_NOTIFICATION_RELAY_URL: 'notifications.relayUrl',
   SEQDESK_NOTIFICATION_RELAY_TOKEN: 'notifications.relayToken',
@@ -489,6 +493,12 @@ export function validateConfig(config: unknown): {
 
   if (cfg.notifications?.enabled !== undefined && typeof cfg.notifications.enabled !== 'boolean') {
     errors.push('notifications.enabled must be a boolean');
+  }
+  if (
+    cfg.notifications?.inApp?.enabled !== undefined &&
+    typeof cfg.notifications.inApp.enabled !== 'boolean'
+  ) {
+    errors.push('notifications.inApp.enabled must be a boolean');
   }
   if (
     cfg.notifications?.provider !== undefined &&

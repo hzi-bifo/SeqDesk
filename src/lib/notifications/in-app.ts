@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getInAppNotificationSettings } from "./settings";
 
 export type InAppNotificationSeverity = "info" | "success" | "warning" | "error";
 
@@ -137,6 +138,7 @@ async function createNotifications(
   content: NotificationContent
 ): Promise<number> {
   if (recipients.length === 0) return 0;
+  if (!(await inAppNotificationsEnabled())) return 0;
 
   const rows = recipients.map((recipient) => ({
     userId: recipient.id,
@@ -195,6 +197,10 @@ export async function listInAppNotifications(
   userId: string,
   options: { limit?: number | null; archived?: boolean } = {}
 ): Promise<InAppNotificationList> {
+  if (!(await inAppNotificationsEnabled())) {
+    return { notifications: [], unreadCount: 0 };
+  }
+
   const where = {
     userId,
     ...(options.archived ? { archivedAt: { not: null } } : { archivedAt: null }),
@@ -218,6 +224,10 @@ export async function listInAppNotifications(
     notifications: notifications.map(toDto),
     unreadCount,
   };
+}
+
+async function inAppNotificationsEnabled(): Promise<boolean> {
+  return (await getInAppNotificationSettings()).enabled;
 }
 
 export async function markInAppNotificationRead(

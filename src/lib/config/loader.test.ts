@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "SEQDESK_FILES_SCAN_DEPTH",
   "SEQDESK_SESSION_TIMEOUT",
   "SEQDESK_ENA_TEST_MODE",
+  "SEQDESK_IN_APP_NOTIFICATIONS_ENABLED",
 ] as const;
 
 let cwdBefore = "";
@@ -73,6 +74,7 @@ describe("config loader", () => {
     expect(resolved.filePath).toBeUndefined();
     expect(resolved.config.site?.name).toBe("SeqDesk");
     expect(resolved.config.sequencingFiles?.scanDepth).toBe(2);
+    expect(resolved.config.notifications?.inApp?.enabled).toBe(true);
     expect(resolved.sources["site.name"]).toBe("default");
   });
 
@@ -155,6 +157,7 @@ describe("config loader", () => {
       pipelines: { execution: { mode: "invalid-mode" } },
       ena: { testMode: "yes" },
       sequencingFiles: { scanDepth: 99 },
+      notifications: { inApp: { enabled: "yes" } },
     });
 
     expect(invalid.valid).toBe(false);
@@ -166,6 +169,7 @@ describe("config loader", () => {
     expect(invalid.errors).toContain(
       "sequencingFiles.scanDepth must be a number between 1 and 10"
     );
+    expect(invalid.errors).toContain("notifications.inApp.enabled must be a boolean");
   });
 
   it("validateConfig accepts valid values", () => {

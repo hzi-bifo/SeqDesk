@@ -2,6 +2,8 @@ import { db } from "@/lib/db";
 import { getEffectiveConfig, saveConfigToDatabase } from "@/lib/config";
 import { parseModulesConfig, isModuleEnabled } from "@/lib/modules/form-integration";
 import type {
+  AdminNotificationSettings,
+  InAppNotificationSettings,
   NotificationEvent,
   NotificationEventSettings,
   NotificationSettings,
@@ -23,6 +25,10 @@ export const DEFAULT_NOTIFICATION_EVENTS: NotificationEventSettings = {
 export const DEFAULT_USER_NOTIFICATION_PREFERENCES: NotificationUserPreferences = {
   orders: true,
   support: true,
+};
+
+export const DEFAULT_IN_APP_NOTIFICATION_SETTINGS: InAppNotificationSettings = {
+  enabled: true,
 };
 
 export const DEFAULT_RELAY_URL = "https://www.seqdesk.com/api/notifications/relay";
@@ -101,6 +107,25 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
   };
 }
 
+export async function getInAppNotificationSettings(): Promise<InAppNotificationSettings> {
+  const resolved = await getEffectiveConfig();
+  const inApp = resolved.config.notifications?.inApp ?? {};
+  return {
+    enabled:
+      typeof inApp.enabled === "boolean"
+        ? inApp.enabled
+        : DEFAULT_IN_APP_NOTIFICATION_SETTINGS.enabled,
+  };
+}
+
+export async function getAdminNotificationSettings(): Promise<AdminNotificationSettings> {
+  const [inApp, email] = await Promise.all([
+    getInAppNotificationSettings(),
+    getNotificationSettings(),
+  ]);
+  return { inApp, email };
+}
+
 export async function getNotificationRelayCredentials(): Promise<{
   relayUrl: string;
   relayToken: string;
@@ -143,16 +168,56 @@ export function isPreferenceEnabled(
 export async function saveNotificationSettings(
   updates: Partial<Pick<NotificationSettings, "enabled" | "events" | "userDefaults">>
 ): Promise<NotificationSettings> {
+  const notifications: {
+    enabled?: boolean;
+    provider: "seqdesk-relay";
+    relayUrl: string;
+    events?: NotificationEventSettings;
+    userDefaults?: NotificationUserPreferences;
+  } = {
+    provider: "seqdesk-relay",
+    relayUrl: DEFAULT_RELAY_URL,
+  };
+  if (updates.enabled !== undefined) notifications.enabled = updates.enabled;
+  if (updates.events !== undefined) notifications.events = updates.events;
+  if (updates.userDefaults !== undefined) notifications.userDefaults = updates.userDefaults;
+
   await saveConfigToDatabase({
-    notifications: {
-      enabled: updates.enabled,
-      provider: "seqdesk-relay",
-      relayUrl: DEFAULT_RELAY_URL,
-      events: updates.events,
-      userDefaults: updates.userDefaults,
-    },
+    notifications,
   });
   return getNotificationSettings();
+}
+
+export async function saveAdminNotificationSettings(updates: {
+  inApp?: Partial<InAppNotificationSettings>;
+  email?: Partial<Pick<NotificationSettings, "enabled" | "events" | "userDefaults">>;
+}): Promise<AdminNotificationSettings> {
+  const notifications: {
+    inApp?: { enabled: boolean };
+    enabled?: boolean;
+    provider?: "seqdesk-relay";
+    relayUrl?: string;
+    events?: NotificationEventSettings;
+    userDefaults?: NotificationUserPreferences;
+  } = {};
+
+  if (updates.inApp?.enabled !== undefined) {
+    notifications.inApp = { enabled: updates.inApp.enabled };
+  }
+  if (updates.email) {
+    notifications.provider = "seqdesk-relay";
+    notifications.relayUrl = DEFAULT_RELAY_URL;
+    if (updates.email.enabled !== undefined) notifications.enabled = updates.email.enabled;
+    if (updates.email.events !== undefined) notifications.events = updates.email.events;
+    if (updates.email.userDefaults !== undefined) {
+      notifications.userDefaults = updates.email.userDefaults;
+    }
+  }
+
+  await saveConfigToDatabase({
+    notifications,
+  });
+  return getAdminNotificationSettings();
 }
 
 function readString(value: unknown, key: string): string | undefined {
