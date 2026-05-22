@@ -1,0 +1,174 @@
+{
+  "id": "read-cleaning",
+  "name": "Read Cleaning",
+  "description": "Screen raw or unknown FASTQ reads for host/contaminant sequences and stage cleaned reads for admin promotion",
+  "category": "qc",
+  "version": "0.1.0",
+  "sortOrder": 1,
+  "website": "https://nf-co.re/detaxizer",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "data",
+      "name": "cleaned_read_candidates",
+      "description": "Per-sample cleaned FASTQ files staged for admin review before becoming active SeqDesk reads",
+      "model": "PipelineArtifact",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "multiqc_report",
+      "description": "MultiQC HTML report for classification and filtering evidence",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "summary",
+      "description": "Run-level detaxizer classification and filtering summary",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "order"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "readMode": "single_or_paired",
+      "pairedEnd": false
+    }
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "both",
+    "readLayouts": [
+      "single",
+      "paired"
+    ]
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "scripts/generate-samplesheet.mjs"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "tax2filter": {
+        "type": "string",
+        "title": "Taxon to Filter",
+        "description": "Taxon name or ID passed to detaxizer. Default targets Homo sapiens.",
+        "default": "Homo sapiens",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "analysis",
+          "helpText": "The contaminant taxon must be represented in the configured classifier reference."
+        }
+      },
+      "classificationKraken2": {
+        "type": "boolean",
+        "title": "Kraken2 Classification",
+        "description": "Use Kraken2 to identify contaminant reads.",
+        "default": true,
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "analysis"
+        }
+      },
+      "kraken2Db": {
+        "type": "string",
+        "title": "Kraken2 DB",
+        "description": "Local Kraken2 database path or an explicitly approved reference URI.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "databases",
+          "helpText": "Required when Kraken2 classification is enabled. SeqDesk will not silently choose or download a database."
+        }
+      },
+      "classificationBbduk": {
+        "type": "boolean",
+        "title": "BBDuk Classification",
+        "description": "Use BBDuk k-mer matching against a contaminant FASTA.",
+        "default": false,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      },
+      "bbdukReference": {
+        "type": "string",
+        "title": "BBDuk FASTA",
+        "description": "Local contaminant reference FASTA for BBDuk.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "databases"
+        }
+      },
+      "filteringTool": {
+        "type": "string",
+        "title": "Filtering Tool",
+        "description": "Read filtering backend used by detaxizer.",
+        "enum": [
+          "seqkit",
+          "bbmap"
+        ],
+        "default": "seqkit",
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      },
+      "readType": {
+        "type": "string",
+        "title": "Read Type",
+        "description": "Controls whether single files are written to short-read or long-read detaxizer columns.",
+        "enum": [
+          "auto",
+          "short",
+          "long"
+        ],
+        "default": "auto",
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      },
+      "outputRemovedReads": {
+        "type": "boolean",
+        "title": "Keep Removed Reads",
+        "description": "Ask detaxizer to write removed contaminant reads to the output folder.",
+        "default": false,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "reporting"
+        }
+      }
+    }
+  },
+  "defaultConfig": {
+    "tax2filter": "Homo sapiens",
+    "classificationKraken2": true,
+    "kraken2Db": "",
+    "classificationBbduk": false,
+    "bbdukReference": "",
+    "filteringTool": "seqkit",
+    "readType": "auto",
+    "outputRemovedReads": false
+  },
+  "icon": "ShieldCheck"
+}

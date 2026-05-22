@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   generateSamplesheetFromConfig: vi.fn(),
   runAllParsers: vi.fn(),
   runDiscoverOutputsScript: vi.fn(),
+  runSamplesheetScript: vi.fn(),
   getAdapter: vi.fn(),
   registerAdapter: vi.fn(),
 }));
@@ -52,6 +53,7 @@ vi.mock("./parser-runtime", () => ({
 
 vi.mock("./script-runtime", () => ({
   runDiscoverOutputsScript: mocks.runDiscoverOutputsScript,
+  runSamplesheetScript: mocks.runSamplesheetScript,
 }));
 
 vi.mock("./adapters/types", async () => {
@@ -197,6 +199,7 @@ beforeEach(async () => {
   mocks.getAdapter.mockReset();
   mocks.registerAdapter.mockReset();
   mocks.runDiscoverOutputsScript.mockReset();
+  mocks.runSamplesheetScript.mockReset();
   mocks.getAdapter.mockReturnValue(undefined);
   mocks.getPackageScriptPath.mockReturnValue(null);
 });
@@ -399,6 +402,76 @@ describe("generic-adapter", () => {
       },
       dataBasePath: "/tmp/data",
     });
+  });
+
+  it("delegates samplesheet generation to package scripts when configured", async () => {
+    const pkg = makePackageIdOnly("read-cleaning");
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.getPackageScriptPath.mockReturnValue("/tmp/generate-samplesheet.mjs");
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "S1",
+        reads: [
+          {
+            id: "read-raw",
+            file1: "reads/S1_R1.fastq.gz",
+            file2: "reads/S1_R2.fastq.gz",
+            dataClass: "raw",
+            isActive: true,
+          },
+        ],
+        order: {
+          id: "order-1",
+          platform: "Illumina",
+          customFields: null,
+        },
+      },
+    ]);
+    mocks.runSamplesheetScript.mockResolvedValue({
+      content: "sample,short_reads_fastq_1\nS1,/data/reads/S1_R1.fastq.gz",
+      sampleCount: 1,
+      errors: [],
+    });
+
+    const adapter = createGenericAdapter("read-cleaning");
+    const result = await adapter!.generateSamplesheet({
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      dataBasePath: "/data",
+      config: { readType: "short" },
+    });
+
+    expect(result.sampleCount).toBe(1);
+    expect(mocks.runSamplesheetScript).toHaveBeenCalledWith(
+      "/tmp/generate-samplesheet.mjs",
+      {
+        packageId: "read-cleaning",
+        target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+        dataBasePath: "/data",
+        config: { readType: "short" },
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            reads: [
+              {
+                id: "read-raw",
+                file1: "reads/S1_R1.fastq.gz",
+                file2: "reads/S1_R2.fastq.gz",
+                dataClass: "raw",
+                isActive: true,
+              },
+            ],
+            order: {
+              id: "order-1",
+              platform: "Illumina",
+              customFields: null,
+            },
+          },
+        ],
+      }
+    );
+    expect(mocks.generateSamplesheetFromConfig).not.toHaveBeenCalled();
   });
 
   it("uses a custom discoverOutputs script when the package provides one", async () => {
@@ -653,6 +726,59 @@ describe("generic-adapter", () => {
 
     expect(result.valid).toBe(false);
     expect(result.issues).toContain("Sample SAMPLE-1: No paired-end reads (R1+R2) found");
+  });
+
+  it("validates strict read data-class filters", async () => {
+    const pkg = makePackageIdOnly("read-cleaning", [
+      {
+        id: "reads",
+        scope: "sample",
+        source: "sample.reads",
+        required: true,
+        filters: { dataClassIn: ["raw", "unknown"] },
+      },
+    ]);
+
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.db.study.findUnique.mockResolvedValue({ studyAccessionId: "PRJ123" });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        sampleId: "SAMPLE-1",
+        reads: [
+          {
+            file1: "/tmp/SAMPLE-1_cleaned.fastq.gz",
+            file2: null,
+            dataClass: "cleaned",
+          },
+        ],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+      {
+        id: "sample-2",
+        sampleId: "SAMPLE-2",
+        reads: [
+          {
+            file1: "/tmp/SAMPLE-2_raw.fastq.gz",
+            file2: null,
+            dataClass: "raw",
+          },
+        ],
+        assemblies: [],
+        bins: [],
+        order: { platform: "Illumina", customFields: null },
+      },
+    ]);
+
+    const adapter = createGenericAdapter("read-cleaning");
+    const result = await adapter!.validateInputs({ type: "study", studyId: "study-1" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      "Sample SAMPLE-1: No active raw or unknown reads found",
+    ]);
   });
 
   it("validates sample.assemblies requirement", async () => {

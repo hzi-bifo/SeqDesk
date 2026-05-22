@@ -1,0 +1,138 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "read-cleaning",
+    "name": "Read Cleaning",
+    "version": "0.1.0",
+    "description": "Screen raw or unknown reads for host/contaminant sequences with nf-core/detaxizer and stage cleaned reads for admin review",
+    "provider": "nf-core",
+    "website": "https://nf-co.re/detaxizer"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "samplesheet": "scripts/generate-samplesheet.mjs",
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "targets": {
+    "supported": [
+      "order"
+    ]
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "both",
+    "readLayouts": [
+      "single",
+      "paired"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "raw_reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true,
+      "filters": {
+        "dataClassIn": [
+          "raw",
+          "unknown"
+        ]
+      }
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "nf-core/detaxizer",
+    "version": "1.3.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {
+      "enableFilter": true,
+      "tax2filter": "Homo sapiens",
+      "classificationKraken2": true,
+      "classificationBbduk": false,
+      "filteringTool": "seqkit",
+      "outputRemovedReads": false
+    },
+    "paramMap": {
+      "enableFilter": "--enable_filter",
+      "tax2filter": "--tax2filter",
+      "classificationKraken2": "--classification_kraken2",
+      "classificationBbduk": "--classification_bbduk",
+      "kraken2Db": "--kraken2db",
+      "bbdukReference": "--fasta_bbduk",
+      "filteringTool": "--filtering_tool",
+      "outputRemovedReads": "--output_removed_reads",
+      "readType": ""
+    },
+    "runtime": {
+      "allowMacOsArmConda": true
+    }
+  },
+  "outputs": [
+    {
+      "id": "cleaned_read_candidates",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "filter",
+      "discovery": {
+        "pattern": "filter/filtered/*_filtered.fastq.gz",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "removed_reads",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "filter",
+      "discovery": {
+        "pattern": "filter/removed/*_removed.fastq.gz",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "summary",
+      "discovery": {
+        "pattern": "summary/summary.tsv"
+      }
+    },
+    {
+      "id": "multiqc_report",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "report",
+      "fromStep": "multiqc",
+      "discovery": {
+        "pattern": "multiqc/multiqc_report.html"
+      }
+    },
+    {
+      "id": "pipeline_info",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "pipeline_info",
+      "discovery": {
+        "pattern": "pipeline_info/*"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  READ_CLEANING_PIPELINE_ID,
   getSimulateReadsConfigIssues,
+  getPipelineRunConfigIssues,
   normalizeSimulateReadsConfig,
 } from "./simulate-reads-config";
 
@@ -52,5 +54,36 @@ describe("simulate-reads-config", () => {
     expect(getSimulateReadsConfigIssues(config)).toEqual([
       "Template simulation is not supported for long-read mode. Choose synthetic or auto mode, or switch to a short-read mode.",
     ]);
+  });
+
+  it("validates read-cleaning classifier configuration", () => {
+    expect(getPipelineRunConfigIssues(READ_CLEANING_PIPELINE_ID, {})).toEqual([
+      "Read Cleaning needs a Kraken2 database path when Kraken2 classification is enabled.",
+    ]);
+
+    expect(
+      getPipelineRunConfigIssues(READ_CLEANING_PIPELINE_ID, {
+        classificationKraken2: false,
+        classificationBbduk: false,
+      }),
+    ).toEqual([
+      "Read Cleaning needs at least one contaminant classifier enabled.",
+    ]);
+
+    expect(
+      getPipelineRunConfigIssues(READ_CLEANING_PIPELINE_ID, {
+        classificationKraken2: false,
+        classificationBbduk: true,
+      }),
+    ).toEqual([
+      "Read Cleaning needs a BBDuk reference FASTA when BBDuk classification is enabled.",
+    ]);
+
+    expect(
+      getPipelineRunConfigIssues(READ_CLEANING_PIPELINE_ID, {
+        classificationKraken2: true,
+        kraken2Db: "/refs/kraken2-human",
+      }),
+    ).toEqual([]);
   });
 });

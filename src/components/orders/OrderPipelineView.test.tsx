@@ -309,6 +309,50 @@ const pipeline = {
   },
 };
 
+const readCleaningPipeline = {
+  ...pipeline,
+  pipelineId: "read-cleaning",
+  name: "Read Cleaning",
+  description: "Remove human and other contaminant reads",
+  category: "qc",
+  config: {
+    classificationKraken2: true,
+    kraken2Db: "/refs/kraken2-human",
+    tax2filter: "Homo sapiens",
+    readType: "auto",
+  },
+  defaultConfig: {
+    classificationKraken2: true,
+    kraken2Db: "",
+    tax2filter: "Homo sapiens",
+    readType: "auto",
+  },
+  configSchema: {
+    properties: {
+      kraken2Db: {
+        type: "string",
+        title: "Kraken2 database",
+        default: "",
+      },
+      tax2filter: {
+        type: "string",
+        title: "Taxa to filter",
+        default: "Homo sapiens",
+      },
+      readType: {
+        type: "string",
+        title: "Read type",
+        enum: ["auto", "short", "long"],
+        default: "auto",
+      },
+    },
+  },
+  input: {
+    supportedScopes: ["order"],
+    perSample: { reads: true, pairedEnd: false },
+  },
+};
+
 const runs = [
   {
     id: "run-1",
@@ -423,6 +467,24 @@ const readA: SequencingReadSummary = {
   classifiedById: null,
   classificationNote: null,
   filesMissing: false,
+};
+
+const rawReadA: SequencingReadSummary = {
+  ...readA,
+  id: "read-raw-a",
+  file1: "/data/SAMPLE_A_raw.fastq.gz",
+  file2: null,
+  pipelineRunId: null,
+  pipelineRunNumber: null,
+  pipelineSources: {},
+  dataClass: "raw",
+  dataClassLabel: "Raw / protected",
+  dataClassSource: "upload",
+  readOrigin: "upload",
+  readOriginLabel: "Uploaded",
+  isSimulated: false,
+  isProtectedRaw: true,
+  classificationNote: "Uploaded raw reads",
 };
 
 const sampleBase = {
@@ -688,6 +750,173 @@ describe("OrderPipelineView", () => {
         { method: "DELETE" }
       );
     });
+  });
+
+  it("lets admins review and promote read-cleaning candidates from run details", async () => {
+    const readCleaningRun = {
+      ...runs[0],
+      id: "run-clean",
+      runNumber: "RUN-CLEAN-001",
+      pipelineId: "read-cleaning",
+      pipelineName: "Read Cleaning",
+      config: JSON.stringify({
+        kraken2Db: "/refs/kraken2-human",
+        tax2filter: "Homo sapiens",
+      }),
+      resultFiles: [
+        {
+          id: "report-1",
+          name: "MultiQC report",
+          path: "/runs/run-clean/output/multiqc/multiqc_report.html",
+          type: "report",
+          outputId: "multiqc_report",
+          source: "artifact",
+          size: 1234,
+          previewable: true,
+        },
+      ],
+      primaryResultFile: null,
+    };
+    const readCleaningSamples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
+      {
+        ...samples[0],
+        read: rawReadA,
+      },
+    ];
+    const candidateMutate = vi.fn().mockResolvedValue(undefined);
+    const readCleaningRunsResponse = { runs: [readCleaningRun], total: 1 };
+    const readCleaningCandidateResponse = {
+      run: {
+        id: "run-clean",
+        runNumber: "RUN-CLEAN-001",
+        status: "completed",
+        orderId: "order-1",
+      },
+      candidates: [
+        {
+          artifactId: "candidate-1",
+          sampleId: "sample-a",
+          sampleCode: "SAMPLE_A",
+          file1: "/runs/run-clean/output/filter/filtered/SAMPLE_A_filtered.fastq.gz",
+          file2: null,
+          readLayout: "single",
+          status: "candidate",
+          metadata: { classified_reads: 12 },
+          currentRead: {
+            id: "read-raw-a",
+            file1: "/data/SAMPLE_A_raw.fastq.gz",
+            file2: null,
+            dataClass: "raw",
+            dataClassLabel: "Raw / protected",
+            isProtectedRaw: true,
+          },
+        },
+      ],
+      reports: [
+        {
+          id: "report-1",
+          name: "MultiQC report",
+          path: "/runs/run-clean/output/multiqc/multiqc_report.html",
+          outputId: "multiqc_report",
+        },
+      ],
+    };
+
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return {
+          data: { pipelines: [readCleaningPipeline] },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/pipelines/runs/run-clean/cleaned-reads")) {
+        return {
+          data: readCleaningCandidateResponse,
+          isLoading: false,
+          mutate: candidateMutate,
+        };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return {
+          data: readCleaningRunsResponse,
+          mutate: mocks.mutateRuns,
+        };
+      }
+      return { data: undefined, isLoading: false, mutate: vi.fn() };
+    });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/pipelines/runs/run-clean/cleaned-reads") {
+        expect(init?.method).toBe("POST");
+        return Promise.resolve(jsonResponse({ promoted: 1, readIds: ["read-cleaned"] }));
+      }
+      if (url === "/api/pipelines/validate-metadata") {
+        return Promise.resolve(
+          jsonResponse({
+            valid: true,
+            issues: [],
+            metadata: {},
+            derivedSettings: [],
+          })
+        );
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="read-cleaning"
+        samples={readCleaningSamples}
+        isFacilityAdmin
+        onSampleDataChanged={onSampleDataChanged}
+      />
+    );
+
+    expect(screen.getByText("Promotion required after cleaning")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("View details for RUN-CLEAN-001"));
+
+    expect(screen.getAllByText("Review cleaned reads").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /multiqc report/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SAMPLE_A").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SAMPLE_A_raw.fastq.gz").length).toBeGreaterThan(0);
+    expect(screen.getByText("SAMPLE_A_filtered.fastq.gz")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Set as active cleaned reads" }));
+    expect(screen.getByText(/Existing raw or unknown reads will be preserved/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Set active" }).hasAttribute("disabled")).toBe(
+      true
+    );
+
+    fireEvent.click(
+      screen.getByLabelText("I reviewed the cleaning report and want to use these cleaned reads")
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Set active" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs/run-clean/cleaned-reads",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ sampleIds: ["sample-a"] }),
+        })
+      );
+    });
+    expect(candidateMutate).toHaveBeenCalled();
+    expect(onSampleDataChanged).toHaveBeenCalled();
   });
 
   it("warns when simulate reads would preserve stale linked reads", () => {

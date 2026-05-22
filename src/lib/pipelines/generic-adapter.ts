@@ -127,6 +127,14 @@ function inputRequiresStudy(input: { scope: string; source: string }): boolean {
   return input.scope === 'study' || input.source.startsWith('study.');
 }
 
+function getAllowedReadDataClasses(filters: Record<string, unknown> | undefined): string[] {
+  const single = typeof filters?.dataClass === 'string' ? [filters.dataClass] : [];
+  const many = Array.isArray(filters?.dataClassIn)
+    ? filters.dataClassIn.filter((value): value is string => typeof value === 'string')
+    : [];
+  return [...single, ...many].map((value) => normalizeReadDataClass(value));
+}
+
 import {
   getPackage,
   getPackageScriptPath,
@@ -136,7 +144,8 @@ import {
 import { resolveOrderPlatform } from './order-platform';
 import { generateSamplesheetFromConfig } from './samplesheet-generator';
 import { runAllParsers, type ParsedData, type ParsedRow } from './parser-runtime';
-import { runDiscoverOutputsScript } from './script-runtime';
+import { runDiscoverOutputsScript, runSamplesheetScript } from './script-runtime';
+import { normalizeReadDataClass } from '@/lib/sequencing/constants';
 import {
   type PipelineAdapter,
   type ValidationResult,
@@ -408,6 +417,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         if (input.scope === 'sample' && input.source === 'sample.reads') {
           const paired = input.filters?.paired === true;
           const checksums = input.filters?.checksums === true;
+          const allowedDataClasses = getAllowedReadDataClasses(input.filters);
 
           for (const sample of samples) {
             if (sample.reads.length === 0) {
@@ -415,9 +425,22 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
               continue;
             }
 
-            const readsToValidate = paired
-              ? sample.reads.filter((r) => r.file1 && r.file2)
+            const dataClassReads = allowedDataClasses.length > 0
+              ? sample.reads.filter((read) =>
+                  allowedDataClasses.includes(normalizeReadDataClass(read.dataClass))
+                )
               : sample.reads;
+
+            if (allowedDataClasses.length > 0 && dataClassReads.length === 0) {
+              issues.push(
+                `Sample ${sample.sampleId}: No active ${allowedDataClasses.join(' or ')} reads found`
+              );
+              continue;
+            }
+
+            const readsToValidate = paired
+              ? dataClassReads.filter((r) => r.file1 && r.file2)
+              : dataClassReads;
 
             if (paired && readsToValidate.length === 0) {
               issues.push(
@@ -540,6 +563,55 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
     async generateSamplesheet(
       options: SamplesheetOptions
     ): Promise<SamplesheetResult> {
+      const customSamplesheetScript = getPackageScriptPath(packageId, 'samplesheet');
+
+      if (customSamplesheetScript) {
+        try {
+          const samples = await db.sample.findMany({
+            where: getPipelineSampleWhere(options.target),
+            include: {
+              reads: {
+                where: { isActive: true },
+                orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+              },
+              order: {
+                select: {
+                  id: true,
+                  platform: true,
+                  customFields: true,
+                },
+              },
+            },
+            orderBy: { sampleId: 'asc' },
+          });
+
+          return await runSamplesheetScript(customSamplesheetScript, {
+            packageId,
+            target: options.target,
+            dataBasePath: options.dataBasePath,
+            config: options.config || {},
+            samples: samples.map((sample) => ({
+              id: sample.id,
+              sampleId: sample.sampleId,
+              reads: sample.reads.map((read) => ({
+                id: read.id,
+                file1: read.file1,
+                file2: read.file2,
+                dataClass: read.dataClass,
+                isActive: read.isActive,
+              })),
+              order: sample.order,
+            })),
+          });
+        } catch (error) {
+          return {
+            content: '',
+            sampleCount: 0,
+            errors: [error instanceof Error ? error.message : 'Unknown samplesheet script error'],
+          };
+        }
+      }
+
       // Use the declarative samplesheet generator
       const result = await generateSamplesheetFromConfig(packageId, {
         target: options.target,

@@ -72,6 +72,7 @@ import {
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 import { getOrderPipelineSampleReadiness } from "@/lib/pipelines/order-pipeline-readiness";
 import {
+  READ_CLEANING_PIPELINE_ID,
   normalizeSimulateReadsConfig,
   SIMULATE_READS_ADVANCED_FIELDS,
   SIMULATE_READS_BASIC_FIELDS,
@@ -195,6 +196,35 @@ type PipelineRun = {
   } | null;
 };
 
+type ReadCleaningCandidate = {
+  artifactId: string;
+  sampleId: string;
+  sampleCode: string;
+  file1: string;
+  file2: string | null;
+  readLayout: "single" | "paired" | "long" | "unknown";
+  status: "candidate" | "promoted";
+  metadata: Record<string, unknown>;
+  currentRead: {
+    id: string;
+    file1: string | null;
+    file2: string | null;
+    dataClass: string;
+    dataClassLabel: string;
+    isProtectedRaw: boolean;
+  } | null;
+};
+
+type ReadCleaningCandidateResponse = {
+  candidates: ReadCleaningCandidate[];
+  reports: Array<{
+    id: string;
+    name: string;
+    path: string;
+    outputId: string | null;
+  }>;
+};
+
 const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
   { value: "completed", label: "Completed" },
@@ -287,6 +317,50 @@ function getSelectedByDisplay(run: PipelineRun): string {
   return name || selectedBy.email;
 }
 
+function basename(filePath: string | null | undefined): string {
+  if (!filePath) return "-";
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
+}
+
+function formatCandidateMetric(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  return null;
+}
+
+function getCandidateEvidence(candidate: ReadCleaningCandidate): string {
+  const keys = [
+    "classified",
+    "classified_reads",
+    "classification_ids",
+    "blastn_unique_ids",
+    "filteredblastn_unique_ids",
+  ];
+  for (const key of keys) {
+    const value = formatCandidateMetric(candidate.metadata[key]);
+    if (value) return value;
+  }
+  return "-";
+}
+
+function getCandidateLayoutLabel(layout: ReadCleaningCandidate["readLayout"]): string {
+  switch (layout) {
+    case "paired":
+      return "Paired-end";
+    case "long":
+      return "Long read";
+    case "single":
+      return "Single-end";
+    default:
+      return "FASTQ";
+  }
+}
+
 function isRunVisibleToUser(run: PipelineRun): boolean {
   return run.isUserVisible ?? run.isSelectedFinal ?? false;
 }
@@ -299,6 +373,8 @@ function getReadinessProblemText(reason?: string): string {
       return "No read files are linked to this sample. Associate FASTQ files before running this pipeline.";
     case "Missing R2 file":
       return "This pipeline requires paired reads, but the R2 file is missing.";
+    case "Needs raw or unknown reads":
+      return "Read Cleaning only runs on active reads marked raw or unknown. Cleaned reads do not need this promotion workflow.";
     case "Pipeline not loaded":
       return "Pipeline metadata is still loading.";
     default:
@@ -325,6 +401,10 @@ function getOrderPipelineHelpText(pipeline: AdminPipeline): string {
 
   if (pipeline.pipelineId === "fastqc") {
     return "FastQC runs quality control on linked FASTQ files and writes report links and quality summaries back to each sample. Samples are ready when their required FASTQ files are linked and still present on disk.";
+  }
+
+  if (pipeline.pipelineId === READ_CLEANING_PIPELINE_ID) {
+    return "Read Cleaning runs nf-core/detaxizer on active raw or unknown reads. Completed runs stage cleaned FASTQ candidates and reports; an admin must review and set candidates as active cleaned reads before SeqDesk uses them for delivery or downstream pipelines.";
   }
 
   if (pipeline.input.perSample.reads) {
@@ -391,6 +471,13 @@ function getSampleRunActionCopy({
     };
   }
 
+  if (pipeline.pipelineId === READ_CLEANING_PIPELINE_ID) {
+    return {
+      title: "Clean raw reads",
+      description: `Starts ${pipeline.name} for ${sampleLabel}. It screens raw or unknown reads for contaminant sequences and stages cleaned read candidates for admin review.`,
+    };
+  }
+
   if (pipeline.input.perSample.reads) {
     return {
       title: `Run ${pipeline.name}`,
@@ -439,6 +526,307 @@ function getRunAllActionCopy({
     title: `Run all ready samples`,
     description: base.description,
   };
+}
+
+function ReadCleaningReviewPanel({
+  run,
+  isDemo,
+  isFacilityAdmin,
+  onPromoted,
+  onError,
+}: {
+  run: PipelineRun;
+  isDemo?: boolean;
+  isFacilityAdmin?: boolean;
+  onPromoted?: () => void;
+  onError?: (message: string) => void;
+}) {
+  const [selectedSampleIds, setSelectedSampleIds] = useState<Set<string>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reviewChecked, setReviewChecked] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const response = useSWR<ReadCleaningCandidateResponse>(
+    run.pipelineId === READ_CLEANING_PIPELINE_ID && run.status === "completed"
+      ? `/api/pipelines/runs/${run.id}/cleaned-reads`
+      : null,
+    fetcher
+  );
+
+  const candidates = response.data?.candidates ?? [];
+  const reports = response.data?.reports ?? [];
+  const promotableCandidates = candidates.filter((candidate) => candidate.status !== "promoted");
+
+  useEffect(() => {
+    if (!response.data) return;
+    setSelectedSampleIds(
+      new Set(
+        response.data.candidates
+          .filter((candidate) => candidate.status !== "promoted")
+          .map((candidate) => candidate.sampleId)
+      )
+    );
+  }, [response.data]);
+
+  if (run.pipelineId !== READ_CLEANING_PIPELINE_ID || run.status !== "completed") {
+    return null;
+  }
+
+  const selectedCount = selectedSampleIds.size;
+  const selectedCandidates = candidates.filter((candidate) =>
+    selectedSampleIds.has(candidate.sampleId)
+  );
+
+  const toggleCandidate = (sampleId: string) => {
+    setSelectedSampleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sampleId)) {
+        next.delete(sampleId);
+      } else {
+        next.add(sampleId);
+      }
+      return next;
+    });
+  };
+
+  const promoteSelected = async () => {
+    setPromoting(true);
+    onError?.("");
+    try {
+      const res = await fetch(`/api/pipelines/runs/${run.id}/cleaned-reads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sampleIds: Array.from(selectedSampleIds) }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to promote cleaned reads"));
+      }
+      setConfirmOpen(false);
+      setReviewChecked(false);
+      await response.mutate();
+      onPromoted?.();
+    } catch (err) {
+      onError?.(err instanceof Error ? err.message : "Failed to promote cleaned reads");
+    } finally {
+      setPromoting(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Review cleaned reads
+          </span>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Select the cleaned candidates that should become the active cleaned reads for this order. Existing raw or unknown reads are preserved.
+          </p>
+        </div>
+        <Badge variant="outline" className="text-xs">
+          {promotableCandidates.length} candidate{promotableCandidates.length === 1 ? "" : "s"}
+        </Badge>
+      </div>
+
+      {response.isLoading ? (
+        <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading candidates...
+        </div>
+      ) : candidates.length === 0 ? (
+        <p className="mt-4 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+          No cleaned read candidates were discovered for this run.
+        </p>
+      ) : (
+        <>
+          {reports.length > 0 ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {reports.map((report) => (
+                <a
+                  key={report.id}
+                  href={`/api/files/preview?path=${encodeURIComponent(report.path)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {report.name}
+                </a>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="mt-4 max-h-72 overflow-auto rounded-lg border">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead className="border-b bg-secondary/30">
+                <tr>
+                  <th className="w-[44px] px-3 py-2 text-left">
+                    <span className="sr-only">Select</span>
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                    Sample
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                    Current active reads
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                    Cleaned candidate
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                    Evidence
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {candidates.map((candidate) => {
+                  const disabled = candidate.status === "promoted" || promoting;
+                  return (
+                    <tr key={candidate.artifactId}>
+                      <td className="px-3 py-2 align-top">
+                        <Checkbox
+                          aria-label={`Select cleaned reads for ${candidate.sampleCode}`}
+                          checked={selectedSampleIds.has(candidate.sampleId)}
+                          disabled={disabled}
+                          onCheckedChange={() => toggleCandidate(candidate.sampleId)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 align-top font-medium">
+                        {candidate.sampleCode}
+                      </td>
+                      <td className="px-3 py-2 align-top text-xs">
+                        {candidate.currentRead ? (
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap gap-1">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-[11px]",
+                                  getReadDataClassBadgeClassName(candidate.currentRead.dataClass as ReadDataClass)
+                                )}
+                              >
+                                {candidate.currentRead.dataClassLabel}
+                              </Badge>
+                              {candidate.currentRead.file2 ? (
+                                <Badge variant="outline" className="text-[11px]">
+                                  Paired
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <div className="font-mono text-muted-foreground">
+                              {basename(candidate.currentRead.file1)}
+                              {candidate.currentRead.file2 ? ` / ${basename(candidate.currentRead.file2)}` : ""}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">No active reads</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 align-top text-xs">
+                        <div className="space-y-1">
+                          <Badge variant="outline" className="text-[11px]">
+                            {getCandidateLayoutLabel(candidate.readLayout)}
+                          </Badge>
+                          <div className="font-mono text-muted-foreground">
+                            {basename(candidate.file1)}
+                            {candidate.file2 ? ` / ${basename(candidate.file2)}` : ""}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                        {getCandidateEvidence(candidate)}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        {candidate.status === "promoted" ? (
+                          <Badge className="bg-emerald-600 text-white">Promoted</Badge>
+                        ) : (
+                          <Badge variant="outline">Candidate</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {isFacilityAdmin && !isDemo ? (
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={promoting || promotableCandidates.length === 0}
+                onClick={() => setSelectedSampleIds(new Set())}
+              >
+                Keep current reads
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={promoting || selectedCount === 0}
+                onClick={() => setConfirmOpen(true)}
+              >
+                Set as active cleaned reads
+              </Button>
+            </div>
+          ) : null}
+        </>
+      )}
+
+      {confirmOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
+            <h4 className="text-base font-semibold">Set as active cleaned reads</h4>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This will change which read files SeqDesk uses for delivery and downstream pipelines for {selectedCount} sample{selectedCount === 1 ? "" : "s"}. Existing raw or unknown reads will be preserved. Existing active cleaned reads will be superseded, not deleted.
+            </p>
+            <div className="mt-3 max-h-28 overflow-auto rounded-md bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
+              {selectedCandidates.map((candidate) => candidate.sampleCode).join(", ")}
+            </div>
+            <label className="mt-4 flex items-start gap-2 text-sm">
+              <Checkbox
+                aria-label="I reviewed the cleaning report and want to use these cleaned reads"
+                checked={reviewChecked}
+                disabled={promoting}
+                onCheckedChange={(checked) => setReviewChecked(Boolean(checked))}
+              />
+              <span>I reviewed the cleaning report and want to use these cleaned reads.</span>
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={promoting}
+                onClick={() => {
+                  setConfirmOpen(false);
+                  setReviewChecked(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={promoting || !reviewChecked}
+                onClick={() => void promoteSelected()}
+              >
+                {promoting ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Set active
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 interface OrderPipelineViewProps {
@@ -752,7 +1140,7 @@ export function OrderPipelineView({
       const protectedSamples = samples.filter(
         (sample) => sampleIds.includes(sample.id) && sample.read?.isProtectedRaw
       );
-      if (protectedSamples.length > 0) {
+      if (protectedSamples.length > 0 && pipeline.pipelineId !== READ_CLEANING_PIPELINE_ID) {
         const confirmed = window.confirm(
           `${protectedSamples.length} selected sample${protectedSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination. Continue running ${pipeline.name}?`
         );
@@ -1430,7 +1818,7 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
-      {protectedReadySamples.length > 0 ? (
+      {protectedReadySamples.length > 0 && pipeline.pipelineId !== READ_CLEANING_PIPELINE_ID ? (
         <PageNotice
           variant="warning"
           title="Raw or unknown reads selected"
@@ -1438,6 +1826,16 @@ export function OrderPipelineView({
         >
           {protectedReadySamples.length} ready sample
           {protectedReadySamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination; pipeline launch will ask for confirmation.
+        </PageNotice>
+      ) : null}
+
+      {pipeline.pipelineId === READ_CLEANING_PIPELINE_ID && readySamples.length > 0 ? (
+        <PageNotice
+          variant="info"
+          title="Promotion required after cleaning"
+          className="rounded-xl border"
+        >
+          Read Cleaning will not change active reads when the run completes. Review the reports and use Set as active cleaned reads on selected candidates after the run.
         </PageNotice>
       ) : null}
 
@@ -2162,6 +2560,17 @@ export function OrderPipelineView({
                                   Make visible to user
                                 </DropdownMenuItem>
                               )}
+                              {isFacilityAdmin && !isDemo && run.pipelineId === READ_CLEANING_PIPELINE_ID && run.status === "completed" && (
+                                <DropdownMenuItem
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    setDetailRun(run);
+                                  }}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Review cleaned reads
+                                </DropdownMenuItem>
+                              )}
                               {isFacilityAdmin && !isDemo && isRunVisibleToUser(run) && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
@@ -2258,7 +2667,7 @@ export function OrderPipelineView({
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
-            <div className="w-full max-w-2xl rounded-xl border bg-card p-6 shadow-lg">
+            <div className={cn("w-full rounded-xl border bg-card p-6 shadow-lg", detailRun.pipelineId === READ_CLEANING_PIPELINE_ID ? "max-w-4xl" : "max-w-2xl")}>
               <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold">
                 <span>Run Details</span>
                 <code className="min-w-0 max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
@@ -2362,6 +2771,16 @@ export function OrderPipelineView({
                     </pre>
                   </>
                 )}
+                <ReadCleaningReviewPanel
+                  run={detailRun}
+                  isDemo={isDemo}
+                  isFacilityAdmin={isFacilityAdmin}
+                  onPromoted={() => {
+                    void runsResponse.mutate();
+                    onSampleDataChanged?.();
+                  }}
+                  onError={setError}
+                />
               </div>
               <div className="mt-4 flex justify-end">
                 <Button

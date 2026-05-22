@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { getOrderPipelineSampleReadiness } from "./order-pipeline-readiness";
 
-function pipeline(reads: boolean, pairedEnd = false) {
+function pipeline(reads: boolean, pairedEnd = false, pipelineId?: string) {
   return {
+    pipelineId,
     input: {
       perSample: {
         reads,
@@ -59,5 +60,31 @@ describe("getOrderPipelineSampleReadiness", () => {
         },
       })
     ).toEqual({ ready: false, reason: "Files missing" });
+  });
+
+  it("only marks raw or unknown reads ready for read cleaning", () => {
+    expect(
+      getOrderPipelineSampleReadiness({
+        pipeline: pipeline(true, false, "read-cleaning"),
+        sample: {
+          read: {
+            file1: "sample_R1.fastq.gz",
+            dataClass: "cleaned",
+          },
+        },
+      })
+    ).toEqual({ ready: false, reason: "Needs raw or unknown reads" });
+
+    expect(
+      getOrderPipelineSampleReadiness({
+        pipeline: pipeline(true, false, "read-cleaning"),
+        sample: {
+          read: {
+            file1: "sample_R1.fastq.gz",
+            dataClass: "raw",
+          },
+        },
+      })
+    ).toEqual({ ready: true });
   });
 });

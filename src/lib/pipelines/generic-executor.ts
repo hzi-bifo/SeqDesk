@@ -767,6 +767,7 @@ export async function prepareGenericRun(
     const samplesheet = await adapter.generateSamplesheet({
       target,
       dataBasePath: executionSettings.dataBasePath,
+      config,
     });
 
     if (samplesheet.errors.length > 0) {

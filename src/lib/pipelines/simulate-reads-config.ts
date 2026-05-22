@@ -1,4 +1,5 @@
 export const SIMULATE_READS_PIPELINE_ID = "simulate-reads";
+export const READ_CLEANING_PIPELINE_ID = "read-cleaning";
 
 export const SIMULATE_READS_MODES = [
   "shortReadPaired",
@@ -228,6 +229,28 @@ export function getPipelineRunConfigIssues(
 ): string[] {
   if (pipelineId === SIMULATE_READS_PIPELINE_ID) {
     return getSimulateReadsConfigIssues(normalizeSimulateReadsConfig(config));
+  }
+  if (pipelineId === READ_CLEANING_PIPELINE_ID) {
+    const issues: string[] = [];
+    const classificationKraken2 = config.classificationKraken2 !== false;
+    const classificationBbduk = config.classificationBbduk === true;
+    const kraken2Db = typeof config.kraken2Db === "string" ? config.kraken2Db.trim() : "";
+    const bbdukReference =
+      typeof config.bbdukReference === "string" ? config.bbdukReference.trim() : "";
+
+    if (!classificationKraken2 && !classificationBbduk) {
+      issues.push("Read Cleaning needs at least one contaminant classifier enabled.");
+    }
+
+    if (classificationKraken2 && !kraken2Db) {
+      issues.push("Read Cleaning needs a Kraken2 database path when Kraken2 classification is enabled.");
+    }
+
+    if (classificationBbduk && !bbdukReference) {
+      issues.push("Read Cleaning needs a BBDuk reference FASTA when BBDuk classification is enabled.");
+    }
+
+    return issues;
   }
   return [];
 }

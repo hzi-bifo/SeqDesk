@@ -35,6 +35,7 @@ export interface SamplesheetResult {
 export interface SamplesheetOptions {
   target: PipelineTarget;
   dataBasePath: string;  // Base path for sequencing files
+  config?: Record<string, unknown>;
 }
 
 /**

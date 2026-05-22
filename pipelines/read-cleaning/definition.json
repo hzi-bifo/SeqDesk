@@ -1,0 +1,127 @@
+{
+  "pipeline": "read-cleaning",
+  "name": "Read Cleaning",
+  "description": "Host/contaminant screening and non-destructive cleaned read staging with nf-core/detaxizer",
+  "url": "https://nf-co.re/detaxizer",
+  "version": "0.1.0",
+  "inputs": [
+    {
+      "id": "raw_reads",
+      "name": "Raw or unknown FASTQ reads",
+      "description": "Active order read records marked raw or unknown",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to selected order samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "cleaned_read_candidates",
+      "name": "Cleaned read candidates",
+      "description": "Filtered FASTQ files staged for admin review. Promotion creates new active cleaned reads without deleting raw sources.",
+      "fromStep": "filter",
+      "fileTypes": [
+        ".fastq.gz"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as run artifacts until an admin promotes them"
+    },
+    {
+      "id": "removed_reads",
+      "name": "Removed reads",
+      "description": "Optional contaminant read output for audit/review",
+      "fromStep": "filter",
+      "fileTypes": [
+        ".fastq.gz"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as run artifacts when output_removed_reads is enabled"
+    },
+    {
+      "id": "summary",
+      "name": "Cleaning summary",
+      "description": "Run-level detaxizer classification and filtering summary",
+      "fromStep": "summary",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review and download"
+    },
+    {
+      "id": "multiqc_report",
+      "name": "MultiQC report",
+      "description": "HTML report summarizing classification/filtering evidence",
+      "fromStep": "multiqc",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Previewable from the pipeline output page"
+    }
+  ],
+  "steps": [
+    {
+      "id": "classification",
+      "name": "Classify Contaminant Reads",
+      "description": "Use Kraken2 and/or BBDuk to identify reads assigned to the configured contaminant taxon/reference.",
+      "category": "preprocessing",
+      "dependsOn": [],
+      "processMatchers": [
+        ".*KRAKEN2.*",
+        ".*BBDUK.*",
+        ".*CLASSIFICATION.*"
+      ],
+      "tools": [
+        "kraken2",
+        "bbduk"
+      ],
+      "outputs": [
+        "summary"
+      ]
+    },
+    {
+      "id": "filter",
+      "name": "Filter Reads",
+      "description": "Remove reads identified as contamination and write filtered FASTQ files.",
+      "category": "preprocessing",
+      "dependsOn": [
+        "classification"
+      ],
+      "processMatchers": [
+        ".*FILTER.*"
+      ],
+      "tools": [
+        "seqkit",
+        "bbmap"
+      ],
+      "outputs": [
+        "cleaned_read_candidates",
+        "removed_reads"
+      ]
+    },
+    {
+      "id": "multiqc",
+      "name": "Aggregate Report",
+      "description": "Build an HTML MultiQC report for review before promotion.",
+      "category": "reporting",
+      "dependsOn": [
+        "filter"
+      ],
+      "processMatchers": [
+        ".*MULTIQC.*"
+      ],
+      "tools": [
+        "multiqc"
+      ],
+      "outputs": [
+        "multiqc_report"
+      ]
+    }
+  ]
+}

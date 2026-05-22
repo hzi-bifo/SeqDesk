@@ -43,13 +43,17 @@ function selectRead(
   filters?: Record<string, unknown>
 ): { file1: string | null; file2: string | null } | null {
   const paired = typeof filters?.paired === 'boolean' ? filters.paired : undefined;
-  const requestedDataClass =
-    typeof filters?.dataClass === 'string' ? normalizeReadDataClass(filters.dataClass) : null;
+  const requestedDataClasses = [
+    ...(typeof filters?.dataClass === 'string' ? [filters.dataClass] : []),
+    ...(Array.isArray(filters?.dataClassIn)
+      ? filters.dataClassIn.filter((value): value is string => typeof value === 'string')
+      : []),
+  ].map((value) => normalizeReadDataClass(value));
   const activeReads = reads.filter((read) => read.isActive !== false);
-  const dataClassReads = requestedDataClass
-    ? activeReads.filter((read) => normalizeReadDataClass(read.dataClass) === requestedDataClass)
+  const dataClassReads = requestedDataClasses.length > 0
+    ? activeReads.filter((read) => requestedDataClasses.includes(normalizeReadDataClass(read.dataClass)))
     : activeReads;
-  const candidates = dataClassReads.length > 0 ? dataClassReads : activeReads;
+  const candidates = dataClassReads;
   const sortedReads = [...candidates].sort((a, b) => {
     const aClass = normalizeReadDataClass(a.dataClass);
     const bClass = normalizeReadDataClass(b.dataClass);

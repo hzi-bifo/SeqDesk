@@ -223,6 +223,58 @@ describe("samplesheet-generator", () => {
     );
   });
 
+  it("does not fall back to cleaned reads when a raw or unknown data class is requested", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue({
+      samplesheet: {
+        format: "csv",
+        filename: "samplesheet.csv",
+        rows: { scope: "sample" },
+        columns: [
+          {
+            name: "sample",
+            source: "sample.sampleId",
+            required: true,
+          },
+          {
+            name: "r1",
+            source: "read.file1",
+            required: true,
+            filters: { dataClassIn: ["raw", "unknown"] },
+          },
+        ],
+      },
+    });
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        sampleId: "S1",
+        reads: [
+          {
+            file1: "reads/S1_cleaned.fastq.gz",
+            file2: null,
+            dataClass: "cleaned",
+          },
+        ],
+        order: { id: "order-1", platform: "illumina", customFields: null },
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("read-cleaning");
+    const result = await generator.generate({
+      target: { type: "study", studyId: "study-1" },
+      dataBasePath: "/data/base",
+    });
+
+    expect(result.sampleCount).toBe(0);
+    expect(result.errors).toContain(
+      "Sample S1: Missing required value for column 'r1'"
+    );
+    expect(result.errors).toContain("No samples with valid data for samplesheet");
+  });
+
   it("uses TSV delimiter when configured", async () => {
     mocks.getPackageSamplesheet.mockReturnValue(makeConfig("tsv"));
     mocks.db.sample.findMany.mockResolvedValue([

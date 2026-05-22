@@ -9,7 +9,7 @@ vi.mock("child_process", () => ({
   spawn: mocks.spawn,
 }));
 
-import { runDiscoverOutputsScript } from "./script-runtime";
+import { runDiscoverOutputsScript, runSamplesheetScript } from "./script-runtime";
 
 function createMockChild() {
   const child = new EventEmitter() as EventEmitter & {
@@ -167,5 +167,91 @@ describe("runDiscoverOutputsScript", () => {
     child.emit("error", new Error("spawn failed"));
 
     await expect(promise).rejects.toThrow("spawn failed");
+  });
+});
+
+describe("runSamplesheetScript", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("streams payload into the script and resolves valid samplesheet JSON", async () => {
+    const child = createMockChild();
+    mocks.spawn.mockReturnValue(child);
+
+    const payload = {
+      packageId: "read-cleaning",
+      target: { type: "order" as const, orderId: "order-1" },
+      dataBasePath: "/data",
+      config: { readType: "short" },
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "S1",
+          reads: [
+            {
+              id: "read-1",
+              file1: "reads/S1_R1.fastq.gz",
+              file2: "reads/S1_R2.fastq.gz",
+              dataClass: "raw",
+              isActive: true,
+            },
+          ],
+          order: { id: "order-1", platform: "Illumina", customFields: null },
+        },
+      ],
+    };
+
+    const promise = runSamplesheetScript("/tmp/generate-samplesheet.mjs", payload);
+
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      process.execPath,
+      ["/tmp/generate-samplesheet.mjs"],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
+    expect(child.stdin.write).toHaveBeenCalledWith(JSON.stringify(payload));
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          content: "sample,short_reads_fastq_1\nS1,/data/reads/S1_R1.fastq.gz",
+          sampleCount: 1,
+          errors: [],
+        })
+      )
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toEqual({
+      content: "sample,short_reads_fastq_1\nS1,/data/reads/S1_R1.fastq.gz",
+      sampleCount: 1,
+      errors: [],
+    });
+  });
+
+  it("rejects invalid samplesheet JSON shape", async () => {
+    const child = createMockChild();
+    mocks.spawn.mockReturnValue(child);
+
+    const promise = runSamplesheetScript("/tmp/generate-samplesheet.mjs", {
+      packageId: "read-cleaning",
+      dataBasePath: "/data",
+      config: {},
+      samples: [],
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(JSON.stringify({ content: "", sampleCount: "one", errors: [] }))
+    );
+    child.emit("close", 0);
+
+    await expect(promise).rejects.toThrow(
+      "Samplesheet script returned an invalid payload"
+    );
   });
 });
