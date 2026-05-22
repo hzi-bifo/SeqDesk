@@ -87,6 +87,7 @@ import type {
 import { OrganismCell } from "@/lib/field-types/organism";
 import { BarcodeCell } from "@/lib/field-types/barcode/BarcodeCell";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
+import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inline-field-help";
 import { PageNotice } from "@/components/ui/page-notice";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 
@@ -646,7 +647,7 @@ export function OrderWizardPage({
   const [acknowledgedAiWarnings, setAcknowledgedAiWarnings] = useState(false);
 
   // Currently focused field for help panel (shared via context to sidebar)
-  const { setFocusedField } = useFieldHelp();
+  const { focusedField, setFocusedField } = useFieldHelp();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
 
   // Samples state for the samples step
@@ -2269,6 +2270,26 @@ export function OrderWizardPage({
     return "border-input";
   };
 
+  const isFieldFocused = (field: FormFieldDefinition) =>
+    focusedField?.id === field.id || focusedField?.name === field.name;
+
+  const isInlineFieldHelpVisible = (field: FormFieldDefinition) =>
+    isFieldFocused(field) &&
+    !fieldErrors[field.name] &&
+    hasInlineFieldHelpContent(field);
+
+  const attachedControlClass = (field: FormFieldDefinition) =>
+    isInlineFieldHelpVisible(field) ? "rounded-b-none" : "";
+
+  const renderInlineFieldHelp = (field: FormFieldDefinition, className?: string) => (
+    <InlineFieldHelp
+      field={field}
+      active={isFieldFocused(field)}
+      hidden={Boolean(fieldErrors[field.name])}
+      className={className}
+    />
+  );
+
   // AI Indicator component - shows inside the input field
   const AIIndicator = ({ field }: { field: FormFieldDefinition }) => {
     const aiResult = aiResults[field.name];
@@ -2419,13 +2440,20 @@ export function OrderWizardPage({
                 placeholder={field.placeholder}
                 required={field.required}
                 disabled={saving}
-                className={`${baseInputClass} bg-white ${getBorderClass(field)} ${hasAI ? "pr-10" : ""} transition-colors`}
+                className={cn(
+                  baseInputClass,
+                  "bg-white transition-colors",
+                  getBorderClass(field),
+                  hasAI && "pr-10",
+                  attachedControlClass(field)
+                )}
               />
               <AIIndicator field={field} />
             </div>
             {fieldErrors[field.name] && (
               <InlineFieldError message={fieldErrors[field.name]} />
             )}
+            {renderInlineFieldHelp(field)}
             <AIStatusBar field={field} />
             <AIResultMessage field={field} />
           </div>
@@ -2457,9 +2485,12 @@ export function OrderWizardPage({
                 placeholder={field.placeholder}
                 required={field.required}
                 disabled={saving}
-                className={`w-full min-h-[120px] px-3 py-2 rounded-md border bg-white text-sm resize-none focus:outline-none focus:ring-2 transition-colors ${
-                  hasAI ? "pr-10" : ""
-                } ${getBorderClass(field)}`}
+                className={cn(
+                  "w-full min-h-[120px] px-3 py-2 rounded-md border bg-white text-sm resize-none focus:outline-none focus:ring-2 transition-colors",
+                  hasAI && "pr-10",
+                  getBorderClass(field),
+                  attachedControlClass(field)
+                )}
               />
               {hasAI && (
                 <div className="absolute right-3 top-3">
@@ -2490,6 +2521,7 @@ export function OrderWizardPage({
             {fieldErrors[field.name] && (
               <InlineFieldError message={fieldErrors[field.name]} />
             )}
+            {renderInlineFieldHelp(field)}
             <AIStatusBar field={field} />
             <AIResultMessage field={field} />
           </div>
@@ -2513,11 +2545,16 @@ export function OrderWizardPage({
               placeholder={field.placeholder}
               required={field.required}
               disabled={saving}
-              className={`max-w-xs bg-white ${fieldErrors[field.name] ? "input-error" : ""}`}
+              className={cn(
+                "max-w-xs bg-white",
+                fieldErrors[field.name] && "input-error",
+                attachedControlClass(field)
+              )}
             />
             {fieldErrors[field.name] && (
               <InlineFieldError message={fieldErrors[field.name]} />
             )}
+            {renderInlineFieldHelp(field, "max-w-xs")}
           </div>
         );
 
@@ -2537,27 +2574,41 @@ export function OrderWizardPage({
               onFocus={() => setFocusedField(field)}
               required={field.required}
               disabled={saving}
-              className="max-w-xs bg-white"
+              className={cn(
+                "max-w-xs bg-white",
+                fieldErrors[field.name] && "input-error",
+                attachedControlClass(field)
+              )}
             />
+            {fieldErrors[field.name] && (
+              <InlineFieldError message={fieldErrors[field.name]} />
+            )}
+            {renderInlineFieldHelp(field, "max-w-xs")}
           </div>
         );
 
       case "checkbox":
         return (
-          <div key={field.id} className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              id={field.id}
-              data-testid={`order-field-${field.name}`}
-              checked={value as boolean}
-              onChange={(e) => setFieldValue(field.name, e.target.checked)}
-              onFocus={() => setFocusedField(field)}
-              disabled={saving}
-              className="mt-1 h-4 w-4 rounded border-input"
-            />
-            <div>
-              <Label htmlFor={field.id} className="font-medium">{field.label}</Label>
+          <div key={field.id} className="space-y-2">
+            <div className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                id={field.id}
+                data-testid={`order-field-${field.name}`}
+                checked={value as boolean}
+                onChange={(e) => setFieldValue(field.name, e.target.checked)}
+                onFocus={() => setFocusedField(field)}
+                disabled={saving}
+                className="mt-1 h-4 w-4 rounded border-input"
+              />
+              <div>
+                <Label htmlFor={field.id} className="font-medium">{field.label}</Label>
+              </div>
             </div>
+            {fieldErrors[field.name] && (
+              <InlineFieldError message={fieldErrors[field.name]} />
+            )}
+            {renderInlineFieldHelp(field)}
           </div>
         );
 
@@ -2580,7 +2631,8 @@ export function OrderWizardPage({
                 data-testid={`order-field-${field.name}`}
                 className={cn(
                   largeStyle ? "max-w-md h-12 bg-white" : "max-w-md bg-white",
-                  fieldErrors[field.name] ? "input-error" : ""
+                  fieldErrors[field.name] ? "input-error" : "",
+                  attachedControlClass(field)
                 )}
               >
                 <SelectValue placeholder={field.placeholder || `Select ${field.label.toLowerCase()}`} />
@@ -2596,6 +2648,7 @@ export function OrderWizardPage({
             {fieldErrors[field.name] && (
               <InlineFieldError message={fieldErrors[field.name]} />
             )}
+            {renderInlineFieldHelp(field, "max-w-md")}
           </div>
         );
 
@@ -2606,7 +2659,12 @@ export function OrderWizardPage({
               {field.label}
               {field.required && <span className="text-destructive ml-1">*</span>}
             </Label>
-            <div className="space-y-2 p-4 rounded-lg border border-input bg-white max-w-md">
+            <div
+              className={cn(
+                "space-y-2 p-4 rounded-lg border border-input bg-white max-w-md",
+                attachedControlClass(field)
+              )}
+            >
               {field.options?.map((opt) => {
                 const selected = Array.isArray(value) ? value.includes(opt.value) : false;
                 return (
@@ -2637,6 +2695,10 @@ export function OrderWizardPage({
                 );
               })}
             </div>
+            {fieldErrors[field.name] && (
+              <InlineFieldError message={fieldErrors[field.name]} />
+            )}
+            {renderInlineFieldHelp(field, "max-w-md")}
           </div>
         );
 

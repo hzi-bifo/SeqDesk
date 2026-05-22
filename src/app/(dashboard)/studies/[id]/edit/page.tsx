@@ -56,6 +56,7 @@ import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRender
 import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
+import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inline-field-help";
 import {
   isStudyChecklistTypeId,
   normalizeStudyChecklistType,
@@ -749,7 +750,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   const { data: session } = useSession();
   const [resolvedStudyId, setResolvedStudyId] = useState(id);
   const activeStudyId = resolvedStudyId;
-  const { setFocusedField } = useFieldHelp();
+  const { focusedField, setFocusedField } = useFieldHelp();
   const searchParams = useSearchParams();
   const requestedSection = searchParams.get("section");
   const [currentStep, setCurrentStep] = useState(0);
@@ -1648,6 +1649,32 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     return <div className="absolute right-3 top-1/2 -translate-y-1/2"><CheckCircle2 className="h-4 w-4 text-green-500" /></div>;
   };
 
+  const isFieldFocused = (field: Pick<FormFieldDefinition, "id" | "name">) =>
+    focusedField?.id === field.id || focusedField?.name === field.name;
+
+  const isInlineFieldHelpVisible = (
+    field: Pick<FormFieldDefinition, "id" | "name" | "helpText" | "placeholder" | "example">,
+    hidden = false
+  ) => isFieldFocused(field) && !hidden && hasInlineFieldHelpContent(field);
+
+  const attachedControlClass = (
+    field: Pick<FormFieldDefinition, "id" | "name" | "helpText" | "placeholder" | "example">,
+    hidden = false
+  ) => isInlineFieldHelpVisible(field, hidden) ? "rounded-b-none" : "";
+
+  const renderInlineFieldHelp = (
+    field: Pick<FormFieldDefinition, "id" | "name" | "helpText" | "placeholder" | "example">,
+    hidden = false,
+    gap: "sm" | "md" = "sm"
+  ) => (
+    <InlineFieldHelp
+      field={field}
+      active={isFieldFocused(field)}
+      hidden={hidden}
+      gap={gap}
+    />
+  );
+
   const renderStudyFieldInput = (field: FormFieldDefinition) => {
     const value = studyFieldValues[field.name];
     const error = studyFieldErrors[field.name];
@@ -1690,8 +1717,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
               {commonLabel}
             </div>
           </div>
-          {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && <InlineFieldError message={error} />}
+          {renderInlineFieldHelp(field, Boolean(error))}
         </div>
       );
     }
@@ -1710,7 +1737,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             disabled={isLoading}
             className={cn(
               "h-10 w-full rounded-md border border-input bg-white px-3 text-sm",
-              error && "input-error"
+              error && "input-error",
+              attachedControlClass(field, Boolean(error))
             )}
           >
             <option value="">Select...</option>
@@ -1721,7 +1749,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             ))}
           </select>
           {error && <InlineFieldError message={error} />}
-          {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
+          {renderInlineFieldHelp(field, Boolean(error))}
         </div>
       );
     }
@@ -1747,7 +1775,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             disabled={isLoading}
             className={cn(
               "min-h-[88px] w-full rounded-md border border-input bg-white px-3 py-2 text-sm",
-              error && "input-error"
+              error && "input-error",
+              attachedControlClass(field, Boolean(error))
             )}
           >
             {(field.options || []).map((opt) => (
@@ -1757,7 +1786,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             ))}
           </select>
           {error && <InlineFieldError message={error} />}
-          {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
+          {renderInlineFieldHelp(field, Boolean(error))}
         </div>
       );
     }
@@ -1774,10 +1803,13 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             placeholder={field.placeholder}
             rows={3}
             disabled={isLoading}
-            className={cn(error && "input-error")}
+            className={cn(
+              error && "input-error",
+              attachedControlClass(field, Boolean(error))
+            )}
           />
           {error && <InlineFieldError message={error} />}
-          {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
+          {renderInlineFieldHelp(field, Boolean(error))}
         </div>
       );
     }
@@ -1794,10 +1826,13 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
           onBlur={() => handleStudyFieldBlur(field)}
           placeholder={field.placeholder}
           disabled={isLoading}
-          className={cn(error && "input-error")}
+          className={cn(
+            error && "input-error",
+            attachedControlClass(field, Boolean(error))
+          )}
         />
         {error && <InlineFieldError message={error} />}
-        {field.helpText && <p className="text-xs text-muted-foreground">{field.helpText}</p>}
+        {renderInlineFieldHelp(field, Boolean(error))}
       </div>
     );
   };
@@ -1955,13 +1990,14 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                   className={cn(
                     "h-12 text-base transition-colors",
                     touched.title && isTitleValid && "pr-10",
-                    getBorderClass("title", isTitleValid)
+                    getBorderClass("title", isTitleValid),
+                    attachedControlClass(FIELD_DEFINITIONS.title, Boolean(titleError))
                   )}
                 />
                 <ValidationIndicator isValid={isTitleValid} touched={touched.title || false} />
               </div>
               {titleError && <InlineFieldError message={titleError} />}
-              <p className="text-sm text-muted-foreground">{FIELD_DEFINITIONS.title.helpText}</p>
+              {renderInlineFieldHelp(FIELD_DEFINITIONS.title, Boolean(titleError), "md")}
             </div>
 
             <div className="space-y-2">
@@ -1976,9 +2012,12 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                 placeholder={FIELD_DEFINITIONS.description.placeholder}
                 rows={4}
                 disabled={isLoading}
-                className="text-base"
+                className={cn(
+                  "text-base",
+                  attachedControlClass(FIELD_DEFINITIONS.description)
+                )}
               />
-              <p className="text-sm text-muted-foreground">{FIELD_DEFINITIONS.description.helpText}</p>
+              {renderInlineFieldHelp(FIELD_DEFINITIONS.description, false, "md")}
             </div>
 
             {studyFieldGroups.length > 0 && (
@@ -2049,6 +2088,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                   );
                 })}
               </div>
+              {renderInlineFieldHelp(FIELD_DEFINITIONS.checklistType, false, "md")}
             </div>
 
             {isStudyChecklistTypeId(checklistType) && (

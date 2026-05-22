@@ -15,9 +15,17 @@ test("wizard blocks progress when order name is missing", async ({ page }) => {
   await page.goto("/orders/new");
   await expect(page.getByRole("heading", { name: "New Sequencing Order" })).toBeVisible();
 
+  const orderNameInput = page.getByTestId("order-field-name");
+  await orderNameInput.focus();
+  const inlineHelp = page.getByTestId("inline-field-help");
+  await expect(inlineHelp).toContainText(/descriptive name/i);
+  await expect(inlineHelp).toContainText(/Soil microbiome study - Batch 1/i);
+  await expect(page.getByText("Field Help", { exact: true })).toHaveCount(0);
+
   await page.getByTestId("next-step-button").click();
 
   await expect(page.getByText("Order Name is required").first()).toBeVisible();
+  await expect(inlineHelp).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
   await expect(page.getByText(/Step 1 of/i)).toBeVisible();
 });

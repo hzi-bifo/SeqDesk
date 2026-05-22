@@ -61,6 +61,11 @@ export function Sidebar({ user, version }: SidebarProps) {
   const showAdminControls = isFacilityAdmin && !workbenchAppMode;
 
   const isAdminPage = !workbenchAppMode && (pathname.startsWith("/admin") || pathname.startsWith("/messages"));
+  const suppressSidebarFieldHelp =
+    pathname === "/orders/new" ||
+    /^\/orders\/[^/]+\/edit$/.test(pathname) ||
+    pathname === "/studies/new" ||
+    /^\/studies\/[^/]+\/edit$/.test(pathname);
   const appMode = workbenchAppMode ? "workbench" : "lab";
   const isWorkbenchMode = appMode === "workbench";
   const effectiveSidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
@@ -229,7 +234,7 @@ export function Sidebar({ user, version }: SidebarProps) {
               </nav>
 
               {/* Field Help Panel */}
-              {focusedField && !collapsed && (
+              {focusedField && !collapsed && !suppressSidebarFieldHelp && (
                 <div className="px-3 pb-2">
                   <SidebarFieldHelp />
                 </div>
