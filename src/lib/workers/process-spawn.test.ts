@@ -94,7 +94,9 @@ describe("startWorker", () => {
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
     const [cmd, args, opts] = mocks.spawn.mock.calls[0];
     expect(typeof cmd).toBe("string");
-    expect(args[0]).toContain("scripts/stream-monitor.ts");
+    expect(String(args[0]).replaceAll("\\", "/")).toMatch(
+      /scripts\/stream-monitor\.(ts|js)$/
+    );
     expect(opts).toMatchObject({
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],

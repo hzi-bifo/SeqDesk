@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
     },
   },
   getPackage: vi.fn(),
+  getAllPackages: vi.fn(),
+  getAllPackageIds: vi.fn(),
+  packageToPipelineDefinition: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -24,6 +27,9 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/pipelines/package-loader", () => ({
   getPackage: mocks.getPackage,
+  getAllPackages: mocks.getAllPackages,
+  getAllPackageIds: mocks.getAllPackageIds,
+  packageToPipelineDefinition: mocks.packageToPipelineDefinition,
 }));
 
 import { mapPlatformForPipeline, validatePipelineMetadata } from "./metadata-validation";
@@ -68,6 +74,9 @@ describe("metadata-validation", () => {
     mocks.db.pipelineConfig.findUnique.mockResolvedValue({ config: null });
     mocks.db.siteSettings.findUnique.mockResolvedValue({ enaTestMode: false });
     mocks.getPackage.mockReturnValue(null);
+    mocks.getAllPackages.mockReturnValue([]);
+    mocks.getAllPackageIds.mockReturnValue([]);
+    mocks.packageToPipelineDefinition.mockReturnValue(null);
   });
 
   it("returns a study-not-found error when study does not exist", async () => {

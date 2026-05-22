@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getPipelineDag: vi.fn(),
   getPipelineDefinition: vi.fn(),
   validatePipelineMetadata: vi.fn(),
+  normalizePipelineExecutionOverrides: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -38,14 +39,18 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
     slurmMemory: "8G",
     slurmTimeLimit: 60,
     slurmOptions: "",
+    pipelineOverrides: {},
+    runtimeMode: "conda",
     condaPath: "/opt/conda",
     condaEnv: "base",
     nextflowProfile: "standard",
     pipelineRunDir: "/tmp/seqdesk-runs",
+    pipelineDatabaseDir: "",
     weblogUrl: "",
     weblogSecret: "",
   },
   getExecutionSettings: mocks.getExecutionSettings,
+  normalizePipelineExecutionOverrides: mocks.normalizePipelineExecutionOverrides,
   saveExecutionSettings: mocks.saveExecutionSettings,
 }));
 
@@ -78,6 +83,7 @@ describe("settings and misc route quick wins", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.normalizePipelineExecutionOverrides.mockReturnValue({});
 
     cwd = process.cwd();
     tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "seqdesk-settings-routes-"));
@@ -96,6 +102,8 @@ describe("settings and misc route quick wins", () => {
       slurmMemory: "16G",
       slurmTimeLimit: 120,
       slurmOptions: "--qos normal",
+      pipelineOverrides: {},
+      runtimeMode: "conda",
       condaPath: "/opt/conda",
       condaEnv: "seqdesk",
       nextflowProfile: "docker",
@@ -293,6 +301,8 @@ describe("settings and misc route quick wins", () => {
         slurmMemory: "16G",
         slurmTimeLimit: 120,
         slurmOptions: "--qos normal",
+        pipelineOverrides: {},
+        runtimeMode: "conda",
         condaPath: "/opt/conda",
         condaEnv: "seqdesk",
         nextflowProfile: "docker",
@@ -341,6 +351,7 @@ describe("settings and misc route quick wins", () => {
       slurmMemory: "64G",
       slurmTimeLimit: 180,
       slurmOptions: "--qos high",
+      pipelineOverrides: {},
       runtimeMode: "conda",
       condaPath: "/custom/conda",
       condaEnv: "prod",

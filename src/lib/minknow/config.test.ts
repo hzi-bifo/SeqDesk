@@ -70,6 +70,8 @@ describe("minknow/config", () => {
         tlsCaCertPath: "/etc/ca.crt",
         outputRoot: "/data/minknow",
         pollIntervalMs: 1000,
+        usePolling: true,
+        stabilityThresholdMs: 5000,
       };
       expect(parseMinknowConfig(JSON.stringify({ minknowStream: full }))).toEqual(full);
     });
@@ -115,6 +117,8 @@ describe("minknow/config", () => {
       tlsCaCertPath: "",
       outputRoot: "/data/runs",
       pollIntervalMs: 5000,
+      usePolling: false,
+      stabilityThresholdMs: 2000,
     };
 
     it("upserts with the new minknowStream when SiteSettings is missing", async () => {
