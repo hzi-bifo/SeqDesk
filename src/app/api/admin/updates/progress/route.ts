@@ -22,13 +22,25 @@ export async function GET() {
   const state = await readUpdateState();
   const runningVersion = getCurrentVersion();
   const installedVersion = await getInstalledVersion();
+  const targetVersion = status?.targetVersion;
+  const targetVersionApplied = !!targetVersion &&
+    installedVersion === targetVersion &&
+    runningVersion === targetVersion;
+
+  if (status && targetVersionApplied && status.status === "error") {
+    await clearUpdateStatus();
+    await releaseUpdateLock();
+    return NextResponse.json({
+      status: null,
+      state,
+      runningVersion,
+      installedVersion,
+    });
+  }
 
   if (
     status &&
-    status.targetVersion &&
-    installedVersion === status.targetVersion &&
-    runningVersion === status.targetVersion &&
-    status.status !== "error" &&
+    targetVersionApplied &&
     status.status !== "complete"
   ) {
     const nextStatus = {
@@ -37,9 +49,9 @@ export async function GET() {
       progress: 100,
       message: "Update complete.",
     };
-    await writeUpdateStatus(nextStatus, { targetVersion: status.targetVersion });
+    await writeUpdateStatus(nextStatus, { targetVersion });
     await notifyAppUpdateProgressInApp(nextStatus, {
-      targetVersion: status.targetVersion,
+      targetVersion,
     });
     return NextResponse.json({
       status: nextStatus,
@@ -52,9 +64,7 @@ export async function GET() {
   if (
     status &&
     status.status === "complete" &&
-    status.targetVersion &&
-    runningVersion === status.targetVersion &&
-    installedVersion === status.targetVersion
+    targetVersionApplied
   ) {
     await clearUpdateStatus();
     return NextResponse.json({

@@ -169,7 +169,7 @@ describe("GET /api/admin/updates/progress", () => {
     );
   });
 
-  it("does not mark complete if status is already error", async () => {
+  it("clears failed status when target matches running and installed versions", async () => {
     mocks.getCurrentVersion.mockReturnValue("2.0.0");
     mocks.getInstalledVersion.mockResolvedValue("2.0.0");
     mocks.readUpdateStatus.mockResolvedValue({
@@ -182,7 +182,30 @@ describe("GET /api/admin/updates/progress", () => {
     const response = await GET();
     const data = await response.json();
 
+    expect(response.status).toBe(200);
+    expect(data.status).toBeNull();
+    expect(mocks.clearUpdateStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseUpdateLock).toHaveBeenCalledTimes(1);
+    expect(mocks.writeUpdateStatus).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed status when target is not fully applied", async () => {
+    mocks.getCurrentVersion.mockReturnValue("2.0.0");
+    mocks.getInstalledVersion.mockResolvedValue("1.0.0");
+    mocks.readUpdateStatus.mockResolvedValue({
+      status: "error",
+      progress: 0,
+      message: "Something failed",
+      targetVersion: "2.0.0",
+    });
+
+    const response = await GET();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
     expect(data.status.status).toBe("error");
+    expect(mocks.clearUpdateStatus).not.toHaveBeenCalled();
+    expect(mocks.releaseUpdateLock).not.toHaveBeenCalled();
     expect(mocks.writeUpdateStatus).not.toHaveBeenCalled();
   });
 

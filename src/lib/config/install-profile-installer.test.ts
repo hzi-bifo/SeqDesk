@@ -89,6 +89,19 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain("data/pipeline-databases.json");
   });
 
+  it("retries runtime dependency installs on NFS-held Prisma client artifacts", () => {
+    expect(installDist).toContain("is_nfs_prisma_busy_unlink_failure");
+    expect(installDist).toContain("unlink .*node_modules");
+    expect(installDist).toContain(".prisma");
+    expect(installDist).toContain(".nfs");
+    expect(installDist).toContain(
+      "npm ci could not remove an NFS-held Prisma client artifact; retrying with npm install."
+    );
+    expect(installDist).toContain(
+      "Runtime Node dependencies retry\" npm install --omit=dev --no-audit --no-fund"
+    );
+  });
+
   it("strips local pipeline download and activity state from release tarballs", () => {
     expect(buildRelease).toContain(".pipeline-download-status.json");
     expect(buildRelease).toContain(".pipeline-downloads.json");

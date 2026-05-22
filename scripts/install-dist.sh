@@ -2461,6 +2461,15 @@ print_node_install_instructions() {
     esac
 }
 
+is_nfs_prisma_busy_unlink_failure() {
+    if [ "$SEQDESK_LOG_ENABLED" != "true" ] || [ ! -f "$SEQDESK_LOG" ]; then
+        return 1
+    fi
+
+    grep -Eq "EBUSY|resource busy or locked" "$SEQDESK_LOG" &&
+        grep -Eiq "unlink .*node_modules[/\\\\]\\.prisma[/\\\\]client[/\\\\]\\.nfs" "$SEQDESK_LOG"
+}
+
 install_runtime_node_modules() {
     if [ -x "./node_modules/.bin/next" ] && [ -x "./node_modules/.bin/prisma" ]; then
         print_info "Runtime Node dependencies already available."
@@ -2468,7 +2477,14 @@ install_runtime_node_modules() {
     fi
 
     if [ -f package-lock.json ]; then
-        run_with_spinner "Runtime Node dependencies" npm ci --omit=dev --no-audit --no-fund
+        if ! run_with_spinner "Runtime Node dependencies" npm ci --omit=dev --no-audit --no-fund; then
+            if is_nfs_prisma_busy_unlink_failure; then
+                print_warning "npm ci could not remove an NFS-held Prisma client artifact; retrying with npm install."
+                run_with_spinner "Runtime Node dependencies retry" npm install --omit=dev --no-audit --no-fund
+            else
+                return 1
+            fi
+        fi
     else
         print_warning "package-lock.json not found, falling back to npm install --omit=dev."
         run_with_spinner "Runtime Node dependencies" npm install --omit=dev --no-audit --no-fund
