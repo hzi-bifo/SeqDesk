@@ -24,21 +24,21 @@ export async function POST(
   }
 
   // Single-instance guard: refuse to start if a row is RUNNING/STOPPING and the PID
-  // is actually alive. Reconcile dead-but-RUNNING rows to ZOMBIE first.
+  // is actually alive. Clear stale rows before starting a fresh worker.
   const existing = await db.backgroundWorkerProcess.findFirst({
-    where: { name, status: { in: ["RUNNING", "STOPPING"] } },
+    where: { name, status: { in: ["RUNNING", "STOPPING", "ZOMBIE"] } },
     orderBy: { startedAt: "desc" },
   });
-  if (existing && isProcessAlive(existing.pid)) {
+  if (existing && existing.status !== "ZOMBIE" && isProcessAlive(existing.pid)) {
     return NextResponse.json(
       { error: `${name} is already running (pid=${existing.pid}). Stop it first.` },
       { status: 409 },
     );
   }
-  if (existing && !isProcessAlive(existing.pid)) {
+  if (existing) {
     await db.backgroundWorkerProcess.update({
       where: { id: existing.id },
-      data: { status: "ZOMBIE", stoppedAt: existing.stoppedAt ?? new Date() },
+      data: { status: "STOPPED", stoppedAt: existing.stoppedAt ?? new Date() },
     });
   }
 

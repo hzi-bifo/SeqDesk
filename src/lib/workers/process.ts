@@ -203,8 +203,9 @@ export async function stopWorker(rowId: string, opts: { graceMs?: number } = {})
 
 /**
  * The latest known DB row for a worker (most recent by startedAt), reconciled
- * against actual PID liveness. If the row says RUNNING but the PID is dead,
- * the row is updated to ZOMBIE inline.
+ * against actual PID liveness. If the row says RUNNING/STOPPING but the PID is
+ * dead, or an old ZOMBIE row is still present, the row is auto-cleared to
+ * STOPPED inline.
  */
 export interface ReconciledWorkerStatus {
   spec: WorkerSpec;
@@ -237,11 +238,18 @@ export async function reconcileWorker(name: string): Promise<ReconciledWorkerSta
   }
 
   let status = row.status;
+  let stoppedAt = row.stoppedAt;
   if ((status === "RUNNING" || status === "STOPPING") && !isProcessAlive(row.pid)) {
-    // Process died without us knowing — flip to ZOMBIE so the UI shows the gap.
-    status = "ZOMBIE";
+    status = "STOPPED";
+    stoppedAt = row.stoppedAt ?? new Date();
     await db.backgroundWorkerProcess
-      .update({ where: { id: row.id }, data: { status: "ZOMBIE", stoppedAt: row.stoppedAt ?? new Date() } })
+      .update({ where: { id: row.id }, data: { status: "STOPPED", stoppedAt } })
+      .catch(() => undefined);
+  } else if (status === "ZOMBIE") {
+    status = "STOPPED";
+    stoppedAt = row.stoppedAt ?? new Date();
+    await db.backgroundWorkerProcess
+      .update({ where: { id: row.id }, data: { status: "STOPPED", stoppedAt } })
       .catch(() => undefined);
   }
 
@@ -252,7 +260,7 @@ export async function reconcileWorker(name: string): Promise<ReconciledWorkerSta
       name: row.name,
       pid: row.pid,
       startedAt: row.startedAt.toISOString(),
-      stoppedAt: row.stoppedAt?.toISOString() ?? null,
+      stoppedAt: stoppedAt?.toISOString() ?? null,
       status,
       exitCode: row.exitCode,
       logPath: row.logPath,

@@ -150,7 +150,7 @@ describe("reconcileWorker", () => {
     expect(mocks.db.backgroundWorkerProcess.update).not.toHaveBeenCalled();
   });
 
-  it("flips RUNNING to ZOMBIE when the pid is no longer alive", async () => {
+  it("flips RUNNING to STOPPED when the pid is no longer alive", async () => {
     const startedAt = new Date("2026-05-07T12:00:00Z");
     mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
       id: "row-zombie",
@@ -168,15 +168,15 @@ describe("reconcileWorker", () => {
 
     const result = await reconcileWorker("stream-monitor");
 
-    expect(result.row?.status).toBe("ZOMBIE");
+    expect(result.row?.status).toBe("STOPPED");
     expect(mocks.db.backgroundWorkerProcess.update).toHaveBeenCalledTimes(1);
     const update = mocks.db.backgroundWorkerProcess.update.mock.calls[0][0];
     expect(update.where).toEqual({ id: "row-zombie" });
-    expect(update.data.status).toBe("ZOMBIE");
+    expect(update.data.status).toBe("STOPPED");
     expect(update.data.stoppedAt).toBeInstanceOf(Date);
   });
 
-  it("flips STOPPING to ZOMBIE when the pid is no longer alive", async () => {
+  it("flips STOPPING to STOPPED when the pid is no longer alive", async () => {
     mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
       id: "row-stop",
       name: "stream-monitor",
@@ -193,7 +193,33 @@ describe("reconcileWorker", () => {
 
     const result = await reconcileWorker("stream-monitor");
 
-    expect(result.row?.status).toBe("ZOMBIE");
+    expect(result.row?.status).toBe("STOPPED");
+  });
+
+  it("clears a persisted ZOMBIE row to STOPPED", async () => {
+    const stoppedAt = new Date("2026-05-07T14:00:00Z");
+    mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
+      id: "row-legacy-zombie",
+      name: "stream-monitor",
+      pid: 99_999_997,
+      status: "ZOMBIE",
+      startedAt: new Date("2026-05-07T12:00:00Z"),
+      stoppedAt,
+      exitCode: null,
+      logPath: "/tmp/x.log",
+      lastErrorMsg: null,
+      startedBy: null,
+    });
+    mocks.db.backgroundWorkerProcess.update.mockResolvedValue({});
+
+    const result = await reconcileWorker("stream-monitor");
+
+    expect(result.row?.status).toBe("STOPPED");
+    expect(result.row?.stoppedAt).toBe(stoppedAt.toISOString());
+    expect(mocks.db.backgroundWorkerProcess.update).toHaveBeenCalledWith({
+      where: { id: "row-legacy-zombie" },
+      data: { status: "STOPPED", stoppedAt },
+    });
   });
 
   it("does not change status when the row is already STOPPED", async () => {
@@ -201,7 +227,7 @@ describe("reconcileWorker", () => {
     mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
       id: "row-stopped",
       name: "stream-monitor",
-      pid: 99_999_997, // dead, but doesn't matter
+      pid: 99_999_996, // dead, but doesn't matter
       status: "STOPPED",
       startedAt: new Date(),
       stoppedAt,
@@ -218,11 +244,11 @@ describe("reconcileWorker", () => {
     expect(mocks.db.backgroundWorkerProcess.update).not.toHaveBeenCalled();
   });
 
-  it("survives a transient DB update failure when flipping to ZOMBIE", async () => {
+  it("survives a transient DB update failure when flipping to STOPPED", async () => {
     mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
       id: "row-flake",
       name: "stream-monitor",
-      pid: 99_999_996,
+      pid: 99_999_995,
       status: "RUNNING",
       startedAt: new Date(),
       stoppedAt: null,
@@ -235,8 +261,8 @@ describe("reconcileWorker", () => {
 
     const result = await reconcileWorker("stream-monitor");
 
-    // Even if the persistence fails the in-memory result still reports ZOMBIE.
-    expect(result.row?.status).toBe("ZOMBIE");
+    // Even if the persistence fails the in-memory result still reports STOPPED.
+    expect(result.row?.status).toBe("STOPPED");
   });
 });
 
