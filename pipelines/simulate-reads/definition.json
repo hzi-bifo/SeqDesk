@@ -10,6 +10,10 @@
       "description": "Create synthetic FASTQ files for each selected sample.",
       "category": "qc",
       "dependsOn": [],
+      "processMatchers": [
+        "SIMULATE_READS",
+        "SUMMARIZE_SIMULATION"
+      ],
       "tools": [
         "node"
       ],

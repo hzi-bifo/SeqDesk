@@ -70,6 +70,119 @@ function looksLikeFlag(value: string): boolean {
   return value === "" || value.startsWith("-") || /^[A-Za-z0-9_.-]+$/.test(value);
 }
 
+function hasCustomRunner(manifest: Manifest): boolean {
+  const execution = manifest.execution as Manifest["execution"] & {
+    runner?: unknown;
+    customRunner?: unknown;
+  };
+  return execution.runner === "custom" || execution.customRunner === "custom";
+}
+
+interface DefinitionDescriptor {
+  pipeline?: string;
+  steps?: Array<{
+    id?: unknown;
+    dependsOn?: unknown;
+    processMatchers?: unknown;
+  }>;
+  outputs?: Array<{
+    id?: unknown;
+    fromStep?: unknown;
+  }>;
+}
+
+function validateDefinitionContract(
+  definition: DefinitionDescriptor,
+  manifest: Manifest,
+  issues: DescriptorLintIssue[]
+) {
+  const steps = Array.isArray(definition.steps) ? definition.steps : [];
+  const stepIds = new Set<string>();
+
+  for (const step of steps) {
+    if (typeof step.id !== "string" || !step.id.trim()) {
+      addIssue(
+        issues,
+        "error",
+        "definition-step-id",
+        "Every definition step must have a non-empty id.",
+        manifest.files.definition
+      );
+      continue;
+    }
+
+    if (stepIds.has(step.id)) {
+      addIssue(
+        issues,
+        "error",
+        "duplicate-step-id",
+        `Duplicate definition step id: ${step.id}.`,
+        manifest.files.definition
+      );
+    }
+    stepIds.add(step.id);
+  }
+
+  for (const step of steps) {
+    if (typeof step.id !== "string" || !step.id.trim()) continue;
+
+    if (Array.isArray(step.dependsOn)) {
+      for (const dependency of step.dependsOn) {
+        if (typeof dependency === "string" && !stepIds.has(dependency)) {
+          addIssue(
+            issues,
+            "error",
+            "step-dependency-missing",
+            `Step "${step.id}" depends on missing step "${dependency}".`,
+            manifest.files.definition
+          );
+        }
+      }
+    }
+
+    if (
+      manifest.execution.type === "nextflow" &&
+      (!Array.isArray(step.processMatchers) || step.processMatchers.length === 0)
+    ) {
+      addIssue(
+        issues,
+        "warning",
+        "step-process-matchers",
+        `Step "${step.id}" has no processMatchers, so trace progress cannot map Nextflow processes to this DAG step.`,
+        manifest.files.definition
+      );
+    }
+  }
+
+  for (const output of definition.outputs || []) {
+    if (
+      typeof output.fromStep === "string" &&
+      output.fromStep &&
+      !stepIds.has(output.fromStep)
+    ) {
+      addIssue(
+        issues,
+        "error",
+        "definition-output-from-step-missing",
+        `Definition output "${String(output.id || "unknown")}" references missing step "${output.fromStep}".`,
+        manifest.files.definition
+      );
+    }
+  }
+
+  for (const output of manifest.outputs) {
+    if (output.fromStep && !stepIds.has(output.fromStep)) {
+      addIssue(
+        issues,
+        "error",
+        "output-from-step-missing",
+        `Manifest output "${output.id}" references missing definition step "${output.fromStep}".`,
+        "manifest.json"
+      );
+    }
+  }
+}
+
 async function validateExecution(
   packageDir: string,
   manifest: Manifest,
@@ -87,7 +200,7 @@ async function validateExecution(
 
   if (isLocalPipelineRef(manifest.execution.pipeline)) {
     const pipelinePath = path.resolve(packageDir, manifest.execution.pipeline);
-    if (!(await pathExists(pipelinePath))) {
+    if (!(await pathExists(pipelinePath)) && !hasCustomRunner(manifest)) {
       addIssue(
         issues,
         "warning",
@@ -209,6 +322,7 @@ async function validateDefinitionAndRegistry(
           manifest.files.definition
         );
       }
+      validateDefinitionContract(definition as DefinitionDescriptor, manifest, issues);
     }
   }
 

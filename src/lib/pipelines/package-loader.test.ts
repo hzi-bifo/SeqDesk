@@ -640,8 +640,10 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDir, "definition.json"), {
       ...baseDefinition("findstep"),
       steps: [
-        { id: "qc", name: "QC", description: "QC", category: "qc", dependsOn: [], processMatchers: ["FASTQC"] },
-        { id: "trim", name: "Trim", description: "Trim", category: "prep", dependsOn: ["qc"], processMatchers: ["TRIMGALORE", "CUTADAPT"] },
+        { id: "fastqc_raw", name: "Raw FastQC", description: "QC", category: "qc", dependsOn: [], processMatchers: ["FASTQC", "FASTQC_RAW"] },
+        { id: "fastqc_trimmed", name: "Trimmed FastQC", description: "Trimmed QC", category: "qc", dependsOn: ["fastqc_raw"], processMatchers: ["FASTQC_TRIMMED"] },
+        { id: "clean", name: "Clean", description: "Clean reads", category: "prep", dependsOn: ["fastqc_raw"], processMatchers: [".*KRAKEN2.*", ".*FILTER.*"] },
+        { id: "trim", name: "Trim", description: "Trim", category: "prep", dependsOn: ["fastqc_raw"], processMatchers: ["TRIMGALORE", "CUTADAPT"] },
       ],
     });
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("findstep"));
@@ -649,7 +651,10 @@ describe("package-loader", () => {
       samplesheet: { format: "csv", filename: "findstep.csv", rows: { scope: "study" }, columns: [] },
     });
 
-    expect(findStepByProcessFromPackage("findstep", "NFCORE_MAG:MAG:FASTQC (sample1)")?.id).toBe("qc");
+    expect(findStepByProcessFromPackage("findstep", "NFCORE_MAG:MAG:FASTQC (sample1)")?.id).toBe("fastqc_raw");
+    expect(findStepByProcessFromPackage("findstep", "NFCORE_MAG:MAG:FASTQC_TRIMMED (sample1)")?.id).toBe("fastqc_trimmed");
+    expect(findStepByProcessFromPackage("findstep", "NFCORE_DETAXIZER:KRAKEN2 (sample1)")?.id).toBe("clean");
+    expect(findStepByProcessFromPackage("findstep", "FILTER")?.id).toBe("clean");
     expect(findStepByProcessFromPackage("findstep", "TRIMGALORE")?.id).toBe("trim");
     expect(findStepByProcessFromPackage("findstep", "NFCORE:CUTADAPT")?.id).toBe("trim");
     expect(findStepByProcessFromPackage("findstep", "UNKNOWN_PROCESS")).toBeNull();

@@ -98,6 +98,7 @@
       "skipQuast": "--skip_quast",
       "skipGtdb": "--skip_gtdbtk",
       "skipGtdbtk": "--skip_gtdbtk",
+      "stubMode": "-stub",
       "gtdbDb": "--gtdb_db",
       "runAt": "",
       "allowedSequencingTechnologies": ""

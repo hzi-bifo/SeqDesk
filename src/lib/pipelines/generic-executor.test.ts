@@ -270,10 +270,15 @@ describe("generic-executor", () => {
 
     const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
     expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");
-    expect(adapter.generateSamplesheet).toHaveBeenCalledWith({
+    expect(adapter.generateSamplesheet).toHaveBeenCalledWith(expect.objectContaining({
       target: { type: "order", orderId: "order-1", sampleIds: ["sample-1", "sample-2"] },
       dataBasePath: tempDir,
-    });
+      config: expect.objectContaining({
+        threads: 8,
+        customValue: "abc",
+        verbose: true,
+      }),
+    }));
 
     expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
       where: { id: "run-1" },
@@ -359,6 +364,60 @@ describe("generic-executor", () => {
     expect(script.indexOf("-params-file /shared/metaxpath/params.yaml")).toBeLessThan(
       script.indexOf("--kraken2_memory_mapping")
     );
+  });
+
+  it("maps single-dash Nextflow switches as presence-only booleans", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "3.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {
+            stubMode: "-stub",
+            skipQuast: "--skip_quast",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const enabled = await prepareGenericRun({
+      runId: "run-single-dash-enabled",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {
+        stubMode: true,
+        skipQuast: false,
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(enabled.success).toBe(true);
+    const enabledScript = await fs.readFile(path.join(enabled.runFolder!, "run.sh"), "utf8");
+    expect(enabledScript).toContain("-stub");
+    expect(enabledScript).toContain("--skip_quast false");
+
+    const disabled = await prepareGenericRun({
+      runId: "run-single-dash-disabled",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {
+        stubMode: false,
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(disabled.success).toBe(true);
+    const disabledScript = await fs.readFile(path.join(disabled.runFolder!, "run.sh"), "utf8");
+    expect(disabledScript).not.toContain("-stub false");
+    expect(disabledScript).not.toContain("-stub");
   });
 
   it("caps MetaxPath local thread defaults to available local CPUs", async () => {

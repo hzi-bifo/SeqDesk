@@ -58,6 +58,7 @@
   ],
   "execution": {
     "type": "nextflow",
+    "runner": "custom",
     "pipeline": "./submg",
     "version": "1.0.0",
     "profiles": ["conda"],

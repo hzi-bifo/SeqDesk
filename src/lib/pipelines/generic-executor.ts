@@ -487,8 +487,10 @@ function buildPipelineFlags(
         // Boolean true -> add flag
         flags.push(trimmedFlag);
       } else if (value === false) {
-        // Boolean false -> pass explicitly so Nextflow overrides its default
-        flags.push(`${trimmedFlag} false`);
+        // Single-dash Nextflow switches such as -stub are presence-only.
+        if (!trimmedFlag.startsWith("-") || trimmedFlag.startsWith("--")) {
+          flags.push(`${trimmedFlag} false`);
+        }
       } else if (value === null || value === undefined || isBlankString(value)) {
         // null/undefined/blank -> skip
         continue;

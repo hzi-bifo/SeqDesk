@@ -109,7 +109,7 @@
       "scope": "run",
       "destination": "run_artifact",
       "type": "artifact",
-      "fromStep": "summary",
+      "fromStep": "classification",
       "discovery": {
         "pattern": "summary/summary.tsv"
       }

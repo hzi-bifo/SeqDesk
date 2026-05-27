@@ -51,9 +51,12 @@ function baseManifest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function writeValidPackage(manifest = baseManifest()) {
+async function writeValidPackage(
+  manifest = baseManifest(),
+  definition: Record<string, unknown> = { pipeline: manifest.package.id }
+) {
   await writeFile("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile("definition.json", JSON.stringify({ pipeline: manifest.package.id }));
+  await writeFile("definition.json", JSON.stringify(definition));
   await writeFile("registry.json", JSON.stringify({ id: manifest.package.id }));
   await writeFile(
     "samplesheet.yaml",
@@ -156,6 +159,100 @@ describe("descriptor-linter", () => {
     expect(result.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "metaxpath-params-file" }),
+      ])
+    );
+  });
+
+  it("reports manifest outputs that reference missing definition steps", async () => {
+    await writeValidPackage(
+      baseManifest({
+        outputs: [
+          {
+            id: "summary",
+            scope: "run",
+            destination: "run_artifact",
+            type: "artifact",
+            fromStep: "summary",
+            discovery: {
+              pattern: "summary.tsv",
+            },
+          },
+        ],
+      }),
+      {
+        pipeline: "demo",
+        steps: [
+          {
+            id: "classification",
+            dependsOn: [],
+            processMatchers: ["KRAKEN2"],
+          },
+        ],
+      }
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "output-from-step-missing" }),
+      ])
+    );
+  });
+
+  it("reports definition outputs that reference missing definition steps", async () => {
+    await writeValidPackage(
+      baseManifest(),
+      {
+        pipeline: "demo",
+        steps: [
+          {
+            id: "qc",
+            dependsOn: [],
+            processMatchers: ["FASTQC"],
+          },
+        ],
+        outputs: [
+          {
+            id: "report",
+            fromStep: "missing",
+          },
+        ],
+      }
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "definition-output-from-step-missing" }),
+      ])
+    );
+  });
+
+  it("warns when definition steps cannot map Nextflow process traces", async () => {
+    await writeValidPackage(
+      baseManifest(),
+      {
+        pipeline: "demo",
+        steps: [
+          {
+            id: "simulate_reads",
+            dependsOn: [],
+          },
+        ],
+      }
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toBeGreaterThan(0);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "step-process-matchers", level: "warning" }),
       ])
     );
   });

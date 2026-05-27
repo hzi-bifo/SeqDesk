@@ -46,7 +46,7 @@
       "id": "summary",
       "name": "Cleaning summary",
       "description": "Run-level detaxizer classification and filtering summary",
-      "fromStep": "summary",
+      "fromStep": "classification",
       "fileTypes": [
         ".tsv"
       ],
@@ -63,6 +63,21 @@
       ],
       "destination": "run_artifact",
       "destinationDescription": "Previewable from the pipeline output page"
+    },
+    {
+      "id": "pipeline_info",
+      "name": "Pipeline info",
+      "description": "nf-core execution metadata and software version files",
+      "fromStep": "pipeline_info",
+      "fileTypes": [
+        ".txt",
+        ".csv",
+        ".json",
+        ".yaml",
+        ".yml"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as run artifacts for provenance"
     }
   ],
   "steps": [
@@ -121,6 +136,26 @@
       ],
       "outputs": [
         "multiqc_report"
+      ]
+    },
+    {
+      "id": "pipeline_info",
+      "name": "Pipeline Info",
+      "description": "Capture nf-core execution metadata and software versions.",
+      "category": "reporting",
+      "dependsOn": [
+        "multiqc"
+      ],
+      "processMatchers": [
+        "PIPELINE_INFO",
+        "DUMPSOFTWAREVERSIONS",
+        "CUSTOM_DUMPSOFTWAREVERSIONS"
+      ],
+      "tools": [
+        "nf-core"
+      ],
+      "outputs": [
+        "pipeline_info"
       ]
     }
   ]

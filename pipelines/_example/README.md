@@ -50,6 +50,19 @@ The `paramMap` translates UI configuration keys to Nextflow command-line flags:
 When a user sets `skipStep1: true` in the UI, the generic executor adds
 `--skip_step1` to the Nextflow command.
 
+Map SeqDesk-only UI settings to an empty string so they are not passed to
+Nextflow. Presence-only Nextflow switches such as `-stub` can be mapped directly;
+`true` adds the switch and `false` omits it.
+
+```json
+{
+  "paramMap": {
+    "stubMode": "-stub",
+    "runAt": ""
+  }
+}
+```
+
 ### paramRules
 
 For complex conditional logic, use `paramRules`:
@@ -92,6 +105,29 @@ The `matchSampleBy` strategy determines how to associate files with samples:
 - `filename`: Sample ID appears in the filename
 - `parent_dir`: Sample ID appears in the parent directory name
 - `path`: Sample ID appears anywhere in the path
+
+Every output `id` must be stable. If an output declares `fromStep`, that value
+must match a `definition.steps[].id`. Discovery scripts should return the same
+`outputId` and `fromStep` values used by the manifest.
+
+### definition.json
+
+The definition file controls the pipeline DAG, output wiring, and trace progress
+mapping. Each runnable Nextflow step should define process matchers:
+
+```json
+{
+  "id": "classification",
+  "dependsOn": [],
+  "processMatchers": ["KRAKEN2", ".*BBDUK.*"],
+  "outputs": ["summary"]
+}
+```
+
+Prefer exact process names when they are known. Regex matchers are supported for
+variable nf-core process names, but broad names like `FASTQC` should not be the
+only matcher when a more specific process such as `FASTQC_TRIMMED` has its own
+step.
 
 ### Parsers
 
@@ -141,6 +177,10 @@ The package loader validates:
 - All referenced files exist
 - Parser IDs referenced in outputs exist
 - Definition and registry IDs match manifest
+- Definition step dependencies point at existing steps
+- Manifest and definition `fromStep` values point at existing definition steps
+- Definition steps include process matchers for trace progress mapping
 
 Warnings are logged for:
-- ID mismatches between manifest/definition/registry (drift)
+- Missing process matchers on runnable definition steps
+- Missing local Nextflow workflow paths unless `execution.runner` is `custom`

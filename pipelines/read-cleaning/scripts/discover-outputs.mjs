@@ -190,7 +190,7 @@ try {
       type: "artifact",
       name: "summary.tsv",
       path: summaryPath,
-      fromStep: "summary",
+      fromStep: "classification",
       outputId: "summary",
     });
   }

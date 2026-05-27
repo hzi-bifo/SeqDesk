@@ -1213,8 +1213,47 @@ export function packageToDagData(packageId: string): DagData | null {
   };
 }
 
+function cleanProcessName(processName: string): string {
+  const withoutSuffix = processName.split(' ')[0];
+  const parts = withoutSuffix.split(':');
+  return (parts[parts.length - 1] || '').toUpperCase();
+}
+
+function isRegexLikeMatcher(matcher: string): boolean {
+  return /[\\^$.*+?()[\]{}|]/.test(matcher);
+}
+
+function scoreProcessMatcher(matcher: string, cleanName: string): number | null {
+  const trimmedMatcher = matcher.trim();
+  if (!trimmedMatcher) return null;
+
+  if (isRegexLikeMatcher(trimmedMatcher)) {
+    try {
+      return new RegExp(trimmedMatcher, 'i').test(cleanName)
+        ? 700 + trimmedMatcher.length
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const upperMatcher = trimmedMatcher.toUpperCase();
+  if (cleanName === upperMatcher) {
+    return 1000 + upperMatcher.length;
+  }
+
+  if (cleanName.includes(upperMatcher)) {
+    return 300 + upperMatcher.length;
+  }
+
+  return null;
+}
+
 /**
- * Find step by Nextflow process name
+ * Find step by Nextflow process name.
+ *
+ * Prefer exact process matcher hits over broader substring or regex matches so
+ * steps like FASTQC_TRIMMED do not get swallowed by a generic FASTQC matcher.
  */
 export function findStepByProcessFromPackage(
   packageId: string,
@@ -1223,22 +1262,23 @@ export function findStepByProcessFromPackage(
   const pkg = getPackage(packageId);
   if (!pkg) return null;
 
-  // Extract clean process name
-  const withoutSuffix = processName.split(' ')[0];
-  const parts = withoutSuffix.split(':');
-  const cleanName = parts[parts.length - 1].toUpperCase();
+  const cleanName = cleanProcessName(processName);
+  let bestMatch: { step: PipelineStepDef; score: number } | null = null;
 
   for (const step of pkg.definition.steps) {
     if (!step.processMatchers) continue;
 
     for (const matcher of step.processMatchers) {
-      if (cleanName.includes(matcher.toUpperCase())) {
-        return step as PipelineStepDef;
+      const score = scoreProcessMatcher(matcher, cleanName);
+      if (score === null) continue;
+
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { step: step as PipelineStepDef, score };
       }
     }
   }
 
-  return null;
+  return bestMatch?.step ?? null;
 }
 
 /**
