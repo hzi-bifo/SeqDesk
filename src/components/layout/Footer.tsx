@@ -455,7 +455,7 @@ function formatRunMode(run: PipelineLoadRunSummary): string {
 }
 
 function notificationSeverityClass(severity: string): string {
-  if (severity === "success") return "bg-emerald-500";
+  if (severity === "success") return "bg-[#00BD7D]";
   if (severity === "warning") return "bg-amber-500";
   if (severity === "error") return "bg-destructive";
   return "bg-sky-500";

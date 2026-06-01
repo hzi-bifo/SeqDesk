@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     mkdir: vi.fn(),
     writeFile: vi.fn(),
     chmod: vi.fn(),
+    rm: vi.fn(),
   },
 }));
 
@@ -37,6 +38,7 @@ vi.mock('fs/promises', () => ({
     mkdir: mocks.fs.mkdir,
     writeFile: mocks.fs.writeFile,
     chmod: mocks.fs.chmod,
+    rm: mocks.fs.rm,
   },
 }));
 
@@ -125,6 +127,7 @@ describe('prepareMagRun', () => {
     mocks.fs.mkdir.mockResolvedValue(undefined);
     mocks.fs.writeFile.mockResolvedValue(undefined);
     mocks.fs.chmod.mockResolvedValue(undefined);
+    mocks.fs.rm.mockResolvedValue(undefined);
   });
 
   it('returns error when adapter is not registered', async () => {
@@ -405,6 +408,98 @@ describe('prepareMagRun', () => {
     );
     const script = scriptWrite![1] as string;
     expect(script).toContain('-profile conda');
+  });
+
+  it('records the exit code via an EXIT trap so failures still write the marker (local)', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    await prepareMagRun(baseStartRunOptions() as any);
+
+    const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
+      (c[0] as string).endsWith('run.sh')
+    );
+    const script = scriptWrite![1] as string;
+    // The marker must be written from a trap so "set -e" cannot skip it on failure.
+    expect(script).toContain(
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+    );
+    // The dead post-command capture must be gone.
+    expect(script).not.toContain('EXIT_CODE=$?\necho');
+  });
+
+  it('records the exit code via an EXIT trap so failures still write the marker (slurm)', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const options = baseStartRunOptions({
+      executionSettings: {
+        ...baseExecutionSettings(),
+        useSlurm: true,
+      },
+    });
+
+    await prepareMagRun(options as any);
+
+    const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
+      (c[0] as string).endsWith('run.sh')
+    );
+    const script = scriptWrite![1] as string;
+    expect(script).toContain('#SBATCH');
+    expect(script).toContain(
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+    );
+    expect(script).not.toContain('EXIT_CODE=$?\necho');
+  });
+
+  it('retries run-number allocation when a concurrent run claims the number first', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // First findMany returns the max for both racers; after the first claim
+    // succeeds, the next findMany reflects it so the retry computes 009.
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([{ runNumber: `MAG-${todayStr}-007` }])
+      .mockResolvedValueOnce([{ runNumber: `MAG-${todayStr}-008` }]);
+
+    const conflict = Object.assign(new Error('Unique constraint failed'), {
+      code: 'P2002',
+      meta: { target: ['runNumber'] },
+    });
+    mocks.db.pipelineRun.update
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({});
+
+    const result = await prepareMagRun(baseStartRunOptions() as any);
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(2);
+    // The stale folder from the losing attempt is removed before retrying.
+    expect(mocks.fs.rm).toHaveBeenCalledTimes(1);
+    const finalCall = mocks.db.pipelineRun.update.mock.calls[1][0];
+    expect(finalCall.data.runNumber).toBe(`MAG-${todayStr}-009`);
+    expect(result.runFolder).toContain(finalCall.data.runNumber);
+  });
+
+  it('surfaces non-runNumber unique violations instead of retrying', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const conflict = Object.assign(new Error('Unique constraint failed'), {
+      code: 'P2002',
+      meta: { target: ['someOtherField'] },
+    });
+    mocks.db.pipelineRun.update.mockRejectedValue(conflict);
+
+    const result = await prepareMagRun(baseStartRunOptions() as any);
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain('Failed to prepare run');
+    // No retry: update is attempted exactly once and the stale folder is kept
+    // for the caller's error to surface unchanged.
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
+    expect(mocks.fs.rm).not.toHaveBeenCalled();
   });
 });
 

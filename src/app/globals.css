@@ -262,7 +262,7 @@
   }
 
   .status-dot-active {
-    @apply bg-emerald-500;
+    background-color: #00BD7D;
   }
 
   .status-dot-pending {

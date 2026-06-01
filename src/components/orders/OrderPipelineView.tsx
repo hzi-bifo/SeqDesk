@@ -198,13 +198,16 @@ type PipelineRun = {
   } | null;
 };
 
-type ReadCleaningCandidate = {
+type PendingReadCandidate = {
   artifactId: string;
+  outputId: string | null;
+  outputLabel: string;
   sampleId: string;
   sampleCode: string;
   file1: string;
   file2: string | null;
   readLayout: "single" | "paired" | "long" | "unknown";
+  targetDataClass: ReadDataClass;
   status: "candidate" | "promoted";
   metadata: Record<string, unknown>;
   currentRead: {
@@ -217,14 +220,24 @@ type ReadCleaningCandidate = {
   } | null;
 };
 
-type ReadCleaningCandidateResponse = {
-  candidates: ReadCleaningCandidate[];
+type PendingWritebackResponse = {
+  readCandidates: PendingReadCandidate[];
   reports: Array<{
     id: string;
     name: string;
     path: string;
     outputId: string | null;
   }>;
+  review?: {
+    title?: string;
+    description?: string;
+    candidateCountLabel?: string;
+    emptyText?: string;
+    promoteButtonLabel?: string;
+    confirmTitle?: string;
+    confirmDescription?: string;
+    reviewedLabel?: string;
+  };
 };
 
 const STATUS_OPTIONS = [
@@ -232,6 +245,7 @@ const STATUS_OPTIONS = [
   { value: "completed", label: "Completed" },
   { value: "running", label: "Running" },
   { value: "queued", label: "Queued" },
+  { value: "pending", label: "Pending" },
   { value: "failed", label: "Failed" },
   { value: "cancelled", label: "Cancelled" },
 ] as const;
@@ -265,11 +279,15 @@ function formatDuration(start: string | null, end: string | null): string {
 function getStatusBadge(status: string) {
   switch (status) {
     case "completed":
-      return <Badge className="bg-emerald-600 text-white">Completed</Badge>;
+      // Use the SeqDesk brand success color, matching StudyPipelinesSection and
+      // the rest of the app (analysis/studies/footer all use #00BD7D).
+      return <Badge className="bg-[#00BD7D] text-white">Completed</Badge>;
     case "running":
       return <Badge className="bg-blue-600 text-white">Running</Badge>;
     case "queued":
       return <Badge variant="secondary">Queued</Badge>;
+    case "pending":
+      return <Badge variant="outline">Pending</Badge>;
     case "failed":
       return <Badge variant="destructive">Failed</Badge>;
     case "cancelled":
@@ -288,6 +306,7 @@ function getRunDetails(run: PipelineRun): string {
   }
   if (run.status === "completed") return "Completed successfully";
   if (run.status === "queued") return "Waiting for execution";
+  if (run.status === "pending") return "Waiting for execution";
   if (run.status === "running") return "Currently running";
   return "";
 }
@@ -301,6 +320,20 @@ function getPendingWritebackCount(run: PipelineRun): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : 0;
+}
+
+// Whether the candidate-review entry points should be offered for a run.
+// The denormalized pendingWritebacks count is only present for runs completed
+// after the writeback-contracts cutover; runs completed before that have a count
+// of 0 even though staged sample_read_candidate artifacts still exist. To avoid
+// stranding those historical runs, also offer the review for any completed
+// read-cleaning run — the review panel recomputes candidates from artifacts and
+// degrades gracefully when none remain.
+function shouldOfferPendingReview(run: PipelineRun): boolean {
+  if (getPendingWritebackCount(run) > 0) return true;
+  return (
+    run.status === "completed" && run.pipelineId === READ_CLEANING_PIPELINE_ID
+  );
 }
 
 function getSampleCount(run: PipelineRun): number | null {
@@ -342,7 +375,7 @@ function formatCandidateMetric(value: unknown): string | null {
   return null;
 }
 
-function getCandidateEvidence(candidate: ReadCleaningCandidate): string {
+function getCandidateEvidence(candidate: PendingReadCandidate): string {
   const keys = [
     "classified",
     "classified_reads",
@@ -357,7 +390,7 @@ function getCandidateEvidence(candidate: ReadCleaningCandidate): string {
   return "-";
 }
 
-function getCandidateLayoutLabel(layout: ReadCleaningCandidate["readLayout"]): string {
+function getCandidateLayoutLabel(layout: PendingReadCandidate["readLayout"]): string {
   switch (layout) {
     case "paired":
       return "Paired-end";
@@ -537,7 +570,7 @@ function getRunAllActionCopy({
   };
 }
 
-function ReadCleaningReviewPanel({
+function PendingWritebackReviewPanel({
   run,
   isDemo,
   isFacilityAdmin,
@@ -554,29 +587,30 @@ function ReadCleaningReviewPanel({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [reviewChecked, setReviewChecked] = useState(false);
   const [promoting, setPromoting] = useState(false);
-  const response = useSWR<ReadCleaningCandidateResponse>(
-    run.pipelineId === READ_CLEANING_PIPELINE_ID && run.status === "completed"
-      ? `/api/pipelines/runs/${run.id}/cleaned-reads`
+  const response = useSWR<PendingWritebackResponse>(
+    run.status === "completed" && shouldOfferPendingReview(run)
+      ? `/api/pipelines/runs/${run.id}/pending-writebacks`
       : null,
     fetcher
   );
 
-  const candidates = response.data?.candidates ?? [];
+  const candidates = response.data?.readCandidates ?? [];
   const reports = response.data?.reports ?? [];
+  const review = response.data?.review;
   const promotableCandidates = candidates.filter((candidate) => candidate.status !== "promoted");
 
   useEffect(() => {
     if (!response.data) return;
     setSelectedSampleIds(
       new Set(
-        response.data.candidates
+        response.data.readCandidates
           .filter((candidate) => candidate.status !== "promoted")
           .map((candidate) => candidate.sampleId)
       )
     );
   }, [response.data]);
 
-  if (run.pipelineId !== READ_CLEANING_PIPELINE_ID || run.status !== "completed") {
+  if (run.status !== "completed" || !shouldOfferPendingReview(run)) {
     return null;
   }
 
@@ -601,21 +635,21 @@ function ReadCleaningReviewPanel({
     setPromoting(true);
     onError?.("");
     try {
-      const res = await fetch(`/api/pipelines/runs/${run.id}/cleaned-reads`, {
+      const res = await fetch(`/api/pipelines/runs/${run.id}/pending-writebacks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sampleIds: Array.from(selectedSampleIds) }),
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to promote cleaned reads"));
+        throw new Error(getApiErrorMessage(payload, "Failed to promote pending outputs"));
       }
       setConfirmOpen(false);
       setReviewChecked(false);
       await response.mutate();
       onPromoted?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to promote cleaned reads");
+      onError?.(err instanceof Error ? err.message : "Failed to promote pending outputs");
     } finally {
       setPromoting(false);
     }
@@ -626,14 +660,17 @@ function ReadCleaningReviewPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Review cleaned reads
+            {review?.title ?? "Review pending read outputs"}
           </span>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select the cleaned candidates that should become the active cleaned reads for this order. Existing raw or unknown reads are preserved.
+            {review?.description ??
+              "Select staged read candidates that should become active reads for this order. Existing raw or unknown reads are preserved."}
           </p>
         </div>
         <Badge variant="outline" className="text-xs">
-          {promotableCandidates.length} candidate{promotableCandidates.length === 1 ? "" : "s"}
+          {promotableCandidates.length}{" "}
+          {review?.candidateCountLabel ?? "candidate"}
+          {promotableCandidates.length === 1 ? "" : "s"}
         </Badge>
       </div>
 
@@ -644,7 +681,7 @@ function ReadCleaningReviewPanel({
         </div>
       ) : candidates.length === 0 ? (
         <p className="mt-4 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-          No cleaned read candidates were discovered for this run.
+          {review?.emptyText ?? "No pending read candidates were discovered for this run."}
         </p>
       ) : (
         <>
@@ -679,7 +716,7 @@ function ReadCleaningReviewPanel({
                     Current active reads
                   </th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                    Cleaned candidate
+                    Candidate
                   </th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                     Evidence
@@ -696,7 +733,7 @@ function ReadCleaningReviewPanel({
                     <tr key={candidate.artifactId}>
                       <td className="px-3 py-2 align-top">
                         <Checkbox
-                          aria-label={`Select cleaned reads for ${candidate.sampleCode}`}
+                          aria-label={`Select pending reads for ${candidate.sampleCode}`}
                           checked={selectedSampleIds.has(candidate.sampleId)}
                           disabled={disabled}
                           onCheckedChange={() => toggleCandidate(candidate.sampleId)}
@@ -749,7 +786,7 @@ function ReadCleaningReviewPanel({
                       </td>
                       <td className="px-3 py-2 align-top">
                         {candidate.status === "promoted" ? (
-                          <Badge className="bg-emerald-600 text-white">Promoted</Badge>
+                          <Badge className="bg-[#00BD7D] text-white">Promoted</Badge>
                         ) : (
                           <Badge variant="outline">Candidate</Badge>
                         )}
@@ -778,7 +815,7 @@ function ReadCleaningReviewPanel({
                 disabled={promoting || selectedCount === 0}
                 onClick={() => setConfirmOpen(true)}
               >
-                Set as active cleaned reads
+                {review?.promoteButtonLabel ?? "Set as active reads"}
               </Button>
             </div>
           ) : null}
@@ -788,21 +825,31 @@ function ReadCleaningReviewPanel({
       {confirmOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
-            <h4 className="text-base font-semibold">Set as active cleaned reads</h4>
+            <h4 className="text-base font-semibold">
+              {review?.confirmTitle ?? "Set as active reads"}
+            </h4>
             <p className="mt-2 text-sm text-muted-foreground">
-              This will change which read files SeqDesk uses for delivery and downstream pipelines for {selectedCount} sample{selectedCount === 1 ? "" : "s"}. Existing raw or unknown reads will be preserved. Existing active cleaned reads will be superseded, not deleted.
+              {review?.confirmDescription ??
+                "This will change which read files SeqDesk uses for delivery and downstream pipelines. Existing raw or unknown reads will be preserved. Existing active cleaned reads will be superseded, not deleted."}{" "}
+              This applies to {selectedCount} sample{selectedCount === 1 ? "" : "s"}.
             </p>
             <div className="mt-3 max-h-28 overflow-auto rounded-md bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
               {selectedCandidates.map((candidate) => candidate.sampleCode).join(", ")}
             </div>
             <label className="mt-4 flex items-start gap-2 text-sm">
               <Checkbox
-                aria-label="I reviewed the cleaning report and want to use these cleaned reads"
+                aria-label={
+                  review?.reviewedLabel ??
+                  "I reviewed the reports and want to use these read candidates."
+                }
                 checked={reviewChecked}
                 disabled={promoting}
                 onCheckedChange={(checked) => setReviewChecked(Boolean(checked))}
               />
-              <span>I reviewed the cleaning report and want to use these cleaned reads.</span>
+              <span>
+                {review?.reviewedLabel ??
+                  "I reviewed the reports and want to use these read candidates."}
+              </span>
             </label>
             <div className="mt-5 flex justify-end gap-2">
               <Button
@@ -2580,15 +2627,15 @@ export function OrderPipelineView({
                                   Make visible to user
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin && !isDemo && run.pipelineId === READ_CLEANING_PIPELINE_ID && run.status === "completed" && (
+                              {isFacilityAdmin && !isDemo && shouldOfferPendingReview(run) && (
                                 <DropdownMenuItem
                                   onSelect={(event) => {
                                     event.preventDefault();
                                     setDetailRun(run);
                                   }}
                                 >
-                                  <CheckCircle2 className="h-4 w-4" />
-                                  Review cleaned reads
+                                  <ShieldCheck className="h-4 w-4" />
+                                  Review pending outputs
                                 </DropdownMenuItem>
                               )}
                               {isFacilityAdmin && !isDemo && isRunVisibleToUser(run) && (
@@ -2687,7 +2734,7 @@ export function OrderPipelineView({
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
-            <div className={cn("w-full rounded-xl border bg-card p-6 shadow-lg", detailRun.pipelineId === READ_CLEANING_PIPELINE_ID ? "max-w-4xl" : "max-w-2xl")}>
+            <div className={cn("w-full rounded-xl border bg-card p-6 shadow-lg", getPendingWritebackCount(detailRun) > 0 ? "max-w-4xl" : "max-w-2xl")}>
               <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold">
                 <span>Run Details</span>
                 <code className="min-w-0 max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
@@ -2800,7 +2847,7 @@ export function OrderPipelineView({
                     </pre>
                   </>
                 )}
-                <ReadCleaningReviewPanel
+                <PendingWritebackReviewPanel
                   run={detailRun}
                   isDemo={isDemo}
                   isFacilityAdmin={isFacilityAdmin}

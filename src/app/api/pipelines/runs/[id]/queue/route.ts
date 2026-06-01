@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -76,8 +77,10 @@ function queueStateToRunStatus(value: string | null | undefined): "queued" | "ru
   return "running";
 }
 
-function shouldReviveRun(runStatus: string): boolean {
-  return ["completed", "failed", "cancelled"].includes(runStatus);
+const TERMINAL_RUN_STATUSES = ["completed", "failed", "cancelled"];
+
+function isTerminalRunStatus(runStatus: string): boolean {
+  return TERMINAL_RUN_STATUSES.includes(runStatus);
 }
 
 function buildQueueUpdateData(
@@ -95,10 +98,11 @@ function buildQueueUpdateData(
 
   if (isQueueStateLikelyActive(queueState)) {
     const nextStatus = queueStateToRunStatus(queueState);
-    const shouldUpdateRunStatus =
-      shouldReviveRun(runStatus) ||
-      runStatus === "pending" ||
-      runStatus === "queued";
+    // Only reconcile non-terminal runs. A genuinely terminal run
+    // (completed/failed/cancelled) must never be revived from queue
+    // liveness: local PIDs and SLURM job IDs are recycled by the OS/
+    // scheduler, so a live id no longer identifies the original job.
+    const shouldUpdateRunStatus = !isTerminalRunStatus(runStatus);
 
     if (shouldUpdateRunStatus) {
       data.status = nextStatus;
@@ -106,9 +110,6 @@ function buildQueueUpdateData(
         nextStatus === "queued" ? "Waiting for scheduler" : "Running on compute node";
       if (nextStatus === "running") {
         data.startedAt = startedAt || now;
-      }
-      if (shouldReviveRun(runStatus)) {
-        data.completedAt = null;
       }
       data.statusSource = "queue";
       data.lastEventAt = now;
@@ -140,6 +141,10 @@ export async function GET(
         startedAt: true,
         study: { select: { userId: true } },
         order: { select: { userId: true } },
+        selectedResultSelections: {
+          select: { id: true },
+          take: 1,
+        },
       },
     });
 
@@ -147,11 +152,7 @@ export async function GET(
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
 
-    if (
-      session.user.role !== "FACILITY_ADMIN" &&
-      run.study?.userId !== session.user.id &&
-      run.order?.userId !== session.user.id
-    ) {
+    if (!canReadPipelineRun(session.user, run)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

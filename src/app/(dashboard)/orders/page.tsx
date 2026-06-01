@@ -60,7 +60,7 @@ interface Order {
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
   DRAFT: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground" },
   SUBMITTED: { label: "Submitted", color: "text-blue-600", dot: "bg-blue-500" },
-  COMPLETED: { label: "Completed", color: "text-emerald-600", dot: "bg-emerald-500" },
+  COMPLETED: { label: "Completed", color: "text-[#00BD7D]", dot: "bg-[#00BD7D]" },
 };
 
 type SortField = "created" | "name" | "status" | "samples";

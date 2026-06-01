@@ -1843,8 +1843,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     }
 
     return (
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex h-full min-h-[420px] flex-col gap-4">
+        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
           <p className="min-w-0 flex-1 text-sm text-muted-foreground">
             Add your sample metadata below. Use <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Tab</kbd>,{" "}
             <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd>, or arrow keys to navigate.
@@ -1866,13 +1866,13 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         )}
 
         {allPerSampleFields.length === 0 ? (
-          <div className="text-center py-8 bg-muted/30 rounded-lg">
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg bg-muted/30 py-8 text-center">
             <p className="text-muted-foreground">No per-sample fields configured.</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
-            <div ref={tableScrollRef} className="overflow-x-auto bg-white">
-              <table className="w-full border-collapse bg-white text-sm">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-white shadow-sm">
+            <div ref={tableScrollRef} className="min-h-0 flex-1 overflow-auto bg-white">
+              <table className="min-w-full border-collapse bg-white text-sm">
                 <thead>
                   {metadataTable.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id}>
@@ -1953,7 +1953,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-end border-t bg-white px-3 py-2">
+            <div className="flex shrink-0 items-center justify-end border-t bg-white px-3 py-2">
               <span className="text-xs text-muted-foreground">
                 {sampleMetadata.length} sample{sampleMetadata.length !== 1 ? "s" : ""}
                 {allPerSampleFields.length > 0 && ` | ${allPerSampleFields.length} field${allPerSampleFields.length !== 1 ? "s" : ""}`}
@@ -2185,7 +2185,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
                               <p className="text-sm text-muted-foreground">No fields match &quot;{mixsFieldSearch}&quot;</p>
                             </div>
                           ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[400px] overflow-y-auto pr-1">
+                            <div className="grid max-h-[min(640px,55svh)] grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
                               {filteredFields.map((field) => {
                                 const isFieldSelected = selectedMixsFields.has(field.name);
                                 return (
@@ -2237,8 +2237,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
       case "samples":
         return (
-          <div className="space-y-4" onFocus={() => setFocusedField(FIELD_DEFINITIONS.samples)}>
-            <div className="flex items-center justify-between">
+          <div className="flex h-full min-h-[360px] flex-col gap-4" onFocus={() => setFocusedField(FIELD_DEFINITIONS.samples)}>
+            <div className="flex shrink-0 items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Select samples to include in this study.</p>
                 {selectedSampleIds.length > 0 && (
@@ -2258,16 +2258,16 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
             </div>
 
             {loadingSamples ? (
-              <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              <div className="flex min-h-0 flex-1 items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
             ) : eligibleSamples.length === 0 ? (
-              <div className="text-center py-12 bg-muted/30 rounded-lg">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg bg-muted/30 py-12 text-center">
                 <FlaskConical className="h-12 w-12 mx-auto mb-3 text-muted-foreground/50" />
                 <p className="text-muted-foreground mb-2">No available samples</p>
                 <p className="text-sm text-muted-foreground">Create an order and add samples first.</p>
                 <Button className="mt-4" size="sm" asChild><Link href="/orders/new">Create Order</Link></Button>
               </div>
             ) : (
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                 {eligibleSamples.map((sample) => {
                   const isSelected = selectedSampleIds.includes(sample.id);
                   const isCurrentStudy = sample.studyId === activeStudyId;
@@ -2407,7 +2407,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   }
 
   return (
-    <div className="p-8">
+    <div className="flex h-[calc(100svh-3.5rem)] flex-col overflow-hidden p-4 pb-16 md:h-[calc(100svh-2.5rem)] md:p-8 md:pb-16">
       <Dialog open={showWarningDialog} onOpenChange={setShowWarningDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -2445,9 +2445,9 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         </DialogContent>
       </Dialog>
 
-      <div className="flex items-center justify-between mb-8">
+      <div className="mb-8 flex shrink-0 items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Edit Study</h1>
+          <h1 className="text-xl font-semibold">Edit Study</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Step {currentStep + 1} of {STEPS.length}
           </p>
@@ -2457,8 +2457,8 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         </Button>
       </div>
 
-      <div>
-        <div className="mb-6">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="mb-6 shrink-0">
           <StepProgressNav
             steps={STEPS}
             currentIndex={currentStep}
@@ -2471,21 +2471,21 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
+          <div className="mb-6 shrink-0 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
             {error}
           </div>
         )}
 
-        <div>
-          <div className="mb-6">
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="mb-6 shrink-0">
             <h2 className="text-xl font-semibold">{STEPS[currentStep].title}</h2>
             <p className="text-sm text-muted-foreground">{STEPS[currentStep].description}</p>
           </div>
 
-          {renderStepContent()}
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">{renderStepContent()}</div>
         </div>
 
-        <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
+        <div className="mt-8 flex shrink-0 items-center justify-between border-t border-border pt-6">
           <Button variant="outline" onClick={prevStep} disabled={currentStep === 0 || isLoading}>
             <ChevronLeft className="h-4 w-4 mr-2" />
             Previous

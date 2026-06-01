@@ -599,7 +599,7 @@ export function SequencingStreamView({
                   Make sure the stream-monitor daemon is running (<code>npm run stream:monitor</code>), otherwise files won&apos;t be picked up.
                 </span>
               ) : daemon.status === "RUNNING" ? (
-                <span className="text-xs inline-flex items-center gap-1.5 text-emerald-700">
+                <span className="text-xs inline-flex items-center gap-1.5 text-[#00BD7D]">
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   Stream-monitor daemon running
                   {daemon.pid != null ? <span className="text-muted-foreground">(pid {daemon.pid})</span> : null}
@@ -746,7 +746,7 @@ export function SequencingStreamView({
                               className={
                                 "inline-block h-1.5 w-1.5 rounded-full " +
                                 (isActive
-                                  ? "bg-emerald-500 animate-pulse"
+                                  ? "bg-[#00BD7D] animate-pulse"
                                   : row.lastFileAt
                                   ? "bg-muted-foreground/40"
                                   : "bg-transparent")

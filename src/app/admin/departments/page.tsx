@@ -585,8 +585,8 @@ export default function DepartmentsPage() {
                 {/* Status */}
                 <div className="col-span-1">
                   <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${dept.isActive ? "bg-emerald-500" : "bg-stone-400"}`} />
-                    <span className={`text-xs font-medium ${dept.isActive ? "text-emerald-600" : "text-stone-600"}`}>
+                    <span className={`h-2 w-2 rounded-full ${dept.isActive ? "bg-[#00BD7D]" : "bg-stone-400"}`} />
+                    <span className={`text-xs font-medium ${dept.isActive ? "text-[#00BD7D]" : "text-stone-600"}`}>
                       {dept.isActive ? "Active" : "Inactive"}
                     </span>
                   </div>
@@ -613,7 +613,7 @@ export default function DepartmentsPage() {
                     className="p-1.5 rounded-md hover:bg-stone-100 transition-colors"
                     title={dept.isActive ? "Deactivate" : "Activate"}
                   >
-                    <span className={`block h-3 w-3 rounded-full border-2 ${dept.isActive ? "bg-emerald-500 border-emerald-500" : "bg-transparent border-stone-400"}`} />
+                    <span className={`block h-3 w-3 rounded-full border-2 ${dept.isActive ? "bg-[#00BD7D] border-[#00BD7D]" : "bg-transparent border-stone-400"}`} />
                   </button>
                   <button
                     onClick={() => handleEdit(dept)}

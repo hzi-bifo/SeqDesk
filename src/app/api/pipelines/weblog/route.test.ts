@@ -78,10 +78,12 @@ vi.mock("util", () => ({
 
 import { POST } from "./route";
 
+const TEST_WEBLOG_SECRET = "test-weblog-secret";
+
 function makeRequest(
   runId: string,
   body: Record<string, unknown>,
-  token = ""
+  token = TEST_WEBLOG_SECRET
 ): NextRequest {
   const url = `http://localhost:3000/api/pipelines/weblog?runId=${runId}&token=${token}`;
   return new NextRequest(url, {
@@ -106,7 +108,7 @@ describe("POST /api/pipelines/weblog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getExecutionSettings.mockResolvedValue({
-      weblogSecret: "",
+      weblogSecret: TEST_WEBLOG_SECRET,
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValue(baseRun);
     mocks.db.pipelineRunStep.findUnique.mockResolvedValue(null);
@@ -165,13 +167,27 @@ describe("POST /api/pipelines/weblog", () => {
     expect(res.status).toBe(200);
   });
 
-  it("allows request when no weblogSecret is configured", async () => {
+  it("rejects request (503) when no weblogSecret is configured (fail closed)", async () => {
     mocks.getExecutionSettings.mockResolvedValue({
       weblogSecret: "",
     });
     const req = makeRequest("run-1", { event: "process_start" });
     const res = await POST(req);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe("Weblog secret is not configured");
+  });
+
+  it("does not mutate run state when no weblogSecret is configured", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      weblogSecret: "",
+    });
+    const req = makeRequest("run-1", { event: "workflow_complete" });
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    // Fail closed before any run lookup or mutation.
+    expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
   });
 
   it("returns 404 when run is not found", async () => {
@@ -759,7 +775,7 @@ describe("POST /api/pipelines/weblog", () => {
 
   it("handles non-numeric queue job IDs gracefully", async () => {
     vi.clearAllMocks();
-    mocks.getExecutionSettings.mockResolvedValue({ weblogSecret: "" });
+    mocks.getExecutionSettings.mockResolvedValue({ weblogSecret: TEST_WEBLOG_SECRET });
     mocks.getStepsForPipeline.mockReturnValue([]);
     mocks.findStepByProcess.mockReturnValue(null);
     mocks.db.pipelineRunStep.findUnique.mockResolvedValue(null);

@@ -294,7 +294,7 @@ export function InfrastructureSetupStatus({
           <Button
             variant="outline"
             size="sm"
-            className="bg-white"
+            className="bg-card"
             onClick={() => void refreshStatuses()}
             disabled={refreshing}
           >

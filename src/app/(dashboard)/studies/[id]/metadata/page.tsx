@@ -330,7 +330,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
         header: "Sample ID",
         size: 150,
         cell: ({ getValue }) => (
-          <div className="px-2 py-1 h-full bg-gray-50 text-gray-600 font-mono text-xs">
+          <div className="px-2 py-1 h-full bg-muted text-muted-foreground font-mono text-xs">
             {getValue() as string}
           </div>
         ),
@@ -341,7 +341,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
         header: "Title",
         size: 150,
         cell: ({ getValue }) => (
-          <div className="px-2 py-1 h-full bg-gray-50 text-gray-600 text-sm truncate">
+          <div className="px-2 py-1 h-full bg-muted text-muted-foreground text-sm truncate">
             {(getValue() as string) || "-"}
           </div>
         ),
@@ -550,7 +550,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
 
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold flex items-center gap-2">
+            <h1 className="text-xl font-semibold flex items-center gap-2">
               <FileSpreadsheet className="h-6 w-6" />
               MIxS Metadata
             </h1>

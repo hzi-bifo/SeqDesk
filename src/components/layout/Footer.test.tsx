@@ -227,7 +227,9 @@ describe("Footer admin activity", () => {
         fetchMock.mock.calls.some(([url]) => String(url).includes("/hide"))
       ).toBe(true);
     });
-    expect(screen.queryByText(/Data base path is not writable/)).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryAllByText(/Data base path is not writable/)).toHaveLength(0);
+    });
   });
 
   it("shows compact background worker status when no activity is visible", async () => {

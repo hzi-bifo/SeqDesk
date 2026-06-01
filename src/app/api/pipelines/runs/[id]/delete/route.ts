@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
 import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
+import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
 import { cleanupRunOutputData } from '@/lib/pipelines/run-delete';
 
 function parseSelectedSampleIds(value: string | null): string[] | null {
@@ -43,6 +44,7 @@ export async function POST(
     const run = await db.pipelineRun.findUnique({
       where: { id },
       include: {
+        // queueJobId is included via the model fields by default with `include`.
         study: {
           select: {
             id: true,
@@ -77,6 +79,23 @@ export async function POST(
         { error: 'Cannot delete a running run. Cancel it first.' },
         { status: 400 }
       );
+    }
+
+    // A queued/pending run can already have a live scheduler job (SLURM job or
+    // local PID) attached. Deleting the row + folder without cancelling would
+    // orphan that job: the scheduler later promotes it to running against a
+    // deleted run folder and a missing run row, wasting compute and producing
+    // failed weblog callbacks. Cancel the live job before deleting.
+    if (
+      run.queueJobId &&
+      (run.status === 'queued' || run.status === 'pending')
+    ) {
+      const cancelResult = await cancelPipelineRunForOperator(id);
+      if (cancelResult.status >= 400) {
+        return NextResponse.json(cancelResult.body, {
+          status: cancelResult.status,
+        });
+      }
     }
 
     const target =

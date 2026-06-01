@@ -49,7 +49,7 @@ interface Ticket {
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
   OPEN: { label: "Open", color: "text-blue-600", dot: "bg-blue-500" },
   IN_PROGRESS: { label: "In Progress", color: "text-amber-600", dot: "bg-amber-500" },
-  RESOLVED: { label: "Resolved", color: "text-emerald-600", dot: "bg-emerald-500" },
+  RESOLVED: { label: "Resolved", color: "text-[#00BD7D]", dot: "bg-[#00BD7D]" },
   CLOSED: { label: "Closed", color: "text-stone-600", dot: "bg-stone-400" },
 };
 

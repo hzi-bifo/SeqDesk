@@ -98,6 +98,9 @@ const baseRun = {
   userId: "user-1",
   orderId: null,
   studyId: "study-1",
+  // Published run so a non-admin owner passes the publish gate enforced by
+  // assertPipelineRunReadAccess.
+  selectedResultSelections: [{ id: "sel-1" }],
   order: null,
   study: {
     id: "study-1",
@@ -407,7 +410,7 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
     expect(text).toContain("last error line");
   });
 
-  it("allows order owner to access their run", async () => {
+  it("allows order owner to access their published run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "order-owner", role: "RESEARCHER" },
     });
@@ -415,6 +418,7 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
       ...baseRun,
       targetType: "order",
       study: null,
+      selectedResultSelections: [{ id: "sel-1" }],
       order: {
         id: "order-1",
         name: "Order",
@@ -426,6 +430,21 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
 
     const res = await GET(makeRequest("run-1"), makeParams("run-1"));
     expect(res.status).toBe(200);
+  });
+
+  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      selectedResultSelections: [],
+    });
+
+    const res = await GET(makeRequest("run-1"), makeParams("run-1"));
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("Forbidden");
   });
 
   it("includes no files when runFolder is null", async () => {

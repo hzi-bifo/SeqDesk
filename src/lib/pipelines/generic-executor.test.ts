@@ -819,6 +819,183 @@ describe("generic-executor", () => {
     expect(script).toContain("source \"$CONDA_SH\"");
     expect(script).toContain("conda activate");
   });
+
+  it("records the exit code via an EXIT trap so failures still write the marker", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const localResult = await prepareGenericRun({
+      runId: "run-trap-local",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(localResult.success).toBe(true);
+    const localScript = await fs.readFile(path.join(localResult.runFolder!, "run.sh"), "utf8");
+    // The marker must be written from a trap so "set -e" cannot skip it on failure.
+    expect(localScript).toContain(
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+    );
+    // The dead post-command capture must be gone.
+    expect(localScript).not.toContain("EXIT_CODE=$?\necho");
+
+    const slurmResult = await prepareGenericRun({
+      runId: "run-trap-slurm",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: { ...baseExecutionSettings(tempDir), useSlurm: true },
+      userId: "user-1",
+    });
+
+    expect(slurmResult.success).toBe(true);
+    const slurmScript = await fs.readFile(path.join(slurmResult.runFolder!, "run.sh"), "utf8");
+    expect(slurmScript).toContain(
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+    );
+    expect(slurmScript).not.toContain("EXIT_CODE=$?\necho");
+  });
+
+  it("does not emit --input/--outdir twice when config also resolves them", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {
+            inputDir: "--input",
+          },
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-dup-flags",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {
+        inputDir: "/some/other/input",
+        outdir: "/some/other/output",
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+
+    // The SeqDesk-managed samplesheet/output paths win; the config-derived
+    // --input/--outdir must be dropped so the flags are not duplicated.
+    expect(script.match(/--input /g) || []).toHaveLength(1);
+    expect(script.match(/--outdir /g) || []).toHaveLength(1);
+    expect(script).toContain(`--input ${path.join(result.runFolder!, "samplesheet.csv")}`);
+    expect(script).toContain(`--outdir ${path.join(result.runFolder!, "output")}`);
+    expect(script).not.toContain("/some/other/input");
+    expect(script).not.toContain("/some/other/output");
+  });
+
+  it("retries run-number allocation when a concurrent run claims the number first", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    // First findMany returns the same max for both racers; after the first
+    // claim succeeds, the next findMany reflects it so the retry computes 009.
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([{ runNumber: "MAG-20260303-007" }])
+      .mockResolvedValueOnce([{ runNumber: "MAG-20260303-008" }]);
+
+    const conflict = Object.assign(new Error("Unique constraint failed"), {
+      code: "P2002",
+      meta: { target: ["runNumber"] },
+    });
+    mocks.db.pipelineRun.update
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({});
+
+    const result = await prepareGenericRun({
+      runId: "run-race",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(2);
+    const finalCall = mocks.db.pipelineRun.update.mock.calls[1][0];
+    expect(finalCall.data.runNumber).toMatch(/^MAG-\d{8}-009$/);
+    expect(result.runFolder).toContain(finalCall.data.runNumber);
+  });
+
+  it("surfaces non-runNumber unique violations instead of retrying", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const conflict = Object.assign(new Error("Unique constraint failed"), {
+      code: "P2002",
+      meta: { target: ["someOtherField"] },
+    });
+    mocks.db.pipelineRun.update.mockRejectedValue(conflict);
+
+    const result = await prepareGenericRun({
+      runId: "run-other-conflict",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain("Failed to prepare run");
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("mergeProfiles", () => {

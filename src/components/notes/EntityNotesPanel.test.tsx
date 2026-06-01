@@ -92,6 +92,7 @@ describe("EntityNotesPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    document.documentElement.style.removeProperty("--entity-notes-sidebar-offset");
     mocks.usePathname.mockReturnValue("/orders/order-1");
     document.execCommand = vi.fn();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -164,6 +165,7 @@ describe("EntityNotesPanel", () => {
 
   afterEach(() => {
     cleanup();
+    document.documentElement.style.removeProperty("--entity-notes-sidebar-offset");
     vi.unstubAllGlobals();
   });
 
@@ -180,6 +182,17 @@ describe("EntityNotesPanel", () => {
     );
 
     expect(await screen.findByText("For order ORD-1")).toBeTruthy();
+    expect(screen.queryByText("Study notepads open from each study")).toBeNull();
+    expect(screen.getByLabelText("notes editor").getAttribute("placeholder")).toContain(
+      "Type here to add notes for this order"
+    );
+    expect(document.documentElement.style.getPropertyValue("--entity-notes-sidebar-offset")).toBe(
+      "320px"
+    );
+    expect(
+      screen.getByText("Shared with everyone who can access this order, including admins.")
+        .parentElement?.style.height
+    ).toBe("var(--seqdesk-footer-height, 2.5rem)");
     expect(screen.getByText(/Edited Apr 1/)).toBeTruthy();
     expect((screen.getByLabelText("notes editor") as HTMLTextAreaElement).value).toContain(
       "<strong>note</strong>"
@@ -212,7 +225,57 @@ describe("EntityNotesPanel", () => {
 
     fireEvent.click(screen.getByLabelText("Hide order notepad"));
     expect(window.localStorage.getItem("order-notes-open")).toBe("false");
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue("--entity-notes-sidebar-offset")).toBe(
+        "40px"
+      );
+    });
     fireEvent.click(screen.getByLabelText("Show order notepad"));
     expect(window.localStorage.getItem("order-notes-open")).toBe("true");
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue("--entity-notes-sidebar-offset")).toBe(
+        "320px"
+      );
+    });
+  });
+
+  it("clears the sidebar offset when notes are disabled so no phantom gap is left", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/orders/order-1") {
+        return Promise.resolve(
+          jsonResponse({
+            id: "order-1",
+            orderNumber: "ORD-1",
+            name: "Genome order",
+            notes: null,
+            notesEditedAt: null,
+            notesEditedBy: null,
+            notesEnabled: false,
+          })
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { container } = render(
+      <EntityNotesPanel
+        desktopPanelStateKey="order-notes-open"
+        entityLabel="order"
+        fetchUrl="/api/orders/order-1"
+        panelDataAttribute="data-order-notes-panel"
+        saveMethod="PATCH"
+        saveUrl="/api/orders/order-1/notes"
+      />
+    );
+
+    // Panel renders nothing once notes are disabled, and the offset is cleared
+    // so the top bar / footer are not pushed against an empty panel.
+    await waitFor(() => {
+      expect(
+        document.documentElement.style.getPropertyValue("--entity-notes-sidebar-offset")
+      ).toBe("");
+    });
+    expect(container.querySelector("[data-order-notes-panel]")).toBeNull();
   });
 });

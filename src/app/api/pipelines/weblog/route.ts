@@ -376,7 +376,21 @@ export async function POST(request: NextRequest) {
     }
 
     const execSettings = await getExecutionSettings();
-    if (execSettings.weblogSecret && token !== execSettings.weblogSecret) {
+    if (!execSettings.weblogSecret) {
+      // Fail closed: an unconfigured secret would otherwise leave this
+      // state-mutating webhook fully unauthenticated, letting anyone drive
+      // run state. Reject until an operator configures a weblog secret
+      // (Application Settings → Pipeline execution).
+      console.error(
+        '[Pipeline Weblog] Rejecting request: no weblog secret configured. ' +
+          'Set a weblog secret to enable pipeline weblog callbacks.'
+      );
+      return NextResponse.json(
+        { error: 'Weblog secret is not configured' },
+        { status: 503 }
+      );
+    }
+    if (token !== execSettings.weblogSecret) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 403 });
     }
 

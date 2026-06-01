@@ -47,7 +47,7 @@ type DestinationHandler = (
   runId: string,
   output: ResolvedOutputContract,
   pipelineId: string
-) => Promise<{ success: boolean; error?: string }>;
+) => Promise<{ success: boolean; error?: string; skipped?: boolean }>;
 
 interface ResolvedOutputContract {
   id: string;
@@ -832,7 +832,12 @@ export async function resolveOutputs(
     const resultContract = inferPipelineResultContract(output);
 
     if (handlerResult.success) {
-      if (resultContract.kind === 'sample_read_candidate') {
+      // Only count a candidate as newly pending when its artifact was actually
+      // created. Re-resolving a completed run (manual re-resolve, duplicate
+      // completion, or a weblog re-fire) finds the existing artifacts and skips
+      // them; counting those again would resurface candidates that may already
+      // have been promoted, breaking the review badge/panel.
+      if (resultContract.kind === 'sample_read_candidate' && !handlerResult.skipped) {
         result.pendingWritebacks = (result.pendingWritebacks ?? 0) + 1;
       }
 
@@ -871,11 +876,36 @@ export async function saveRunResults(
   runId: string,
   result: ResolveResult
 ): Promise<void> {
+  // Preserve the existing pending-writeback count when this resolution staged no
+  // new candidates. Re-resolving a completed run (manual re-resolve, duplicate
+  // completion, or weblog re-fire) skips already-created candidate artifacts, so
+  // result.pendingWritebacks is undefined; clobbering the stored value would
+  // either resurface already-promoted candidates (resetting 0 -> N) or hide
+  // still-pending ones (resetting N -> undefined). Promotion owns lowering the
+  // count via persistPendingWritebackCount.
+  let pendingWritebacks = result.pendingWritebacks;
+  if (pendingWritebacks === undefined) {
+    try {
+      const existing = await db.pipelineRun.findUnique({
+        where: { id: runId },
+        select: { results: true },
+      });
+      if (existing?.results) {
+        const parsed = JSON.parse(existing.results) as { pendingWritebacks?: unknown };
+        if (typeof parsed.pendingWritebacks === 'number') {
+          pendingWritebacks = parsed.pendingWritebacks;
+        }
+      }
+    } catch {
+      // Ignore unreadable/legacy results JSON and fall back to undefined.
+    }
+  }
+
   const results = {
     assembliesCreated: result.assembliesCreated,
     binsCreated: result.binsCreated,
     artifactsCreated: result.artifactsCreated,
-    pendingWritebacks: result.pendingWritebacks,
+    pendingWritebacks,
     errors: result.errors.length > 0 ? result.errors : undefined,
     warnings: result.warnings.length > 0 ? result.warnings : undefined,
   };

@@ -436,6 +436,8 @@ describe("GET /api/admin/settings/pipelines", () => {
           requiresLinkedReads: true,
           writesCanonicalReadMetadata: true,
           writesCanonicalReadFiles: false,
+          stagesReadCandidates: false,
+          requiresAdminReadPromotion: false,
         },
       }),
     ]);

@@ -780,7 +780,7 @@ export default function ENASettingsPage() {
                 {saving ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : enaSaved ? (
-                  <Check className="h-4 w-4 mr-2 text-emerald-500" />
+                  <Check className="h-4 w-4 mr-2 text-[#00BD7D]" />
                 ) : null}
                 {enaSaved ? "Saved" : "Save changes"}
               </Button>

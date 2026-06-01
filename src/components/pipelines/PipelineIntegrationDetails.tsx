@@ -216,7 +216,7 @@ export function PipelineIntegrationDetails({
               How SeqDesk creates the input CSV for {pipelineName}
             </p>
           </div>
-          <Badge className="ml-auto bg-green-100 text-green-700 border-green-200">
+          <Badge variant="success" className="ml-auto">
             <Check className="h-3 w-3 mr-1" />
             Implemented
           </Badge>
@@ -392,12 +392,12 @@ export function PipelineIntegrationDetails({
                     </td>
                     <td className="p-3">
                       {status === "implemented" ? (
-                        <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
+                        <Badge variant="success" className="text-xs">
                           <Check className="h-3 w-3 mr-1" />
                           Done
                         </Badge>
                       ) : status === "partial" ? (
-                        <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">
+                        <Badge variant="warning" className="text-xs">
                           <Clock className="h-3 w-3 mr-1" />
                           Partial
                         </Badge>

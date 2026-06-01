@@ -314,7 +314,7 @@ function getPublishingStatus(
   if (study.submitted) {
     return {
       label: "Registered",
-      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      className: "border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D]",
     };
   }
   if (study.studyAccessionId && !study.testRegisteredAt) {
@@ -1052,7 +1052,7 @@ export default function StudyDetailPage({
       )}
 
       {submitSuccess && (
-        <div className="mb-6 p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center gap-2">
+        <div className="mb-6 p-4 rounded-lg bg-[#00BD7D]/10 border border-[#00BD7D]/20 text-[#00BD7D] flex items-center gap-2">
           <CheckCircle2 className="h-5 w-5" />
           {submitSuccess}
         </div>
@@ -1455,8 +1455,8 @@ export default function StudyDetailPage({
 
                     {study.submittedAt && (
                       <div className="flex items-start gap-3 px-5 py-3">
-                        <div className="h-7 w-7 rounded-md bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        <div className="h-7 w-7 rounded-md bg-[#00BD7D]/10 flex items-center justify-center flex-shrink-0">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-[#00BD7D]" />
                         </div>
                         <div>
                           <p className="text-sm font-medium">Submitted to ENA</p>

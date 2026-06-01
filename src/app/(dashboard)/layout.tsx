@@ -3,7 +3,6 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
-import { Footer } from "@/components/layout/Footer";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 
@@ -31,7 +30,6 @@ export default async function DashboardLayout({
       <DashboardShell user={session.user} version={version}>
         {children}
       </DashboardShell>
-      <Footer />
     </div>
   );
 }

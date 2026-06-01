@@ -887,7 +887,7 @@ export function PipelineDagViewer({
 
         {/* Side Panel */}
         {showSidePanel && (
-          <div className="w-[360px] min-w-[320px] border rounded-lg bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="w-[360px] min-w-[320px] border rounded-lg bg-card overflow-hidden">
             {selectedNode ? (
               <NodeDetailPanel
                 node={selectedNode}

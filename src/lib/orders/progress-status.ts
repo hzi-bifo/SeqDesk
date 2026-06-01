@@ -291,7 +291,7 @@ export function getOrderProgressIndicatorClassName(
 ): string {
   switch (status) {
     case "complete":
-      return "bg-emerald-500";
+      return "bg-[#00BD7D]";
     case "partial":
       return "bg-amber-400";
     default:

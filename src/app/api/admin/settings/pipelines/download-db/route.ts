@@ -574,8 +574,15 @@ export async function POST(req: NextRequest) {
           const finishedAt = new Date().toISOString();
           const currentJob = await getDatabaseDownloadJobStatus(pipelineId, databaseId);
           if (currentJob?.cancelled) {
+            // Remove the partial file so it is never later mistaken for a
+            // complete download (getPipelineDatabaseStatuses would otherwise
+            // report any non-empty file as "downloaded" when no expected size
+            // is known, e.g. when the content-length HEAD probe was missing).
+            await fs.rm(targetPath, { force: true }).catch(() => {
+              // Best-effort cleanup; leave the file if removal fails.
+            });
             logStream.write(
-              `[${new Date().toISOString()}] Download cancelled by user (exit code ${code}).\n`
+              `[${new Date().toISOString()}] Download cancelled by user (exit code ${code}). Removed partial file ${targetPath}.\n`
             );
             logStream.end();
             return;

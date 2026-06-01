@@ -161,7 +161,7 @@ export default function SettingsPage() {
   return (
     <PageContainer>
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold">Account Settings</h1>
+        <h1 className="text-xl font-semibold">Account Settings</h1>
         <p className="text-muted-foreground mt-1">
           Manage your profile information
         </p>
@@ -170,11 +170,8 @@ export default function SettingsPage() {
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
 
       <form onSubmit={handleSubmit}>
-        <div
-          className="p-6 rounded-xl space-y-6"
-          style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-        >
-          <h2 className="text-lg font-semibold" style={{ color: '#171717' }}>
+        <div className="p-6 rounded-xl space-y-6 bg-card border border-border">
+          <h2 className="text-lg font-semibold text-foreground">
             Personal Information
           </h2>
 
@@ -261,13 +258,10 @@ export default function SettingsPage() {
         </div>
       </form>
 
-      <div
-        className="p-6 mt-6 rounded-xl"
-        style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-      >
+      <div className="p-6 mt-6 rounded-xl bg-card border border-border">
         <div className="flex items-center gap-2 mb-4">
           <Mail className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-lg font-semibold" style={{ color: '#171717' }}>
+          <h2 className="text-lg font-semibold text-foreground">
             Email Notifications
           </h2>
           {savingNotifications && (
@@ -293,11 +287,8 @@ export default function SettingsPage() {
       </div>
 
       {/* Account Info */}
-      <div
-        className="p-6 mt-6 rounded-xl"
-        style={{ background: '#ffffff', border: '1px solid #e5e5e0' }}
-      >
-        <h2 className="text-lg font-semibold mb-4" style={{ color: '#171717' }}>
+      <div className="p-6 mt-6 rounded-xl bg-card border border-border">
+        <h2 className="text-lg font-semibold mb-4 text-foreground">
           Account Information
         </h2>
         <div className="space-y-3 text-sm">

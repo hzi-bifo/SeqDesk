@@ -8,10 +8,12 @@ const mocks = vi.hoisted(() => ({
   db: {
     pipelineRun: {
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     $transaction: vi.fn(),
   },
   txRead: {
+    findFirst: vi.fn(),
     create: vi.fn(),
     updateMany: vi.fn(),
     update: vi.fn(),
@@ -102,6 +104,7 @@ describe("read-cleaning-results", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-read-cleaning-results-"));
+    mocks.txRead.findFirst.mockResolvedValue(null);
     mocks.txRead.create.mockResolvedValue({ id: "read-cleaned" });
     mocks.txRead.updateMany.mockResolvedValue({ count: 1 });
     mocks.txRead.update.mockResolvedValue({ id: "read-cleaned" });
@@ -152,6 +155,19 @@ describe("read-cleaning-results", () => {
     expect(mocks.db.$transaction).not.toHaveBeenCalled();
   });
 
+  it("keeps the compatibility wrapper scoped to read-cleaning runs", async () => {
+    const runFolder = path.join(tempDir, "run");
+    const candidatePath = path.join(runFolder, "output", "filter", "filtered", "S1_filtered.fastq");
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...createRun(runFolder, candidatePath),
+      pipelineId: "fastq-checksum",
+    });
+
+    await expect(listReadCleaningCandidates("run-1")).rejects.toThrow(
+      "Pipeline run is not a read-cleaning run"
+    );
+  });
+
   it("promotes selected candidates as active cleaned reads and preserves previous files", async () => {
     const dataBasePath = path.join(tempDir, "data");
     const runFolder = path.join(tempDir, "run");
@@ -184,6 +200,7 @@ describe("read-cleaning-results", () => {
           "read-cleaning",
           "RUN-001",
           "S1",
+          "cleaned_read_candidates",
           "R1-S1_filtered.fastq",
         ),
         file2: null,
@@ -223,6 +240,7 @@ describe("read-cleaning-results", () => {
       "read-cleaning",
       "RUN-001",
       "S1",
+      "cleaned_read_candidates",
       "R1-S1_filtered.fastq",
     );
     await expect(fs.readFile(copiedPath, "utf8")).resolves.toContain("@read_0");

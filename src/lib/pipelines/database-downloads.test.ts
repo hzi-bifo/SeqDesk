@@ -388,6 +388,54 @@ describe("database-downloads", () => {
     expect(result[0].detail).toBe("Database not downloaded");
   });
 
+  it("serializes concurrent status updates without clobbering sibling keys", async () => {
+    // Use the real filesystem so the in-process lock is exercised against an
+    // actual shared status file. beforeEach spies on (but does not stub)
+    // readFile/writeFile/mkdir, so they pass through to the real fs.
+    await Promise.all([
+      updateDatabaseDownloadJobStatus("mag", "gtdb", {
+        state: "running",
+        totalBytes: 1000,
+      }),
+      updateDatabaseDownloadJobStatus("metaxpath", "db-bundle", {
+        state: "running",
+        totalBytes: 2000,
+      }),
+      updateDatabaseDownloadJobStatus("kraken2", "k2", {
+        state: "success",
+        totalBytes: 3000,
+      }),
+    ]);
+
+    const all = await getAllDatabaseDownloadJobStatuses();
+    expect(all).toHaveLength(3);
+
+    const persisted = JSON.parse(await fs.promises.readFile(statusPath, "utf8"));
+    expect(persisted["mag:gtdb"]).toMatchObject({ state: "running", totalBytes: 1000 });
+    expect(persisted["metaxpath:db-bundle"]).toMatchObject({
+      state: "running",
+      totalBytes: 2000,
+    });
+    expect(persisted["kraken2:k2"]).toMatchObject({ state: "success", totalBytes: 3000 });
+  });
+
+  it("serializes concurrent record updates without dropping sibling entries", async () => {
+    await Promise.all([
+      updateDatabaseDownloadRecord("mag", "gtdb", { path: "/a/gtdb.tar.gz", sizeBytes: 1 }),
+      updateDatabaseDownloadRecord("metaxpath", "db-bundle", {
+        path: "/b/bundle.tar",
+        sizeBytes: 2,
+      }),
+    ]);
+
+    const persisted = JSON.parse(await fs.promises.readFile(indexPath, "utf8"));
+    expect(persisted["mag:gtdb"]).toMatchObject({ path: "/a/gtdb.tar.gz", sizeBytes: 1 });
+    expect(persisted["metaxpath:db-bundle"]).toMatchObject({
+      path: "/b/bundle.tar",
+      sizeBytes: 2,
+    });
+  });
+
   it("reports configured path mismatch when configured database file is absent", async () => {
     const configuredPath = "/configured/missing.tar.gz";
 

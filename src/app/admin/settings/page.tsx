@@ -149,10 +149,17 @@ interface ScriptRunSummary {
   stderr: string;
 }
 
+interface InstallProfileValidationSummary {
+  warnings: string[];
+  ignoredSections: string[];
+  appliedSections: string[];
+}
+
 interface InstallProfileReloadResult {
   success?: boolean;
   profile?: InstallProfileSummary;
   includeAssets?: boolean;
+  validation?: InstallProfileValidationSummary;
   settings?: ScriptRunSummary;
   assets?: ScriptRunSummary;
   error?: string;
@@ -2377,6 +2384,16 @@ export default function SettingsPage() {
                           ? " and assets were applied."
                           : "."}
                       </p>
+                      {profileReloadResult.validation?.warnings?.length ? (
+                        <p className="mt-1 text-xs text-emerald-800">
+                          {profileReloadResult.validation.warnings.length} profile reload
+                          warning
+                          {profileReloadResult.validation.warnings.length === 1
+                            ? ""
+                            : "s"}{" "}
+                          recorded in admin activity.
+                        </p>
+                      ) : null}
                     </div>
                   )}
                 </div>

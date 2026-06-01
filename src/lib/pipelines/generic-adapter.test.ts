@@ -604,6 +604,82 @@ describe("generic-adapter", () => {
     });
   });
 
+  it("attributes outputs to the correct sample for prefix-overlapping ids", async () => {
+    const outputs: PackageOutput[] = [
+      {
+        id: "cleaned",
+        scope: "sample",
+        destination: "run_artifact",
+        discovery: {
+          pattern: "cleaned/*_filtered.fastq.gz",
+          matchSampleBy: "filename",
+        },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("test", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+
+    await fs.mkdir(path.join(tempDir, "cleaned"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "cleaned", "S1_filtered.fastq.gz"), "a");
+    await fs.writeFile(path.join(tempDir, "cleaned", "S10_filtered.fastq.gz"), "b");
+
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    const adapter = createGenericAdapter("test");
+    // S1 is iterated before S10 and is a substring of "S10_filtered..." — the
+    // boundary-anchored, longest-match logic must still attribute correctly.
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      samples: [
+        { id: "db-s1", sampleId: "S1" },
+        { id: "db-s10", sampleId: "S10" },
+      ],
+    });
+
+    const fileS1 = result.files.find((f) => f.name === "S1_filtered.fastq.gz");
+    const fileS10 = result.files.find((f) => f.name === "S10_filtered.fastq.gz");
+
+    expect(fileS1?.sampleId).toBe("db-s1");
+    expect(fileS1?.sampleName).toBe("S1");
+    expect(fileS10?.sampleId).toBe("db-s10");
+    expect(fileS10?.sampleName).toBe("S10");
+  });
+
+  it("does not match a sample id embedded mid-token without delimiters", async () => {
+    const outputs: PackageOutput[] = [
+      {
+        id: "report",
+        scope: "sample",
+        destination: "run_artifact",
+        discovery: {
+          pattern: "out/*.txt",
+          matchSampleBy: "filename",
+        },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("test", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+
+    await fs.mkdir(path.join(tempDir, "out"), { recursive: true });
+    // "AB" appears inside "GRABBAG" but not as a delimiter-bounded token.
+    await fs.writeFile(path.join(tempDir, "out", "GRABBAG.txt"), "x");
+
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    const adapter = createGenericAdapter("test");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      samples: [{ id: "db-ab", sampleId: "AB" }],
+    });
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].sampleId).toBeUndefined();
+  });
+
   it("registers adapters for packages without existing registrations", () => {
     const pkg = makePackageIdOnly("auto", [], []);
     mocks.getAllPackages.mockReturnValue([pkg]);

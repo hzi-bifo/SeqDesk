@@ -1099,7 +1099,7 @@ export function PipelineProgressViewer({
 
         {/* Side Panel - Node Details */}
         {selectedNode && (
-          <div className="w-[320px] min-w-[280px] border rounded-lg bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="w-[320px] min-w-[280px] border rounded-lg bg-card overflow-hidden">
             <NodeDetailPanel
               node={selectedNode}
               status={statusMap.get(selectedNode.id)}
@@ -1117,7 +1117,7 @@ export function PipelineProgressViewer({
 
         {/* Side Panel - File Details */}
         {selectedFile && (
-          <div className="w-[320px] min-w-[280px] border rounded-lg bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="w-[320px] min-w-[280px] border rounded-lg bg-card overflow-hidden">
             <FileDetailPanel
               file={selectedFile}
               onClose={() => setSelectedFile(null)}

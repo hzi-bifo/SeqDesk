@@ -158,6 +158,40 @@ describe("LiveLogViewer", () => {
     expect(mocks.mutateError).toHaveBeenCalled();
   });
 
+  it("falls back to the output tab when steps disappear while the steps tab is active", async () => {
+    const { rerender } = render(<LiveLogViewer runId="run-1" isRunning />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Steps/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("ALIGN_READS")).toBeTruthy();
+    });
+    expect(
+      screen.getByRole("tab", { name: /Steps/ }).getAttribute("aria-selected")
+    ).toBe("true");
+
+    // A later poll returns no steps; the steps trigger unmounts.
+    mocks.useSWR.mockImplementation((url: string) => {
+      if (url.includes("type=output")) {
+        return {
+          data: { content: "stdout line 1\nstdout line 2", steps: [] },
+          mutate: mocks.mutateOutput,
+        };
+      }
+      return { data: { content: "stderr line 1" }, mutate: mocks.mutateError };
+    });
+
+    rerender(<LiveLogViewer runId="run-1" isRunning />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: /Steps/ })).toBeNull();
+    });
+    expect(
+      screen.getByRole("tab", { name: "Output" }).getAttribute("aria-selected")
+    ).toBe("true");
+    expect(screen.getByText(/stdout line 1/)).toBeTruthy();
+  });
+
   it("copies log output, toggles auto-scroll, and downloads the active log", async () => {
     const { container } = render(<LiveLogViewer runId="run-2" isRunning={false} />);
 
@@ -182,7 +216,7 @@ describe("LiveLogViewer", () => {
     );
 
     expect(mocks.createObjectURL).toHaveBeenCalledTimes(1);
-    expect(mocks.createObjectURL.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect((mocks.createObjectURL.mock.calls[0] as unknown[])[0]).toBeInstanceOf(Blob);
     expect(mocks.anchorClick).toHaveBeenCalled();
     expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:seqdesk-log");
   });

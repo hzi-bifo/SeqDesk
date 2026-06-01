@@ -421,7 +421,7 @@ export default function ProcessedWeblogPage({
               Back to run
             </Link>
           </Button>
-          <h1 className="text-2xl font-semibold tracking-normal">Processed weblog</h1>
+          <h1 className="text-xl font-semibold">Processed weblog</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Run {data.run.runNumber} · {data.run.pipelineId} · {data.run.id}
           </p>

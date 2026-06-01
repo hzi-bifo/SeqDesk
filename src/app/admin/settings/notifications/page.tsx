@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bell, Check, CheckCircle2, Loader2, Mail, Send, XCircle } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -233,33 +233,46 @@ export default function AdminNotificationSettingsPage() {
   return (
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex min-h-12 flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
-          <div className="text-xs text-muted-foreground">
-            {settings?.email.hasRelayToken ? (
-              <span className="text-green-600 font-medium">Relay token configured</span>
-            ) : (
-              <span className="text-amber-600 font-medium">Relay token missing</span>
-            )}
+        <div className="relative flex h-[52px] items-center justify-center px-6 lg:px-8">
+          <span className="text-sm font-medium">Notification Settings</span>
+        </div>
+        <div className="flex min-h-12 flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <HeaderStatusChip tone={settings?.email.hasRelayToken ? "success" : "warning"}>
+              {settings?.email.hasRelayToken ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              Relay token
+              <span className="font-semibold">
+                {settings?.email.hasRelayToken ? "Configured" : "Missing"}
+              </span>
+            </HeaderStatusChip>
             {settings ? (
               <>
-                {" "}
-                &middot; In-app{" "}
-                <span
-                  className={
-                    settings.inApp.enabled ? "text-green-600 font-medium" : "text-muted-foreground"
-                  }
-                >
-                  {settings.inApp.enabled ? "enabled" : "disabled"}
-                </span>
-                {" "}
-                &middot; Email{" "}
-                <span
-                  className={
-                    settings.email.enabled ? "text-green-600 font-medium" : "text-muted-foreground"
-                  }
-                >
-                  {settings.email.enabled ? "enabled" : "disabled"}
-                </span>
+                <HeaderStatusChip tone={settings.inApp.enabled ? "success" : "muted"}>
+                  {settings.inApp.enabled ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  In-app
+                  <span className="font-semibold">
+                    {settings.inApp.enabled ? "Enabled" : "Disabled"}
+                  </span>
+                </HeaderStatusChip>
+                <HeaderStatusChip tone={settings.email.enabled ? "success" : "muted"}>
+                  {settings.email.enabled ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  Email
+                  <span className="font-semibold">
+                    {settings.email.enabled ? "Enabled" : "Disabled"}
+                  </span>
+                </HeaderStatusChip>
               </>
             ) : null}
           </div>
@@ -446,6 +459,28 @@ export default function AdminNotificationSettingsPage() {
         )}
       </PageContainer>
     </>
+  );
+}
+
+function HeaderStatusChip({
+  children,
+  tone,
+}: {
+  children: ReactNode;
+  tone: "success" | "warning" | "muted";
+}) {
+  const toneClass = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+    muted: "border-border bg-muted/30 text-muted-foreground",
+  }[tone];
+
+  return (
+    <span
+      className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs ${toneClass}`}
+    >
+      {children}
+    </span>
   );
 }
 

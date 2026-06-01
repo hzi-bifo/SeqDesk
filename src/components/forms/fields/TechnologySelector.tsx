@@ -36,7 +36,7 @@ interface TechResponse {
 }
 
 const TECHNOLOGY_IMAGE_FALLBACKS: Record<string, string> = {
-  "ont-minion": "/images/sequencers/devices/s1.png",
+  "ont-minion": "/images/sequencers/devices/ont-minion-mk1d.png",
 };
 
 export function TechnologySelector({

@@ -636,7 +636,7 @@ export default function AdminAccountsPage() {
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     {invite.usedAt ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <CheckCircle2 className="h-4 w-4 text-[#00BD7D] shrink-0" />
                     ) : (
                       <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                     )}

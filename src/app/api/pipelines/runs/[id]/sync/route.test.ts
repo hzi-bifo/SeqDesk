@@ -97,6 +97,9 @@ const defaultRun = {
   queueJobId: "local-12345",
   study: null,
   order: { userId: "user-1" },
+  // Published run so a non-admin owner passes the publish gate enforced by
+  // assertPipelineRunReadAccess.
+  selectedResultSelections: [{ id: "sel-1" }],
 };
 
 const metaxpathSteps = [
@@ -236,7 +239,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(body.tasks).toBe(1);
   });
 
-  it("allows the study owner (non-admin) to sync their run", async () => {
+  it("allows the study owner (non-admin) to sync their published run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "study-owner", role: "RESEARCHER" },
     });
@@ -244,6 +247,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
       ...defaultRun,
       study: { userId: "study-owner" },
       order: null,
+      selectedResultSelections: [{ id: "sel-1" }],
     });
     mocks.findTraceFile.mockResolvedValue(null);
 
@@ -252,6 +256,24 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.success).toBe(true);
+  });
+
+  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "study-owner", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...defaultRun,
+      study: { userId: "study-owner" },
+      order: null,
+      selectedResultSelections: [],
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBe("Forbidden");
   });
 
   it("detects failed tasks from trace file", async () => {
@@ -852,7 +874,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(body.queueStatus).toBeNull();
   });
 
-  it("allows the order owner (non-admin) to sync their run", async () => {
+  it("allows the order owner (non-admin) to sync their published run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "order-owner", role: "RESEARCHER" },
     });
@@ -860,6 +882,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
       ...defaultRun,
       study: null,
       order: { userId: "order-owner" },
+      selectedResultSelections: [{ id: "sel-1" }],
     });
     mocks.findTraceFile.mockResolvedValue(null);
 

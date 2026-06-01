@@ -60,7 +60,7 @@ export function DemoBanner({
 
   return (
     <div
-      className={`border-b border-border bg-gradient-to-r from-[#F7F7F4] via-white to-[#F7F7F4] ${
+      className={`border-b border-border bg-gradient-to-r from-background via-card to-background ${
         embeddedMode ? "px-3 py-2.5" : "px-4 py-3"
       }`}
     >

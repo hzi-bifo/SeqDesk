@@ -51,6 +51,32 @@ function getExtension(filePath: string): string {
   return filePath.toLowerCase().split(".").pop() || "";
 }
 
+/**
+ * Re-verify that the resolved target path stays within the run folder after
+ * symlinks are resolved. `ensureWithinBase` is a lexical check only, so a
+ * symlink physically present inside the run folder could otherwise point at
+ * arbitrary host files. Mirrors the realpath containment check used in
+ * src/lib/minknow/security.ts.
+ */
+async function assertRealpathWithinBase(
+  basePath: string,
+  absolutePath: string
+): Promise<string> {
+  const [realBase, realTarget] = await Promise.all([
+    fs.realpath(basePath),
+    fs.realpath(absolutePath),
+  ]);
+  const relative = path.relative(realBase, realTarget);
+  const escapes =
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative);
+  if (escapes) {
+    throw new Error(`Path traversal detected: ${absolutePath} escapes base path`);
+  }
+  return realTarget;
+}
+
 async function readTail(filePath: string, size: number): Promise<Buffer> {
   const handle = await fs.open(filePath, "r");
   try {
@@ -121,6 +147,9 @@ export async function GET(
     let absolutePath: string;
     try {
       absolutePath = ensureWithinBase(run.runFolder, targetPath);
+      // Resolve symlinks and re-verify containment so a symlink inside the
+      // run folder cannot be used to read files outside it.
+      absolutePath = await assertRealpathWithinBase(run.runFolder, absolutePath);
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Invalid path" },

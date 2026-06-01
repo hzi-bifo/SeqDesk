@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   requireFacilityAdminSequencingReadSession,
@@ -7,6 +8,10 @@ import {
 } from "@/lib/sequencing/server";
 import { loadMinknowConfig } from "@/lib/minknow/config";
 import { validateOutputDirUnderRoot } from "@/lib/minknow/security";
+
+// Thrown inside the start transaction when an ACTIVE stream already watches the
+// same directory; caught and surfaced as a 409.
+class ActiveStreamConflictError extends Error {}
 
 export async function GET(
   _request: NextRequest,
@@ -82,21 +87,6 @@ export async function POST(
     }
     const resolvedOutputDir = validation.realpath;
 
-    // No two ACTIVE streams may share the same physical directory — otherwise both
-    // monitors would race on the same files and we'd see double-ingest.
-    const conflicting = await db.streamRun.findFirst({
-      where: { status: "ACTIVE", outputDir: resolvedOutputDir },
-      select: { id: true, orderId: true },
-    });
-    if (conflicting) {
-      return NextResponse.json(
-        {
-          error: `Another active stream (id=${conflicting.id}, order=${conflicting.orderId}) is already watching ${resolvedOutputDir}. Stop it first.`,
-        },
-        { status: 409 },
-      );
-    }
-
     const barcodeMapInput = body?.barcodeMap;
     const barcodeMap: Record<string, string> = {};
     if (barcodeMapInput && typeof barcodeMapInput === "object") {
@@ -105,25 +95,66 @@ export async function POST(
       }
     }
 
-    const run = await db.streamRun.create({
-      data: {
-        orderId: id,
-        outputDir: resolvedOutputDir,
-        deviceId: typeof body?.deviceId === "string" ? body.deviceId : null,
-        flowCellId: typeof body?.flowCellId === "string" ? body.flowCellId : null,
-        minknowRunId: typeof body?.minknowRunId === "string" ? body.minknowRunId : null,
-        barcodeMap: JSON.stringify(barcodeMap),
-        status: "ACTIVE",
-      },
-    });
-
-    await db.streamRunEvent.create({
-      data: {
-        streamRunId: run.id,
-        kind: "RUN_STARTED",
-        payload: JSON.stringify({ outputDir: resolvedOutputDir, barcodeMap }),
-      },
-    });
+    // No two ACTIVE streams may share the same physical directory — otherwise
+    // both monitors would race on the same files and we'd double-ingest. The
+    // conflict check, the run create, and the RUN_STARTED event run inside one
+    // SERIALIZABLE transaction so two concurrent start requests (or a
+    // double-click) cannot both pass the check and both insert: Postgres SSI
+    // detects the read/write conflict across connections and aborts one of them.
+    // Either outcome is surfaced as a 409. (A plain find-then-create is racy and
+    // there is no DB-level uniqueness backing it.)
+    let run: { id: string };
+    try {
+      run = await db.$transaction(
+        async (tx) => {
+          const conflicting = await tx.streamRun.findFirst({
+            where: { status: "ACTIVE", outputDir: resolvedOutputDir },
+            select: { id: true, orderId: true },
+          });
+          if (conflicting) {
+            throw new ActiveStreamConflictError(
+              `Another active stream (id=${conflicting.id}, order=${conflicting.orderId}) is already watching ${resolvedOutputDir}. Stop it first.`,
+            );
+          }
+          const created = await tx.streamRun.create({
+            data: {
+              orderId: id,
+              outputDir: resolvedOutputDir,
+              deviceId: typeof body?.deviceId === "string" ? body.deviceId : null,
+              flowCellId: typeof body?.flowCellId === "string" ? body.flowCellId : null,
+              minknowRunId: typeof body?.minknowRunId === "string" ? body.minknowRunId : null,
+              barcodeMap: JSON.stringify(barcodeMap),
+              status: "ACTIVE",
+            },
+            select: { id: true },
+          });
+          await tx.streamRunEvent.create({
+            data: {
+              streamRunId: created.id,
+              kind: "RUN_STARTED",
+              payload: JSON.stringify({ outputDir: resolvedOutputDir, barcodeMap }),
+            },
+          });
+          return created;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (err) {
+      if (err instanceof ActiveStreamConflictError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      // P2034: the transaction failed due to a write conflict / serialization
+      // failure — i.e. two starts for the same directory raced. Treat as 409.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034") {
+        return NextResponse.json(
+          {
+            error: `Another active stream is already being started for ${resolvedOutputDir}. Stop it first or try again.`,
+          },
+          { status: 409 },
+        );
+      }
+      throw err;
+    }
 
     return NextResponse.json({ id: run.id }, { status: 201 });
   } catch (error) {

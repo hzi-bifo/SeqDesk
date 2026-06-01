@@ -122,7 +122,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-2xl font-semibold">
+              <h1 className="text-xl font-semibold">
                 {user.firstName} {user.lastName}
               </h1>
               <Badge variant={user.role === "FACILITY_ADMIN" ? "default" : "secondary"}>
