@@ -280,6 +280,75 @@ describe("pending-writebacks", () => {
     });
   });
 
+  it("rejects a candidate whose source path escapes the run folder and creates no read", async () => {
+    const dataBasePath = path.join(tempDir, "data");
+    const runFolder = path.join(tempDir, "run");
+    // A candidate that points outside the run folder via path traversal. The
+    // artifact path stays inside the run folder, but the metadata sourceFile1
+    // (which wins over artifact.path in listPendingWritebacks) escapes it.
+    const candidatePath = path.join(runFolder, "output", "filtered", "S1.fastq");
+
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath,
+      source: "database",
+      isImplicit: false,
+    });
+    const run = createRun(runFolder, candidatePath);
+    const escapingPath = path.join(runFolder, "..", "..", "..", "etc", "passwd");
+    run.artifacts[0].metadata = JSON.stringify({
+      dataClass: "cleaned",
+      readLayout: "single",
+      sourceFile1: escapingPath,
+      sourceFile2: null,
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(run);
+
+    await expect(
+      promotePendingWritebacks({
+        runId: "run-1",
+        sampleIds: ["sample-1"],
+        userId: "admin-1",
+      }),
+    ).rejects.toThrow(/outside the run folder/);
+
+    // The security guard must run before any read is created or copied.
+    expect(mocks.txRead.create).not.toHaveBeenCalled();
+    expect(mocks.txRead.updateMany).not.toHaveBeenCalled();
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a candidate whose second source path escapes the run folder", async () => {
+    const dataBasePath = path.join(tempDir, "data");
+    const runFolder = path.join(tempDir, "run");
+    const candidatePath = path.join(runFolder, "output", "filtered", "S1_R1.fastq");
+
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath,
+      source: "database",
+      isImplicit: false,
+    });
+    const run = createRun(runFolder, candidatePath);
+    // R1 stays inside the run folder, but R2 is an absolute path elsewhere on disk.
+    run.artifacts[0].metadata = JSON.stringify({
+      dataClass: "cleaned",
+      readLayout: "paired",
+      sourceFile1: candidatePath,
+      sourceFile2: "/etc/shadow",
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(run);
+
+    await expect(
+      promotePendingWritebacks({
+        runId: "run-1",
+        sampleIds: ["sample-1"],
+        userId: "admin-1",
+      }),
+    ).rejects.toThrow(/outside the run folder/);
+
+    expect(mocks.txRead.create).not.toHaveBeenCalled();
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
   it("forces protected raw/unknown candidate classes to cleaned on promotion", async () => {
     const dataBasePath = path.join(tempDir, "data");
     const runFolder = path.join(tempDir, "run");

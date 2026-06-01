@@ -1,0 +1,124 @@
+{
+  "id": "ci-fixture",
+  "version": "1.0.0",
+  "profile": {
+    "name": "CI Fixture Install Profile"
+  },
+  "modules": {
+    "billing-info": false,
+    "account-validation": false
+  },
+  "forms": {
+    "order": {
+      "defaultsVersion": 1,
+      "groups": [
+        {
+          "id": "ci_order_group",
+          "label": "CI Order Details",
+          "order": 1
+        }
+      ],
+      "fields": [
+        {
+          "name": "run_type",
+          "label": "Run Type",
+          "type": "select",
+          "required": true,
+          "order": 1,
+          "group": "ci_order_group",
+          "options": [
+            { "value": "genomic", "label": "Genomic" },
+            { "value": "metagenomic", "label": "Metagenomic" }
+          ]
+        },
+        {
+          "name": "internal_sample_code",
+          "label": "Internal Sample Code",
+          "type": "text",
+          "required": false,
+          "order": 2,
+          "group": "ci_order_group"
+        }
+      ]
+    },
+    "study": {
+      "defaultsVersion": 1,
+      "fields": [
+        {
+          "name": "study_experiment_type",
+          "label": "Experiment Type",
+          "type": "text",
+          "required": false,
+          "order": 1
+        }
+      ]
+    },
+    "runAssignment": {
+      "defaultsVersion": 1,
+      "fields": [
+        {
+          "name": "barcode",
+          "label": "Barcode",
+          "type": "text",
+          "required": false,
+          "order": 1
+        },
+        {
+          "name": "concentration_ng_ul",
+          "label": "Concentration (ng/uL)",
+          "type": "number",
+          "required": false,
+          "order": 2
+        }
+      ]
+    }
+  },
+  "sequencingTech": {
+    "config": {
+      "devices": [
+        {
+          "id": "ont-minion-mk1d",
+          "name": "ONT MinION Mk1D",
+          "available": true
+        },
+        {
+          "id": "ont-promethion",
+          "name": "ONT PromethION",
+          "available": false
+        }
+      ]
+    }
+  },
+  "sequencingFiles": {
+    "allowedExtensions": [".fastq.gz", ".fastq"],
+    "scanDepth": 3,
+    "autoAssign": true
+  },
+  "telemetry": {
+    "enabled": false
+  },
+  "access": {
+    "departmentSharing": true,
+    "orderNotesEnabled": true
+  },
+  "auth": {
+    "allowRegistration": false
+  },
+  "ena": {
+    "username": "ci-fixture-webin-user",
+    "testMode": true,
+    "centerName": "CI Fixture Center"
+  },
+  "pipelines": {
+    "enabled": true,
+    "enable": ["fastq-checksum"],
+    "configs": {
+      "fastq-checksum": {
+        "algorithm": "sha256"
+      }
+    },
+    "execution": {
+      "mode": "local"
+    }
+  }
+}

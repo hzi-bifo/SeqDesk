@@ -2,8 +2,7 @@ name: Alma Install E2E
 
 on:
   push:
-    branches:
-      - "**"
+    branches: [main]
   workflow_dispatch:
     inputs:
       profile_id:

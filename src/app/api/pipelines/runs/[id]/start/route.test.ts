@@ -1320,4 +1320,105 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       expect.any(Object)
     );
   });
+
+  it("returns 409 when the run was already claimed (double-start race)", async () => {
+    // The launch claim is the FIRST updateMany on the start path:
+    //   updateMany({ where: { id, status: 'pending' }, ... })
+    // Simulate a concurrent request (or double-click) that already
+    // transitioned the run out of 'pending': the guarded updateMany matches
+    // zero rows, so this request must lose the race with a 409 and must never
+    // submit/spawn the job.
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+    // After losing the claim, the route re-reads the current status for the
+    // error message.
+    mocks.db.pipelineRun.findUnique.mockResolvedValueOnce(defaultRun);
+    mocks.db.pipelineRun.findUnique.mockResolvedValueOnce({
+      ...defaultRun,
+      status: "running",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toContain("already been started");
+    // The loser must never launch the job: neither the local spawn nor the
+    // SLURM sbatch spawn may run.
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 (SLURM mode) when the run was already claimed and never submits to sbatch", async () => {
+    // Same race as above, but under SLURM execution. The launch claim runs
+    // before sbatch availability is checked or the sbatch spawn is issued, so a
+    // lost claim must short-circuit to 409 without touching the scheduler.
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.db.pipelineRun.findUnique.mockResolvedValueOnce(defaultRun);
+    mocks.db.pipelineRun.findUnique.mockResolvedValueOnce({
+      ...defaultRun,
+      status: "queued",
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toContain("already been started");
+    // sbatch must never be spawned, and sbatch availability must not be probed.
+    expect(mocks.spawn).not.toHaveBeenCalledWith(
+      "sbatch",
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mocks.exec).not.toHaveBeenCalledWith(
+      expect.stringContaining("command -v sbatch"),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it("finalizeLocalRun does not resurrect a run that lost the terminal-state guard", async () => {
+    // Drive a local run all the way to its child 'close' handler, but make the
+    // FINALIZE updateMany (data.status === 'completed') match zero rows, as if
+    // the run had already been finalized out-of-band (e.g. cancelled) before
+    // the child exited. The launch claim (data.status === 'running') and the
+    // post-spawn guard (no data.status) still succeed so the run starts
+    // normally; only the terminal transition loses the race.
+    mocks.db.pipelineRun.updateMany.mockImplementation(
+      async (args: { data?: { status?: string } }) => {
+        const status = args?.data?.status;
+        if (status === "completed" || status === "failed") {
+          return { count: 0 };
+        }
+        return { count: 1 };
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+
+    // Wait for the async close handler to run finalizeLocalRun.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The finalize updateMany was attempted with the terminal status...
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
+    const completedUpdate = updateCalls.find(
+      (call) => call[0]?.data?.status === "completed"
+    );
+    expect(completedUpdate).toBeDefined();
+
+    // ...but since it matched zero rows, finalizeLocalRun must return early:
+    // no output processing and no terminal notification side-effects fire.
+    expect(mocks.processCompletedPipelineRun).not.toHaveBeenCalled();
+  });
 });

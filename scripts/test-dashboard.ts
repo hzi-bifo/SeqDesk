@@ -52,7 +52,7 @@ function printHelp(): void {
   process.stdout.write(`Usage: node scripts/test-dashboard.ts [options] [filters...]
 
 Options:
-  --tier <fast|risk|live|ui|all>  Test tier to run (default: fast)
+  --tier <fast|live|ui|all>    Test tier to run (default: fast)
   --watch                      Keep Vitest running in watch mode
   --coverage                   Enable coverage for the run
   --host <host>                Dashboard host (default: ${DEFAULT_HOST})
@@ -103,8 +103,8 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (value === "--tier") {
       const tier = argv[index + 1];
-      if (!tier || !["fast", "risk", "live", "ui", "all"].includes(tier)) {
-        throw new Error("Expected --tier to be one of: fast, risk, live, ui, all.");
+      if (!tier || !["fast", "live", "ui", "all"].includes(tier)) {
+        throw new Error("Expected --tier to be one of: fast, live, ui, all.");
       }
       options.tier = tier as DashboardTier;
       index += 1;
@@ -1155,7 +1155,6 @@ function renderDashboardPage(statusPath: string): string {
                 <select id="tier-select" class="control-select">
                   <option value="fast">Fast</option>
                   <option value="all">All</option>
-                  <option value="risk">Risk</option>
                   <option value="live">Live</option>
                   <option value="ui">UI</option>
                 </select>
