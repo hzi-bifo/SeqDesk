@@ -84,4 +84,31 @@ describe("store source helpers", () => {
       "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download"
     );
   });
+
+  it("normalizes partial registry capabilities to the complete response shape", () => {
+    const normalized = normalizeRegistryPipeline(
+      {
+        id: "fastqc",
+        capabilities: {
+          requiresLinkedReads: true,
+          writesCanonicalReadMetadata: true,
+          writesCanonicalReadFiles: false,
+        },
+      },
+      {
+        id: "registry:https://seqdesk.com/api/registry",
+        registryUrl: "https://seqdesk.com/api/registry",
+        browseUrl: "https://seqdesk.com/pipelines",
+        label: "SeqDesk Registry",
+      }
+    );
+
+    expect(normalized.capabilities).toEqual({
+      requiresLinkedReads: true,
+      writesCanonicalReadMetadata: true,
+      writesCanonicalReadFiles: false,
+      stagesReadCandidates: false,
+      requiresAdminReadPromotion: false,
+    });
+  });
 });
