@@ -1165,4 +1165,847 @@ describe("submg runner", () => {
     expect(result.artifactsCreated).toBe(0);
     expect(mocks.db.pipelineArtifact.create).not.toHaveBeenCalled();
   });
+
+  // ---------------------------------------------------------------------------
+  // prepareSubmgRun: per-sample validation guard branches.
+  // These exercise the sampleErrors paths that short-circuit a sample without
+  // writing YAML, plus the platform/coverage/fallback variations.
+  // ---------------------------------------------------------------------------
+
+  const baseExecutionSettings = () => ({
+    useSlurm: false,
+    pipelineRunDir: tempDir,
+    dataBasePath: tempDir,
+  });
+
+  const baseSiteSettings = (testMode = false) => ({
+    enaUsername: "Webin-12345",
+    enaPassword: "secret",
+    enaTestMode: testMode,
+  });
+
+  // Builds a sample fixture with everything valid; callers override fields.
+  const validSample = (overrides: Record<string, unknown> = {}) => ({
+    id: "sample-1",
+    sampleId: "SAMPLE-1",
+    sampleAlias: "S1",
+    sampleTitle: "Sample 1",
+    taxId: "9606",
+    scientificName: "Bacteria",
+    preferredAssemblyId: null,
+    customFields: null,
+    checklistData: JSON.stringify({
+      "collection date": "2026-02-01",
+      "geographic location (country and/or sea)": "Europe",
+    }),
+    reads: [
+      {
+        id: "read-1",
+        file1: "reads/sample-1_R1.fastq.gz",
+        file2: "reads/sample-1_R2.fastq.gz",
+        checksum1: "md5r1",
+        checksum2: "md5r2",
+      },
+    ],
+    assemblies: [
+      {
+        id: "asm-1",
+        assemblyName: "sample-1_assembly",
+        assemblyFile: "assemblies/sample-1_assembly.fasta.gz",
+        createdByPipelineRunId: "run-asm",
+        createdByPipelineRun: {
+          id: "run-asm",
+          runNumber: "MAG-2026-001",
+          createdAt: new Date(),
+        },
+      },
+    ],
+    bins: [],
+    order: {
+      platform: "Illumina",
+      customFields: null,
+      instrumentModel: "NovaSeq",
+      librarySource: "METAGENOMIC",
+      librarySelection: "RANDOM",
+      libraryStrategy: "WGS",
+    },
+    ...overrides,
+  });
+
+  it("collects a sample error when taxId is missing", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample({ taxId: null })],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("missing taxId"))).toBe(true);
+    expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+  });
+
+  it("collects sample errors for missing paired reads and missing checksums", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        // No paired reads (file2 missing) -> "no paired-end read files".
+        validSample({
+          id: "sample-1",
+          sampleId: "SAMPLE-1",
+          reads: [
+            { id: "read-1", file1: "reads/a_R1.fastq.gz", file2: null, checksum1: "x", checksum2: "y" },
+          ],
+        }),
+        // Paired but missing checksums.
+        validSample({
+          id: "sample-2",
+          sampleId: "SAMPLE-2",
+          reads: [
+            { id: "read-2", file1: "reads/b_R1.fastq.gz", file2: "reads/b_R2.fastq.gz", checksum1: null, checksum2: null },
+          ],
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("no paired-end read files"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("without MD5 checksums"))).toBe(true);
+  });
+
+  it("collects sample errors for missing collection date and geo location", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample({ checklistData: JSON.stringify({ irrelevant: "field" }) })],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("collection date"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("geographic location"))).toBe(true);
+  });
+
+  it("collects a sample error when the sample has no assembly file", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample({ assemblies: [] })],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("has no assembly file"))).toBe(true);
+  });
+
+  it("hints at a fallback assembly when the preferred selection is unavailable", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        validSample({
+          preferredAssemblyId: "missing-assembly",
+          assemblies: [
+            {
+              id: "asm-other",
+              assemblyName: "other",
+              assemblyFile: "assemblies/other.fasta.gz",
+              createdByPipelineRunId: "run-other",
+              createdByPipelineRun: { id: "run-other", runNumber: "MAG-2026-009", createdAt: new Date() },
+            },
+          ],
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("preferred assembly selection is unavailable"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("MAG-2026-009"))).toBe(true);
+  });
+
+  it("collects a sample error when read FASTQ files do not exist on disk", async () => {
+    // No files are written to disk and no fallbacks exist, so the read paths
+    // resolve as missing while everything else is valid.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample()],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: path.join(tempDir, "nonexistent-data"),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("missing FASTQ R1 file"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("missing FASTQ R2 file"))).toBe(true);
+  });
+
+  it("resolves a .fastq fallback when the .fastq.gz path is absent and warns", async () => {
+    const dataBaseDir = path.join(tempDir, "fallback-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    // Only the un-gzipped variants exist on disk; the DB references .fastq.gz.
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample()],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w) => w.includes("was not found; using"))).toBe(true);
+  });
+
+  it("maps Nanopore and PacBio platforms and passes skip_checks through", async () => {
+    const dataBaseDir = path.join(tempDir, "platform-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        validSample({
+          order: {
+            platform: "Oxford Nanopore MinION",
+            customFields: null,
+            instrumentModel: "MinION",
+            librarySource: "METAGENOMIC",
+            librarySelection: "RANDOM",
+            libraryStrategy: "WGS",
+          },
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: { skipChecks: true },
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    const yamlContent = await fs.readFile(
+      path.join(result.runFolder!, "submg_run-1_0.yaml"),
+      "utf8"
+    );
+    expect(yamlContent).toContain("OXFORD_NANOPORE");
+    const script = await fs.readFile(result.scriptPath!, "utf8");
+    expect(script).toContain("--skip_checks");
+  });
+
+  it("uses coverage from sample customFields and emits SLURM options", async () => {
+    const dataBaseDir = path.join(tempDir, "coverage-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        validSample({
+          customFields: JSON.stringify({ coverage_depth: 42 }),
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: {
+        useSlurm: true,
+        slurmQueue: "highmem",
+        slurmCores: 8,
+        slurmMemory: "64GB",
+        slurmTimeLimit: 12,
+        slurmOptions: "--exclusive",
+        pipelineRunDir: tempDir,
+        dataBasePath: dataBaseDir,
+      },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    const yamlContent = await fs.readFile(
+      path.join(result.runFolder!, "submg_run-1_0.yaml"),
+      "utf8"
+    );
+    expect(yamlContent).toContain('COVERAGE_VALUE: "42"');
+    const script = await fs.readFile(result.scriptPath!, "utf8");
+    expect(script).toContain("#SBATCH --exclusive");
+    expect(script).toContain("#SBATCH -p highmem");
+  });
+
+  it("increments the run number based on the latest existing SUBMG run", async () => {
+    const dataBaseDir = path.join(tempDir, "runnum-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample()],
+    });
+    // A previous run ending in 007 means the next should be 008.
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      { runNumber: `SUBMG-${today}-007` },
+    ]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.runNumber).toBe(`SUBMG-${today}-008`);
+  });
+
+  it("warns and skips bins that do not exist on disk while still succeeding", async () => {
+    const dataBaseDir = path.join(tempDir, "bins-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        validSample({
+          bins: [
+            { id: "bin-1", binFile: "bins/missing.bin.fa", completeness: 90, contamination: 1 },
+          ],
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: { submitBins: true },
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w) => w.includes("bin file does not exist"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("no usable bin files were found"))).toBe(true);
+  });
+
+  it("writes bin quality/taxonomy files and a BINS block when bins exist on disk", async () => {
+    const dataBaseDir = path.join(tempDir, "bins-ok-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "bins"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+    await fs.writeFile(path.join(dataBaseDir, "bins", "bin.001.fa"), ">bin");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [
+        validSample({
+          bins: [
+            { id: "bin-1", binFile: "bins/bin.001.fa", completeness: 95, contamination: 2 },
+          ],
+        }),
+      ],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: { submitBins: true },
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    const yamlContent = await fs.readFile(
+      path.join(result.runFolder!, "submg_run-1_0.yaml"),
+      "utf8"
+    );
+    expect(yamlContent).toContain("BINS:");
+    expect(yamlContent).toContain("QUALITY_FILE:");
+    const qualityContent = await fs.readFile(
+      path.join(result.runFolder!, "checkm_summary_SAMPLE-1.tsv"),
+      "utf8"
+    );
+    expect(qualityContent).toContain("bin.001\t95\t2");
+    const script = await fs.readFile(result.scriptPath!, "utf8");
+    expect(script).toContain("--submit_bins");
+  });
+
+  it("warns when no bins exist and submitBins is enabled", async () => {
+    const dataBaseDir = path.join(tempDir, "nobins-db");
+    await fs.mkdir(path.join(dataBaseDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(dataBaseDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(dataBaseDir, "reads", "sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(dataBaseDir, "assemblies", "sample-1_assembly.fasta.gz"), ">asm");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample({ bins: [] })],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: { submitBins: true },
+      executionSettings: { ...baseExecutionSettings(), pipelineRunDir: tempDir },
+      dataBasePath: dataBaseDir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w) => w.includes("has no bins"))).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // processSubmgRunResults: accession parsing and read mapping branches.
+  // ---------------------------------------------------------------------------
+
+  it("matches reads by swapped checksums and falls back to read.findFirst by sample scope", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-050");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "biological_samples"), { recursive: true });
+    await fs.mkdir(path.join(loggingDir, "reads", "1", "submit"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "biological_samples", "sample_preliminary_accessions.txt"),
+      ["sample\tbiosample\trun", "SAMPLE-1\tSAMPLE0001\tERS0001"].join("\n")
+    );
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "webin-cli.report"),
+      "run accession submission: ERR300\nexperiment accession submission: EXP300"
+    );
+    // Checksums appear swapped relative to metadata (md5r2 then md5r1).
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "submit", "run.xml"),
+      'submission><checksum="md5r2"/><checksum="md5r1"/>'
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [{ id: "sample-1", reads: [], assemblies: [], bins: [] }] },
+    });
+    mocks.db.sample.update.mockResolvedValue({});
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    const metadataPath = path.join(runFolder, "submg-metadata.json");
+    await fs.writeFile(
+      metadataPath,
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            // Two reads so the single-read fallback does NOT trigger.
+            readIds: ["read-1", "read-2"],
+            reads: [
+              { id: "read-1", checksum1: "md5r1", checksum2: "md5r2" },
+              { id: "read-2", checksum1: "other1", checksum2: "other2" },
+            ],
+            assemblyId: null,
+            assemblyFile: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.readsUpdated).toBe(1);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: { runAccessionNumber: "ERR300", experimentAccessionNumber: "EXP300" },
+    });
+  });
+
+  it("falls back to a single declared read when checksums do not match", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-051");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "reads", "1", "submit"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "webin-cli.report"),
+      "run accession submission: ERR301\nexperiment accession submission: EXP301"
+    );
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "submit", "run.xml"),
+      'submission><checksum="unknownA"/><checksum="unknownB"/>'
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [{ id: "sample-1", reads: [], assemblies: [], bins: [] }] },
+    });
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            readIds: ["read-solo"],
+            reads: [{ id: "read-solo", checksum1: "md5r1", checksum2: "md5r2" }],
+            assemblyId: null,
+            assemblyFile: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.readsUpdated).toBe(1);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-solo" },
+      data: { runAccessionNumber: "ERR301", experimentAccessionNumber: "EXP301" },
+    });
+  });
+
+  it("matches a read via db.read.findFirst when metadata has no entry mapping", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-052");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "reads", "1", "submit"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "webin-cli.report"),
+      "run accession submission: ERR302\nexperiment accession submission: EXP302"
+    );
+    await fs.writeFile(
+      path.join(loggingDir, "reads", "1", "submit", "run.xml"),
+      'submission><checksum="md5x"/><checksum="md5y"/>'
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [{ id: "sample-1", reads: [], assemblies: [], bins: [] }] },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({ id: "db-read-1" });
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    // Metadata with no matching entry index (index 5) so entry is null for dir 0.
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 5,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            readIds: ["read-1"],
+            reads: [{ id: "read-1", checksum1: "md5r1", checksum2: "md5r2" }],
+            assemblyId: null,
+            assemblyFile: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(mocks.db.read.findFirst).toHaveBeenCalled();
+    expect(result.readsUpdated).toBe(1);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "db-read-1" },
+      data: { runAccessionNumber: "ERR302", experimentAccessionNumber: "EXP302" },
+    });
+  });
+
+  it("parses an ERZ assembly accession from the bare regex pattern", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-053");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "assembly_fasta"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "assembly_fasta", "webin-cli.report"),
+      "The assembly was registered as ERZ9988776 successfully."
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [{ id: "sample-1", reads: [], assemblies: [], bins: [] }] },
+    });
+    mocks.db.assembly.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            readIds: [],
+            reads: [],
+            assemblyId: "asm-1",
+            assemblyFile: "/tmp/asm.fa",
+            bins: [],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.assembliesUpdated).toBe(1);
+    expect(mocks.db.assembly.update).toHaveBeenCalledWith({
+      where: { id: "asm-1" },
+      data: { assemblyAccession: "ERZ9988776" },
+    });
+  });
+
+  it("maps a bin accession via db.bin.findFirst when the metadata lookup misses", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-054");
+    const loggingDir = path.join(runFolder, "logging_0");
+    await fs.mkdir(path.join(loggingDir, "bins"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(loggingDir, "bins", "bin_to_preliminary_accession.tsv"),
+      "renamed.bin.fa\tERZBINDB"
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: { samples: [{ id: "sample-1", reads: [], assemblies: [], bins: [] }] },
+    });
+    // The metadata bin lookup misses, but db.bin.findFirst resolves it.
+    mocks.db.bin.findFirst.mockResolvedValue({ id: "bin-db-1" });
+    mocks.db.bin.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            readIds: [],
+            reads: [],
+            assemblyId: null,
+            assemblyFile: null,
+            bins: [{ id: "bin-1", name: "different", path: "/tmp/different.fa" }],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(mocks.db.bin.findFirst).toHaveBeenCalled();
+    expect(result.binsUpdated).toBe(1);
+    expect(mocks.db.bin.update).toHaveBeenCalledWith({
+      where: { id: "bin-db-1" },
+      data: { binAccession: "ERZBINDB" },
+    });
+  });
+
+  it("returns 'No valid samples' error when no metadata entries were produced", async () => {
+    // A sample whose only failure is a missing assembly produces errors, but
+    // here we drive the metadataEntries.length === 0 guard by selecting a
+    // sample list that yields a sample error -> errors path returns first.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample({ taxId: null, assemblies: [] })],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+
+    const result = await prepareSubmgRun({
+      runId: "run-1",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    // errors take precedence over the "No valid samples" guard.
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
 });

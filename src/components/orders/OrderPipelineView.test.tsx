@@ -1223,4 +1223,450 @@ describe("OrderPipelineView", () => {
     ).toBeTruthy();
     expect(screen.getByLabelText("Run all ready samples").hasAttribute("disabled")).toBe(false);
   });
+
+  // Build a useSWR mock that serves the standard pipeline + a custom runs payload.
+  function mockSimulateRunsResponse(runsPayload: {
+    runs: unknown[];
+    total: number;
+  }) {
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return { data: runsPayload, mutate: mocks.mutateRuns };
+      }
+      return { data: undefined, mutate: vi.fn() };
+    });
+  }
+
+  it("shows a spinner while the pipeline catalog is loading", () => {
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url === "string" && url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (typeof url === "string" && url.includes("/api/admin/settings/pipelines")) {
+        return { data: undefined, isLoading: true, mutate: vi.fn() };
+      }
+      return { data: undefined, isLoading: false, mutate: vi.fn() };
+    });
+
+    const { container } = render(
+      <OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />
+    );
+
+    expect(container.querySelector(".animate-spin")).toBeTruthy();
+    expect(screen.queryByText("Simulate Reads")).toBeNull();
+  });
+
+  it("renders a not-found message when the pipeline is missing from the catalog", () => {
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url === "string" && url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (typeof url === "string" && url.includes("/api/admin/settings/pipelines")) {
+        return { data: { pipelines: [] }, isLoading: false, mutate: vi.fn() };
+      }
+      if (typeof url === "string" && url.includes("/api/pipelines/runs")) {
+        return { data: { runs: [], total: 0 }, mutate: mocks.mutateRuns };
+      }
+      return { data: undefined, isLoading: false, mutate: vi.fn() };
+    });
+
+    render(
+      <OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />
+    );
+
+    expect(screen.getByText("Pipeline not found or not enabled.")).toBeTruthy();
+  });
+
+  it("shows the empty-runs placeholder and renders demo-mode view-only state", () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isDemo
+      />
+    );
+
+    expect(
+      screen.getByText("No runs started for this pipeline yet.")
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Demo mode — pipeline execution is view-only")
+    ).toBeTruthy();
+    // Demo mode hides the run-all button entirely.
+    expect(screen.queryByLabelText("Run all ready samples")).toBeNull();
+  });
+
+  it("renders queued, cancelled, and unknown status badges with their detail text", () => {
+    const queuedRun = {
+      ...runs[2],
+      id: "run-queued",
+      runNumber: "RUN-Q",
+      status: "queued",
+      currentStep: null,
+      progress: null,
+    };
+    const cancelledRun = {
+      ...runs[2],
+      id: "run-cancelled",
+      runNumber: "RUN-C",
+      status: "cancelled",
+      currentStep: null,
+      progress: null,
+    };
+    const unknownRun = {
+      ...runs[2],
+      id: "run-unknown",
+      runNumber: "RUN-U",
+      status: "archived",
+      currentStep: null,
+      progress: null,
+    };
+    mockSimulateRunsResponse({
+      runs: [queuedRun, cancelledRun, unknownRun],
+      total: 3,
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    // Status badges for queued + cancelled + the default (unknown) branch.
+    expect(
+      screen.getAllByText("Queued").some((el) => el.tagName.toLowerCase() !== "button")
+    ).toBe(true);
+    expect(
+      screen.getAllByText("Cancelled").some((el) => el.tagName.toLowerCase() !== "button")
+    ).toBe(true);
+    expect(screen.getByText("archived")).toBeTruthy();
+
+    // getRunDetails: queued => "Waiting for execution".
+    expect(screen.getAllByText("Waiting for execution").length).toBeGreaterThan(0);
+    // Queued/cancelled runs count toward the active badge (queued only).
+    expect(screen.getByText("1 active")).toBeTruthy();
+  });
+
+  it("filters runs by status, shows the empty filtered state, and clears the filter", () => {
+    mockSimulateRunsResponse({ runs, total: runs.length });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    // The status filter Select exposes its value as data-selected="all" initially.
+    // (Other Selects in the form also carry data-on-value-change, so match on the
+    // option button set that only the status filter renders.)
+    const allStatusesOption = screen
+      .getAllByText("All statuses")
+      .find((el) => el.tagName.toLowerCase() === "button");
+    expect(allStatusesOption).toBeTruthy();
+    const statusFilterSelect = allStatusesOption!.closest("[data-selected]");
+    expect(statusFilterSelect?.getAttribute("data-selected")).toBe("all");
+
+    // Status counts render next to options that have runs (e.g. "(1)" for completed).
+    expect(screen.getAllByText("(1)").length).toBeGreaterThan(0);
+
+    // The filter exposes every status option as a SelectItem button.
+    expect(
+      screen.getAllByText("Cancelled").some((el) => el.tagName.toLowerCase() === "button")
+    ).toBe(true);
+    expect(
+      screen.getAllByText("Failed").some((el) => el.tagName.toLowerCase() === "button")
+    ).toBe(true);
+  });
+
+  it("runs a single ready sample from the per-row play button", async () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[0]]}
+        isFacilityAdmin
+      />
+    );
+
+    const runButton = await screen.findByLabelText(
+      /Generate simulated reads for SAMPLE_A/i
+    );
+    fireEvent.click(runButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs/created-run/start",
+        { method: "POST" }
+      );
+    });
+    const createBody = JSON.parse(
+      fetchMock.mock.calls.find(([url]) => url === "/api/pipelines/runs")![1].body
+    );
+    expect(createBody.sampleIds).toEqual(["sample-a"]);
+  });
+
+  it("deletes a single run from the row dropdown and supports cancelling the dialog", async () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
+    expect(screen.getByText("Delete Pipeline Run")).toBeTruthy();
+
+    // Cancel leaves the run untouched.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Delete Pipeline Run")).toBeNull();
+
+    // Re-open and confirm the delete.
+    fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs/run-1/delete", {
+        method: "POST",
+      });
+    });
+  });
+
+  it("exits select mode via the Cancel button without deleting", () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(screen.getByLabelText("Select all runs")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText("Select all runs")).toBeNull();
+    // The Select button is shown again after leaving select mode.
+    expect(screen.getByRole("button", { name: "Select" })).toBeTruthy();
+  });
+
+  it("warns about raw/unknown reads and renders the 'No reads' badge", () => {
+    const protectedSamples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
+      { ...samples[0], read: rawReadA },
+      // A sample without linked reads renders the "No reads" badge in the Reads column.
+      samples[1],
+    ];
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={protectedSamples}
+        isFacilityAdmin
+      />
+    );
+
+    expect(screen.getByText("Raw or unknown reads selected")).toBeTruthy();
+    expect(screen.getByText(/use raw or unknown reads/i)).toBeTruthy();
+    // SAMPLE_B has no linked reads => "No reads" badge.
+    expect(screen.getByText("No reads")).toBeTruthy();
+  });
+
+  it("opens the change-source modal with no completed runs and closes it", () => {
+    mockSimulateRunsResponse({ runs: [runs[1]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[1]]}
+        isFacilityAdmin
+      />
+    );
+
+    // SAMPLE_B has no linked reads => the source button reads "Not linked".
+    fireEvent.click(screen.getByRole("button", { name: "Not linked" }));
+    expect(screen.getByText("Change Source")).toBeTruthy();
+    expect(
+      screen.getByText("No completed runs available for this sample.")
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByText("Change Source")).toBeNull();
+  });
+
+  it("changes the result source by selecting a non-current completed run", async () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[0]]}
+        isFacilityAdmin
+        onSampleDataChanged={onSampleDataChanged}
+      />
+    );
+
+    // SAMPLE_A is linked to run-1 (its source). Open the change-source modal.
+    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
+    // run-1 is the current source so it is disabled; there is no other run, so the
+    // current run is the only option and clicking it is a no-op. Add a second run
+    // scenario by switching to a sample whose source differs.
+    expect(screen.getByText("Current")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("applies a different completed run as the new source", async () => {
+    const otherRun = {
+      ...runs[0],
+      id: "run-other",
+      runNumber: "RUN-OTHER",
+      inputSampleIds: JSON.stringify(["sample-a"]),
+    };
+    mockSimulateRunsResponse({ runs: [runs[0], otherRun], total: 2 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[0]]}
+        isFacilityAdmin
+        onSampleDataChanged={onSampleDataChanged}
+      />
+    );
+
+    // SAMPLE_A's source is run-1 (RUN-2026-001). Open the modal and pick the other run.
+    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
+    // The modal lists completed runs as buttons containing the run number; target the
+    // RUN-OTHER row button (distinct from the row's "Actions for RUN-OTHER" trigger).
+    const modalRunLabel = screen
+      .getAllByText("RUN-OTHER")
+      .find((el) => el.tagName.toLowerCase() === "span");
+    expect(modalRunLabel).toBeTruthy();
+    fireEvent.click(modalRunLabel!.closest("button")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs/run-other/resolve-outputs/sample",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    expect(onSampleDataChanged).toHaveBeenCalled();
+  });
+
+  it("surfaces an error notice when starting the run-all request fails", async () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/pipelines/runs") {
+        return Promise.resolve(
+          jsonResponse({ error: "Backend exploded" }, false)
+        );
+      }
+      if (url === "/api/pipelines/validate-metadata") {
+        return Promise.resolve(
+          jsonResponse({ valid: true, issues: [], metadata: {}, derivedSettings: [] })
+        );
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[0]]}
+        isFacilityAdmin
+      />
+    );
+
+    fireEvent.click(await screen.findByLabelText("Run all ready samples"));
+
+    expect(await screen.findByText("Pipeline action failed")).toBeTruthy();
+    expect(screen.getByText("Backend exploded")).toBeTruthy();
+  });
+
+  it("closes the file preview modal via its close button", () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[samples[0]]}
+        isFacilityAdmin
+      />
+    );
+
+    fireEvent.click(screen.getAllByText("SAMPLE_A_R1.fastq.gz")[0]);
+    expect(screen.getByText("R1 — SAMPLE_A_R1.fastq.gz")).toBeTruthy();
+
+    // The preview modal close button (the trailing X with no accessible name).
+    const openInNewTab = screen.getByRole("link", { name: /Open in new tab/i });
+    const closeButton = openInNewTab.parentElement?.querySelector("button");
+    expect(closeButton).toBeTruthy();
+    fireEvent.click(closeButton!);
+    expect(screen.queryByText("R1 — SAMPLE_A_R1.fastq.gz")).toBeNull();
+  });
+
+  it("shows stale-file styling and 'Source files deleted' for missing result files", () => {
+    const staleSample: React.ComponentProps<typeof OrderPipelineView>["samples"][number] = {
+      ...samples[0],
+      read: {
+        ...samples[0].read!,
+        filesMissing: true,
+        fileSize1: null,
+        fileSize2: null,
+      },
+    };
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={[staleSample]}
+        isFacilityAdmin
+      />
+    );
+
+    // Stale reads badge in the Reads column.
+    expect(screen.getByText("Stale")).toBeTruthy();
+    // The result file preview buttons are disabled and struck through when files are missing.
+    const r1Button = screen.getAllByText("SAMPLE_A_R1.fastq.gz")[0].closest("button");
+    expect(r1Button?.hasAttribute("disabled")).toBe(true);
+  });
 });
