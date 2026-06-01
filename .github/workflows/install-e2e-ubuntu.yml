@@ -902,24 +902,39 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$FIXTURE_PROFILE"
-          test -f "$INSTALL_DIR/scripts/apply-install-profile.mjs"
-          cd "$INSTALL_DIR"
+          # A release/launcher install lays the app (scripts, .env, node_modules)
+          # out under $INSTALL_DIR/current; seqdesk.config.json is at the install
+          # root (symlinked into current). Run apply from the app dir so apply-core
+          # finds .env (DB connection) and writes the install's seqdesk.config.json.
+          if [ -f "$INSTALL_DIR/current/scripts/apply-install-profile.mjs" ]; then
+            APP_DIR="$INSTALL_DIR/current"
+          elif [ -f "$INSTALL_DIR/scripts/apply-install-profile.mjs" ]; then
+            APP_DIR="$INSTALL_DIR"
+          else
+            echo "apply-install-profile.mjs not found under $INSTALL_DIR or $INSTALL_DIR/current"
+            ls -la "$INSTALL_DIR" "$INSTALL_DIR/current" 2>/dev/null || true
+            exit 1
+          fi
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          cd "$APP_DIR"
           node scripts/apply-install-profile.mjs --profile-config "$FIXTURE_PROFILE"
 
       - name: Assert install profile applied (Prisma DB + config persistence)
         run: |
           set -euo pipefail
-          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          CONFIG_DIR="${APP_DIR:-$INSTALL_DIR}"
+          cp "$CONFIG_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
-            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --file "$CONFIG_DIR/seqdesk.config.json" \
             --expected-port "$PORT" >/dev/null
-          INSTALL_DIR="$INSTALL_DIR" PROFILE_ID="$PROFILE_ID" PROFILE_ASSERT_JSON="$PROFILE_ASSERT_JSON" \
+          INSTALL_DIR="$INSTALL_DIR" APP_DIR="${APP_DIR:-$INSTALL_DIR}" PROFILE_ID="$PROFILE_ID" PROFILE_ASSERT_JSON="$PROFILE_ASSERT_JSON" \
           node --input-type=module -e '
             import fs from "node:fs";
             import path from "node:path";
             import { createRequire } from "node:module";
 
             const installDir = process.env.INSTALL_DIR;
+            const appDir = process.env.APP_DIR || installDir;
             const expectedProfileId = process.env.PROFILE_ID;
             const expectedDeviceId = "ont-minion-mk1d";
 
@@ -944,7 +959,7 @@ jobs:
             }
 
             // seqdesk.config.json persistence of safe install profile metadata
-            const configPath = path.join(installDir, "seqdesk.config.json");
+            const configPath = path.join(appDir, "seqdesk.config.json");
             const config = parseJsonObject(fs.readFileSync(configPath, "utf8"), configPath);
             if (!config.installProfile || config.installProfile.id !== expectedProfileId) {
               fail("seqdesk.config.json installProfile.id mismatch, got " + JSON.stringify(config.installProfile));
@@ -958,7 +973,7 @@ jobs:
             process.env.DATABASE_URL = databaseUrl;
             process.env.DIRECT_URL = (config.runtime && config.runtime.directUrl) || databaseUrl;
 
-            const requireFromInstall = createRequire(path.join(installDir, "package.json"));
+            const requireFromInstall = createRequire(path.join(appDir, "package.json"));
             const { PrismaClient } = requireFromInstall("@prisma/client");
             const prisma = new PrismaClient();
             try {
