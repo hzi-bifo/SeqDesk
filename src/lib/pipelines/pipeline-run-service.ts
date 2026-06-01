@@ -1094,12 +1094,19 @@ export async function startPipelineRunForOperator({
     // Atomically claim the run before launching. Validation and prep above are
     // idempotent/read-mostly, but the sbatch/spawn below are not: two concurrent
     // start requests (or a double-click) would otherwise both reach this point
-    // and launch the job twice. updateMany guarded on status='pending' lets only
-    // the first request transition out of 'pending'; the loser gets a 409 and
-    // never submits. The SLURM branch re-sets 'queued' (with the job id) and the
+    // and launch the job twice. updateMany lets only the first request transition
+    // the run; the loser sees a non-claimable status and gets a 409, never
+    // submitting. The SLURM branch re-sets 'queued' (with the job id) and the
     // local branch re-sets 'running' (with the pid) immediately below.
+    //
+    // The guard accepts both 'pending' (freshly created) and 'queued': prepare
+    // (prepareGenericRun/prepareSubmgRun) flips the run to 'queued' while it
+    // writes the run folder, so by this point the status is 'queued', not
+    // 'pending'. A genuinely already-launched run is rejected earlier by the
+    // run.status !== 'pending' check at the top of this function, so the only
+    // 'queued' state reachable here is the transient one set by prepare.
     const launchClaim = await db.pipelineRun.updateMany({
-      where: { id: runId, status: 'pending' },
+      where: { id: runId, status: { in: ['pending', 'queued'] } },
       data: {
         status: effectiveExecutionSettings.useSlurm ? 'queued' : 'running',
         statusSource: 'launcher',
