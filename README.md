@@ -9,246 +9,89 @@
 [![Alma Install E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-profile-alma.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-profile-alma.yml)
 [![codecov](https://codecov.io/gh/hzi-bifo/SeqDesk/branch/main/graph/badge.svg?token=SMQXMDYACH)](https://codecov.io/gh/hzi-bifo/SeqDesk)
 
-SeqDesk is a sequencing facility management system for handling orders, samples, studies, sequencing files, and pipeline execution.
+**Sequencing facility management — from order submission to data publishing.** SeqDesk handles
+sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
+runs self-hosted on your own infrastructure.
 
-This repository intentionally keeps documentation minimal for public use.
-Full user and operator documentation is published at:
-[https://www.seqdesk.com/docs](https://www.seqdesk.com/docs)
+> 📖 **Full documentation: [seqdesk.com/docs](https://www.seqdesk.com/docs)** — installation,
+> configuration, orders & studies, sequencing files, pipelines, ENA submission, administration, and
+> updates. This README covers installing and developing **the repository itself**.
 
-## Quick Install
+## Features
 
-Recommended for regular installs and upgrades:
+- **Orders & samples** — submit and track sequencing orders; collect per-sample data with configurable forms.
+- **Studies & metadata** — group samples across orders into studies with standardized MIxS metadata.
+- **Sequencing files** — discover, assign, and track raw/cleaned read files with checksums and barcode-based matching.
+- **Pipelines** — run bioinformatics workflows (FASTQ QC, read cleaning, assembly/MAG, …) locally or on SLURM, with live monitoring and result write-back.
+- **ENA submission** — register studies and samples and submit reads, assemblies, and bins to ENA.
+- **Self-hosted** — runs on your own infrastructure; your data stays with you.
+
+## Requirements
+
+- Node.js 18+
+- PostgreSQL (SeqDesk is PostgreSQL-only)
+- Optional, for pipelines: Conda and/or Nextflow — and SLURM for cluster execution
+
+## Install
+
+Recommended — the npm launcher handles installs and upgrades:
 
 ```bash
 npm i -g seqdesk
 seqdesk
 ```
 
-Pass installer flags directly through the launcher:
+Installer flags pass straight through the launcher, for example:
 
 ```bash
 seqdesk -y --config ./infrastructure-setup.json
-seqdesk -y --reconfigure --config ./infrastructure-setup.json
-seqdesk -y --use-pm2 --dir /opt/seqdesk
+seqdesk -y --profile <id> --profile-code <code>   # apply a hosted install profile
 ```
 
-Install with a hosted profile (pre-configured settings from seqdesk.com):
-
-```bash
-seqdesk -y --profile <id> --profile-code <code>
-```
-
-Organizations can create install profiles at [seqdesk.com](https://www.seqdesk.com) that bundle form fields, pipeline settings, and module configuration. The installer fetches and applies the profile during setup.
-
-Advanced fallback when npm is unavailable:
+Organizations can create install profiles at [seqdesk.com](https://www.seqdesk.com) that bundle form
+fields, pipeline settings, and module configuration; the installer fetches and applies them during
+setup. Fallback when npm is unavailable:
 
 ```bash
 curl -fsSL https://seqdesk.com/install.sh | bash
 ```
 
-The npm package is the supported public entry point. Internally, it downloads
-and runs the public shell installer served from `seqdesk.com/install.sh`.
-Updating `scripts/install-dist.sh` in this repository does not change the live
-installer until the matching `public/install.sh` in the SeqDesk.com repository
-has been updated and deployed.
+Full installation, configuration, unattended, and hosted-profile options are documented at
+**[seqdesk.com/docs/installation](https://www.seqdesk.com/docs/installation)**.
 
-## Source Installer
+> The npm package is the supported public entry point; it downloads and runs the public installer
+> served from `seqdesk.com/install.sh`. Editing `scripts/install-dist.sh` in this repository does
+> **not** change the live installer until the matching `public/install.sh` in the SeqDesk.com
+> repository has been updated and deployed.
 
-Use the source installer for advanced/dev checkouts rather than the recommended production path above:
-
-```bash
-bash scripts/install.sh -y --dir ./seqdesk-source
-```
-
-## Local Development
-
-macOS shortcut for local testing with Homebrew PostgreSQL:
-
-```bash
-npm run dev:mac
-```
-
-This starts local PostgreSQL if needed, creates the default local `seqdesk`
-database and role, runs migrations and seed data, then starts Next.js with
-local PostgreSQL runtime overrides.
-
-### 1. Clone and install
+## Local development
 
 ```bash
 git clone https://github.com/hzi-bifo/SeqDesk.git
 cd SeqDesk
 npm ci
-```
-
-### 2. Configure runtime values
-
-```bash
-cp seqdesk.config.example.json seqdesk.config.json
-```
-
-Set at least:
-
-```json
-{
-  "runtime": {
-    "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
-    "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
-    "nextAuthUrl": "http://localhost:3000",
-    "nextAuthSecret": "replace-with-a-random-secret"
-  }
-}
-```
-
-For `npm run dev`, keep `runtime.nextAuthUrl` aligned with the URL you will
-open in the browser, typically `http://localhost:3000`. The installer-oriented
-config example uses port `8000`, which is for installed service mode rather than
-local Next.js development.
-
-### 3. Initialize database
-
-```bash
+cp seqdesk.config.example.json seqdesk.config.json   # set runtime.databaseUrl and nextAuthSecret
 npm run db:migrate:deploy
 npm run db:seed
+npm run dev                                           # http://localhost:3000
 ```
 
-SeqDesk is now PostgreSQL-only. Existing SQLite installs must remain on the last
-SQLite-compatible release until they are migrated manually.
-
-### 4. Start
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
+On macOS with Homebrew PostgreSQL, `npm run dev:mac` starts/creates the local database, runs
+migrations and seed data, and launches the dev server in one step.
 
 Default seeded users:
-- Admin: `admin@example.com` / `admin`
-- Researcher: `user@example.com` / `user`
 
-## Common Commands
+- Admin — `admin@example.com` / `admin`
+- Researcher — `user@example.com` / `user`
 
-```bash
-npm run dev
-npm run build
-npm run start
-npm test
-```
+For configuration details, testing, the live test dashboard, background workers, and the pipeline
+e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
-Vitest commands assume a local PostgreSQL test database at
-`postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public`
-unless you override `DATABASE_URL` and `DIRECT_URL`.
+## Documentation
 
-### Background workers
-
-Two long-lived helper processes run alongside the Next.js server:
-
-```bash
-npm run pipeline:monitor          # poll SLURM/local pipeline runs, update PipelineRun rows
-npm run stream:monitor            # watch MinKNOW output dirs, ingest reads into active StreamRuns
-npm run stream:monitor:simulate   # drop fake FASTQs into a directory for end-to-end testing without hardware
-```
-
-`stream:monitor` reads its configuration (output root, gRPC host/port, TLS cert) from
-*Application Settings → MinKNOW Stream* in the admin UI. Facility admins attach a running
-sequencing run to an order from *Sequencing Data → Stream* on the order page. The simulator
-flag drops MinKNOW-shaped FASTQs into a target directory at a configurable cadence
-(`SIMULATE_INTERVAL_MS`, `SIMULATE_BARCODES`) so the full pipeline can be exercised without
-a real device.
-
-### Headless pipeline runtime smoke test
-
-On a Linux dev server with SeqDesk running, use the runtime E2E smoke test to
-verify pipeline execution without opening a browser. The test logs in through
-the API, chooses an order, runs the lightweight `simulate-reads` order pipeline
-once locally and once through SLURM, then checks the generated run scripts,
-Nextflow config, queue IDs, logs, and output files.
-
-```bash
-SEQDESK_RUNTIME_E2E_BASE_URL="https://your-seqdesk.example.org" \
-SEQDESK_RUNTIME_E2E_EMAIL="admin@example.com" \
-SEQDESK_RUNTIME_E2E_PASSWORD="admin-password" \
-npm run pipeline:e2e:runtime -- --ensure-dummy-data
-```
-
-If `--order-id` is omitted, the script prefers the admin-owned dummy orders
-created by **Admin → Settings → Load dummy data**. With `--ensure-dummy-data`,
-it calls the same seed endpoint automatically when those orders are missing.
-
-Useful variants:
-
-```bash
-npm run pipeline:e2e:runtime -- --skip-slurm --ensure-dummy-data
-npm run pipeline:e2e:runtime -- --skip-local --ensure-dummy-data
-npm run pipeline:e2e:runtime -- --include-default-policy --expect-default-mode slurm
-npm run pipeline:e2e:runtime -- --order-id <order-id>
-```
-
-The full local + SLURM run requires `sbatch`, `squeue`, and `sacct` on the host.
-Use `--skip-slurm` for a local-only check on machines without SLURM.
-
-## Live Test Dashboard
-
-SeqDesk includes a local test dashboard that groups tests by section and shows live pass/fail/running state while the suite executes.
-
-Start the default fast watcher:
-
-```bash
-npm run test:dashboard:watch
-```
-
-Other entry points:
-
-```bash
-npm run test:dashboard          # fast Vitest, one-shot
-npm run test:dashboard:watch    # fast Vitest, persistent local dashboard
-npm run test:dashboard:all      # all current Vitest tiers
-npm run test:dashboard:risk     # risk-tier Vitest files
-npm run test:dashboard:live     # live-tier Vitest files
-npm run test:dashboard:ui       # Playwright UI/E2E tests in the same dashboard shell
-```
-
-Useful examples:
-
-```bash
-npm run test:dashboard -- --no-open src/lib/testing/dashboard.test.ts
-npm run test:dashboard:ui -- --no-open playwright/tests/auth.setup.ts
-```
-
-Notes:
-- The dashboard prints a local URL when it starts and can open the browser automatically.
-- The page includes a tier selector and `Run Tests` button for local reruns.
-- `ui` is a separate Playwright tier. `all` currently means Vitest-only, not Vitest + Playwright combined.
-
-## UI E2E Coverage
-
-Codecov now tracks repository source coverage across `src/**`.
-Playwright browser coverage is still tracked separately from the Codecov percentage shown above, and the badge above reports the E2E workflow status.
-Current local UI E2E coverage includes:
-
-| Area | Covered Flows |
-| --- | --- |
-| Orders | wizard validation, multi-sample orders, sample-table copy/import checks, draft delete, submitted-order edit, mark sent, order notes |
-| Studies | study creation from order samples, ready/draft transitions, delete, study notes sidebar |
-| Admin | admin order creation, cross-user order visibility, admin access guard, form-builder roundtrip, facility-only/required field enforcement, submitted-order deletion policy |
-| Pipelines | admin simulate-reads run, settings persistence, replace-existing behavior |
-| Demo | seeded demo workspace, session isolation/reset, shared workspace behavior, pipeline execution blocked in demo |
-
-Run locally with:
-
-```bash
-npm run test:e2e
-```
-
-This uses the Playwright config in the repo, starts `npm run dev` at
-`http://127.0.0.1:3000` by default, and expects PostgreSQL to be available.
-
-## Public Docs
-
-- Main docs: [https://www.seqdesk.com/docs](https://www.seqdesk.com/docs)
-- Releases and update info: [https://www.seqdesk.com](https://www.seqdesk.com)
+- User & operator guide: [seqdesk.com/docs](https://www.seqdesk.com/docs)
+- Releases and update info: [seqdesk.com](https://www.seqdesk.com)
 
 ## License
 
-This project is licensed under the Apache License 2.0.
-See the [LICENSE](./LICENSE) file for the full license text.
+Licensed under the Apache License 2.0 — see [LICENSE](./LICENSE).
