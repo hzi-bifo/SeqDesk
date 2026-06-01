@@ -1,0 +1,195 @@
+name: Install Real-Network Smoke
+
+# Exercises the ACTUAL published install paths end to end:
+#   - `npm i -g seqdesk@latest` from the real npm registry
+#   - `curl https://seqdesk.com/install.sh | bash`
+# Both download the real release tarball from seqdesk.com and boot the app
+# against a throwaway PostgreSQL. This is the ONLY CI that catches drift between
+# this repo and the live installer (the repo's scripts/install-dist.sh is NOT
+# the published installer).
+#
+# It is network-dependent, so it is intentionally:
+#   - scheduled + manual only (never on push/PR),
+#   - NOT a required check and NOT a README badge,
+# so a transient npm/seqdesk.com/network hiccup never looks like an
+# installability regression. Read the run output to judge a failure.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      npm_spec:
+        description: "npm spec to install (e.g. seqdesk@latest or seqdesk@1.1.112)"
+        required: false
+        default: "seqdesk@latest"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-real-network-smoke
+  cancel-in-progress: false
+
+jobs:
+  npm-global-install:
+    name: "npm i -g seqdesk (node ${{ matrix.node }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      PORT: "8893"
+      INSTALL_DIR: ${{ runner.temp }}/seqdesk-realnet-npm
+      INSTALL_LOG: ${{ runner.temp }}/realnet-npm-install.log
+      SERVER_LOG: ${{ runner.temp }}/realnet-npm-server.log
+      NPM_PREFIX: ${{ runner.temp }}/realnet-npm-prefix
+      DB_NAME: seqdesk_realnet_npm
+    steps:
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Start PostgreSQL (throwaway DB)
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER seqdesk"
+          fi
+
+      - name: Install the published launcher from the real npm registry
+        run: |
+          set -euo pipefail
+          SPEC="${{ github.event.inputs.npm_spec || 'seqdesk@latest' }}"
+          echo "Installing $SPEC from npm..."
+          npm install -g "$SPEC" --prefix "$NPM_PREFIX"
+          "$NPM_PREFIX/bin/seqdesk" --version
+
+      - name: Run the REAL install (downloads release from seqdesk.com)
+        run: |
+          set -euo pipefail
+          # No SEQDESK_API / SEQDESK_INSTALL_URL overrides => the launcher resolves
+          # the real https://seqdesk.com release metadata and downloads the real
+          # tarball, exactly as a user would.
+          PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --without-pipelines \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public" \
+              --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public"
+
+      - name: Verify the installed app boots and the DB migrated
+        run: |
+          set -euo pipefail
+          if [ ! -f "$INSTALL_DIR/start.sh" ]; then
+            echo "start.sh missing in $INSTALL_DIR"; ls -la "$INSTALL_DIR" || true; exit 1
+          fi
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" -o /tmp/providers.json; then READY=1; break; fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "App did not become ready in time."; tail -n 200 "$SERVER_LOG" || true; exit 1
+          fi
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("/tmp/providers.json","utf8"));if(!p||typeof p!=="object"||!p.credentials){console.error("No credentials provider in /api/auth/providers");process.exit(1)}'
+          # A 200 from a DB-backed endpoint proves migrations were applied.
+          curl -fsS "http://127.0.0.1:${PORT}/api/setup/status" -o /tmp/setup.json
+          node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/setup.json","utf8"));console.log("setup status:",JSON.stringify(s));'
+          echo "OK: real-network npm install booted + migrated on node ${{ matrix.node }}."
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realnet-npm-node-${{ matrix.node }}
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  curl-install-sh:
+    name: "curl https://seqdesk.com/install.sh | bash"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      PORT: "8894"
+      INSTALL_DIR: ${{ runner.temp }}/seqdesk-realnet-curl
+      INSTALL_LOG: ${{ runner.temp }}/realnet-curl-install.log
+      SERVER_LOG: ${{ runner.temp }}/realnet-curl-server.log
+      DB_NAME: seqdesk_realnet_curl
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Start PostgreSQL (throwaway DB)
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER seqdesk"
+          fi
+
+      - name: Run the real one-line installer
+        run: |
+          set -euo pipefail
+          # Mirrors the documented curl|bash path; args flow through install.sh
+          # to the downloaded installer exactly as the npm launcher passes them.
+          SEQDESK_LOG="$INSTALL_LOG" \
+          curl -fsSL https://seqdesk.com/install.sh | bash -s -- \
+            -y \
+            --without-pipelines \
+            --no-pm2 \
+            --dir "$INSTALL_DIR" \
+            --port "$PORT" \
+            --nextauth-url "http://127.0.0.1:$PORT" \
+            --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public" \
+            --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public"
+
+      - name: Verify the installed app boots
+        run: |
+          set -euo pipefail
+          if [ ! -f "$INSTALL_DIR/start.sh" ]; then
+            echo "start.sh missing in $INSTALL_DIR"; ls -la "$INSTALL_DIR" || true; exit 1
+          fi
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >/dev/null; then
+              echo "OK: curl|bash install booted."; exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become ready in time."; tail -n 200 "$SERVER_LOG" || true; exit 1
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realnet-curl
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 14
