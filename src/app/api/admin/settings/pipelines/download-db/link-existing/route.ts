@@ -12,9 +12,20 @@ import {
   updateDatabaseDownloadRecord,
 } from '@/lib/pipelines/database-downloads';
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
+
+async function computeFileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash('sha256');
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
 
 function parsePipelineConfig(rawConfig: string | null | undefined): Record<string, unknown> {
   if (!rawConfig) return {};
@@ -118,6 +129,22 @@ export async function POST(req: NextRequest) {
         { error: 'The file at the target path is empty.' },
         { status: 400 }
       );
+    }
+
+    // When the definition declares a checksum, verify it before accepting the
+    // linked file, mirroring the download path (download-db/route.ts). Without
+    // this, an admin could link a wrong-version or corrupt file for a
+    // checksum-protected database and have it accepted as verified.
+    if (database.sha256 && stats.isFile()) {
+      const actualHash = await computeFileSha256(resolvedPath);
+      if (actualHash.toLowerCase() !== database.sha256.toLowerCase()) {
+        return NextResponse.json(
+          {
+            error: `Checksum mismatch: expected sha256 ${database.sha256}, got ${actualHash}. The linked file does not match the expected database.`,
+          },
+          { status: 400 }
+        );
+      }
     }
 
     await setPipelineDatabasePath(pipelineId, database.configKey, resolvedPath);

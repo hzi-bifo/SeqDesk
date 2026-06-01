@@ -19,6 +19,10 @@ const profileApplicator = fs.readFileSync(
   path.join(repoRoot, "scripts/apply-install-profile.mjs"),
   "utf8"
 );
+const profileApplicatorCore = fs.readFileSync(
+  path.join(repoRoot, "scripts/lib/install-profile-apply-core.mjs"),
+  "utf8"
+);
 const profileAssetsApplicator = fs.readFileSync(
   path.join(repoRoot, "scripts/apply-install-profile-assets.mjs"),
   "utf8"
@@ -89,6 +93,12 @@ describe("install profile installer wiring", () => {
     expect(buildRelease).toContain("data/pipeline-databases.json");
   });
 
+  it("keeps root package metadata discoverable for release-layout installs", () => {
+    expect(installDist).toContain("link_root_release_metadata");
+    expect(installDist).toContain("for item in package.json package-lock.json");
+    expect(installDist).toContain('ln -s "current/${item}" "$SEQDESK_DIR/${item}"');
+  });
+
   it("retries runtime dependency installs on NFS-held Prisma client artifacts", () => {
     expect(installDist).toContain("is_nfs_prisma_busy_unlink_failure");
     expect(installDist).toContain("unlink .*node_modules");
@@ -129,28 +139,46 @@ describe("install profile installer wiring", () => {
   });
 
   it("keeps the profile applicator scoped to settings upserts", () => {
-    expect(profileApplicator).toContain("sequencingRunSampleFormFields");
-    expect(profileApplicator).toContain("sequencingTechConfig");
-    expect(profileApplicator).toContain("installProfile");
-    expect(profileApplicator).toContain("installProfilePipelineAllowlist");
-    expect(profileApplicator).toContain("discoverInstalledPipelineIds");
-    expect(profileApplicator).toContain("buildPipelineExecutionOverrides");
-    expect(profileApplicator).toContain("buildPipelineProfileConfig");
-    expect(profileApplicator).toContain("mergePipelineConfig");
-    expect(profileApplicator).toContain("pipelines.configs");
-    expect(profileApplicator).toContain("pipelines.pipelineConfigs");
-    expect(profileApplicator).toContain("pipelineConfig.config");
-    expect(profileApplicator).toContain("pipelineOverrides");
-    expect(profileApplicator).toContain("...Object.keys(pipelines)");
-    expect(profileApplicator).toContain("pipelineDatabaseDir");
-    expect(profileApplicator).toContain("extra.telemetry");
-    expect(profileApplicator).toContain("installProfileSeedData");
-    expect(profileApplicator).toContain("installProfilePipelineSmokeTests");
-    expect(profileApplicator).toContain("persistSafeInstallProfileMetadata");
-    expect(profileApplicator).toContain("buildSafeInstallProfileMetadata");
-    expect(profileApplicator).not.toContain("metadata.relayToken");
-    expect(profileApplicator).not.toContain("metadata.databaseUrl");
-    expect(profileApplicator).not.toContain("deleteMany");
+    expect(profileApplicator).toContain("applyInstallProfile");
+    expect(profileApplicator).toContain("scripts/apply-install-profile.mjs --profile-config");
+    expect(profileApplicatorCore).toContain("sequencingRunSampleFormFields");
+    expect(profileApplicatorCore).toContain("sequencingTechConfig");
+    expect(profileApplicatorCore).toContain("installProfile");
+    expect(profileApplicatorCore).toContain("installProfilePipelineAllowlist");
+    expect(profileApplicatorCore).toContain("installProfileManaged");
+    expect(profileApplicatorCore).toContain("mergeManagedFields");
+    expect(profileApplicatorCore).toContain("pipelineConfigKeys");
+    expect(profileApplicatorCore).toContain("discoverInstalledPipelineIds");
+    expect(profileApplicatorCore).toContain("buildPipelineExecutionOverrides");
+    expect(profileApplicatorCore).toContain("buildPipelineProfileConfig");
+    expect(profileApplicatorCore).toContain("mergePipelineConfig");
+    expect(profileApplicatorCore).toContain("pipelines.configs");
+    expect(profileApplicatorCore).toContain("pipelines.pipelineConfigs");
+    expect(profileApplicatorCore).toContain("pipelineConfig.config");
+    expect(profileApplicatorCore).toContain("pipelineOverrides");
+    expect(profileApplicatorCore).toContain("...Object.keys(pipelines)");
+    expect(profileApplicatorCore).toContain("pipelineDatabaseDir");
+    expect(profileApplicatorCore).toContain("extra.telemetry");
+    expect(profileApplicatorCore).toContain("installProfileSeedData");
+    expect(profileApplicatorCore).toContain("installProfilePipelineSmokeTests");
+    expect(profileApplicatorCore).toContain("normalizeSequencingFilesConfig");
+    expect(profileApplicatorCore).toContain("activeWriteMinAgeMs");
+    expect(profileApplicatorCore).toContain("normalizeAccessSettings");
+    expect(profileApplicatorCore).toContain("allowUserAssemblyDownload");
+    expect(profileApplicatorCore).toContain("normalizeAuthSettings");
+    expect(profileApplicatorCore).toContain("allowRegistration");
+    expect(profileApplicatorCore).toContain("normalizeNotificationManagedSettings");
+    expect(profileApplicatorCore).toContain("managed.notificationKeys");
+    expect(profileApplicatorCore).toContain("normalizeAccountValidationSettings");
+    expect(profileApplicatorCore).toContain("accountValidationSettings");
+    expect(profileApplicatorCore).toContain("normalizeBillingSettings");
+    expect(profileApplicatorCore).toContain("billingSettings");
+    expect(profileApplicatorCore).toContain("managed.moduleSettings");
+    expect(profileApplicatorCore).toContain("persistSafeInstallProfileMetadata");
+    expect(profileApplicatorCore).toContain("buildSafeInstallProfileMetadata");
+    expect(profileApplicatorCore).not.toContain("metadata.relayToken");
+    expect(profileApplicatorCore).not.toContain("metadata.databaseUrl");
+    expect(profileApplicatorCore).not.toContain("deleteMany");
   });
 
   it("has a second profile asset pass for DB downloads and smoke fixtures", () => {

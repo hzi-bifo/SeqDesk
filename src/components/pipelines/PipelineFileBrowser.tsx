@@ -396,7 +396,7 @@ function FilePreviewDialog({
                 {file.path}
               </code>
               <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={copyPath}>
-                {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                {copied ? <Check className="h-4 w-4 text-[#00BD7D]" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
           </div>

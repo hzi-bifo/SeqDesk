@@ -180,6 +180,31 @@ function destinationToType(
 }
 
 /**
+ * Test whether `needle` occurs in `haystack` bounded by non-alphanumeric
+ * delimiters (or the start/end of the string) on both sides. This prevents a
+ * shorter sampleId (e.g. "S1") from matching a longer prefix-overlapping one
+ * (e.g. "S10_filtered.fastq.gz").
+ */
+function matchesWithBoundaries(haystack: string, needle: string): boolean {
+  if (!needle) return false;
+
+  const isWordChar = (char: string | undefined): boolean =>
+    char !== undefined && /[A-Za-z0-9]/.test(char);
+
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    const before = haystack[index - 1];
+    const after = haystack[index + needle.length];
+    if (!isWordChar(before) && !isWordChar(after)) {
+      return true;
+    }
+    index = haystack.indexOf(needle, index + 1);
+  }
+
+  return false;
+}
+
+/**
  * Extract sample identifier from a file path based on matching strategy
  */
 function extractSampleId(
@@ -196,27 +221,34 @@ function extractSampleId(
   const parentDir = path.basename(path.dirname(filePath));
   const relativePath = path.relative(outputDir, filePath);
 
-  for (const sample of samples) {
-    let matches = false;
+  let best: { dbId: string; sampleId: string } | null = null;
 
+  for (const sample of samples) {
+    let target: string;
     switch (matchBy) {
       case 'filename':
-        matches = fileName.includes(sample.sampleId);
+        target = fileName;
         break;
       case 'parent_dir':
-        matches = parentDir.includes(sample.sampleId);
+        target = parentDir;
         break;
       case 'path':
-        matches = relativePath.includes(sample.sampleId);
+        target = relativePath;
         break;
     }
 
-    if (matches) {
-      return { dbId: sample.id, sampleId: sample.sampleId };
+    if (!matchesWithBoundaries(target, sample.sampleId)) {
+      continue;
+    }
+
+    // Prefer the most specific (longest) matching sampleId so prefix-overlapping
+    // ids (e.g. "S1" vs "S10") are not misattributed based on iteration order.
+    if (!best || sample.sampleId.length > best.sampleId.length) {
+      best = { dbId: sample.id, sampleId: sample.sampleId };
     }
   }
 
-  return null;
+  return best;
 }
 
 /**

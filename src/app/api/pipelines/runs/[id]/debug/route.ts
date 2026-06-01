@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
-import { db } from '@/lib/db';
 import { isDemoSession } from '@/lib/demo/server';
 import {
   type DebugBundle,
   buildDebugBundleText,
   getPipelineDebugBundleForOperator,
 } from '@/lib/pipelines/pipeline-run-ops-service';
+import { assertPipelineRunReadAccess } from '@/lib/pipelines/run-visibility';
 
 // GET - Build a debug bundle (run/session info) for support
 export async function GET(
@@ -30,24 +30,9 @@ export async function GET(
     }
 
     const { id } = await params;
-    const run = await db.pipelineRun.findUnique({
-      where: { id },
-      select: {
-        study: { select: { userId: true } },
-        order: { select: { userId: true } },
-      },
-    });
-
-    if (!run) {
-      return NextResponse.json({ error: 'Run not found' }, { status: 404 });
-    }
-
-    if (
-      session.user.role !== 'FACILITY_ADMIN' &&
-      run.study?.userId !== session.user.id &&
-      run.order?.userId !== session.user.id
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const accessError = await assertPipelineRunReadAccess(id, session);
+    if (accessError) {
+      return NextResponse.json(accessError.body, { status: accessError.status });
     }
 
     const result = await getPipelineDebugBundleForOperator(id);

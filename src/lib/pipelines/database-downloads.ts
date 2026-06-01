@@ -84,6 +84,34 @@ function getRecordKey(pipelineId: string, databaseId: string): string {
   return `${pipelineId}:${databaseId}`;
 }
 
+/**
+ * Serializes read-modify-write mutations against a shared index file within
+ * this process. Both index files (.pipeline-database-downloads.json and
+ * .pipeline-database-download-status.json) are single shared documents keyed by
+ * `${pipelineId}:${databaseId}`, so concurrent downloads (e.g. two databases in
+ * parallel, plus the 5s progress timer racing the finalize/cancel handlers)
+ * would otherwise read a stale snapshot and clobber a sibling job's key on
+ * write. Each tail keeps a per-file promise chain so mutations run one at a
+ * time. (This guards a single Node process; a multi-worker deployment would
+ * additionally need file-level locking or per-key files.)
+ */
+const indexMutationTails = new Map<string, Promise<unknown>>();
+
+function withIndexLock<T>(indexPath: string, task: () => Promise<T>): Promise<T> {
+  const previous = indexMutationTails.get(indexPath) ?? Promise.resolve();
+  const result = previous.then(task, task);
+  // Keep the chain alive even if a mutation rejects, so later mutations still
+  // run serially rather than re-racing.
+  indexMutationTails.set(
+    indexPath,
+    result.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return result;
+}
+
 function getDbDownloadIndexPath(): string {
   return path.join(getPipelinesDir(), DB_DOWNLOAD_INDEX_FILE);
 }
@@ -276,20 +304,22 @@ export async function updateDatabaseDownloadJobStatus(
   update: Partial<PipelineDatabaseDownloadJobStatus>
 ): Promise<PipelineDatabaseDownloadJobStatus> {
   const key = getRecordKey(pipelineId, databaseId);
-  const index = await readDownloadStatusIndex();
-  const existing = index[key];
-  const now = new Date().toISOString();
-  const merged: PipelineDatabaseDownloadJobStatus = {
-    pipelineId,
-    databaseId,
-    state: existing?.state || 'running',
-    ...existing,
-    ...update,
-    updatedAt: update.updatedAt || now,
-  };
-  index[key] = merged;
-  await writeDownloadStatusIndex(index);
-  return merged;
+  return withIndexLock(getDbDownloadStatusPath(), async () => {
+    const index = await readDownloadStatusIndex();
+    const existing = index[key];
+    const now = new Date().toISOString();
+    const merged: PipelineDatabaseDownloadJobStatus = {
+      pipelineId,
+      databaseId,
+      state: existing?.state || 'running',
+      ...existing,
+      ...update,
+      updatedAt: update.updatedAt || now,
+    };
+    index[key] = merged;
+    await writeDownloadStatusIndex(index);
+    return merged;
+  });
 }
 
 export async function createDatabaseDownloadLogPath(
@@ -309,18 +339,20 @@ export async function updateDatabaseDownloadRecord(
   }
 ): Promise<PipelineDatabaseDownloadRecord> {
   const key = getRecordKey(pipelineId, databaseId);
-  const index = await readDownloadIndex();
-  const updated: PipelineDatabaseDownloadRecord = {
-    ...index[key],
-    ...record,
-    pipelineId,
-    databaseId,
-    updatedAt: record.updatedAt || new Date().toISOString(),
-  } as PipelineDatabaseDownloadRecord;
+  return withIndexLock(getDbDownloadIndexPath(), async () => {
+    const index = await readDownloadIndex();
+    const updated: PipelineDatabaseDownloadRecord = {
+      ...index[key],
+      ...record,
+      pipelineId,
+      databaseId,
+      updatedAt: record.updatedAt || new Date().toISOString(),
+    } as PipelineDatabaseDownloadRecord;
 
-  index[key] = updated;
-  await writeDownloadIndex(index);
-  return updated;
+    index[key] = updated;
+    await writeDownloadIndex(index);
+    return updated;
+  });
 }
 
 export async function getPipelineDatabaseStatuses(

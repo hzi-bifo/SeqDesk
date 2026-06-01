@@ -100,7 +100,13 @@ describe("sequencing-tech config", () => {
     const resolved = withResolvedTechAssetUrls(
       {
         technologies: [makeTechnology({ icon: "/icons/tech-1.svg" })],
-        devices: [makeDevice("device-1", { image: "devices/device-1.png" })],
+        devices: [
+          makeDevice("device-1", { image: "devices/device-1.png" }),
+          makeDevice("legacy-minion", { image: "/images/sequencers/devices/s1.png" }),
+          makeDevice("legacy-minion-absolute", {
+            image: "https://registry.example.org/images/sequencers/devices/s1.png",
+          }),
+        ],
         flowCells: [makeFlowCell("flow-1", { image: "flowcells/flow-1.png" })],
         kits: [makeKit("kit-1", { image: "https://cdn.example.org/kit.png" })],
         version: 4,
@@ -116,6 +122,12 @@ describe("sequencing-tech config", () => {
     );
     expect(resolved.devices?.[0].image).toBe(
       "https://registry.example.org/devices/device-1.png"
+    );
+    expect(resolved.devices?.[1].image).toBe(
+      "https://registry.example.org/images/sequencers/devices/ont-minion-mk1d.png"
+    );
+    expect(resolved.devices?.[2].image).toBe(
+      "https://registry.example.org/images/sequencers/devices/ont-minion-mk1d.png"
     );
     expect(resolved.flowCells?.[0].image).toBe(
       "https://registry.example.org/flowcells/flow-1.png"

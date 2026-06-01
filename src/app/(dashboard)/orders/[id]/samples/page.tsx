@@ -262,7 +262,7 @@ function EditableCell({
 
   if (isReadOnly) {
     return (
-      <div className="px-2 py-1 h-full bg-gray-50 text-gray-500 cursor-not-allowed flex items-center gap-1">
+      <div className="px-2 py-1 h-full bg-muted text-muted-foreground cursor-not-allowed flex items-center gap-1">
         <span className="flex-1 truncate">{value}</span>
         {isRequired && hasValue && (
           <Check className="h-3 w-3 text-green-500 flex-shrink-0" />
@@ -679,7 +679,7 @@ export default function SamplesPage({
         header: "Sample ID *",
         size: 180,
         cell: ({ getValue }) => (
-          <div className="px-2 py-1 h-full bg-gray-50 text-gray-600 font-mono text-xs">
+          <div className="px-2 py-1 h-full bg-muted text-muted-foreground font-mono text-xs">
             {getValue() as string}
           </div>
         ),
@@ -782,7 +782,7 @@ export default function SamplesPage({
         cell: ({ row }) => (
           <button
             onClick={() => handleDeleteRow(row.original)}
-            className="w-full h-full flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors"
+            className="w-full h-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -1457,7 +1457,7 @@ export default function SamplesPage({
                 <FileSpreadsheet className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h1 className="text-xl font-bold">Sample Entry</h1>
+                <h1 className="text-xl font-semibold">Sample Entry</h1>
                 <p className="text-sm text-muted-foreground">
                   {order?.name} - {activeSampleCount} sample{activeSampleCount !== 1 ? "s" : ""}
                 </p>

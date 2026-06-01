@@ -992,6 +992,120 @@ describe("prerequisite-check", () => {
     expect(runDirCheck?.message).toContain("Created");
   });
 
+  it("checkConda accepts a condabin-only install at the configured root", async () => {
+    // Miniconda/Mambaforge layout: only <root>/condabin/conda exists, not <root>/bin/conda.
+    fsAccessMock.mockImplementation(async (target: string) => {
+      const value = String(target);
+      if (value.startsWith("/opt/miniconda/bin/")) {
+        throw createFsError("ENOENT");
+      }
+      // condabin candidates, run dir, and data base path all resolve.
+    });
+
+    execResponder = (command: string) => {
+      if (command === "/opt/miniconda/condabin/conda --version") {
+        return { stdout: "conda 24.7.0\n" };
+      }
+      if (command === "/opt/miniconda/condabin/conda env list") {
+        return {
+          stdout:
+            "base * /opt/miniconda\nseqdesk-pipelines /opt/miniconda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command.includes("config --show channels")) {
+        return { stdout: "channels:\n  - conda-forge\n  - bioconda\n" };
+      }
+      if (command.includes("nf-core --version")) {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: false,
+        condaPath: "/opt/miniconda",
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    const condaCheck = result.checks.find((c) => c.id === "conda");
+    expect(condaCheck?.status).toBe("pass");
+    expect(condaCheck?.message).toBe("Found at configured path");
+    expect(result.requiredPassed).toBe(true);
+  });
+
+  it("does not treat a substring-only conda env name as the configured env", async () => {
+    // Host has seqdesk-pipelines-backup but not the exact seqdesk-pipelines env.
+    // Java/Nextflow detection must NOT use `conda run -n seqdesk-pipelines`.
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list" || command === "'conda' env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines-backup /opt/conda/envs/seqdesk-pipelines-backup\n",
+        };
+      }
+      // System PATH fallbacks (used because the exact env does not exist).
+      if (command === "nextflow -version") {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command === "java -version 2>&1") {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      if (command.includes("create --yes --quiet --dry-run")) {
+        return { stdout: "Dry run complete\n" };
+      }
+      if (command === "conda config --show channels") {
+        return { stdout: "channels:\n  - conda-forge\n  - bioconda\n" };
+      }
+      if (command === "nf-core --version 2>&1" || command.includes("nf-core --version")) {
+        return { stdout: "nf-core, version 2.14.1\n" };
+      }
+      // Any `conda run -n seqdesk-pipelines ...` would fall through to here and fail,
+      // proving the substring match did not trigger.
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    const result = await checkAllPrerequisites(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      "/tmp/seqdesk-data"
+    );
+
+    const javaCheck = result.checks.find((c) => c.id === "java");
+    // Detected via system PATH, not the (non-existent) exact conda env.
+    expect(javaCheck?.status).toBe("pass");
+    expect(javaCheck?.message).toBe("Installed (Java 17)");
+
+    const nextflowCheck = result.checks.find((c) => c.id === "nextflow");
+    expect(nextflowCheck?.status).toBe("pass");
+    expect(nextflowCheck?.message).not.toContain("conda env");
+
+    const versions = await detectVersions(undefined, "seqdesk-pipelines");
+    // condaEnv must be absent because the exact env name does not exist.
+    expect(versions.condaEnv).toBeUndefined();
+  });
+
   it("quickPrerequisiteCheck with SLURM enabled passes without slurm check", async () => {
     execResponder = (command: string) => {
       if (command === "which conda") {

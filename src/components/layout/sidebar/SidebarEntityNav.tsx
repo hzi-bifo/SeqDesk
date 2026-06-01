@@ -481,7 +481,7 @@ export function SidebarEntityNav({
                 </div>
               )}
               {shouldShowStudyFacilitySubitems && (
-                <div className="ml-5 border-l border-slate-200 pl-2">
+                <div className="ml-5 border-l border-border/70 pl-2">
                   {studyFormLoading && studyFacilitySections.length === 0 ? (
                     Array.from({ length: 2 }).map((_, i) => (
                       <div key={i} className="flex items-center gap-2 px-2 py-1">
@@ -499,8 +499,8 @@ export function SidebarEntityNav({
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isSectionActive
-                            ? "bg-slate-100 text-slate-900 font-medium"
-                            : "text-muted-foreground hover:bg-slate-100/80 hover:text-foreground"
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                         )}
                       >
                         <span
@@ -585,7 +585,7 @@ export function SidebarEntityNav({
                     <span
                       className={cn(
                         "h-2 w-2 rounded-full shadow-sm",
-                        isEnaRegistered ? "bg-emerald-500" : "bg-slate-300"
+                        isEnaRegistered ? "bg-[#00BD7D]" : "bg-slate-300"
                       )}
                       aria-hidden="true"
                     />
@@ -667,7 +667,7 @@ export function SidebarEntityNav({
                 </div>
               )}
               {shouldShowFacilitySubitems && (
-                <div className="ml-5 border-l border-slate-200 pl-2">
+                <div className="ml-5 border-l border-border/70 pl-2">
                   {orderFormLoading && facilitySections.length === 0 ? (
                     Array.from({ length: 2 }).map((_, i) => (
                       <div key={i} className="flex items-center gap-2 px-2 py-1">
@@ -694,8 +694,8 @@ export function SidebarEntityNav({
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isSectionActive
-                            ? "bg-slate-100 text-slate-900 font-medium"
-                            : "text-muted-foreground hover:bg-slate-100/80 hover:text-foreground"
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                         )}
                       >
                         <span

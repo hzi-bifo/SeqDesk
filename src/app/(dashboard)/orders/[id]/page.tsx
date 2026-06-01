@@ -1201,7 +1201,7 @@ export default function OrderDetailPage({
                             <span className="font-medium">{run.pipelineName}</span>
                             <Badge
                               variant="outline"
-                              className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                              className="border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D]"
                             >
                               Visible to you
                             </Badge>
@@ -1278,7 +1278,7 @@ export default function OrderDetailPage({
                   ) : (
                     <Badge
                       variant="outline"
-                      className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                      className="border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D]"
                     >
                       Downloadable
                     </Badge>
@@ -1782,10 +1782,10 @@ export default function OrderDetailPage({
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={`h-7 w-7 rounded-md flex items-center justify-center ${
-                            hasFiles ? "bg-green-500/10" : "bg-muted"
+                            hasFiles ? "bg-[#00BD7D]/10" : "bg-muted"
                           }`}>
                             <FlaskConical className={`h-3.5 w-3.5 ${
-                              hasFiles ? "text-green-600" : "text-muted-foreground"
+                              hasFiles ? "text-[#00BD7D]" : "text-muted-foreground"
                             }`} />
                           </div>
                           <div>
@@ -1795,7 +1795,7 @@ export default function OrderDetailPage({
                                 <span className="text-muted-foreground font-normal">- {sample.sampleTitle}</span>
                               )}
                               {hasFiles && (
-                                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                                <CheckCircle2 className="h-3 w-3 text-[#00BD7D]" />
                               )}
                             </div>
                             {sample.study && (

@@ -74,6 +74,15 @@ export function LiveLogViewer({
     }
   }, [steps, onStepsUpdate]);
 
+  // The "steps" tab trigger only renders while steps exist. If a later poll
+  // empties the steps, fall back to a valid tab so the view is not stranded on
+  // a tab whose trigger has unmounted.
+  useEffect(() => {
+    if (activeTab === "steps" && steps.length === 0) {
+      setActiveTab("output");
+    }
+  }, [activeTab, steps.length]);
+
   // Auto-scroll to bottom when new content arrives
   useEffect(() => {
     if (autoScroll && activeTab === "output" && outputRef.current) {

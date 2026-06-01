@@ -21,6 +21,10 @@ const DEFAULTS_PATH = path.join(
 );
 const DEVICES_DIR = path.join(process.cwd(), "data", "sequencing-devices");
 const USE_LOCAL_DEFAULTS = process.env.SEQDESK_USE_LOCAL_TECH_DEFAULTS === "true";
+const CANONICAL_ASSET_PATHS: Record<string, string> = {
+  "/images/sequencers/devices/s1.png": "/images/sequencers/devices/ont-minion-mk1d.png",
+  "images/sequencers/devices/s1.png": "images/sequencers/devices/ont-minion-mk1d.png",
+};
 
 function mergeById<T extends { id: string }>(
   base: T[],
@@ -119,18 +123,24 @@ function resolveRegistryAssetUrl(
   syncUrl: string
 ): string | undefined {
   if (!assetPath) return assetPath;
+  const canonicalAssetPath = CANONICAL_ASSET_PATHS[assetPath] || assetPath;
 
   try {
-    return new URL(assetPath).toString();
+    const url = new URL(canonicalAssetPath);
+    const canonicalPath = CANONICAL_ASSET_PATHS[url.pathname];
+    if (canonicalPath) {
+      url.pathname = canonicalPath;
+    }
+    return url.toString();
   } catch {
     // Non-absolute paths are resolved against the registry origin below.
   }
 
   try {
     const origin = new URL(syncUrl).origin;
-    return new URL(assetPath, origin).toString();
+    return new URL(canonicalAssetPath, origin).toString();
   } catch {
-    return assetPath;
+    return canonicalAssetPath;
   }
 }
 

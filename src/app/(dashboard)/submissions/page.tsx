@@ -87,8 +87,8 @@ const STATUS_CONFIG: Record<
   },
   ACCEPTED: {
     label: "Accepted",
-    dot: "bg-emerald-500",
-    color: "text-emerald-600",
+    dot: "bg-[#00BD7D]",
+    color: "text-[#00BD7D]",
     icon: <CheckCircle2 className="h-3 w-3" />,
   },
   REJECTED: {
@@ -211,7 +211,7 @@ function StepItem({ step }: { step: StepDetails }) {
           <div
             className={`h-8 w-8 rounded-full flex items-center justify-center ${
               step.status === "completed"
-                ? "bg-emerald-100 text-emerald-600"
+                ? "bg-[#00BD7D]/10 text-[#00BD7D]"
                 : step.status === "error"
                 ? "bg-red-100 text-red-600"
                 : "bg-amber-100 text-amber-600"
@@ -230,7 +230,7 @@ function StepItem({ step }: { step: StepDetails }) {
         </div>
         <div className="flex items-center gap-2">
           {step.status === "completed" && (
-            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
+            <Badge className="bg-[#00BD7D]/10 text-[#00BD7D] border-[#00BD7D]/20">
               <CheckCircle2 className="h-3 w-3 mr-1" />
               Completed
             </Badge>
@@ -451,7 +451,7 @@ export default function SubmissionsPage() {
           <h1 className="text-xl font-semibold">Archive Queue</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
-            {acceptedCount > 0 && <span className="text-emerald-600"> · {acceptedCount} accepted</span>}
+            {acceptedCount > 0 && <span className="text-[#00BD7D]"> · {acceptedCount} accepted</span>}
             {pendingCount > 0 && <span className="text-amber-600"> · {pendingCount} pending</span>}
             {issueCount > 0 && <span className="text-red-600"> · {issueCount} issue{issueCount !== 1 ? "s" : ""}</span>}
           </p>
@@ -612,7 +612,7 @@ export default function SubmissionsPage() {
                     {/* Accession */}
                     <div className="col-span-2">
                       {accessionNumbers ? (
-                        <span className="font-mono text-xs text-emerald-700">
+                        <span className="font-mono text-xs text-[#00BD7D]">
                           {Object.values(accessionNumbers)[0]}
                         </span>
                       ) : (
@@ -713,14 +713,14 @@ export default function SubmissionsPage() {
 
                         {/* Accession Numbers */}
                         {accessionNumbers && (
-                          <div className="bg-emerald-50 rounded-lg p-4">
-                            <h4 className="font-medium mb-3 text-sm text-emerald-700 flex items-center gap-2">
+                          <div className="bg-[#00BD7D]/5 rounded-lg p-4">
+                            <h4 className="font-medium mb-3 text-sm text-[#00BD7D] flex items-center gap-2">
                               <CheckCircle2 className="h-4 w-4" />
                               Accession Numbers
                             </h4>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                               {Object.entries(accessionNumbers).map(([key, value]) => (
-                                <div key={key} className="bg-white rounded-lg p-2 border border-emerald-200">
+                                <div key={key} className="bg-card rounded-lg p-2 border border-[#00BD7D]/20">
                                   <div className="text-xs text-muted-foreground mb-1">
                                     {key === "study" ? "Study" : `Sample: ${key}`}
                                   </div>
@@ -732,7 +732,7 @@ export default function SubmissionsPage() {
                                     }
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="font-mono text-sm text-emerald-700 hover:text-emerald-900 hover:underline flex items-center gap-1"
+                                    className="font-mono text-sm text-[#00BD7D] hover:text-[#00BD7D]/80 hover:underline flex items-center gap-1"
                                   >
                                     {value as string}
                                     <ExternalLink className="h-3 w-3" />

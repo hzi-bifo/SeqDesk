@@ -2258,7 +2258,7 @@ export function StudyPipelinesSection({
                               #{run.runNumber.split("-").pop()}
                             </code>
                             {run.isSelectedFinal && (
-                              <Badge variant="outline" className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
+                              <Badge variant="outline" className="gap-1 border-[#00BD7D]/20 bg-[#00BD7D]/10 text-[#00BD7D]">
                                 <CheckCircle2 className="h-3 w-3" />
                                 Final
                               </Badge>

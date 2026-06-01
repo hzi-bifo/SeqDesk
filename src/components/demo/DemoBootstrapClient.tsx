@@ -137,7 +137,7 @@ export function DemoBootstrapClient({
   if (embedded && !error) {
     return (
       <div
-        className="min-h-screen bg-[#F7F7F4]"
+        className="min-h-screen bg-background"
         aria-busy="true"
         aria-live="polite"
       >
@@ -147,8 +147,8 @@ export function DemoBootstrapClient({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#F7F7F4] px-6">
-      <div className="w-full max-w-lg rounded-3xl border border-[#e5e5e0] bg-white p-8 shadow-sm">
+    <div className="flex min-h-screen items-center justify-center bg-background px-6">
+      <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-8 shadow-sm">
         <div className="mb-6">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             SeqDesk Demo
@@ -185,7 +185,7 @@ export function DemoBootstrapClient({
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl border border-border bg-[#F7F7F4] p-5">
+          <div className="rounded-2xl border border-border bg-background p-5">
             <div className="flex items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin text-foreground" />
               <div>

@@ -97,8 +97,21 @@ describe("database-merge", () => {
         pipelines: { enabled: true },
         sequencingFiles: { scanDepth: 7 },
         auth: { allowRegistration: false },
+        departmentSharing: true,
+        allowDeleteSubmittedOrders: true,
+        allowUserAssemblyDownload: true,
+        orderNotesEnabled: false,
+        accountValidationSettings: JSON.stringify({
+          allowedDomains: ["example.org"],
+          enforceValidation: true,
+        }),
+        billingSettings: JSON.stringify({
+          pspEnabled: true,
+          costCenterEnabled: false,
+        }),
         ena: { centerName: "DB-CENTER" },
       }),
+      postSubmissionInstructions: "Submission received.",
     });
 
     const result = await mergeWithDatabase();
@@ -112,11 +125,27 @@ describe("database-merge", () => {
     expect(result.config.ena?.centerName).toBe("DB-CENTER");
     expect(result.config.pipelines?.enabled).toBe(true);
     expect(result.config.sequencingFiles?.scanDepth).toBe(7);
+    expect(result.config.access).toMatchObject({
+      departmentSharing: true,
+      allowDeleteSubmittedOrders: true,
+      allowUserAssemblyDownload: true,
+      orderNotesEnabled: false,
+      postSubmissionInstructions: "Submission received.",
+    });
     expect(result.config.auth?.allowRegistration).toBe(false);
+    expect(result.config.moduleSettings?.["account-validation"]).toMatchObject({
+      allowedDomains: ["example.org"],
+      enforceValidation: true,
+    });
+    expect(result.config.moduleSettings?.["billing-info"]).toMatchObject({
+      pspEnabled: true,
+      costCenterEnabled: false,
+    });
 
     expect(result.sources["site.name"]).toBe("database");
     expect(result.sources["ena.testMode"]).toBe("database");
     expect(result.sources["auth.allowRegistration"]).toBe("database");
+    expect(result.sources["access.departmentSharing"]).toBe("database");
   });
 
   it("keeps env/file values over database values", async () => {
@@ -228,6 +257,23 @@ describe("database-merge", () => {
       auth: {
         allowRegistration: false,
       },
+      access: {
+        departmentSharing: true,
+        allowDeleteSubmittedOrders: true,
+        allowUserAssemblyDownload: true,
+        orderNotesEnabled: false,
+        postSubmissionInstructions: "Updated instructions",
+      },
+      moduleSettings: {
+        "account-validation": {
+          allowedDomains: ["example.org"],
+          enforceValidation: true,
+        },
+        "billing-info": {
+          pspEnabled: true,
+          costCenterEnabled: false,
+        },
+      },
       pipelines: {
         enabled: true,
       },
@@ -251,11 +297,24 @@ describe("database-merge", () => {
     expect(callArg.data.enaTestMode).toBe(false);
     expect(callArg.data.enaUsername).toBe("ena-user");
     expect(callArg.data.enaPassword).toBe("ena-pass");
+    expect(callArg.data.postSubmissionInstructions).toBe("Updated instructions");
 
     const extra = JSON.parse(String(callArg.data.extraSettings));
     expect(extra.auth.allowRegistration).toBe(false);
+    expect(extra.departmentSharing).toBe(true);
+    expect(extra.allowDeleteSubmittedOrders).toBe(true);
+    expect(extra.allowUserAssemblyDownload).toBe(true);
+    expect(extra.orderNotesEnabled).toBe(false);
     expect(extra.pipelines.enabled).toBe(true);
     expect(extra.sequencingFiles.scanDepth).toBe(9);
+    expect(JSON.parse(extra.accountValidationSettings)).toMatchObject({
+      allowedDomains: ["example.org"],
+      enforceValidation: true,
+    });
+    expect(JSON.parse(extra.billingSettings)).toMatchObject({
+      pspEnabled: true,
+      costCenterEnabled: false,
+    });
     expect(extra.ena.centerName).toBe("NEW-CENTER");
 
     expect(mocks.clearConfigCache).toHaveBeenCalledTimes(1);

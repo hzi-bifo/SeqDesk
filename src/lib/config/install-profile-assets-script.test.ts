@@ -489,6 +489,76 @@ describe("install profile asset script helpers", () => {
     ).rejects.toThrow("uses mode=skip but no path was provided");
   });
 
+  it("requires sha256 for remote database URL overrides", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma: makeDatabasePrisma(path.join(tempDir, "override-dbs")),
+        profile: {
+          pipelines: {
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                sourceUrlOverride: "https://mirror.example.org/metaxpath_db_bundle.tar",
+              },
+            ],
+          },
+        },
+        rootDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("requires sha256");
+  });
+
+  it("requires sha256 for file:// database URL overrides", async () => {
+    const { rootDir, archiveSource } = await createMetaxDbInstallRoot();
+
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma: makeDatabasePrisma(path.join(tempDir, "file-override-dbs")),
+        profile: {
+          pipelines: {
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                sourceUrlOverride: `file://${archiveSource}`,
+              },
+            ],
+          },
+        },
+        rootDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("requires sha256");
+  });
+
+  it("rejects skipped database paths outside allowed asset roots", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma: makeDatabasePrisma(path.join(tempDir, "skip-root-dbs")),
+        profile: {
+          pipelines: {
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                mode: "skip",
+                path: "/private/var/seqdesk-untrusted/metaxpath.params.yaml",
+              },
+            ],
+          },
+        },
+        rootDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow("allowed asset root");
+  });
+
   it("overwrites a stale database archive when mode is overwrite", async () => {
     const { rootDir } = await createMetaxDbInstallRoot();
     const databaseRoot = path.join(tempDir, "overwrite-profile-dbs");

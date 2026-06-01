@@ -532,8 +532,8 @@ describe("order progress status", () => {
 });
 
 describe("getOrderProgressIndicatorClassName", () => {
-  it("returns emerald for complete", () => {
-    expect(getOrderProgressIndicatorClassName("complete")).toBe("bg-emerald-500");
+  it("returns brand green for complete", () => {
+    expect(getOrderProgressIndicatorClassName("complete")).toBe("bg-[#00BD7D]");
   });
 
   it("returns amber for partial", () => {

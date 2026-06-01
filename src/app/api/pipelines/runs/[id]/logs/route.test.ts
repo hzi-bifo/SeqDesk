@@ -55,6 +55,9 @@ const baseRun = {
   currentStep: "Done",
   study: { userId: "user-1" },
   order: null,
+  // Published run (has a selected result selection) so a non-admin owner
+  // passes the publish gate enforced by assertPipelineRunReadAccess.
+  selectedResultSelections: [{ id: "sel-1" }],
 };
 
 describe("GET /api/pipelines/runs/[id]/logs", () => {
@@ -83,6 +86,15 @@ describe("GET /api/pipelines/runs/[id]/logs", () => {
   it("returns 403 when user does not own the run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "other-user", role: "RESEARCHER" },
+    });
+    const res = await GET(makeRequest(), makeParams());
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      selectedResultSelections: [],
     });
     const res = await GET(makeRequest(), makeParams());
     expect(res.status).toBe(403);

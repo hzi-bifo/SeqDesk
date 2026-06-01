@@ -57,7 +57,7 @@ interface Study {
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
   draft: { label: "Draft", color: "text-muted-foreground", dot: "bg-muted-foreground" },
-  published: { label: "Published", color: "text-emerald-600", dot: "bg-emerald-500" },
+  published: { label: "Published", color: "text-[#00BD7D]", dot: "bg-[#00BD7D]" },
 };
 
 type SortField = "created" | "title" | "status" | "samples";
@@ -543,7 +543,7 @@ export default function StudiesPage() {
                             {study._count.samples} samples · {formatDate(study.createdAt)}
                           </p>
                           {study.studyAccessionId && (
-                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                            <p className="text-xs text-[#00BD7D] font-mono mt-0.5">
                               {study.studyAccessionId}
                             </p>
                           )}
@@ -562,7 +562,7 @@ export default function StudiesPage() {
                             {study._count.samples} samples · {formatDate(study.createdAt)}
                           </p>
                           {study.studyAccessionId && (
-                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                            <p className="text-xs text-[#00BD7D] font-mono mt-0.5">
                               {study.studyAccessionId}
                             </p>
                           )}
@@ -630,7 +630,7 @@ export default function StudiesPage() {
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
-                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                            <p className="text-xs text-[#00BD7D] font-mono mt-0.5">
                               {study.studyAccessionId}
                             </p>
                           )}
@@ -641,7 +641,7 @@ export default function StudiesPage() {
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
-                            <p className="text-xs text-emerald-600 font-mono mt-0.5">
+                            <p className="text-xs text-[#00BD7D] font-mono mt-0.5">
                               {study.studyAccessionId}
                             </p>
                           )}

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   defaultProfileRegistryUrl: vi.fn(),
   reloadHostedInstallProfile: vi.fn(),
   resolveProfileCodeFromEnv: vi.fn(),
+  updateAdminActivityJob: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -15,6 +16,10 @@ vi.mock("next-auth", () => ({
 
 vi.mock("@/lib/auth", () => ({
   authOptions: {},
+}));
+
+vi.mock("@/lib/admin/activity", () => ({
+  updateAdminActivityJob: mocks.updateAdminActivityJob,
 }));
 
 vi.mock("@/lib/db-status", () => ({
@@ -68,6 +73,7 @@ describe("/api/admin/install-profile/reload", () => {
     mocks.reloadHostedInstallProfile.mockResolvedValue({
       profile: { id: "dev", version: "2026.05.13" },
       includeAssets: false,
+      validation: { warnings: [], ignoredSections: [], appliedSections: [] },
       settings: {
         script: "scripts/apply-install-profile.mjs",
         stdout: "applied",
@@ -138,26 +144,30 @@ describe("/api/admin/install-profile/reload", () => {
     expect(mocks.reloadHostedInstallProfile).toHaveBeenCalledWith({
       profileId: "dev",
       profileCode: "setup-code",
-      profileRegistryUrl: undefined,
       includeAssets: true,
     });
+    expect(mocks.updateAdminActivityJob).toHaveBeenCalledWith(
+      "install-profile-reload:dev",
+      expect.objectContaining({
+        type: "install-profile-reload",
+        state: "success",
+      })
+    );
   });
 
-  it("allows overriding profile id and registry URL", async () => {
-    await POST(
+  it("rejects browser-supplied registry URL overrides", async () => {
+    const response = await POST(
       jsonRequest({
         profileId: "qa",
         profileCode: "setup-code",
         profileRegistryUrl: "https://profiles.example.test/api",
       })
     );
+    const body = await response.json();
 
-    expect(mocks.reloadHostedInstallProfile).toHaveBeenCalledWith({
-      profileId: "qa",
-      profileCode: "setup-code",
-      profileRegistryUrl: "https://profiles.example.test/api",
-      includeAssets: false,
-    });
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("registry override is not accepted");
+    expect(mocks.reloadHostedInstallProfile).not.toHaveBeenCalled();
   });
 
   it("returns 400 when no profile id is known", async () => {
@@ -182,6 +192,24 @@ describe("/api/admin/install-profile/reload", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe("Profile access code is required");
+  });
+
+  it("rejects a concurrent reload without clobbering the running job status", async () => {
+    mocks.reloadHostedInstallProfile.mockRejectedValue(
+      new Error("A hosted profile reload is already running")
+    );
+
+    const response = await POST(jsonRequest({ profileCode: "setup-code" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe("A hosted profile reload is already running");
+    // The running reload owns this profile's activity job; the losing request
+    // must not write an "error" state over it.
+    expect(mocks.updateAdminActivityJob).not.toHaveBeenCalledWith(
+      "install-profile-reload:dev",
+      expect.objectContaining({ state: "error" })
+    );
   });
 
   it("surfaces unexpected reload errors", async () => {

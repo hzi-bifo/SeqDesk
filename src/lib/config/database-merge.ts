@@ -9,6 +9,28 @@ import { db } from '@/lib/db';
 import { loadConfig, clearConfigCache } from './loader';
 import type { SeqDeskConfig, ResolvedConfig, ConfigSource } from './types';
 
+function parseStoredJsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function compactRecord<T extends Record<string, unknown>>(value: T): Partial<T> | undefined {
+  const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) as Partial<T> : undefined;
+}
+
 /**
  * Load settings from database and merge with file config
  */
@@ -26,6 +48,22 @@ export async function mergeWithDatabase(): Promise<ResolvedConfig> {
       ? JSON.parse(siteSettings.extraSettings)
       : {};
 
+    const access = compactRecord({
+      departmentSharing: extraSettings.departmentSharing ?? undefined,
+      allowDeleteSubmittedOrders: extraSettings.allowDeleteSubmittedOrders ?? undefined,
+      allowUserAssemblyDownload: extraSettings.allowUserAssemblyDownload ?? undefined,
+      orderNotesEnabled: extraSettings.orderNotesEnabled ?? undefined,
+      postSubmissionInstructions: siteSettings.postSubmissionInstructions || undefined,
+    }) as SeqDeskConfig['access'];
+    const accountValidationSettings = parseStoredJsonObject(
+      extraSettings.accountValidationSettings
+    );
+    const billingSettings = parseStoredJsonObject(extraSettings.billingSettings);
+    const moduleSettings = compactRecord({
+      'account-validation': accountValidationSettings,
+      'billing-info': billingSettings,
+    }) as SeqDeskConfig['moduleSettings'];
+
     // Build database config
     const dbConfig: SeqDeskConfig = {
       site: {
@@ -42,9 +80,11 @@ export async function mergeWithDatabase(): Promise<ResolvedConfig> {
         centerName: extraSettings.ena?.centerName || undefined,
       },
       sequencingFiles: extraSettings.sequencingFiles || undefined,
+      access,
       auth: {
         allowRegistration: extraSettings.auth?.allowRegistration ?? undefined,
       },
+      moduleSettings,
       notifications: extraSettings.notifications || undefined,
     };
 
@@ -78,6 +118,21 @@ function deepMergeWithTracking(
   fileSources: Record<string, ConfigSource>
 ): { config: SeqDeskConfig; sources: Record<string, ConfigSource> } {
   const sources: Record<string, ConfigSource> = { ...fileSources };
+
+  function markDatabaseSources(path: string, value: unknown): void {
+    if (
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      for (const [key, childValue] of Object.entries(value)) {
+        if (childValue === undefined) continue;
+        markDatabaseSources(`${path}.${key}`, childValue);
+      }
+      return;
+    }
+    sources[path] = 'database';
+  }
 
   function merge(
     db: Record<string, unknown>,
@@ -124,7 +179,7 @@ function deepMergeWithTracking(
         result[key] = fileValue;
       } else if (dbValue !== undefined) {
         result[key] = dbValue;
-        sources[fullPath] = 'database';
+        markDatabaseSources(fullPath, dbValue);
       }
     }
 
@@ -182,6 +237,23 @@ export async function saveConfigToDatabase(
     updateData.contactEmail = updates.site.contactEmail;
   }
 
+  // Access policy settings
+  if (updates.access?.postSubmissionInstructions !== undefined) {
+    updateData.postSubmissionInstructions = updates.access.postSubmissionInstructions;
+  }
+  if (updates.access?.departmentSharing !== undefined) {
+    extraSettings.departmentSharing = updates.access.departmentSharing;
+  }
+  if (updates.access?.allowDeleteSubmittedOrders !== undefined) {
+    extraSettings.allowDeleteSubmittedOrders = updates.access.allowDeleteSubmittedOrders;
+  }
+  if (updates.access?.allowUserAssemblyDownload !== undefined) {
+    extraSettings.allowUserAssemblyDownload = updates.access.allowUserAssemblyDownload;
+  }
+  if (updates.access?.orderNotesEnabled !== undefined) {
+    extraSettings.orderNotesEnabled = updates.access.orderNotesEnabled;
+  }
+
   // ENA settings
   if (updates.ena?.testMode !== undefined) {
     updateData.enaTestMode = updates.ena.testMode;
@@ -217,9 +289,24 @@ export async function saveConfigToDatabase(
     };
   }
 
+  // Module-specific settings use the same storage shape as the admin module APIs.
+  if (updates.moduleSettings?.['account-validation']) {
+    extraSettings.accountValidationSettings = JSON.stringify({
+      ...parseStoredJsonObject(extraSettings.accountValidationSettings),
+      ...updates.moduleSettings['account-validation'],
+    });
+  }
+  if (updates.moduleSettings?.['billing-info']) {
+    extraSettings.billingSettings = JSON.stringify({
+      ...parseStoredJsonObject(extraSettings.billingSettings),
+      ...updates.moduleSettings['billing-info'],
+    });
+  }
+
   // Notification settings go into extraSettings. Relay tokens stay in config files/env.
   if (updates.notifications) {
-    const { relayToken: _relayToken, ...safeNotifications } = updates.notifications;
+    const safeNotifications: Record<string, unknown> = { ...updates.notifications };
+    delete safeNotifications.relayToken;
     extraSettings.notifications = {
       ...extraSettings.notifications,
       ...safeNotifications,

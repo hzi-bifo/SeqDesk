@@ -71,7 +71,7 @@ interface Ticket {
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: React.ElementType }> = {
   OPEN: { label: "Open", color: "text-blue-600", bgColor: "bg-blue-100", icon: Circle },
   IN_PROGRESS: { label: "In Progress", color: "text-amber-600", bgColor: "bg-amber-100", icon: Clock },
-  RESOLVED: { label: "Resolved", color: "text-emerald-600", bgColor: "bg-emerald-100", icon: CheckCircle2 },
+  RESOLVED: { label: "Resolved", color: "text-[#00BD7D]", bgColor: "bg-[#00BD7D]/10", icon: CheckCircle2 },
   CLOSED: { label: "Closed", color: "text-stone-600", bgColor: "bg-stone-100", icon: XCircle },
 };
 

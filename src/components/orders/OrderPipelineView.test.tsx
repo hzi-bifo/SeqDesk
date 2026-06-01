@@ -763,6 +763,7 @@ describe("OrderPipelineView", () => {
         kraken2Db: "/refs/kraken2-human",
         tax2filter: "Homo sapiens",
       }),
+      results: { pendingWritebacks: 1 },
       resultFiles: [
         {
           id: "report-1",
@@ -792,14 +793,17 @@ describe("OrderPipelineView", () => {
         status: "completed",
         orderId: "order-1",
       },
-      candidates: [
+      readCandidates: [
         {
           artifactId: "candidate-1",
+          outputId: "cleaned_read_candidates",
+          outputLabel: "Cleaned read candidate",
           sampleId: "sample-a",
           sampleCode: "SAMPLE_A",
           file1: "/runs/run-clean/output/filter/filtered/SAMPLE_A_filtered.fastq.gz",
           file2: null,
           readLayout: "single",
+          targetDataClass: "cleaned",
           status: "candidate",
           metadata: { classified_reads: 12 },
           currentRead: {
@@ -820,6 +824,18 @@ describe("OrderPipelineView", () => {
           outputId: "multiqc_report",
         },
       ],
+      review: {
+        title: "Review pending read outputs",
+        description:
+          "Select staged read candidates that should become active reads for this order. Existing raw or unknown reads are preserved.",
+        candidateCountLabel: "candidate",
+        emptyText: "No pending read candidates were discovered for this run.",
+        promoteButtonLabel: "Set as active reads",
+        confirmTitle: "Set as active reads",
+        confirmDescription:
+          "This will change which read files SeqDesk uses for delivery and downstream pipelines. Existing raw or unknown reads will be preserved. Existing active cleaned reads will be superseded, not deleted.",
+        reviewedLabel: "I reviewed the reports and want to use these read candidates.",
+      },
     };
 
     mocks.useSWR.mockImplementation((url: string | null) => {
@@ -840,7 +856,7 @@ describe("OrderPipelineView", () => {
           mutate: vi.fn(),
         };
       }
-      if (url.includes("/api/pipelines/runs/run-clean/cleaned-reads")) {
+      if (url.includes("/api/pipelines/runs/run-clean/pending-writebacks")) {
         return {
           data: readCleaningCandidateResponse,
           isLoading: false,
@@ -857,7 +873,7 @@ describe("OrderPipelineView", () => {
     });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/pipelines/runs/run-clean/cleaned-reads") {
+      if (url === "/api/pipelines/runs/run-clean/pending-writebacks") {
         expect(init?.method).toBe("POST");
         return Promise.resolve(jsonResponse({ promoted: 1, readIds: ["read-cleaned"] }));
       }
@@ -888,27 +904,27 @@ describe("OrderPipelineView", () => {
 
     fireEvent.click(screen.getByLabelText("View details for RUN-CLEAN-001"));
 
-    expect(screen.getAllByText("Review cleaned reads").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Review pending read outputs").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: /multiqc report/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByText("SAMPLE_A").length).toBeGreaterThan(0);
     expect(screen.getAllByText("SAMPLE_A_raw.fastq.gz").length).toBeGreaterThan(0);
     expect(screen.getByText("SAMPLE_A_filtered.fastq.gz")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Set as active cleaned reads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set as active reads" }));
     expect(screen.getByText(/Existing raw or unknown reads will be preserved/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Set active" }).hasAttribute("disabled")).toBe(
       true
     );
 
     fireEvent.click(
-      screen.getByLabelText("I reviewed the cleaning report and want to use these cleaned reads")
+      screen.getByLabelText("I reviewed the reports and want to use these read candidates.")
     );
     fireEvent.click(screen.getByRole("button", { name: "Set active" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/pipelines/runs/run-clean/cleaned-reads",
+        "/api/pipelines/runs/run-clean/pending-writebacks",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ sampleIds: ["sample-a"] }),
@@ -917,6 +933,173 @@ describe("OrderPipelineView", () => {
     });
     expect(candidateMutate).toHaveBeenCalled();
     expect(onSampleDataChanged).toHaveBeenCalled();
+  });
+
+  it("surfaces the candidate review for completed read-cleaning runs even when the pending count is absent", async () => {
+    // Read-cleaning runs that completed before the writeback-count cutover have
+    // results without pendingWritebacks (count === 0). The review must still be
+    // reachable so staged candidates are not stranded.
+    const legacyReadCleaningRun = {
+      ...runs[0],
+      id: "run-clean-legacy",
+      runNumber: "RUN-CLEAN-000",
+      pipelineId: "read-cleaning",
+      pipelineName: "Read Cleaning",
+      config: JSON.stringify({ tax2filter: "Homo sapiens" }),
+      results: null,
+      resultFiles: [],
+      primaryResultFile: null,
+    };
+    const candidateResponse = {
+      run: {
+        id: "run-clean-legacy",
+        runNumber: "RUN-CLEAN-000",
+        status: "completed",
+        orderId: "order-1",
+      },
+      readCandidates: [
+        {
+          artifactId: "candidate-legacy",
+          outputId: "cleaned_read_candidates",
+          outputLabel: "Cleaned read candidate",
+          sampleId: "sample-a",
+          sampleCode: "SAMPLE_A",
+          file1: "/runs/run-clean-legacy/output/filter/filtered/SAMPLE_A_filtered.fastq.gz",
+          file2: null,
+          readLayout: "single",
+          targetDataClass: "cleaned",
+          status: "candidate",
+          metadata: { classified_reads: 7 },
+          currentRead: {
+            id: "read-raw-a",
+            file1: "/data/SAMPLE_A_raw.fastq.gz",
+            file2: null,
+            dataClass: "raw",
+            dataClassLabel: "Raw / protected",
+            isProtectedRaw: true,
+          },
+        },
+      ],
+      reports: [],
+    };
+    let pendingWritebacksFetched = false;
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return {
+          data: { pipelines: [readCleaningPipeline] },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/pipelines/runs/run-clean-legacy/pending-writebacks")) {
+        // The component must request candidates despite count === 0.
+        pendingWritebacksFetched = true;
+        return {
+          data: candidateResponse,
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return {
+          data: { runs: [legacyReadCleaningRun], total: 1 },
+          mutate: mocks.mutateRuns,
+        };
+      }
+      return { data: undefined, isLoading: false, mutate: vi.fn() };
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="read-cleaning"
+        samples={[{ ...samples[0], read: rawReadA }]}
+        isFacilityAdmin
+      />
+    );
+
+    // The dropdown review action is offered for the completed read-cleaning run.
+    expect(
+      screen.getByRole("button", { name: /Review pending outputs/i })
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("View details for RUN-CLEAN-000"));
+
+    // The panel renders and recomputed candidates surface even with count === 0.
+    expect(pendingWritebacksFetched).toBe(true);
+    expect(screen.getAllByText("Review pending read outputs").length).toBeGreaterThan(0);
+    expect(screen.getByText("SAMPLE_A_filtered.fastq.gz")).toBeTruthy();
+  });
+
+  it("renders pending status badge and filter option, aligning completed badge color", () => {
+    const pendingRun = {
+      ...runs[2],
+      id: "run-pending",
+      runNumber: "RUN-2026-005",
+      status: "pending",
+      currentStep: null,
+      progress: null,
+    };
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (typeof url !== "string") {
+        return { data: undefined, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/admin/settings/pipelines/test-setting")) {
+        return {
+          data: { success: true, message: "SLURM available" },
+          isLoading: false,
+          mutate: vi.fn(),
+        };
+      }
+      if (url.includes("/api/admin/settings/pipelines")) {
+        return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
+      }
+      if (url.includes("/api/pipelines/runs")) {
+        return {
+          data: { runs: [runs[0], pendingRun], total: 2 },
+          mutate: mocks.mutateRuns,
+        };
+      }
+      return { data: undefined, mutate: vi.fn() };
+    });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        isFacilityAdmin
+      />
+    );
+
+    // Pending counts as active alongside running/queued.
+    expect(screen.getByText("1 active")).toBeTruthy();
+
+    // The status filter offers a Pending option (rendered as a SelectItem button).
+    expect(screen.getByRole("button", { name: /Pending/ })).toBeTruthy();
+
+    // The pending run shows a labeled status badge (a span, not the filter button).
+    const pendingBadge = screen
+      .getAllByText("Pending")
+      .find((el) => el.tagName.toLowerCase() !== "button");
+    expect(pendingBadge).toBeTruthy();
+
+    // The completed badge uses the SeqDesk brand success color (span, not filter button).
+    const completedBadge = screen
+      .getAllByText("Completed")
+      .find((el) => el.tagName.toLowerCase() !== "button");
+    expect(completedBadge).toBeTruthy();
+    expect(completedBadge!.className).toContain("bg-[#00BD7D]");
   });
 
   it("warns when simulate reads would preserve stale linked reads", () => {

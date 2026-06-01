@@ -80,7 +80,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     });
   });
 
-  it("reports a running local job and revives a completed run", async () => {
+  it("reports a running local job but does NOT revive a completed run (PID reuse safety)", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "local-42",
@@ -102,17 +102,17 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       status: "running",
       pid: 42,
     });
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
-      data: expect.objectContaining({
-        queueStatus: "RUNNING",
-        queueReason: null,
-        status: "running",
-        currentStep: "Running on compute node",
-        completedAt: null,
-        statusSource: "queue",
-      }),
+    // Queue status is refreshed, but a terminal run must not be revived:
+    // local PIDs are recycled by the OS, so a live PID does not prove the
+    // original job is still running.
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data).toMatchObject({
+      queueStatus: "RUNNING",
+      queueReason: null,
     });
+    expect(updateCall.data.status).toBeUndefined();
+    expect(updateCall.data.completedAt).toBeUndefined();
+    expect(updateCall.data.currentStep).toBeUndefined();
   });
 
   it("promotes a queued run when SLURM reports RUNNING", async () => {
@@ -453,6 +453,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       status: "running",
       study: { userId: "user-1" },
       order: null,
+      selectedResultSelections: [{ id: "sel-1" }],
     });
 
     const response = await GET(
@@ -463,7 +464,53 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(403);
   });
 
-  it("revives a failed run with PENDING queue state to queued", async () => {
+  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      queueJobId: "local-42",
+      status: "running",
+      study: { userId: "user-1" },
+      order: null,
+      selectedResultSelections: [],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/queue"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("allows a non-admin owner of a published run", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      queueJobId: null,
+      status: "completed",
+      study: { userId: "user-1" },
+      order: null,
+      selectedResultSelections: [{ id: "sel-1" }],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/queue"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      available: false,
+      message: "No queue job id set",
+    });
+  });
+
+  it("does NOT revive a failed run even when SLURM reports PENDING (job id reuse safety)", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "4444",
@@ -487,7 +534,37 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     const body = await response.json();
     expect(body.status).toBe("PENDING");
     const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
-    expect(updateCall.data.status).toBe("queued");
-    expect(updateCall.data.currentStep).toBe("Waiting for scheduler");
+    // SLURM numeric job ids are recycled, so a live PENDING job for the same
+    // id does not justify reviving a terminal run.
+    expect(updateCall.data.status).toBeUndefined();
+    expect(updateCall.data.currentStep).toBeUndefined();
+    expect(updateCall.data.completedAt).toBeUndefined();
+  });
+
+  it("still reconciles a non-terminal queued run promoted to running", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      queueJobId: "5555",
+      status: "queued",
+      startedAt: null,
+      study: null,
+      order: null,
+    });
+    mocks.execFileAsync.mockImplementation(async (command: string) => {
+      if (command === "squeue") {
+        return { stdout: "5555|cpu|run.sh|user1|RUNNING|00:30|1|node-01\n", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/queue"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data.status).toBe("running");
+    expect(updateCall.data.currentStep).toBe("Running on compute node");
   });
 });

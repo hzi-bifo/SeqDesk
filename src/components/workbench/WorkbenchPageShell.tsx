@@ -34,7 +34,7 @@ export function WorkbenchPageHeader({
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">{title}</h1>
             <WorkbenchStatusBadge tone="accent">{badge}</WorkbenchStatusBadge>
           </div>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>

@@ -16,7 +16,8 @@ export type AdminActivityState = "running" | "success" | "error";
 export type AdminActivityType =
   | "pipeline-db-download"
   | "dummy-seed"
-  | "example-dataset";
+  | "example-dataset"
+  | "install-profile-reload";
 
 export interface AdminActivityJob {
   id: string;
@@ -64,7 +65,13 @@ function asActivityState(value: unknown): AdminActivityState {
 }
 
 function asActivityType(value: unknown): AdminActivityType {
-  if (value === "pipeline-db-download" || value === "dummy-seed") return value;
+  if (
+    value === "pipeline-db-download" ||
+    value === "dummy-seed" ||
+    value === "install-profile-reload"
+  ) {
+    return value;
+  }
   return "example-dataset";
 }
 

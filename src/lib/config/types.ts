@@ -91,16 +91,35 @@ export interface EnaConfig {
 export interface SequencingFilesConfig {
   /** Allowed file extensions */
   extensions?: string[];
+  /** Allowed file extensions; hosted profile alias for extensions */
+  allowedExtensions?: string[];
   /** How deep to scan directories */
   scanDepth?: number;
   /** Allow single-end reads (not just paired-end) */
   allowSingleEnd?: boolean;
   /** Patterns to ignore during scanning */
   ignorePatterns?: string[];
+  /** Automatically link discovered files to samples when names match */
+  autoAssign?: boolean;
+  /** Minimum age for active-write file stability checks */
+  activeWriteMinAgeMs?: number;
   /** Read simulation mode: auto uses templates if available, otherwise synthetic */
   simulationMode?: "auto" | "synthetic" | "template";
   /** Template directory for realistic simulation FASTQ pairs */
   simulationTemplateDir?: string;
+}
+
+export interface AccessConfig {
+  /** Allow users to share submitted orders within their department */
+  departmentSharing?: boolean;
+  /** Allow users to delete submitted orders */
+  allowDeleteSubmittedOrders?: boolean;
+  /** Allow users to download assembly outputs */
+  allowUserAssemblyDownload?: boolean;
+  /** Enable order notes/comments */
+  orderNotesEnabled?: boolean;
+  /** Facility instructions shown after order submission */
+  postSubmissionInstructions?: string;
 }
 
 export interface AuthConfig {
@@ -157,6 +176,34 @@ export interface NotificationConfig {
   userDefaults?: NotificationUserDefaults;
 }
 
+export interface AccountValidationModuleSettings {
+  /** Email domains accepted for automatic account validation */
+  allowedDomains?: string[];
+  /** Require allowed-domain validation for new accounts */
+  enforceValidation?: boolean;
+}
+
+export interface RangeSetting {
+  min?: number;
+  max?: number;
+}
+
+export interface BillingInfoModuleSettings {
+  pspEnabled?: boolean;
+  pspPrefixRange?: RangeSetting;
+  pspMainDigits?: number;
+  pspSuffixRange?: RangeSetting;
+  pspExample?: string;
+  costCenterEnabled?: boolean;
+  costCenterPattern?: string;
+  costCenterExample?: string;
+}
+
+export interface ModuleSettingsConfig {
+  "account-validation"?: AccountValidationModuleSettings;
+  "billing-info"?: BillingInfoModuleSettings;
+}
+
 export interface AppConfig {
   /** App listen port for generated start scripts */
   port?: number;
@@ -202,7 +249,9 @@ export interface SeqDeskConfig {
   pipelines?: PipelinesConfig;
   ena?: EnaConfig;
   sequencingFiles?: SequencingFilesConfig;
+  access?: AccessConfig;
   auth?: AuthConfig;
+  moduleSettings?: ModuleSettingsConfig;
   telemetry?: TelemetryConfig;
   notifications?: NotificationConfig;
   runtime?: RuntimeConfig;

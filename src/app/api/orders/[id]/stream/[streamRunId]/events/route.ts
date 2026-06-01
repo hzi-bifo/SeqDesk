@@ -22,20 +22,34 @@ export async function GET(
     }
 
     const afterParam = request.nextUrl.searchParams.get("after");
-    const limit = Math.min(Number(request.nextUrl.searchParams.get("limit") ?? 100), 500);
     const afterSeq = afterParam !== null ? Number(afterParam) : NaN;
+    const hasCursor = Number.isFinite(afterSeq);
 
-    const events = await db.streamRunEvent.findMany({
+    // Validate `limit`: Number(...) can yield NaN (e.g. ?limit=abc) or a
+    // negative, which would be passed straight to Prisma's `take`. Clamp to
+    // [1, 500] with a default of 100.
+    const rawLimit = Number(request.nextUrl.searchParams.get("limit"));
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : 100;
+
+    const rows = await db.streamRunEvent.findMany({
       where: {
         streamRunId,
-        ...(Number.isFinite(afterSeq) ? { seq: { gt: afterSeq } } : {}),
+        ...(hasCursor ? { seq: { gt: afterSeq } } : {}),
       },
-      orderBy: { seq: "desc" },
+      // With a cursor we page forward OLDEST-first so a backlog larger than
+      // `limit` is delivered incrementally over successive polls instead of
+      // permanently skipping the middle: the client advances its cursor to the
+      // highest seq it received, so the next poll continues from there. Without
+      // a cursor we return the newest events (initial live-tail load).
+      orderBy: { seq: hasCursor ? "asc" : "desc" },
       take: limit,
     });
 
-    // Newest first for display; expose the highest seq we returned so the client can resume.
-    const nextCursor = events.length > 0 ? events[0].seq : (Number.isFinite(afterSeq) ? afterSeq : 0);
+    // Always present newest-first for display; expose the highest seq we
+    // returned so the client can resume without dropping events.
+    const events = hasCursor ? [...rows].reverse() : rows;
+    const nextCursor = events.length > 0 ? events[0].seq : hasCursor ? afterSeq : 0;
 
     return NextResponse.json({
       events: events.map((e) => ({

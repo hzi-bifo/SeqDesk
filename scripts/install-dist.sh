@@ -2549,6 +2549,20 @@ activate_current_release() {
     mv -f "$next_link" "$SEQDESK_DIR/current"
 }
 
+link_root_release_metadata() {
+    if [ ! -e "$SEQDESK_DIR/current" ]; then
+        return 0
+    fi
+
+    local item
+    for item in package.json package-lock.json; do
+        if [ -e "$SEQDESK_DIR/current/${item}" ]; then
+            rm -f "$SEQDESK_DIR/${item}"
+            ln -s "current/${item}" "$SEQDESK_DIR/${item}"
+        fi
+    done
+}
+
 run_wizard() {
     if ! command_exists node; then
         return 1
@@ -3513,6 +3527,7 @@ else
     sync_release_shared_paths "$RELEASE_DIR"
     write_root_start_wrapper
     activate_current_release "$LATEST_VERSION"
+    link_root_release_metadata
     APP_DIR="$SEQDESK_DIR/current"
 fi
 

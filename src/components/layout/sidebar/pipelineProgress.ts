@@ -67,7 +67,7 @@ export function getPipelineProgressIndicatorClassName(
 ): string {
   switch (status) {
     case "complete":
-      return "bg-emerald-500";
+      return "bg-[#00BD7D]";
     case "active":
       return "bg-blue-500";
     case "failed":

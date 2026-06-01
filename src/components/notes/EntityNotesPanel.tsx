@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -23,13 +22,12 @@ import {
 import { notifyPanel } from "@/lib/notifications/client";
 import {
   Bold,
-  ChevronLeft,
+  ChevronRight,
   Italic,
   Link2,
   List,
   ListOrdered,
   Loader2,
-  ArrowUpRight,
   Search,
   Redo2,
   StickyNote,
@@ -53,6 +51,9 @@ const ICON_CLASSNAME = "h-3.5 w-3.5";
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 480;
 const DEFAULT_WIDTH = 320;
+const COLLAPSED_DESKTOP_WIDTH = 40;
+const DESKTOP_PANEL_MEDIA_QUERY = "(min-width: 1280px)";
+const FOOTER_RIGHT_OFFSET_PROPERTY = "--entity-notes-sidebar-offset";
 const SAVE_STATUS_DELAY_MS = 350;
 const SAVED_STATUS_MIN_MS = 750;
 const EMPTY_EDITOR_HTML_VALUES = new Set(["", "<br>", "<div><br></div>", "<p><br></p>"]);
@@ -344,6 +345,49 @@ export function EntityNotesPanel({
     window.localStorage.setItem(desktopPanelStateKey, String(desktopOpen));
   }, [desktopOpen, desktopPanelStateKey]);
 
+  // Mirror the render gate (`if (!loading && !notesEnabled) return null`) so the
+  // footer offset is never left set while the panel renders nothing.
+  const panelRendersOffset = loading || data?.notesEnabled !== false;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const getOffset = () =>
+      `${desktopOpen ? panelWidth : COLLAPSED_DESKTOP_WIDTH}px`;
+    const clearOffset = () => {
+      root.style.removeProperty(FOOTER_RIGHT_OFFSET_PROPERTY);
+    };
+    const setOffset = () => {
+      root.style.setProperty(FOOTER_RIGHT_OFFSET_PROPERTY, getOffset());
+    };
+
+    if (!panelRendersOffset) {
+      clearOffset();
+      return clearOffset;
+    }
+
+    if (typeof window.matchMedia !== "function") {
+      setOffset();
+      return clearOffset;
+    }
+
+    const media = window.matchMedia(DESKTOP_PANEL_MEDIA_QUERY);
+    const syncOffset = () => {
+      if (media.matches) {
+        setOffset();
+      } else {
+        clearOffset();
+      }
+    };
+
+    syncOffset();
+    media.addEventListener("change", syncOffset);
+
+    return () => {
+      media.removeEventListener("change", syncOffset);
+      clearOffset();
+    };
+  }, [desktopOpen, panelWidth, panelRendersOffset]);
+
   const handleResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -487,12 +531,8 @@ export function EntityNotesPanel({
       return `Edited ${editedAt}`;
     }
 
-    if (!notesContent.trim()) {
-      return "No notes yet";
-    }
-
     return "";
-  }, [data?.notesEditedAt, data?.notesEditedBy, notesContent]);
+  }, [data?.notesEditedAt, data?.notesEditedBy]);
 
   const notesContext = useMemo(() => {
     if (entityLabel === "order") {
@@ -500,60 +540,24 @@ export function EntityNotesPanel({
       return {
         title: "Notepad",
         subject: `For order ${orderLabel}`,
-        hint: "Study notepads open from each study",
-        href: null,
       };
     }
 
     if (entityLabel === "study") {
       const subject = data?.title || data?.alias || "this study";
-      const relatedOrders = new Map<
-        string,
-        {
-          id: string;
-          label: string;
-        }
-      >();
-
-      for (const sample of data?.samples ?? []) {
-        const order = sample.order;
-        if (order?.id) {
-          relatedOrders.set(order.id, {
-            id: order.id,
-            label: order.orderNumber || order.name || "related order",
-          });
-        } else if (sample.orderId) {
-          relatedOrders.set(sample.orderId, {
-            id: sample.orderId,
-            label: "related order",
-          });
-        }
-      }
-
-      const orders = Array.from(relatedOrders.values());
-      const onlyOrder = orders.length === 1 ? orders[0] : null;
-
       return {
         title: "Notepad",
         subject: `For study ${subject}`,
-        hint:
-          orders.length > 1
-            ? `${orders.length} related orders`
-            : onlyOrder
-              ? `Open order notepad ${onlyOrder.label}`
-              : "Attached to this study",
-        href: onlyOrder ? `/orders/${onlyOrder.id}` : null,
       };
     }
 
     return {
       title: "Notepad",
       subject: "",
-      hint: "",
-      href: null,
     };
-  }, [data?.alias, data?.name, data?.orderNumber, data?.samples, data?.title, entityLabel]);
+  }, [data?.alias, data?.name, data?.orderNumber, data?.title, entityLabel]);
   const sharedAccessText = `Shared with everyone who can access this ${entityLabel}, including admins.`;
+  const emptyEditorPlaceholder = `No notes yet. Type here to add notes for this ${entityLabel}, such as context, decisions, links, or follow-up details. ${sharedAccessText}`;
 
   const actualSaveStatusKey = useMemo<SaveStatusKey>(() => {
     if (loading) {
@@ -622,7 +626,7 @@ export function EntityNotesPanel({
       default:
         return {
           label: "Saved",
-          dotClassName: "bg-emerald-500",
+          dotClassName: "bg-[#00BD7D]",
           animated: false,
         };
     }
@@ -1088,7 +1092,7 @@ export function EntityNotesPanel({
 
   const panelBody = (
     <div {...panelAttributes} className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-12 shrink-0 items-start justify-between gap-2 px-3 py-2">
+      <div className="flex min-h-11 shrink-0 items-start justify-between gap-2 px-3 py-2">
         <div className="min-w-0 space-y-0.5">
           <div className="flex items-center gap-2 font-geist-pixel text-xs font-medium text-muted-foreground">
             <StickyNote className="h-3.5 w-3.5 shrink-0" />
@@ -1114,31 +1118,9 @@ export function EntityNotesPanel({
               </TooltipContent>
             </Tooltip>
           </div>
-          <div className="space-y-0.5 pl-5 text-[11px] leading-4 text-muted-foreground">
-            <p className="truncate">
-              {notesContext.subject}
-              {notesContext.hint ? (
-                <>
-                  <span className="px-1.5 text-border">/</span>
-                  {notesContext.href ? (
-                    <Link
-                      href={notesContext.href}
-                      className="inline-flex items-center gap-0.5 text-primary hover:underline"
-                    >
-                      {notesContext.hint}
-                      <ArrowUpRight className="h-2.5 w-2.5" />
-                    </Link>
-                  ) : (
-                    <span>{notesContext.hint}</span>
-                  )}
-                </>
-              ) : null}
-            </p>
-            {metadataText && <p className="truncate">{metadataText}</p>}
-            <p className="text-[10px] leading-4 text-muted-foreground/90">
-              {sharedAccessText}
-            </p>
-          </div>
+          <p className="truncate pl-5 text-[11px] leading-4 text-muted-foreground">
+            {notesContext.subject}
+          </p>
         </div>
 
         <div className="flex items-center gap-1">
@@ -1173,186 +1155,209 @@ export function EntityNotesPanel({
             className="hidden xl:inline-flex h-7 w-7"
             aria-label={`Hide ${entityLabel} notepad`}
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
+            <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : error ? (
-        <div className="flex flex-1 flex-col justify-center gap-3 px-3">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => void fetchNotes()}>
-            Try again
-          </Button>
-        </div>
-      ) : !notesSupported ? (
-        <div className="flex flex-1 flex-col justify-center gap-3 px-3">
-          <p className="text-sm text-muted-foreground">
-            Database schema update required for notes.
-          </p>
-          <Button type="button" variant="outline" size="sm" onClick={() => void fetchNotes()}>
-            Recheck
-          </Button>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <EditorProvider>
-              <div ref={editorContainerRef} className="relative flex h-full min-h-0 flex-col">
-                <Editor
-                  value={editorHtml}
-                  onChange={handleEditorChange}
-                  placeholder="No notes yet. Write notes..."
-                  containerProps={{
-                    className:
-                      "order-notes-wysiwyg flex h-full min-h-0 flex-col overflow-hidden bg-transparent",
-                    onClick: handleEditorClick,
-                    onKeyDown: handleEditorKeyDown,
-                    onKeyUp: () => window.setTimeout(updateMentionQueryFromSelection, 0),
-                    onMouseUp: handleEditorMouseUp,
-                  }}
-                >
-                  <Toolbar className="order-notes-toolbar shrink-0 bg-card">
-                    <ToolbarBtn title="Bold" command="bold">
-                      <Bold className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <ToolbarBtn title="Italic" command="italic">
-                      <Italic className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <span className="order-notes-toolbar-sep" />
-                    <ToolbarBtn title="Bullet list" command="insertUnorderedList">
-                      <List className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <ToolbarBtn title="Numbered list" command="insertOrderedList">
-                      <ListOrdered className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <span className="order-notes-toolbar-sep" />
-                    <ToolbarBtn title="Link" command={openLinkEditor}>
-                      <Link2 className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <span className="order-notes-toolbar-sep" />
-                    <ToolbarBtn title="Undo" command="undo">
-                      <Undo2 className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                    <ToolbarBtn title="Redo" command="redo">
-                      <Redo2 className={ICON_CLASSNAME} />
-                    </ToolbarBtn>
-                  </Toolbar>
-                  {linkEditorOpen && (
-                    <form
-                      className="flex shrink-0 items-center gap-1 border-b border-border/40 bg-card px-2.5 py-1.5"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        applyLink();
-                      }}
-                    >
-                      <Input
-                        ref={linkInputRef}
-                        value={linkUrl}
-                        onChange={(event) => setLinkUrl(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") {
-                            event.preventDefault();
-                            event.stopPropagation();
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <div className="flex h-full flex-col justify-center gap-3 px-3">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void fetchNotes()}>
+              Try again
+            </Button>
+          </div>
+        ) : !notesSupported ? (
+          <div className="flex h-full flex-col justify-center gap-3 px-3">
+            <p className="text-sm text-muted-foreground">
+              Database schema update required for notes.
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void fetchNotes()}>
+              Recheck
+            </Button>
+          </div>
+        ) : (
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <EditorProvider>
+                <div ref={editorContainerRef} className="relative flex h-full min-h-0 flex-col">
+                  <Editor
+                    value={editorHtml}
+                    onChange={handleEditorChange}
+                    placeholder={emptyEditorPlaceholder}
+                    containerProps={{
+                      className:
+                        "order-notes-wysiwyg flex h-full min-h-0 flex-col overflow-hidden bg-transparent",
+                      onClick: handleEditorClick,
+                      onKeyDown: handleEditorKeyDown,
+                      onKeyUp: () => window.setTimeout(updateMentionQueryFromSelection, 0),
+                      onMouseUp: handleEditorMouseUp,
+                    }}
+                  >
+                    <Toolbar className="order-notes-toolbar shrink-0 bg-card">
+                      <ToolbarBtn title="Bold" command="bold">
+                        <Bold className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <ToolbarBtn title="Italic" command="italic">
+                        <Italic className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <span className="order-notes-toolbar-sep" />
+                      <ToolbarBtn title="Bullet list" command="insertUnorderedList">
+                        <List className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <ToolbarBtn title="Numbered list" command="insertOrderedList">
+                        <ListOrdered className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <span className="order-notes-toolbar-sep" />
+                      <ToolbarBtn title="Link" command={openLinkEditor}>
+                        <Link2 className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <span className="order-notes-toolbar-sep" />
+                      <ToolbarBtn title="Undo" command="undo">
+                        <Undo2 className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                      <ToolbarBtn title="Redo" command="redo">
+                        <Redo2 className={ICON_CLASSNAME} />
+                      </ToolbarBtn>
+                    </Toolbar>
+                    {linkEditorOpen && (
+                      <form
+                        className="flex shrink-0 items-center gap-1 border-b border-border/40 bg-card px-2.5 py-1.5"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          applyLink();
+                        }}
+                      >
+                        <Input
+                          ref={linkInputRef}
+                          value={linkUrl}
+                          onChange={(event) => setLinkUrl(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              closeLinkEditor();
+                              focusEditor();
+                            }
+                          }}
+                          placeholder="Paste URL"
+                          className="h-7 rounded-md px-2 text-xs"
+                        />
+                        <Button type="submit" size="sm" className="h-7 px-2 text-[11px]">
+                          Apply
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
                             closeLinkEditor();
                             focusEditor();
-                          }
-                        }}
-                        placeholder="Paste URL"
-                        className="h-7 rounded-md px-2 text-xs"
-                      />
-                      <Button type="submit" size="sm" className="h-7 px-2 text-[11px]">
-                        Apply
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          closeLinkEditor();
-                          focusEditor();
-                        }}
-                        className="h-7 px-2 text-[11px]"
-                      >
-                        Cancel
-                      </Button>
-                    </form>
-                  )}
-                </Editor>
-                {mentionOpen && (
-                  <div className="absolute left-3 right-3 top-12 z-20 max-h-72 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
-                    <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
-                      <Search className="h-3.5 w-3.5" />
-                      <span>
-                        {mentionQuery ? `Mention "${mentionQuery}"` : "Type to mention sample, file, run, or artifact"}
-                      </span>
-                    </div>
-                    {mentionLoading ? (
-                      <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Loading mentions...
-                      </div>
-                    ) : mentionError ? (
-                      <div className="px-3 py-3 text-xs text-destructive">{mentionError}</div>
-                    ) : flatMentionItems.length === 0 ? (
-                      <div className="px-3 py-3 text-xs text-muted-foreground">No matching mentions.</div>
-                    ) : (
-                      <div className="max-h-60 overflow-y-auto py-1">
-                        {mentionGroups.map((group) => {
-                          const groupItems = group.items;
-                          if (groupItems.length === 0) {
-                            return null;
-                          }
-
-                          return (
-                            <div key={group.key} className="py-1">
-                              <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                                {group.label}
-                              </div>
-                              {groupItems.map((mention) => {
-                                const itemIndex = flatMentionItems.findIndex(
-                                  (item) => item.type === mention.type && item.id === mention.id
-                                );
-                                const selected = itemIndex === mentionSelectedIndex;
-
-                                return (
-                                  <button
-                                    key={`${mention.type}:${mention.id}`}
-                                    type="button"
-                                    className={cn(
-                                      "flex w-full min-w-0 flex-col items-start px-3 py-1.5 text-left text-xs transition-colors",
-                                      selected ? "bg-secondary text-foreground" : "hover:bg-secondary/70"
-                                    )}
-                                    onMouseDown={(event) => {
-                                      event.preventDefault();
-                                      insertMention(mention);
-                                    }}
-                                  >
-                                    <span className="max-w-full truncate font-medium">@{mention.label}</span>
-                                    {mention.detail && (
-                                      <span className="max-w-full truncate text-[11px] text-muted-foreground">
-                                        {mention.detail}
-                                      </span>
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-                      </div>
+                          }}
+                          className="h-7 px-2 text-[11px]"
+                        >
+                          Cancel
+                        </Button>
+                      </form>
                     )}
-                  </div>
-                )}
-              </div>
-            </EditorProvider>
+                  </Editor>
+                  {mentionOpen && (
+                    <div className="absolute left-3 right-3 top-12 z-20 max-h-72 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
+                      <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-2 text-xs text-muted-foreground">
+                        <Search className="h-3.5 w-3.5" />
+                        <span>
+                          {mentionQuery ? `Mention "${mentionQuery}"` : "Type to mention sample, file, run, or artifact"}
+                        </span>
+                      </div>
+                      {mentionLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Loading mentions...
+                        </div>
+                      ) : mentionError ? (
+                        <div className="px-3 py-3 text-xs text-destructive">{mentionError}</div>
+                      ) : flatMentionItems.length === 0 ? (
+                        <div className="px-3 py-3 text-xs text-muted-foreground">No matching mentions.</div>
+                      ) : (
+                        <div className="max-h-60 overflow-y-auto py-1">
+                          {mentionGroups.map((group) => {
+                            const groupItems = group.items;
+                            if (groupItems.length === 0) {
+                              return null;
+                            }
+
+                            return (
+                              <div key={group.key} className="py-1">
+                                <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  {group.label}
+                                </div>
+                                {groupItems.map((mention) => {
+                                  const itemIndex = flatMentionItems.findIndex(
+                                    (item) => item.type === mention.type && item.id === mention.id
+                                  );
+                                  const selected = itemIndex === mentionSelectedIndex;
+
+                                  return (
+                                    <button
+                                      key={`${mention.type}:${mention.id}`}
+                                      type="button"
+                                      className={cn(
+                                        "flex w-full min-w-0 flex-col items-start px-3 py-1.5 text-left text-xs transition-colors",
+                                        selected ? "bg-secondary text-foreground" : "hover:bg-secondary/70"
+                                      )}
+                                      onMouseDown={(event) => {
+                                        event.preventDefault();
+                                        insertMention(mention);
+                                      }}
+                                    >
+                                      <span className="max-w-full truncate font-medium">@{mention.label}</span>
+                                      {mention.detail && (
+                                        <span className="max-w-full truncate text-[11px] text-muted-foreground">
+                                          {mention.detail}
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </EditorProvider>
+            </div>
           </div>
+        )}
+      </div>
+
+      {!loading && !error && notesSupported ? (
+        <div
+          className="flex shrink-0 items-center gap-1.5 overflow-hidden border-t border-border/60 bg-card px-3 text-[10px] leading-4 text-muted-foreground"
+          style={{ height: "var(--seqdesk-footer-height, 2.5rem)" }}
+        >
+          {metadataText ? (
+            <>
+              <p className="max-w-[45%] shrink-0 truncate" title={metadataText}>
+                {metadataText}
+              </p>
+              <span className="shrink-0 text-border" aria-hidden>
+                &middot;
+              </span>
+            </>
+          ) : null}
+          <p className="min-w-0 truncate" title={sharedAccessText}>
+            {sharedAccessText}
+          </p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 
@@ -1361,9 +1366,11 @@ export function EntityNotesPanel({
       <aside
         className={cn(
           "hidden xl:flex fixed top-0 right-0 bottom-0 flex-col border-l border-border bg-card z-30 transition-all duration-300",
-          !desktopOpen && "w-10"
         )}
-        style={desktopOpen ? { width: panelWidth } : undefined}
+        style={{
+          bottom: "var(--seqdesk-footer-height, 2.5rem)",
+          width: desktopOpen ? panelWidth : COLLAPSED_DESKTOP_WIDTH,
+        }}
       >
         {desktopOpen && (
           <div
@@ -1410,9 +1417,8 @@ export function EntityNotesPanel({
       <div
         className={cn(
           "hidden xl:block shrink-0 transition-all duration-300",
-          !desktopOpen && "w-10"
         )}
-        style={desktopOpen ? { width: panelWidth } : undefined}
+        style={{ width: desktopOpen ? panelWidth : COLLAPSED_DESKTOP_WIDTH }}
         aria-hidden
       />
 
@@ -1425,7 +1431,10 @@ export function EntityNotesPanel({
               shouldFocusEditorRef.current = true;
               setMobileOpen(true);
             }}
-            className="fixed bottom-6 right-6 z-30 shadow-lg"
+            className="fixed right-6 z-40 shadow-lg"
+            style={{
+              bottom: "calc(var(--seqdesk-footer-height, 2.5rem) + 1rem)",
+            }}
           >
             <StickyNote className="h-4 w-4" />
             Notepad

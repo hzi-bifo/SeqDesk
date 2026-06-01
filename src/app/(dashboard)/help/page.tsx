@@ -139,7 +139,7 @@ export default function HelpPage() {
     <PageContainer>
       <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Help & Guide</h1>
+          <h1 className="text-xl font-semibold">Help & Guide</h1>
           <p className="mt-2 max-w-3xl text-muted-foreground">
             A quick orientation for ordering sequencing, tracking samples and read files,
             organizing studies, running facility workflows, and preparing publication.

@@ -11,11 +11,10 @@ export function SidebarFieldHelp() {
   return (
     <div>
       <div
-        className="relative p-3 rounded-lg overflow-hidden"
+        className="relative p-3 rounded-lg overflow-hidden border border-border"
         style={{
           background:
             "linear-gradient(135deg, rgba(247, 247, 244, 0.9) 0%, rgba(239, 239, 233, 0.95) 50%, rgba(247, 247, 244, 0.9) 100%)",
-          border: "1px solid #e5e5e0",
         }}
       >
         <div className="relative z-10">

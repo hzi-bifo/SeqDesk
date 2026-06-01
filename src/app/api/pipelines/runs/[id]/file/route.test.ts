@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     stat: vi.fn(),
     readFile: vi.fn(),
     open: vi.fn(),
+    realpath: vi.fn(),
   },
   db: {
     pipelineRun: {
@@ -60,6 +61,9 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
       selectedResultSelections: [],
     });
     mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/logs/run.log");
+    // By default realpath resolves to the path it is given (no symlinks),
+    // so the containment re-check passes for files inside the run folder.
+    mocks.fs.realpath.mockImplementation(async (p: string) => p);
     mocks.fs.stat.mockResolvedValue({
       size: 12,
       isFile: () => true,
@@ -92,6 +96,25 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     expect(await response.json()).toEqual({
       error: "Path escapes base directory",
     });
+  });
+
+  it("rejects symlinks that escape the run folder after realpath resolution", async () => {
+    // The lexical ensureWithinBase check passes, but the file is a symlink that
+    // physically resolves outside the run folder.
+    mocks.ensureWithinBase.mockReturnValue("/tmp/run-1/logs/escape.log");
+    mocks.fs.realpath.mockImplementation(async (p: string) => {
+      if (p === "/tmp/run-1") return "/tmp/run-1";
+      if (p === "/tmp/run-1/logs/escape.log") return "/etc/passwd";
+      return p;
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/file?path=logs/escape.log"),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
   });
 
   it("returns a text preview for supported files", async () => {

@@ -98,7 +98,7 @@ describe("SidebarEntityNav", () => {
       { pipelineId: "mag", name: "MAG", category: "analysis", status: "active", runIds: ["run-1"] },
     ]);
     mocks.progressClassName.mockImplementation((status: string) => {
-      if (status === "complete") return "bg-emerald-500";
+      if (status === "complete") return "bg-[#00BD7D]";
       if (status === "partial") return "bg-amber-400";
       return "bg-slate-400";
     });
@@ -164,7 +164,7 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("FASTQ Checksum")).toBeTruthy();
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
     const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
-    expect(pipelineDot?.className).toContain("bg-emerald-500");
+    expect(pipelineDot?.className).toContain("bg-[#00BD7D]");
   });
 
   it("renders study navigation and hides demo-only restricted items", () => {
@@ -247,7 +247,7 @@ describe("SidebarEntityNav", () => {
     const readsDot = readsLink.querySelector("span[aria-hidden='true']");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/studies/study-1");
-      expect(readsDot?.className).toContain("bg-emerald-500");
+      expect(readsDot?.className).toContain("bg-[#00BD7D]");
     });
   });
 
@@ -450,7 +450,7 @@ describe("SidebarEntityNav", () => {
     );
     const enaDot = enaLink.querySelector("span[aria-hidden='true']");
     expect(enaDot?.className).toContain("bg-slate-300");
-    expect(enaDot?.className).not.toContain("bg-emerald-500");
+    expect(enaDot?.className).not.toContain("bg-[#00BD7D]");
   });
 
   it("marks the ENA publishing subitem green only after registration", () => {
@@ -473,7 +473,7 @@ describe("SidebarEntityNav", () => {
 
     const enaLink = screen.getByRole("link", { name: /ENA/i });
     const enaDot = enaLink.querySelector("span[aria-hidden='true']");
-    expect(enaDot?.className).toContain("bg-emerald-500");
+    expect(enaDot?.className).toContain("bg-[#00BD7D]");
   });
 
   it("hides entity navigation on collection routes without a selected entity", () => {

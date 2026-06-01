@@ -70,10 +70,29 @@ export async function generateRunNumber(): Promise<string> {
   let nextNum = 1;
   if (existingRuns.length > 0) {
     const lastNum = parseInt(existingRuns[0].runNumber.slice(-3), 10);
-    nextNum = lastNum + 1;
+    if (!isNaN(lastNum)) {
+      nextNum = lastNum + 1;
+    }
   }
 
   return `${prefix}${nextNum.toString().padStart(3, '0')}`;
+}
+
+/**
+ * Detect a Prisma unique-constraint violation (P2002) on the runNumber column,
+ * which signals that a concurrent prepare claimed the same generated run number.
+ */
+function isRunNumberConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  if (code !== 'P2002') return false;
+
+  // When Prisma reports the offending field(s), only treat runNumber collisions
+  // as retryable; any other unique violation should surface normally.
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  if (typeof target === 'string') return target.includes('runNumber');
+  if (Array.isArray(target)) return target.includes('runNumber');
+  return true;
 }
 
 function buildNextflowRunName(runNumber: string, runId: string): string {
@@ -311,6 +330,11 @@ set -euo pipefail
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
 STDERR_LOG="${runFolder}/logs/pipeline.err"
 
+# Always record the real exit code for the pipeline monitor, even when a
+# command fails under "set -e" (which would otherwise abort before the marker
+# below is reached).
+trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT
+
 echo "Starting nf-core/mag pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
@@ -320,12 +344,6 @@ ${runtimeBootstrap}
 "\${NEXTFLOW_RUNNER[@]}" run nf-core/mag \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
-
-# Capture exit code
-EXIT_CODE=$?
-
-echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"
-exit $EXIT_CODE
 `;
 }
 
@@ -375,6 +393,11 @@ set -euo pipefail
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
 STDERR_LOG="${runFolder}/logs/pipeline.err"
 
+# Always record the real exit code for the pipeline monitor, even when a
+# command fails under "set -e" (which would otherwise abort before the marker
+# below is reached).
+trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT
+
 echo "Starting MAG pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
@@ -384,10 +407,6 @@ ${runtimeBootstrap}
 "\${NEXTFLOW_RUNNER[@]}" run nf-core/mag \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
-
-EXIT_CODE=$?
-echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"
-exit $EXIT_CODE
 `;
 }
 
@@ -409,15 +428,6 @@ export async function prepareMagRun(
   const errors: string[] = [];
 
   try {
-    // Generate run number
-    const runNumber = await generateRunNumber();
-
-    // Create run directory
-    const runFolder = await prepareRunDirectory(
-      runNumber,
-      executionSettings.pipelineRunDir
-    );
-
     // Generate samplesheet using adapter
     const adapter = getAdapter('mag');
     if (!adapter) {
@@ -443,45 +453,73 @@ export async function prepareMagRun(
       return { success: false, runId, errors };
     }
 
-    // Write samplesheet
-    const samplesheetPath = path.join(runFolder, 'samplesheet.csv');
-    await fs.writeFile(samplesheetPath, samplesheet.content);
-
-    // Output directory
-    const outputDir = path.join(runFolder, 'output');
-    await fs.mkdir(outputDir, { recursive: true });
-
-    // Create run-specific Nextflow config (weblog, etc.)
     const weblogUrl = buildWeblogUrl(executionSettings.weblogUrl, runId, executionSettings.weblogSecret);
-    const runConfig = buildRunConfig(weblogUrl, executionSettings);
-    const runConfigPath = runConfig ? path.join(runFolder, 'nextflow.config') : null;
-    if (runConfig && runConfigPath) {
-      await fs.writeFile(runConfigPath, runConfig);
-    }
 
-    // Generate execution script
-    const script = executionSettings.useSlurm
-      ? generateSlurmScript(runFolder, samplesheetPath, outputDir, config, executionSettings, runConfigPath, runNumber, runId)
-      : generateLocalScript(runFolder, samplesheetPath, outputDir, config, executionSettings, runConfigPath, runNumber, runId);
+    // generateRunNumber reads the current max then increments, so two concurrent
+    // prepares for the same day can compute the same NNN. runNumber is unique, so
+    // the loser's update throws P2002 — recompute and retry rather than failing a
+    // perfectly valid run with an opaque error.
+    const MAX_RUN_NUMBER_ATTEMPTS = 5;
+    let runFolder = '';
+    for (let attempt = 0; ; attempt++) {
+      const runNumber = await generateRunNumber();
 
-    const scriptPath = path.join(runFolder, 'run.sh');
-    await fs.writeFile(scriptPath, script);
-    await fs.chmod(scriptPath, 0o755);
-
-    // Update run record with folder and paths
-    // Steps will be populated dynamically from the Nextflow trace file
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
+      // Create run directory
+      runFolder = await prepareRunDirectory(
         runNumber,
-        runFolder,
-        outputPath: path.join(runFolder, 'logs/pipeline.out'),
-        errorPath: path.join(runFolder, 'logs/pipeline.err'),
-        status: 'queued',
-        queuedAt: new Date(),
-        config: JSON.stringify(config),
-      },
-    });
+        executionSettings.pipelineRunDir
+      );
+
+      // Write samplesheet
+      const samplesheetPath = path.join(runFolder, 'samplesheet.csv');
+      await fs.writeFile(samplesheetPath, samplesheet.content);
+
+      // Output directory
+      const outputDir = path.join(runFolder, 'output');
+      await fs.mkdir(outputDir, { recursive: true });
+
+      // Create run-specific Nextflow config (weblog, etc.)
+      const runConfig = buildRunConfig(weblogUrl, executionSettings);
+      const runConfigPath = runConfig ? path.join(runFolder, 'nextflow.config') : null;
+      if (runConfig && runConfigPath) {
+        await fs.writeFile(runConfigPath, runConfig);
+      }
+
+      // Generate execution script
+      const script = executionSettings.useSlurm
+        ? generateSlurmScript(runFolder, samplesheetPath, outputDir, config, executionSettings, runConfigPath, runNumber, runId)
+        : generateLocalScript(runFolder, samplesheetPath, outputDir, config, executionSettings, runConfigPath, runNumber, runId);
+
+      const scriptPath = path.join(runFolder, 'run.sh');
+      await fs.writeFile(scriptPath, script);
+      await fs.chmod(scriptPath, 0o755);
+
+      // Update run record with folder and paths
+      // Steps will be populated dynamically from the Nextflow trace file
+      try {
+        await db.pipelineRun.update({
+          where: { id: runId },
+          data: {
+            runNumber,
+            runFolder,
+            outputPath: path.join(runFolder, 'logs/pipeline.out'),
+            errorPath: path.join(runFolder, 'logs/pipeline.err'),
+            status: 'queued',
+            queuedAt: new Date(),
+            config: JSON.stringify(config),
+          },
+        });
+        break;
+      } catch (error) {
+        if (isRunNumberConflict(error) && attempt < MAX_RUN_NUMBER_ATTEMPTS - 1) {
+          // Another run claimed this number first; drop the stale folder and
+          // recompute on the next iteration.
+          await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
+        throw error;
+      }
+    }
 
     return {
       success: true,

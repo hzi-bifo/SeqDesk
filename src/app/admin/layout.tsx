@@ -2,11 +2,9 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
-import { Footer } from "@/components/layout/Footer";
 import { AdminDemoReadOnlyWrapper } from "@/components/demo/AdminDemoReadOnlyWrapper";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
-import { isFacilityDemoSession } from "@/lib/demo/server";
 
 export default async function AdminLayout({
   children,
@@ -34,7 +32,6 @@ export default async function AdminLayout({
           {children}
         </AdminDemoReadOnlyWrapper>
       </DashboardShell>
-      <Footer />
     </div>
   );
 }

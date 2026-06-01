@@ -7,7 +7,7 @@
       "manufacturer": "Oxford Nanopore",
       "shortDescription": "Next-generation portable nanopore sequencing device with USB-C",
       "productOverview": "The MinION Mk1D is the next generation of portable nanopore sequencing devices...",
-      "image": "/images/sequencers/devices/s1.png",
+      "image": "/images/sequencers/devices/ont-minion-mk1d.png",
       "connectivity": "USB-C",
       "features": [
         "Improved thermal dissipation",

@@ -311,7 +311,10 @@ export default function MinknowStreamSettingsPage() {
   return (
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
-        <div className="flex min-h-12 flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+        <div className="relative flex h-[52px] items-center justify-center px-6 lg:px-8">
+          <span className="text-sm font-medium">MinKNOW Stream</span>
+        </div>
+        <div className="flex min-h-12 flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between lg:px-8">
           <div className="text-xs text-muted-foreground">
             {(() => {
               const daemonRunning = worker?.status === "RUNNING";

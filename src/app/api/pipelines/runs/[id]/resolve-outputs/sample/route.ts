@@ -6,6 +6,12 @@ import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import '@/lib/pipelines/adapters/mag';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
 import { resolveOutputs } from '@/lib/pipelines/output-resolver';
+import { getPackage } from '@/lib/pipelines/package-loader';
+import { inferPipelineResultContract } from '@/lib/pipelines/package-contracts';
+import {
+  PENDING_READ_CANDIDATE_KIND,
+  promotePendingWritebacks,
+} from '@/lib/pipelines/pending-writebacks';
 import path from 'path';
 import { isDemoSession } from '@/lib/demo/server';
 import type { PipelineTarget } from '@/lib/pipelines/types';
@@ -126,6 +132,54 @@ export async function POST(
         { error: 'No outputs found for this sample in the run' },
         { status: 404 }
       );
+    }
+
+    // Read-cleaning style outputs are staged as run artifacts with a
+    // `sample_read_candidate` result contract; they are NOT written through the
+    // sample_reads handler, so resolveOutputs (which only honours
+    // replaceExisting for sample_reads) would be a silent no-op here. Route these
+    // through the promote flow so "Change Source" actually switches the active
+    // reads for the sample.
+    const packageOutputs = getPackage(run.pipelineId)?.manifest.outputs ?? [];
+    const hasCandidateOutput = filteredFiles.some((file) => {
+      const output = file.outputId
+        ? packageOutputs.find((o) => o.id === file.outputId)
+        : undefined;
+      return (
+        !!output &&
+        inferPipelineResultContract(output).kind === PENDING_READ_CANDIDATE_KIND
+      );
+    });
+
+    if (hasCandidateOutput) {
+      if (run.targetType !== 'order') {
+        return NextResponse.json(
+          { error: 'Candidate read outputs can only be re-resolved for order runs' },
+          { status: 400 }
+        );
+      }
+
+      try {
+        const promotion = await promotePendingWritebacks({
+          runId: id,
+          sampleIds: [body.sampleId],
+          userId: session.user.id,
+        });
+
+        return NextResponse.json({
+          success: true,
+          promoted: promotion.promoted,
+          readIds: promotion.readIds,
+        });
+      } catch (promoteError) {
+        // Surface actionable promote failures (e.g. the candidate is already the
+        // active source, or the run is not completed) rather than a generic 500.
+        const message =
+          promoteError instanceof Error
+            ? promoteError.message
+            : 'Failed to re-resolve candidate reads for sample';
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
     }
 
     const result = await resolveOutputs(run.pipelineId, id, {

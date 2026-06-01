@@ -3535,8 +3535,7 @@ export function OrderWizardPage({
               </div>
             ) : (
               <div
-                className="inline-flex items-center gap-4 px-4 py-3 rounded-lg text-sm"
-                style={{ background: '#F7F7F4', border: '1px solid #e5e5e0' }}
+                className="inline-flex items-center gap-4 px-4 py-3 rounded-lg text-sm bg-muted border border-border"
               >
                 <div className="font-medium">
                   {userProfile?.firstName} {userProfile?.lastName}
@@ -3608,7 +3607,7 @@ export function OrderWizardPage({
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold">
+          <h1 className="text-xl font-semibold">
             {isFacilityScopedEdit
               ? "Edit Facility Fields"
               : isEditMode

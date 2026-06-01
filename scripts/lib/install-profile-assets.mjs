@@ -392,6 +392,65 @@ function normalizeExpectedSha256(value) {
   return expected.replace(/^sha256:/i, "").trim().toLowerCase();
 }
 
+function isLocalhost(hostname) {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function parseAllowedRoots() {
+  return normalizeStringList(process.env.SEQDESK_PROFILE_ASSET_ALLOWED_ROOTS);
+}
+
+function normalizeStringList(value) {
+  if (typeof value !== "string" || !value.trim()) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function assertSafeSourceUrl(sourceUrl, label, { requireRemoteSha256 = false, sha256 } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    throw new Error(`${label} must be a valid URL`);
+  }
+
+  const isLocalHttp = parsed.protocol === "http:" && isLocalhost(parsed.hostname);
+  if (parsed.protocol !== "https:" && parsed.protocol !== "file:" && !isLocalHttp) {
+    throw new Error(`${label} must use https, file, or localhost http`);
+  }
+  if (parsed.protocol === "http:" && !isLocalHttp) {
+    throw new Error(`${label} must use HTTPS for remote downloads`);
+  }
+  if (requireRemoteSha256 && !normalizeExpectedSha256(sha256)) {
+    throw new Error(`${label} requires sha256 when overriding a download URL`);
+  }
+}
+
+function assertAllowedExistingAssetPath(targetPath, roots, label) {
+  if (!path.isAbsolute(targetPath)) {
+    throw new Error(`${label} must be an absolute path`);
+  }
+  const resolvedPath = path.resolve(targetPath);
+  const resolvedRoots = roots
+    .map((root) => toOptionalString(root))
+    .filter(Boolean)
+    .map((root) => path.resolve(root));
+  if (resolvedRoots.length === 0) {
+    throw new Error(`${label} cannot be validated because no allowed asset roots are configured`);
+  }
+  const allowed = resolvedRoots.some(
+    (root) => resolvedPath === root || resolvedPath.startsWith(`${root}${path.sep}`)
+  );
+  if (!allowed) {
+    throw new Error(
+      `${label} must be under an allowed asset root: ${resolvedRoots.join(", ")}`
+    );
+  }
+}
+
 function runLoggedCommand(logPath, command, args, options = {}) {
   appendLog(logPath, `Command: ${command} ${args.join(" ")}`);
   const fd = fs.openSync(logPath, "a");
@@ -511,6 +570,7 @@ async function verifyOptionalSha256(filePath, expectedSha256, label) {
 }
 
 async function downloadFileArchive({ sourceUrl, targetPath, logPath, activity }) {
+  assertSafeSourceUrl(sourceUrl, "Fixture source.url");
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   const totalBytes = await getRemoteContentLength(sourceUrl);
   const localBytes = await getFileSize(targetPath);
@@ -631,6 +691,7 @@ async function extractVerifiedFastqBundle({
   if (!expectedSha256) {
     throw new Error(`Fixture ${fixtureId} source.sha256 is required`);
   }
+  assertSafeSourceUrl(sourceUrl, `Fixture ${fixtureId} source.url`);
 
   const archivePath = path.join(
     dataBasePath,
@@ -789,6 +850,17 @@ export async function applyProfilePipelineDatabases({
   }
 
   const settings = await resolveProfilePipelineAssetSettings(prisma, profile);
+  const allowedExistingRoots = [
+    settings.databaseDirectory,
+    settings.pipelineRunDir,
+    settings.dataBasePath,
+    "/data",
+    "/mnt",
+    "/net",
+    "/opt",
+    "/scratch",
+    ...parseAllowedRoots(),
+  ].filter(Boolean);
   let downloaded = 0;
   let failed = 0;
   const results = [];
@@ -815,6 +887,14 @@ export async function applyProfilePipelineDatabases({
       ...database,
       downloadUrl: request.sourceUrlOverride || database.downloadUrl,
     };
+    if (request.sourceUrlOverride) {
+      assertSafeSourceUrl(request.sourceUrlOverride, `${request.pipelineId}/${request.databaseId} sourceUrlOverride`, {
+        requireRemoteSha256: true,
+        sha256: request.sha256,
+      });
+    } else {
+      assertSafeSourceUrl(resolvedDatabase.downloadUrl, `${request.pipelineId}/${request.databaseId} downloadUrl`);
+    }
     const configKey = request.configKey || database.configKey;
     if (!configKey) {
       const message = `Database ${request.databaseId} for pipeline ${request.pipelineId} does not define a config key`;
@@ -862,6 +942,11 @@ export async function applyProfilePipelineDatabases({
             `Database ${request.pipelineId}/${request.databaseId} uses mode=skip but no path was provided`
           );
         }
+        assertAllowedExistingAssetPath(
+          request.path,
+          allowedExistingRoots,
+          `Database ${request.pipelineId}/${request.databaseId} path`
+        );
         appendLog(logPath, `Using existing database path without download: ${request.path}`);
         installed = await verifyExistingDatabasePath(request.path, `${request.pipelineId}/${request.databaseId}`);
         await verifyOptionalSha256(request.path, request.sha256, `${request.pipelineId}/${request.databaseId}`);

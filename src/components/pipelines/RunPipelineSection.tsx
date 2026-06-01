@@ -178,11 +178,14 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
 
   // Pre-check metadata for enabled pipelines
   useEffect(() => {
-    const checkMetadata = async () => {
-      if (!enabledPipelines.length) return;
+    if (!enabledPipelines.length) return;
 
+    let cancelled = false;
+
+    const checkMetadata = async () => {
       const checks: Record<string, MetadataValidation> = {};
       for (const pipeline of enabledPipelines) {
+        if (cancelled) return;
         try {
           const res = await fetch("/api/pipelines/validate-metadata", {
             method: "POST",
@@ -196,9 +199,16 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
           // Ignore errors in precheck
         }
       }
-      setMetadataPrecheck(checks);
+      if (!cancelled) {
+        setMetadataPrecheck(checks);
+      }
     };
-    checkMetadata();
+
+    void checkMetadata();
+
+    return () => {
+      cancelled = true;
+    };
   }, [enabledPipelines, studyId]);
 
   // Check which pipelines can run based on data availability

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   isDemoSession: vi.fn(),
   cleanupRunOutputData: vi.fn(),
+  cancelPipelineRunForOperator: vi.fn(),
   db: {
     pipelineRun: {
       findUnique: vi.fn(),
@@ -44,6 +45,10 @@ vi.mock("@/lib/pipelines/run-delete", () => ({
   cleanupRunOutputData: mocks.cleanupRunOutputData,
 }));
 
+vi.mock("@/lib/pipelines/pipeline-run-ops-service", () => ({
+  cancelPipelineRunForOperator: mocks.cancelPipelineRunForOperator,
+}));
+
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
@@ -67,6 +72,10 @@ describe("POST /api/pipelines/runs/[id]/delete", () => {
     });
     mocks.isDemoSession.mockReturnValue(false);
     mocks.cleanupRunOutputData.mockResolvedValue(undefined);
+    mocks.cancelPipelineRunForOperator.mockResolvedValue({
+      status: 200,
+      body: { success: true, status: "cancelled" },
+    });
     mocks.db.assembly.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.bin.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.pipelineRunStep.deleteMany.mockResolvedValue({ count: 0 });
@@ -216,6 +225,119 @@ describe("POST /api/pipelines/runs/[id]/delete", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.cleanupRunOutputData).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalled();
+  });
+
+  it("cancels the live scheduler job before deleting a queued run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      status: "queued",
+      targetType: "order",
+      orderId: "order-1",
+      studyId: null,
+      runFolder: "/tmp/run-1",
+      queueJobId: "12345",
+      inputSampleIds: null,
+      order: {
+        id: "order-1",
+        samples: [{ id: "sample-1", sampleId: "S1" }],
+      },
+      study: null,
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/delete", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.cancelPipelineRunForOperator).toHaveBeenCalledWith("run-1");
+    expect(mocks.db.pipelineRun.delete).toHaveBeenCalled();
+  });
+
+  it("cancels the live scheduler job before deleting a pending run", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      status: "pending",
+      targetType: "order",
+      orderId: "order-1",
+      studyId: null,
+      runFolder: "/tmp/run-1",
+      queueJobId: "local-9999",
+      inputSampleIds: null,
+      order: { id: "order-1", samples: [] },
+      study: null,
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/delete", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.cancelPipelineRunForOperator).toHaveBeenCalledWith("run-1");
+  });
+
+  it("does not cancel a queued run without a queue job id", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      status: "queued",
+      targetType: "order",
+      orderId: "order-1",
+      studyId: null,
+      runFolder: "/tmp/run-1",
+      queueJobId: null,
+      inputSampleIds: null,
+      order: { id: "order-1", samples: [] },
+      study: null,
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/delete", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.cancelPipelineRunForOperator).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.delete).toHaveBeenCalled();
+  });
+
+  it("aborts deletion when cancelling the live job fails", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      pipelineId: "simulate-reads",
+      status: "queued",
+      targetType: "order",
+      orderId: "order-1",
+      studyId: null,
+      runFolder: "/tmp/run-1",
+      queueJobId: "12345",
+      inputSampleIds: null,
+      order: { id: "order-1", samples: [] },
+      study: null,
+    });
+    mocks.cancelPipelineRunForOperator.mockResolvedValue({
+      status: 400,
+      body: { error: "Cannot cancel a completed or failed run" },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/delete", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(400);
     expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalled();
   });
 

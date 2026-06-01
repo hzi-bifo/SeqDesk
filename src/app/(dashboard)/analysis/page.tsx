@@ -32,7 +32,7 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 function getStatusBadge(status: string) {
   switch (status) {
     case "completed":
-      return <Badge variant="default" className="bg-green-600">Completed</Badge>;
+      return <Badge variant="default" className="bg-[#00BD7D] text-white">Completed</Badge>;
     case "running":
       return (
         <Badge variant="default" className="bg-blue-600">

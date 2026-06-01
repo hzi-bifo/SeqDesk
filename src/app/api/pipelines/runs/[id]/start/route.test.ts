@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     pipelineConfig: {
       findUnique: vi.fn(),
@@ -197,6 +198,7 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     mocks.isDemoSession.mockReturnValue(false);
     mocks.db.pipelineRun.findUnique.mockResolvedValue(defaultRun);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.pipelineConfig.findUnique.mockResolvedValue(null);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.getExecutionSettings.mockResolvedValue(defaultExecutionSettings);
@@ -810,7 +812,8 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // finalizeLocalRun should have been called with exit code 1
-    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    // finalizeLocalRun transitions via a status-guarded updateMany (#1).
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
     const failedUpdate = updateCalls.find(
       (call) => call[0]?.data?.status === "failed"
     );
@@ -832,7 +835,8 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // Wait for the async error handler
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    // finalizeLocalRun transitions via a status-guarded updateMany (#1).
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
     const failedUpdate = updateCalls.find(
       (call) => call[0]?.data?.status === "failed"
     );
@@ -903,7 +907,8 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // Wait for the async close handler
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    // finalizeLocalRun transitions via a status-guarded updateMany (#1).
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
     const completedUpdate = updateCalls.find(
       (call) => call[0]?.data?.status === "completed"
     );

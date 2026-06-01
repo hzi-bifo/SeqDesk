@@ -206,6 +206,11 @@ function buildSbatchSubmitArgs(scriptPath: string): string[] {
   return ['--parsable', scriptPath];
 }
 
+// Statuses from which a local run may still transition to a terminal state.
+// Used to guard finalizeLocalRun so the process 'close' handler can never
+// clobber a run that was already finalized out-of-band (e.g. cancelled).
+const NON_TERMINAL_LOCAL_STATUSES = ['pending', 'queued', 'running'];
+
 async function finalizeLocalRun(
   runId: string,
   pipelineId: string,
@@ -213,8 +218,10 @@ async function finalizeLocalRun(
 ): Promise<void> {
   const completedAt = new Date();
   if (exitCode === 0) {
-    await db.pipelineRun.update({
-      where: { id: runId },
+    // Guard against a terminal state: if the run was already cancelled (or
+    // otherwise finalized) before the child exited, leave it alone.
+    const { count } = await db.pipelineRun.updateMany({
+      where: { id: runId, status: { in: NON_TERMINAL_LOCAL_STATUSES } },
       data: {
         status: 'completed',
         progress: 100,
@@ -226,6 +233,7 @@ async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       },
     });
+    if (count === 0) return;
     await notifyPipelineRunTerminalInApp(runId, null, 'completed');
     processCompletedPipelineRun(runId, pipelineId).catch((err) => {
       console.error('[Pipeline Run] Output resolution failed:', err);
@@ -243,8 +251,11 @@ async function finalizeLocalRun(
       errorPath: run?.errorPath ?? null,
       exitCode,
     });
-    await db.pipelineRun.update({
-      where: { id: runId },
+    // A SIGTERM-killed process (e.g. an operator cancel) emits 'close' with a
+    // non-zero/null code. The status guard ensures we do NOT overwrite a run
+    // that has already reached a terminal state such as 'cancelled'.
+    const { count } = await db.pipelineRun.updateMany({
+      where: { id: runId, status: { in: NON_TERMINAL_LOCAL_STATUSES } },
       data: {
         status: 'failed',
         currentStep: 'Failed',
@@ -257,6 +268,7 @@ async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       },
     });
+    if (count === 0) return;
     await notifyPipelineRunTerminalInApp(runId, null, 'failed');
   }
 }
@@ -1079,6 +1091,35 @@ export async function startPipelineRunForOperator({
       return jsonResponse({ error: message }, 500);
     }
 
+    // Atomically claim the run before launching. Validation and prep above are
+    // idempotent/read-mostly, but the sbatch/spawn below are not: two concurrent
+    // start requests (or a double-click) would otherwise both reach this point
+    // and launch the job twice. updateMany guarded on status='pending' lets only
+    // the first request transition out of 'pending'; the loser gets a 409 and
+    // never submits. The SLURM branch re-sets 'queued' (with the job id) and the
+    // local branch re-sets 'running' (with the pid) immediately below.
+    const launchClaim = await db.pipelineRun.updateMany({
+      where: { id: runId, status: 'pending' },
+      data: {
+        status: effectiveExecutionSettings.useSlurm ? 'queued' : 'running',
+        statusSource: 'launcher',
+        currentStep: effectiveExecutionSettings.useSlurm
+          ? 'Waiting for scheduler'
+          : 'Launching',
+        lastEventAt: new Date(),
+      },
+    });
+    if (launchClaim.count === 0) {
+      const current = await db.pipelineRun.findUnique({
+        where: { id: runId },
+        select: { status: true },
+      });
+      return jsonResponse(
+        { error: `Run has already been started (status: ${current?.status ?? 'unknown'})` },
+        409
+      );
+    }
+
     if (effectiveExecutionSettings.useSlurm) {
       const sbatchAvailable = await commandExists('sbatch');
       if (!sbatchAvailable) {
@@ -1194,10 +1235,12 @@ export async function startPipelineRunForOperator({
         void finalizeLocalRun(run.id, pipelineId, 1);
       });
 
-      await db.pipelineRun.update({
-        where: { id: runId },
+      // Guard on status='running' (set by the launch claim above): if the child
+      // exited fast enough that finalizeLocalRun already moved the run to a
+      // terminal state, this must NOT resurrect it back to 'running'.
+      await db.pipelineRun.updateMany({
+        where: { id: runId, status: 'running' },
         data: {
-          status: 'running',
           queueJobId: `local-${childProcess.pid}`,
           startedAt: new Date(),
           queueStatus: 'RUNNING',

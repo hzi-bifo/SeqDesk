@@ -353,7 +353,7 @@ async function checkJava(condaPath?: string, condaEnv?: string): Promise<Prerequ
   if (condaBin) {
     try {
       const { stdout: envList } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-      if (envList.includes(envName)) {
+      if (hasCondaEnv(envList, envName)) {
         try {
           const { stdout, stderr } = await execAsync(`${condaBin} run -n ${envName} java -version 2>&1`, { timeout: 20000 });
           const output = stdout || stderr;
@@ -430,20 +430,34 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
     required: true,
   };
 
-  // Check configured conda path first
+  // Check configured conda path first. Probe both condabin/conda and
+  // bin/conda (and the mamba variants) to match every other conda resolver in
+  // this module, so condabin-only installs (e.g. Miniconda/Mambaforge with the
+  // path pointed at the install root) are still detected.
   if (condaPath) {
-    const condaBin = path.join(condaPath, 'bin', 'conda');
-    const mambaBin = path.join(condaPath, 'bin', 'mamba');
+    const condaCandidates = [
+      path.join(condaPath, 'condabin', 'conda'),
+      path.join(condaPath, 'bin', 'conda'),
+    ];
+    const mambaCandidates = [
+      path.join(condaPath, 'condabin', 'mamba'),
+      path.join(condaPath, 'bin', 'mamba'),
+    ];
 
-    try {
-      await fs.access(condaBin);
-      const { stdout } = await execAsync(`${condaBin} --version`, { timeout: 10000 });
-      check.status = 'pass';
-      check.message = `Found at configured path`;
-      check.details = `${condaPath}\n${stdout.trim()}`;
-      return check;
-    } catch {
-      // Try mamba
+    for (const condaBin of condaCandidates) {
+      try {
+        await fs.access(condaBin);
+        const { stdout } = await execAsync(`${condaBin} --version`, { timeout: 10000 });
+        check.status = 'pass';
+        check.message = `Found at configured path`;
+        check.details = `${condaPath}\n${stdout.trim()}`;
+        return check;
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    for (const mambaBin of mambaCandidates) {
       try {
         await fs.access(mambaBin);
         const { stdout } = await execAsync(`${mambaBin} --version`, { timeout: 10000 });
@@ -452,11 +466,13 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
         check.details = `${condaPath}\n${stdout.trim()}`;
         return check;
       } catch {
-        check.status = 'warning';
-        check.message = `Configured path invalid: ${condaPath}`;
-        check.details = 'Conda/Mamba not found at the configured path';
+        // Try next candidate
       }
     }
+
+    check.status = 'warning';
+    check.message = `Configured path invalid: ${condaPath}`;
+    check.details = 'Conda/Mamba not found at the configured path';
   }
 
   // Check system conda/mamba
@@ -872,7 +888,7 @@ async function checkNextflowInConda(condaPath?: string, condaEnv?: string): Prom
     // First verify the environment exists
     try {
       const { stdout: envList } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-      if (!envList.includes(envName)) {
+      if (!hasCondaEnv(envList, envName)) {
         console.log(`[checkNextflowInConda] Environment ${envName} not found`);
         // Fall through to system check
       } else {
@@ -1175,7 +1191,7 @@ export async function detectVersions(condaPath?: string, condaEnv?: string): Pro
   let hasEnv = false;
   try {
     const { stdout } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-    if (stdout.includes(envName)) {
+    if (hasCondaEnv(stdout, envName)) {
       hasEnv = true;
       versions.condaEnv = envName;
     }
