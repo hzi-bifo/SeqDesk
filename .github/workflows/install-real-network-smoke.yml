@@ -43,16 +43,19 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: 1
       PORT: "8893"
-      INSTALL_DIR: ${{ runner.temp }}/seqdesk-realnet-npm
-      INSTALL_LOG: ${{ runner.temp }}/realnet-npm-install.log
-      SERVER_LOG: ${{ runner.temp }}/realnet-npm-server.log
-      NPM_PREFIX: ${{ runner.temp }}/realnet-npm-prefix
       DB_NAME: seqdesk_realnet_npm
     steps:
       - name: Setup Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+
+      - name: Configure paths
+        run: |
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-realnet-npm" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/realnet-npm-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/realnet-npm-server.log" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/realnet-npm-prefix" >> "$GITHUB_ENV"
 
       - name: Start PostgreSQL (throwaway DB)
         run: |
@@ -130,15 +133,18 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: 1
       PORT: "8894"
-      INSTALL_DIR: ${{ runner.temp }}/seqdesk-realnet-curl
-      INSTALL_LOG: ${{ runner.temp }}/realnet-curl-install.log
-      SERVER_LOG: ${{ runner.temp }}/realnet-curl-server.log
       DB_NAME: seqdesk_realnet_curl
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Configure paths
+        run: |
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-realnet-curl" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/realnet-curl-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/realnet-curl-server.log" >> "$GITHUB_ENV"
 
       - name: Start PostgreSQL (throwaway DB)
         run: |
