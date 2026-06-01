@@ -624,10 +624,15 @@ describe("Footer admin activity", () => {
       screen.getByRole("button", { name: /mark order ord-20260519-0001 updated read/i })
     );
 
+    // Wait for the read POST AND the refetch-driven re-render that removes the
+    // "mark read" action — asserting the button is gone immediately after only
+    // the fetch flag is set races the re-render (flaky under slower CI timing).
     await waitFor(() => {
       expect(read).toBe(true);
+      expect(
+        screen.queryByRole("button", { name: /mark order ord-20260519-0001 updated read/i })
+      ).toBeNull();
     });
-    expect(screen.queryByRole("button", { name: /mark order ord-20260519-0001 updated read/i })).toBeNull();
 
     fireEvent.click(
       screen.getByRole("button", { name: /hide order ord-20260519-0001 updated/i })
@@ -635,8 +640,8 @@ describe("Footer admin activity", () => {
 
     await waitFor(() => {
       expect(archived).toBe(true);
+      expect(screen.queryByText("Order ORD-20260519-0001 updated")).toBeNull();
     });
-    expect(screen.queryByText("Order ORD-20260519-0001 updated")).toBeNull();
   });
 
   it("shows an empty notification state", async () => {
