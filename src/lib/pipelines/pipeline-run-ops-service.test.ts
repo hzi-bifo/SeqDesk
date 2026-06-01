@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    pipelineRunStep: {
+      upsert: vi.fn(),
+    },
     pipelineRunEvent: {
       findFirst: vi.fn(),
     },
@@ -19,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   },
   getPipelineEnabled: vi.fn(),
   getAllPackages: vi.fn(),
+  findStepByProcess: vi.fn(),
+  getStepsForPipeline: vi.fn(),
   findTraceFile: vi.fn(),
   parseTraceFile: vi.fn(),
   inferPipelineExitCode: vi.fn(),
@@ -69,6 +74,11 @@ vi.mock('@/lib/pipelines', () => ({
 
 vi.mock('@/lib/pipelines/enablement', () => ({
   getPipelineEnabled: mocks.getPipelineEnabled,
+}));
+
+vi.mock('@/lib/pipelines/definitions', () => ({
+  findStepByProcess: mocks.findStepByProcess,
+  getStepsForPipeline: mocks.getStepsForPipeline,
 }));
 
 vi.mock('@/lib/pipelines/package-loader', () => ({
@@ -538,5 +548,300 @@ describe('syncPipelineRunForOperator (no trace file)', () => {
     expect(result.body.status).toBe('running');
     // No status change => no DB update issued.
     expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+  });
+
+  it('holds a completed non-mag run as running when outputs are not yet ready (EXITED, exit 0)', async () => {
+    // EXITED + exit code 0 => considered successful, but a local run reporting
+    // EXITED still finalizes immediately for non-mag pipelines.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: 'running',
+      queueJobId: 'local-1234',
+    });
+    mocks.inferPipelineExitCode.mockResolvedValue(0);
+    // ps reports the local pid as gone -> EXITED.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'ps') {
+        callback(new Error('no such process'));
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+    });
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('completed');
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'completed', progress: 100 });
+  });
+
+  it('marks an EXITED local run failed when the inferred exit code is non-zero', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: 'running',
+      queueJobId: 'local-4321',
+    });
+    mocks.inferPipelineExitCode.mockResolvedValue(1);
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'ps') {
+        callback(new Error('no such process'));
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+    });
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('failed');
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'failed', currentStep: 'Failed' });
+  });
+
+  it('reconciles via sacct when squeue returns nothing', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...baseRun, status: 'running' });
+    // squeue emits empty stdout; sacct supplies the COMPLETED state.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'squeue') {
+        callback(null, { stdout: '', stderr: '' });
+      } else if (file === 'sacct') {
+        callback(null, {
+          stdout: '123456|COMPLETED|None\n',
+          stderr: '',
+        });
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+    });
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('completed');
+    expect(result.body.queueSource).toBe('sacct');
+  });
+
+  it('continues holding a mag run running when post-completion processing throws', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: 'running',
+      pipelineId: 'mag',
+    });
+    mocks.processCompletedPipelineRun.mockRejectedValue(new Error('processing exploded'));
+    stubSqueueState('COMPLETED');
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('running');
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'running', currentStep: 'Finalizing outputs...' });
+  });
+});
+
+describe('syncPipelineRunForOperator (with trace file)', () => {
+  const traceRun = {
+    id: 'run-1',
+    runFolder: '/runs/run-1',
+    status: 'queued',
+    pipelineId: 'order-pipe',
+    currentStep: 'Waiting for scheduler',
+    startedAt: null,
+    completedAt: null,
+    lastEventAt: null,
+    lastTraceAt: null,
+    queueJobId: '123456',
+  };
+
+  // A minimal TraceResult builder. `order-pipe` has no package step defs, so
+  // findStepByProcess returns null and getStepsForPipeline returns [], meaning
+  // progress falls back to traceResult.overallProgress.
+  const trace = (overrides: Partial<{
+    tasks: Array<{ process: string; status: string; exit?: number; submit?: Date; start?: Date; complete?: Date }>;
+    overallProgress: number;
+    startedAt?: Date;
+    completedAt?: Date;
+  }> = {}) => ({
+    tasks: overrides.tasks ?? [],
+    processes: new Map(),
+    overallProgress: overrides.overallProgress ?? 0,
+    startedAt: overrides.startedAt,
+    completedAt: overrides.completedAt,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRunStep.upsert.mockResolvedValue({});
+    mocks.db.pipelineRunEvent.findFirst.mockResolvedValue(null);
+    mocks.notifyPipelineRunTerminalInApp.mockResolvedValue(undefined);
+    mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
+    mocks.inferPipelineExitCode.mockResolvedValue(null);
+    mocks.findTraceFile.mockResolvedValue('/runs/run-1/trace.txt');
+    // Unknown pipeline => no package step defs: step lookups resolve to nothing
+    // so progress falls back to traceResult.overallProgress.
+    mocks.findStepByProcess.mockReturnValue(null);
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.db.assembly.count.mockResolvedValue(0);
+    mocks.db.bin.count.mockResolvedValue(0);
+    mocks.db.pipelineArtifact.count.mockResolvedValue(0);
+    // No queue activity by default (all probes empty).
+    mocks.execFile.mockImplementation((_file, _args, callback) => {
+      callback(null, { stdout: '', stderr: '' });
+    });
+  });
+
+  it('marks the run running while a task is still in progress', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'queued' });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ALIGN', status: 'RUNNING', start: new Date('2026-03-03T10:00:00Z') }],
+        overallProgress: 50,
+        startedAt: new Date('2026-03-03T10:00:00Z'),
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.synced).toBe(true);
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'running', statusSource: 'trace' });
+    expect(update.data.currentStep).toContain('Running:');
+    // First-time start gets stamped from the trace.
+    expect(update.data.startedAt).toEqual(new Date('2026-03-03T10:00:00Z'));
+    expect(mocks.db.pipelineRunStep.upsert).toHaveBeenCalled();
+  });
+
+  it('completes the run when all trace tasks finished and progress is 100', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [
+          { process: 'ALIGN', status: 'COMPLETED', complete: new Date('2026-03-03T11:00:00Z') },
+        ],
+        overallProgress: 100,
+        completedAt: new Date('2026-03-03T11:00:00Z'),
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({
+      status: 'completed',
+      progress: 100,
+      currentStep: 'Completed',
+    });
+    expect(update.data.completedAt).toEqual(new Date('2026-03-03T11:00:00Z'));
+    // Non-mag completed run gets post-completion processing once.
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith('run-1', 'order-pipe');
+  });
+
+  it('marks the run failed when a trace task reports a non-zero exit code', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.inferPipelineExitCode.mockResolvedValue(1);
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ALIGN', status: 'FAILED', exit: 137, complete: new Date('2026-03-03T11:30:00Z') }],
+        overallProgress: 40,
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'failed', currentStep: 'Failed' });
+    expect(result.body.synced).toBe(true);
+  });
+
+  it('overrides a trace failure to completed when the queue reports COMPLETED', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    // Trace says failed, but the scheduler insists the job COMPLETED cleanly.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'squeue') {
+        callback(null, { stdout: 'COMPLETED|\n', stderr: '' });
+      } else {
+        callback(new Error('no sacct'));
+      }
+    });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ALIGN', status: 'FAILED', exit: 1 }],
+        overallProgress: 80,
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'completed', statusSource: 'queue' });
+    expect(result.body.synced).toBe(true);
+  });
+
+  it('forces the run back to running when the queue is still active despite a completed trace', async () => {
+    // Start from "queued" so the forced status change is recorded in updateData.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'queued' });
+    // Queue still RUNNING -> forceRunningFromQueue path.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'squeue') {
+        callback(null, { stdout: 'RUNNING|\n', stderr: '' });
+      } else {
+        callback(new Error('no sacct'));
+      }
+    });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ALIGN', status: 'COMPLETED', complete: new Date() }],
+        overallProgress: 100,
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'running', statusSource: 'queue' });
+    expect(update.data.completedAt).toBeNull();
+    expect(result.body.synced).toBe(true);
+  });
+
+  it('holds a completed mag trace run running when materialized outputs are empty', async () => {
+    // Start from "queued" so the demotion to running is recorded in updateData.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...traceRun,
+      status: 'queued',
+      pipelineId: 'mag',
+    });
+    mocks.db.assembly.count.mockResolvedValue(0);
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ASSEMBLY', status: 'COMPLETED', complete: new Date() }],
+        overallProgress: 100,
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith('run-1', 'mag');
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    // No outputs => demoted back to running/finalizing.
+    expect(update.data.status).toBe('running');
+    expect(result.body.synced).toBe(true);
+  });
+
+  it('marks a trace run cancelled when the queue reports CANCELLED and no task runs', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'squeue') {
+        callback(null, { stdout: 'CANCELLED|\n', stderr: '' });
+      } else {
+        callback(new Error('no sacct'));
+      }
+    });
+    // No tasks => hasRunning false, nextStatus stays queued until queue forces cancel.
+    mocks.parseTraceFile.mockResolvedValue(trace({ tasks: [], overallProgress: 0 }));
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'cancelled', currentStep: 'Cancelled' });
+    expect(update.data.completedAt).toBeTruthy();
+    expect(result.body.synced).toBe(true);
   });
 });

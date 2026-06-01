@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     order: {
       findUnique: vi.fn(),
     },
+    $transaction: vi.fn(),
     read: {
       update: vi.fn(),
       create: vi.fn(),
@@ -103,6 +104,7 @@ import {
   appendSequencingUploadChunk,
   assignOrderSequencingReads,
   cancelSequencingUpload,
+  classifyOrderSequencingRead,
   completeSequencingUpload,
   computeOrderSequencingChecksums,
   createSequencingUploadSession,
@@ -183,7 +185,16 @@ function resetWorkspaceMocks() {
     },
   });
   mocks.db.read.update.mockResolvedValue({});
-  mocks.db.read.create.mockResolvedValue({});
+  mocks.db.read.create.mockResolvedValue({ id: "new-read" });
+  // Default $transaction simply runs the callback with a tx mirroring db.read.
+  mocks.db.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+    cb({
+      read: {
+        create: vi.fn().mockResolvedValue({ id: "new-read" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    })
+  );
   mocks.db.sequencingArtifact.create.mockResolvedValue({});
   mocks.db.sequencingArtifact.update.mockResolvedValue({});
   mocks.db.sequencingUpload.create.mockResolvedValue({
@@ -1982,6 +1993,586 @@ describe("completeSequencingUpload", () => {
 
     await expect(completeSequencingUpload("order-1", "upload-1")).rejects.toThrow(
       "Read uploads require a target sample"
+    );
+  });
+});
+
+describe("classifyOrderSequencingRead", () => {
+  it("classifies the active read when no readId is given", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            facilityStatus: "SEQUENCED",
+            reads: [{ id: "read-1", file1: "reads/S1_R1.fastq.gz", file2: null, isActive: true }],
+          },
+        ],
+      })
+    );
+    mocks.db.read.update.mockResolvedValue({
+      id: "read-1",
+      dataClass: "raw",
+      dataClassSource: "manual",
+    });
+
+    const result = await classifyOrderSequencingRead(
+      "order-1",
+      { sampleId: "sample-1", dataClass: "raw", classificationNote: "looks raw" },
+      "user-7"
+    );
+
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: expect.objectContaining({
+        dataClass: "raw",
+        dataClassSource: "manual",
+        classifiedById: "user-7",
+        classificationNote: "looks raw",
+      }),
+    });
+    expect(result).toMatchObject({
+      id: "read-1",
+      dataClass: "raw",
+      isProtectedRaw: true,
+    });
+  });
+
+  it("classifies a specific read by readId", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            facilityStatus: "SEQUENCED",
+            reads: [
+              { id: "read-1", file1: "reads/a.fastq.gz", file2: null, isActive: true },
+              { id: "read-2", file1: "reads/b.fastq.gz", file2: null, isActive: false },
+            ],
+          },
+        ],
+      })
+    );
+    mocks.db.read.update.mockResolvedValue({ id: "read-2", dataClass: "cleaned", dataClassSource: "manual" });
+
+    await classifyOrderSequencingRead("order-1", {
+      sampleId: "sample-1",
+      readId: "read-2",
+      dataClass: "cleaned",
+    });
+
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-2" },
+      data: expect.objectContaining({ dataClass: "cleaned" }),
+    });
+  });
+
+  it("throws when the order is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(null);
+    await expect(
+      classifyOrderSequencingRead("missing", { sampleId: "s1", dataClass: "raw" })
+    ).rejects.toThrow("Order not found");
+  });
+
+  it("throws when the sample is not found", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(createOrder({ samples: [] }));
+    await expect(
+      classifyOrderSequencingRead("order-1", { sampleId: "missing", dataClass: "raw" })
+    ).rejects.toThrow("Sample not found");
+  });
+
+  it("throws when there is no read record to classify", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [{ id: "sample-1", sampleId: "S1", facilityStatus: "WAITING", reads: [] }],
+      })
+    );
+    await expect(
+      classifyOrderSequencingRead("order-1", { sampleId: "sample-1", dataClass: "raw" })
+    ).rejects.toThrow("Read record not found");
+  });
+});
+
+describe("assignOrderSequencingReads protected-source preservation", () => {
+  it("supersedes a protected raw read with a new cleaned read via a transaction", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      status: "COMPLETED",
+      samples: [
+        {
+          id: "sample-1",
+          sampleId: "S1",
+          facilityStatus: "SEQUENCED",
+          reads: [
+            {
+              id: "raw-read",
+              file1: "raw/S1_R1.fastq.gz",
+              file2: "raw/S1_R2.fastq.gz",
+              dataClass: "raw",
+              isActive: true,
+            },
+          ],
+        },
+      ],
+    });
+    // The transaction callback receives a tx client mirroring db.read.
+    const tx = {
+      read: {
+        create: vi.fn().mockResolvedValue({ id: "new-read" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    mocks.db.$transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<void>) => cb(tx));
+
+    await assignOrderSequencingReads("order-1", [
+      {
+        sampleId: "sample-1",
+        read1: "cleaned/S1_R1.fastq.gz",
+        read2: "cleaned/S1_R2.fastq.gz",
+        dataClass: "cleaned",
+      },
+    ]);
+
+    expect(mocks.db.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.read.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sampleId: "sample-1",
+        file1: "cleaned/S1_R1.fastq.gz",
+        file2: "cleaned/S1_R2.fastq.gz",
+        isActive: false,
+        dataClass: "cleaned",
+      }),
+    });
+    // Old raw read is superseded; new read activated.
+    expect(tx.read.update).toHaveBeenCalledWith({
+      where: { id: "raw-read" },
+      data: { isActive: false, supersededByReadId: "new-read" },
+    });
+    expect(tx.read.update).toHaveBeenCalledWith({
+      where: { id: "new-read" },
+      data: { isActive: true },
+    });
+    // No direct (non-tx) read.update should be issued in this path.
+    expect(mocks.db.read.update).not.toHaveBeenCalled();
+  });
+
+  it("resolves absolute read paths against the data base path", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      status: "COMPLETED",
+      samples: [{ id: "sample-1", sampleId: "S1", facilityStatus: "WAITING", reads: [] }],
+    });
+    // Absolute path is converted to a relative path under the base.
+    mocks.files.toRelativePath.mockReturnValue("reads/abs_R1.fastq.gz");
+
+    const result = await assignOrderSequencingReads("order-1", [
+      {
+        sampleId: "sample-1",
+        read1: "/data/sequencing/reads/abs_R1.fastq.gz",
+        read2: null,
+      },
+    ]);
+
+    expect(result).toEqual([{ sampleId: "S1", success: true }]);
+    expect(mocks.files.toRelativePath).toHaveBeenCalledWith(
+      "/data/sequencing",
+      "/data/sequencing/reads/abs_R1.fastq.gz"
+    );
+    expect(mocks.db.read.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ file1: "reads/abs_R1.fastq.gz" }),
+    });
+  });
+
+  it("returns an invalid-file-path error when normalization yields the base root", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      status: "COMPLETED",
+      samples: [{ id: "sample-1", sampleId: "S1", facilityStatus: "WAITING", reads: [] }],
+    });
+    // Absolute path that resolves to "." (the base itself) is rejected.
+    mocks.files.toRelativePath.mockReturnValue(".");
+
+    const result = await assignOrderSequencingReads("order-1", [
+      {
+        sampleId: "sample-1",
+        read1: "/data/sequencing",
+        read2: null,
+      },
+    ]);
+
+    expect(result).toEqual([
+      { sampleId: "S1", success: false, error: "Invalid file path" },
+    ]);
+    expect(mocks.db.read.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("getOrderSequencingSummary stream + read-origin branches", () => {
+  it("aggregates stream-ingested file stats and active-run info per sample", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: null,
+            sequencingRunSamples: [],
+            facilityStatus: "PROCESSING",
+            facilityStatusUpdatedAt: null,
+            updatedAt: baseTime,
+            reads: [],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+    mocks.db.streamIngestedFile.groupBy.mockResolvedValue([
+      {
+        sampleId: "sample-1",
+        _count: { _all: 3 },
+        _sum: { reads: 1500, bases: BigInt(450000) },
+        _max: { ingestedAt: new Date("2026-03-24T10:00:00.000Z") },
+      },
+      // A row without a sampleId is ignored.
+      {
+        sampleId: null,
+        _count: { _all: 9 },
+        _sum: { reads: 0, bases: BigInt(0) },
+        _max: { ingestedAt: null },
+      },
+    ]);
+    mocks.db.streamIngestedFile.findMany.mockResolvedValue([
+      { sampleId: "sample-1", streamRunId: "stream-run-1" },
+    ]);
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.samples[0].stream).toEqual({
+      fileCount: 3,
+      totalReads: 1500,
+      totalBases: 450000,
+      lastFileAt: "2026-03-24T10:00:00.000Z",
+      activeRunId: "stream-run-1",
+    });
+    expect(result.summary.statusCounts.PROCESSING).toBe(1);
+  });
+
+  it("derives pipeline and legacy read origins", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: null,
+            sequencingRunSamples: [],
+            facilityStatus: "READY",
+            facilityStatusUpdatedAt: null,
+            updatedAt: baseTime,
+            reads: [
+              {
+                id: "read-1",
+                file1: "reads/S1_R1.fastq.gz",
+                file2: null,
+                checksum1: "c1",
+                checksum2: null,
+                readCount1: null,
+                readCount2: null,
+                avgQuality1: null,
+                avgQuality2: null,
+                fastqcReport1: null,
+                fastqcReport2: null,
+                pipelineRunId: "run-9",
+                // Pipeline sources without simulate-reads => "pipeline" origin.
+                pipelineSources: '{"trimming":"run-9"}',
+                dataClassSource: "associate",
+                pipelineRun: { runNumber: 9 },
+                sequencingRun: null,
+                isActive: true,
+              },
+            ],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime });
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.samples[0].read).toEqual(
+      expect.objectContaining({
+        readOrigin: "pipeline",
+        isSimulated: false,
+      })
+    );
+  });
+
+  it("counts protected provenance reads kept around inactively", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            sampleAlias: null,
+            sampleTitle: null,
+            customFields: null,
+            sequencingRunSamples: [],
+            facilityStatus: "READY",
+            facilityStatusUpdatedAt: null,
+            updatedAt: baseTime,
+            reads: [
+              {
+                id: "active-clean",
+                file1: "reads/clean_R1.fastq.gz",
+                file2: null,
+                checksum1: "c1",
+                checksum2: null,
+                readCount1: null,
+                readCount2: null,
+                avgQuality1: null,
+                avgQuality2: null,
+                fastqcReport1: null,
+                fastqcReport2: null,
+                pipelineRunId: null,
+                pipelineSources: null,
+                dataClass: "cleaned",
+                dataClassSource: "associate",
+                pipelineRun: null,
+                sequencingRun: null,
+                isActive: true,
+              },
+              {
+                id: "raw-provenance",
+                file1: "reads/raw_R1.fastq.gz",
+                file2: null,
+                checksum1: "c2",
+                checksum2: null,
+                readCount1: null,
+                readCount2: null,
+                avgQuality1: null,
+                avgQuality2: null,
+                fastqcReport1: null,
+                fastqcReport2: null,
+                pipelineRunId: null,
+                pipelineSources: null,
+                dataClass: "raw",
+                dataClassSource: "manual",
+                pipelineRun: null,
+                sequencingRun: null,
+                isActive: false,
+              },
+            ],
+            sequencingArtifacts: [],
+          },
+        ],
+      })
+    );
+    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime });
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.samples[0].protectedProvenanceCount).toBe(1);
+    expect(result.samples[0].protectedProvenance[0]).toEqual(
+      expect.objectContaining({ id: "raw-provenance", dataClass: "raw" })
+    );
+  });
+
+  it("reads the sequencing tech selection from a plain string custom field", async () => {
+    const baseTime = new Date("2026-03-24T09:00:00.000Z");
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        customFields: JSON.stringify({ _sequencing_tech: "illumina" }),
+        samples: [],
+      })
+    );
+
+    const result = await getOrderSequencingSummary("order-1");
+    void baseTime;
+
+    expect(result.sequencingTechSelection).toEqual({
+      id: "illumina",
+      name: "illumina",
+      label: "illumina",
+      platform: "illumina",
+    });
+  });
+
+  it("returns null sequencing tech selection for an empty string custom field", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        customFields: JSON.stringify({ _sequencing_tech: "   " }),
+        samples: [],
+      })
+    );
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(result.sequencingTechSelection).toBeNull();
+  });
+});
+
+describe("completeSequencingUpload R2 + superseding branches", () => {
+  it("merges an R2 upload onto the existing R1 read, preserving its checksum", async () => {
+    mocks.db.sequencingUpload.findUnique.mockResolvedValue({
+      id: "upload-1",
+      orderId: "order-1",
+      sampleId: "sample-1",
+      targetKind: "read",
+      targetRole: "R2",
+      originalName: "reads_R2.fastq.gz",
+      tempPath: "_uploads/tmp/upload-1.part",
+      expectedSize: BigInt(500),
+      receivedSize: BigInt(500),
+      checksumProvided: "md5-r2",
+      checksumComputed: null,
+      mimeType: null,
+      metadata: JSON.stringify({ dataClass: "cleaned" }),
+      finalPath: null,
+      createdById: "user-1",
+    });
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            facilityStatus: "SEQUENCED",
+            reads: [
+              {
+                id: "read-1",
+                file1: "reads/existing_R1.fastq.gz",
+                file2: null,
+                checksum1: "md5-existing-r1",
+                checksum2: null,
+                dataClass: "cleaned",
+                isActive: true,
+              },
+            ],
+          },
+        ],
+      })
+    );
+    mocks.storage.statSequencingRelativePath.mockResolvedValue({
+      size: BigInt(500),
+      modifiedAt: new Date(),
+    });
+
+    const result = await completeSequencingUpload("order-1", "upload-1");
+
+    expect(result.status).toBe("COMPLETED");
+    // Existing read gets updated (not superseded): R1 kept, R2 + its checksum set.
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: expect.objectContaining({
+        file1: "reads/existing_R1.fastq.gz",
+        file2: expect.any(String),
+        checksum1: "md5-existing-r1",
+        checksum2: "md5-r2",
+      }),
+    });
+  });
+});
+
+describe("computeOrderSequencingChecksums additional branches", () => {
+  it("computes checksum2 for reads that only miss the R2 checksum", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [
+          {
+            id: "sample-1",
+            sampleId: "S1",
+            reads: [
+              {
+                id: "read-1",
+                file1: "reads/S1_R1.fastq.gz",
+                file2: "reads/S1_R2.fastq.gz",
+                checksum1: "already",
+                checksum2: null,
+              },
+            ],
+            sequencingArtifacts: [],
+          },
+        ],
+        sequencingArtifacts: [],
+      })
+    );
+    mocks.storage.calculateMd5ForRelativePath.mockResolvedValue("md5-r2");
+
+    const result = await computeOrderSequencingChecksums("order-1");
+
+    expect(result.updatedReads).toBe(1);
+    expect(mocks.db.read.update).toHaveBeenCalledWith({
+      where: { id: "read-1" },
+      data: { checksum2: "md5-r2" },
+    });
+  });
+
+  it("counts a non-ENOENT artifact checksum failure as failed", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [],
+        sequencingArtifacts: [
+          { id: "artifact-1", path: "artifacts/broken.html", checksum: null },
+        ],
+      })
+    );
+    mocks.storage.calculateMd5ForRelativePath.mockRejectedValue(new Error("permission denied"));
+
+    const result = await computeOrderSequencingChecksums("order-1");
+
+    expect(result.failed).toBe(1);
+    expect(result.skippedMissingFiles).toBe(0);
+    expect(result.updatedArtifacts).toBe(0);
+  });
+
+  it("skips artifacts that have no path", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [],
+        sequencingArtifacts: [
+          { id: "artifact-1", path: null, checksum: null },
+        ],
+      })
+    );
+
+    const result = await computeOrderSequencingChecksums("order-1");
+
+    expect(result.updatedArtifacts).toBe(0);
+    expect(mocks.storage.calculateMd5ForRelativePath).not.toHaveBeenCalled();
+  });
+
+  it("filters artifacts by artifactIds when provided", async () => {
+    mocks.db.order.findUnique.mockResolvedValue(
+      createOrder({
+        samples: [],
+        sequencingArtifacts: [
+          { id: "artifact-1", path: "artifacts/a.html", checksum: null },
+          { id: "artifact-2", path: "artifacts/b.html", checksum: null },
+        ],
+      })
+    );
+    mocks.storage.calculateMd5ForRelativePath.mockResolvedValue("md5");
+
+    const result = await computeOrderSequencingChecksums("order-1", {
+      artifactIds: ["artifact-2"],
+    });
+
+    expect(result.updatedArtifacts).toBe(1);
+    expect(mocks.storage.calculateMd5ForRelativePath).toHaveBeenCalledTimes(1);
+    expect(mocks.storage.calculateMd5ForRelativePath).toHaveBeenCalledWith(
+      "/data/sequencing",
+      "artifacts/b.html"
     );
   });
 });
