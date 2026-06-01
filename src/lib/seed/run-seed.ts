@@ -12,9 +12,6 @@ import {
 import { setDummyDataEnabledFlag } from "./extra-settings-flag";
 import { selectPlatformForSeed } from "./select-platform";
 
-const SYNTHETIC_READ_COUNT = 1000;
-const SYNTHETIC_READ_LENGTH = 150;
-
 export interface RunDummySeedOptions {
   ownerUserId: string;
   /** Already-resolved absolute base path; caller is responsible for verifying writability. */
@@ -22,6 +19,13 @@ export interface RunDummySeedOptions {
   /** Display name + email for Order.contactName / contactEmail. */
   ownerEmail?: string | null;
   ownerDisplayName?: string;
+  /**
+   * Synthetic reads per FASTQ. Overrides the SEQDESK_SEED_READ_COUNT env var and the
+   * built-in default. Used by heavy pipelines (mag assembly) that need larger inputs.
+   */
+  syntheticReadCount?: number;
+  /** Synthetic read length. Overrides SEQDESK_SEED_READ_LENGTH and the default. */
+  syntheticReadLength?: number;
 }
 
 export interface RunDummySeedResult {
@@ -29,8 +33,14 @@ export interface RunDummySeedResult {
   samplesCreated: number;
   readsCreated: number;
   filesCreated: number;
+  /** Primary gut-recovery study. */
   studyId: string;
+  /** Dedicated study-scoped dataset (study-level pipeline target). */
+  studyScopedId: string;
   dataPath: string;
+  /** Synthetic read count/length actually used (after resolving options/env/defaults). */
+  syntheticReadCount: number;
+  syntheticReadLength: number;
   platform: {
     platform: string;
     instrumentModel: string;
@@ -76,6 +86,8 @@ export async function runDummySeed(
     ownerUserId,
     dataBasePath: resolvedBase,
     primaryPlatform: platformSelection.primary,
+    syntheticReadCount: options.syntheticReadCount,
+    syntheticReadLength: options.syntheticReadLength,
   });
 
   const safeFolder = ensureWithinBase(resolvedBase, dataset.fastqRelativeFolder);
@@ -92,8 +104,8 @@ export async function runDummySeed(
       const reads = buildSimulatedFastq({
         sampleId: target.sampleId,
         sampleIndex: target.sampleIndex,
-        readCount: SYNTHETIC_READ_COUNT,
-        readLength: SYNTHETIC_READ_LENGTH,
+        readCount: dataset.syntheticReadCount,
+        readLength: dataset.syntheticReadLength,
         pairedEnd: target.pairedEnd,
       });
       await fs.writeFile(target.file1Absolute, gzipSync(reads.read1));
@@ -110,34 +122,47 @@ export async function runDummySeed(
 
   let createdSummary: {
     studyId: string;
+    studyScopedId: string;
     ordersCreated: number;
     samplesCreated: number;
     readsCreated: number;
   };
   try {
     createdSummary = await db.$transaction(async (tx) => {
-      const study = await tx.study.create({
-        data: {
-          title: dataset.study.title,
-          alias: dataset.study.alias,
-          description: dataset.study.description,
-          checklistType: dataset.study.checklistType,
-          studyMetadata: JSON.stringify({
-            principal_investigator: dataset.study.principalInvestigator,
-            study_abstract: dataset.study.abstract,
-            seedSource: SEED_DUMMY_MARKER,
-          }),
-          readyForSubmission: dataset.study.readyForSubmission,
-          readyAt: dataset.study.readyForSubmission ? new Date() : null,
-          userId: ownerUserId,
-        },
-      });
+      const createStudy = (spec: typeof dataset.study) =>
+        tx.study.create({
+          data: {
+            title: spec.title,
+            alias: spec.alias,
+            description: spec.description,
+            checklistType: spec.checklistType,
+            studyMetadata: JSON.stringify({
+              principal_investigator: spec.principalInvestigator,
+              study_abstract: spec.abstract,
+              seedSource: SEED_DUMMY_MARKER,
+            }),
+            readyForSubmission: spec.readyForSubmission,
+            readyAt: spec.readyForSubmission ? new Date() : null,
+            userId: ownerUserId,
+          },
+        });
+
+      const study = await createStudy(dataset.study);
+      const studyScoped = await createStudy(dataset.studyScoped);
+      const studyIdByLink: Record<"primary" | "study", string> = {
+        primary: study.id,
+        study: studyScoped.id,
+      };
 
       let ordersCreated = 0;
       let samplesCreated = 0;
       let readsCreated = 0;
 
       for (const orderSpec of dataset.orders) {
+        const linkedStudyId = orderSpec.studyLink
+          ? studyIdByLink[orderSpec.studyLink]
+          : null;
+
         const order = await tx.order.create({
           data: {
             orderNumber: orderSpec.orderNumber,
@@ -171,16 +196,19 @@ export async function runDummySeed(
                   ...sample.customFields,
                   seedSource: SEED_DUMMY_MARKER,
                 }),
-                ...(orderSpec.linkSamplesToStudy
-                  ? { study: { connect: { id: study.id } } }
+                ...(linkedStudyId
+                  ? { study: { connect: { id: linkedStudyId } } }
                   : {}),
-                ...(sample.reads
+                ...(sample.reads.length > 0
                   ? {
                       reads: {
-                        create: {
-                          file1: sample.reads.file1Relative,
-                          file2: sample.reads.file2Relative ?? null,
-                        },
+                        create: sample.reads.map((read) => ({
+                          file1: read.file1Relative,
+                          file2: read.file2Relative ?? null,
+                          dataClass: read.dataClass,
+                          dataClassSource: read.dataClassSource,
+                          isActive: read.isActive,
+                        })),
                       },
                     }
                   : {}),
@@ -200,6 +228,7 @@ export async function runDummySeed(
 
       return {
         studyId: study.id,
+        studyScopedId: studyScoped.id,
         ordersCreated,
         samplesCreated,
         readsCreated,
@@ -226,7 +255,10 @@ export async function runDummySeed(
     readsCreated: createdSummary.readsCreated,
     filesCreated,
     studyId: createdSummary.studyId,
+    studyScopedId: createdSummary.studyScopedId,
     dataPath: dataset.fastqRelativeFolder,
+    syntheticReadCount: dataset.syntheticReadCount,
+    syntheticReadLength: dataset.syntheticReadLength,
     platform: {
       platform: platformSelection.primary.platform,
       instrumentModel: platformSelection.primary.instrumentModel,

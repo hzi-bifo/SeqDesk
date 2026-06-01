@@ -589,3 +589,486 @@ jobs:
           if [ -n "${PM2_BIN:-}" ]; then
             "${PM2_BIN}" delete seqdesk >/dev/null 2>&1 || true
           fi
+
+  npm-launcher-ubuntu:
+    name: Install via npm launcher (npm i -g seqdesk)
+    needs: build-public-release-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
+          fi
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8793" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-npm-launcher" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/npm-launcher-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/npm-launcher-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/npm-launcher-providers.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/npm-launcher-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/npm-launcher-release-artifact" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/npm-launcher-package" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$RUNNER_TEMP/npm-launcher-cache" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/npm-launcher-prefix" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/npm-launcher-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8794" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/npm-launcher-release-server.log" >> "$GITHUB_ENV"
+          echo "NPM_PACK_METADATA=$RUNNER_TEMP/npm-launcher-pack.txt" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Pack npm launcher
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/npm/seqdesk"
+          npm run sync-version
+          mkdir -p "$NPM_ARTIFACT_DIR"
+          npm pack --pack-destination "$NPM_ARTIFACT_DIR" > "$NPM_ARTIFACT_DIR/npm-pack-name.txt"
+          npm pack --dry-run > "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" 2>&1
+
+      - name: Prepare mock installer and release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_RELEASE_ROOT/install.sh"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI npm launcher e2e release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Install globally via npm and run launcher (npm i -g seqdesk)
+        run: |
+          set -euo pipefail
+          NPM_TGZ="$(find "$NPM_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n 1)"
+          if [ -z "$NPM_TGZ" ]; then
+            echo "Npm launcher tarball not found in $NPM_ARTIFACT_DIR"
+            exit 1
+          fi
+          cp "$NPM_ARTIFACT_DIR/npm-pack-dry-run.txt" "$NPM_PACK_METADATA"
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$NPM_CACHE"
+
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null && \
+               curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          PATH="$NPM_PREFIX/bin:$PATH" \
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
+          SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --without-pipelines \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public" \
+              --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
+
+      - name: Verify install artifacts and config
+        run: |
+          set -euo pipefail
+          test -f "$INSTALL_DIR/package.json"
+          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT"
+
+      - name: Verify installed app startup, DB migrate, and auth flows
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" \
+            --password "user" \
+            --expected-role "RESEARCHER"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
+
+      - name: Upload npm launcher e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-e2e-npm-launcher-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.NPM_PACK_METADATA }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  install-profile-fixture-ubuntu:
+    name: Apply checked-in install profile (no secret)
+    needs: build-public-release-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      PROFILE_ID: ci-fixture
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk_profile_fixture'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk_profile_fixture OWNER seqdesk"
+          fi
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8795" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-profile-fixture" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/profile-fixture-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/profile-fixture-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/profile-fixture-providers.json" >> "$GITHUB_ENV"
+          echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/profile-fixture-seqdesk.config.json" >> "$GITHUB_ENV"
+          echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-fixture-assert.json" >> "$GITHUB_ENV"
+          echo "FIXTURE_PROFILE=$GITHUB_WORKSPACE/.github/fixtures/ci-install-profile.json" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/profile-fixture-release-artifact" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/profile-fixture-npm-package" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$RUNNER_TEMP/profile-fixture-npm-cache" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$RUNNER_TEMP/profile-fixture-npm-prefix" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/profile-fixture-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8796" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/profile-fixture-release-server.log" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Pack npm launcher
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/npm/seqdesk"
+          npm run sync-version
+          mkdir -p "$NPM_ARTIFACT_DIR"
+          npm pack --pack-destination "$NPM_ARTIFACT_DIR" > "$NPM_ARTIFACT_DIR/npm-pack-name.txt"
+
+      - name: Prepare mock installer and release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_RELEASE_ROOT/install.sh"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI install profile fixture release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Install side-by-side without profile through npm launcher
+        run: |
+          set -euo pipefail
+          NPM_TGZ="$(find "$NPM_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n 1)"
+          if [ -z "$NPM_TGZ" ]; then
+            echo "Npm launcher tarball not found in $NPM_ARTIFACT_DIR"
+            exit 1
+          fi
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$NPM_CACHE"
+
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null && \
+               curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          PATH="$NPM_PREFIX/bin:$PATH" \
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
+          SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --without-pipelines \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_profile_fixture?schema=public" \
+              --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_profile_fixture?schema=public"
+
+      - name: Apply checked-in install profile via --profile-config (no secret)
+        run: |
+          set -euo pipefail
+          test -f "$FIXTURE_PROFILE"
+          test -f "$INSTALL_DIR/scripts/apply-install-profile.mjs"
+          cd "$INSTALL_DIR"
+          node scripts/apply-install-profile.mjs --profile-config "$FIXTURE_PROFILE"
+
+      - name: Assert install profile applied (Prisma DB + config persistence)
+        run: |
+          set -euo pipefail
+          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
+            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --expected-port "$PORT" >/dev/null
+          INSTALL_DIR="$INSTALL_DIR" PROFILE_ID="$PROFILE_ID" PROFILE_ASSERT_JSON="$PROFILE_ASSERT_JSON" \
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import path from "node:path";
+            import { createRequire } from "node:module";
+
+            const installDir = process.env.INSTALL_DIR;
+            const expectedProfileId = process.env.PROFILE_ID;
+            const expectedDeviceId = "ont-minion-mk1d";
+
+            function fail(message) {
+              console.error("ASSERT FAIL: " + message);
+              process.exit(1);
+            }
+            function parseJsonObject(raw, label) {
+              if (!raw) return {};
+              try {
+                const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+              } catch (error) {
+                fail("Failed to parse " + label + ": " + (error && error.message ? error.message : error));
+              }
+              return {};
+            }
+            function requireField(items, name, label) {
+              if (!Array.isArray(items) || !items.some((item) => item && item.name === name)) {
+                fail("Expected " + label + " field " + name + " to be present");
+              }
+            }
+
+            // seqdesk.config.json persistence of safe install profile metadata
+            const configPath = path.join(installDir, "seqdesk.config.json");
+            const config = parseJsonObject(fs.readFileSync(configPath, "utf8"), configPath);
+            if (!config.installProfile || config.installProfile.id !== expectedProfileId) {
+              fail("seqdesk.config.json installProfile.id mismatch, got " + JSON.stringify(config.installProfile));
+            }
+
+            // Real Prisma DB reads from the installed app
+            const databaseUrl = config && config.runtime && config.runtime.databaseUrl;
+            if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
+              fail("Installed config does not include runtime.databaseUrl");
+            }
+            process.env.DATABASE_URL = databaseUrl;
+            process.env.DIRECT_URL = (config.runtime && config.runtime.directUrl) || databaseUrl;
+
+            const requireFromInstall = createRequire(path.join(installDir, "package.json"));
+            const { PrismaClient } = requireFromInstall("@prisma/client");
+            const prisma = new PrismaClient();
+            try {
+              const [settings, orderForm, pipelineConfigs] = await Promise.all([
+                prisma.siteSettings.findUnique({ where: { id: "singleton" } }),
+                prisma.orderFormConfig.findUnique({ where: { id: "singleton" } }),
+                prisma.pipelineConfig.findMany(),
+              ]);
+              if (!settings) fail("SiteSettings singleton is missing");
+              if (!orderForm) fail("OrderFormConfig singleton is missing");
+
+              const extra = parseJsonObject(settings.extraSettings, "SiteSettings.extraSettings");
+              if (!extra.installProfile || extra.installProfile.id !== expectedProfileId) {
+                fail("extraSettings.installProfile.id mismatch, got " + JSON.stringify(extra.installProfile));
+              }
+
+              const orderSchema = parseJsonObject(orderForm.schema, "OrderFormConfig.schema");
+              requireField(orderSchema.fields, "run_type", "order");
+              requireField(orderSchema.fields, "internal_sample_code", "order");
+              requireField(extra.studyFormFields, "study_experiment_type", "study");
+              requireField(extra.sequencingRunSampleFormFields, "barcode", "run assignment");
+              requireField(extra.sequencingRunSampleFormFields, "concentration_ng_ul", "run assignment");
+
+              const sequencingTechRaw = extra.sequencingTechConfig;
+              const sequencingTech = parseJsonObject(
+                typeof sequencingTechRaw === "string" ? sequencingTechRaw : JSON.stringify(sequencingTechRaw),
+                "extraSettings.sequencingTechConfig"
+              );
+              const availableDeviceIds = Array.isArray(sequencingTech.devices)
+                ? sequencingTech.devices.filter((d) => d.available).map((d) => d.id)
+                : [];
+              if (availableDeviceIds.length !== 1 || availableDeviceIds[0] !== expectedDeviceId) {
+                fail("Expected only " + expectedDeviceId + " available, got " + availableDeviceIds.join(", "));
+              }
+
+              if (settings.enaUsername !== "ci-fixture-webin-user") {
+                fail("Expected fixture ENA username, got " + settings.enaUsername);
+              }
+
+              const enabledPipelines = pipelineConfigs
+                .filter((p) => p.enabled)
+                .map((p) => p.pipelineId)
+                .sort();
+              if (!enabledPipelines.includes("fastq-checksum")) {
+                fail("Expected pipeline fastq-checksum to be enabled, got " + enabledPipelines.join(", "));
+              }
+
+              const result = {
+                installProfile: extra.installProfile,
+                availableDeviceIds,
+                enabledPipelines,
+                orderFields: orderSchema.fields.map((f) => f.name),
+              };
+              fs.writeFileSync(process.env.PROFILE_ASSERT_JSON, JSON.stringify(result, null, 2));
+              process.stdout.write(JSON.stringify(result, null, 2));
+            } finally {
+              await prisma.$disconnect();
+            }
+          '
+
+      - name: Verify installed app startup with applied profile
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "credentials")) {
+              console.error("Missing credentials provider in /api/auth/providers response");
+              process.exit(1);
+            }
+          ' "$PROVIDERS_JSON"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" \
+            --password "admin" \
+            --expected-role "FACILITY_ADMIN" \
+            --check-path "/api/admin/users"
+
+      - name: Upload install profile fixture artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-e2e-profile-fixture-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.CONFIG_SNAPSHOT }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.PROFILE_ASSERT_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 14
