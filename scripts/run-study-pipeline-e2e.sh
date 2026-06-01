@@ -9,6 +9,7 @@ WORKFLOW_LABEL="${PIPELINE_E2E_WORKFLOW_LABEL:-Study Pipeline End-to-End}"
 TMP_DIR=""
 
 SIMULATE_STATUS="not run"
+DEMO_STATUS="not run"
 MAG_STATUS="not run"
 CURRENT_STAGE="setup"
 FAILURE_MESSAGE=""
@@ -102,6 +103,11 @@ write_summary() {
           SIMULATE_STATUS="failed"
         fi
         ;;
+      study-demo-report)
+        if [[ "$DEMO_STATUS" != "passed" ]]; then
+          DEMO_STATUS="failed"
+        fi
+        ;;
       mag)
         if [[ "$MAG_STATUS" != "passed" ]]; then
           MAG_STATUS="failed"
@@ -126,6 +132,7 @@ write_summary() {
     echo "- Result: **$result_label**"
     echo "- Runner: \`$RUNNER_LABEL\`"
     echo "- Simulate reads: \`$SIMULATE_STATUS\`"
+    echo "- Study demo report: \`$DEMO_STATUS\`"
     echo "- MAG assembly: \`$MAG_STATUS\`"
     echo "- Temporary run directory: \`$TMP_DIR\`"
     echo "- Artifact manifest: \`$(basename "$ARTIFACT_MANIFEST")\`"
@@ -139,6 +146,8 @@ write_summary() {
     echo
     echo "## Key output files"
     append_key_file "$SIM_OUT/summary/simulation-summary.tsv"
+    append_key_file "$DEMO_OUT/report/demo-report.html"
+    append_key_file "$DEMO_OUT/tables/sample-summary.tsv"
     echo
     echo "### MAG outputs"
     if [[ -d "$MAG_OUT" ]]; then
@@ -194,8 +203,10 @@ fi
 
 SIM_SAMPLESHEET="$TMP_DIR/sim-samplesheet.csv"
 MAG_SAMPLESHEET="$TMP_DIR/mag-samplesheet.csv"
+DEMO_SAMPLESHEET="$TMP_DIR/demo-samplesheet.csv"
 SIM_OUT="$TMP_DIR/sim-output"
 MAG_OUT="$TMP_DIR/mag-output"
+DEMO_OUT="$TMP_DIR/demo-output"
 SUMMARY_FILE="$TMP_DIR/STUDY_PIPELINE_E2E_SUMMARY.md"
 ARTIFACT_MANIFEST="$TMP_DIR/STUDY_PIPELINE_E2E_ARTIFACTS.txt"
 
@@ -226,7 +237,42 @@ done
 
 SIMULATE_STATUS="passed"
 
-# Step 2: Run MAG (lightweight: skip binning, taxonomy, and QC to keep it fast)
+# Step 2: Run the study-scoped study-demo-report package (deterministic, in-repo, no external deps)
+cat > "$DEMO_SAMPLESHEET" <<'EOF'
+sample_id,study_id,study_title
+STUDY_SAMPLE_A,STUDY_1,SeqDesk CI Study
+STUDY_SAMPLE_B,STUDY_1,SeqDesk CI Study
+EOF
+
+CURRENT_STAGE="study-demo-report"
+DEMO_STATUS="running"
+DEMO_REPORT_TITLE="SeqDesk CI study demo report"
+echo "Running study-demo-report with Conda env '$ENV_NAME'..."
+conda run -n "$ENV_NAME" nextflow run pipelines/study-demo-report/workflow/main.nf \
+  --input "$DEMO_SAMPLESHEET" \
+  --outdir "$DEMO_OUT" \
+  --report_title "$DEMO_REPORT_TITLE"
+
+require_output_file "$DEMO_OUT/report/demo-report.html" "study-demo-report"
+require_output_file "$DEMO_OUT/report/demo-report.md" "study-demo-report"
+require_output_file "$DEMO_OUT/tables/sample-summary.tsv" "study-demo-report"
+
+# The study_report output must reflect the requested study title and every sample.
+grep -q "$DEMO_REPORT_TITLE" "$DEMO_OUT/report/demo-report.html" \
+  || fail_e2e "study-demo-report HTML is missing the report title '$DEMO_REPORT_TITLE'"
+for demo_sample in STUDY_SAMPLE_A STUDY_SAMPLE_B; do
+  grep -q "$demo_sample" "$DEMO_OUT/tables/sample-summary.tsv" \
+    || fail_e2e "study-demo-report sample-summary.tsv is missing sample $demo_sample"
+done
+
+DEMO_SAMPLE_ROWS="$(awk -F'\t' 'NR > 1 && $1 != "" { count += 1 } END { print count + 0 }' "$DEMO_OUT/tables/sample-summary.tsv")"
+if [[ "$DEMO_SAMPLE_ROWS" -ne 2 ]]; then
+  fail_e2e "study-demo-report sample-summary.tsv expected 2 sample rows, found $DEMO_SAMPLE_ROWS"
+fi
+
+DEMO_STATUS="passed"
+
+# Step 3: Run MAG (lightweight: skip binning, taxonomy, and QC to keep it fast)
 cat > "$MAG_SAMPLESHEET" <<EOF
 sample,group,short_reads_1,short_reads_2,long_reads
 STUDY_SAMPLE_A,0,$SIM_OUT/reads/STUDY_SAMPLE_A_R1.fastq.gz,$SIM_OUT/reads/STUDY_SAMPLE_A_R2.fastq.gz,
@@ -260,7 +306,7 @@ echo "MAG produced $ASSEMBLY_COUNT assembly file(s)"
 MAG_STATUS="passed"
 CURRENT_STAGE="completed"
 
-echo "Study pipeline end-to-end test passed (simulate-reads, mag)."
+echo "Study pipeline end-to-end test passed (simulate-reads, study-demo-report, mag)."
 echo "Temporary run directory: $TMP_DIR"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
   echo "Temporary files will be removed on exit."

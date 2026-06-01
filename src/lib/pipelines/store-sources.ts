@@ -153,6 +153,19 @@ function buildRegistryLabel(registryUrl: string): string {
   }
 }
 
+function normalizeRegistryCapabilities(
+  capabilities?: Partial<PipelineCapabilities>
+): PipelineCapabilities | null {
+  if (!capabilities) return null;
+  return {
+    requiresLinkedReads: capabilities.requiresLinkedReads === true,
+    writesCanonicalReadMetadata: capabilities.writesCanonicalReadMetadata === true,
+    writesCanonicalReadFiles: capabilities.writesCanonicalReadFiles === true,
+    stagesReadCandidates: capabilities.stagesReadCandidates === true,
+    requiresAdminReadPromotion: capabilities.requiresAdminReadPromotion === true,
+  };
+}
+
 export function getPipelineRegistrySources(
   env: NodeJS.ProcessEnv = process.env
 ): RegistrySourceConfig[] {
@@ -239,15 +252,7 @@ export function normalizeRegistryPipeline(
   const catalogs = derivePipelineCatalogs(supportedTargets);
   const capabilities = localManifest
     ? derivePipelineCapabilities(localManifest)
-    : pipeline.capabilities
-      ? {
-          requiresLinkedReads: pipeline.capabilities.requiresLinkedReads === true,
-          writesCanonicalReadMetadata:
-            pipeline.capabilities.writesCanonicalReadMetadata === true,
-          writesCanonicalReadFiles:
-            pipeline.capabilities.writesCanonicalReadFiles === true,
-        }
-      : null;
+    : normalizeRegistryCapabilities(pipeline.capabilities);
 
   return {
     id: pipeline.id,

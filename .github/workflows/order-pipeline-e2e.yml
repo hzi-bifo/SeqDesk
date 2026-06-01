@@ -90,7 +90,9 @@ jobs:
     name: Order Pipeline E2E (Self-hosted Twincore)
     needs: github_hosted
     if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
-    runs-on: [self-hosted, linux, twincore, alma]
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
     timeout-minutes: 60
     defaults:
       run:
@@ -152,3 +154,51 @@ jobs:
         run: |
           conda env remove -n "$PIPELINE_CONDA_ENV" || true
           rm -rf "$PIPELINE_E2E_TMPDIR" "$NXF_HOME"
+
+  writeback_integration:
+    name: Order Writeback Integration (read-cleaning promotion)
+    if: ${{ github.event_name == 'push' || inputs.run_github_hosted }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+      DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      # Exercises the order read-cleaning -> candidate -> admin promotion writeback
+      # path end-to-end against a real database (no detaxizer/kraken2 required).
+      - name: Run read-cleaning promotion integration test
+        run: npm run test:live -- src/lib/pipelines/pending-writebacks.live.test.ts

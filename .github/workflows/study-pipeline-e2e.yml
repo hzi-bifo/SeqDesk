@@ -90,7 +90,9 @@ jobs:
     name: Study Pipeline E2E (Self-hosted Twincore)
     needs: github_hosted
     if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
-    runs-on: [self-hosted, linux, twincore, alma]
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
     timeout-minutes: 90
     defaults:
       run:
