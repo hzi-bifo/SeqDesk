@@ -34,6 +34,11 @@ Access should be limited to authorized users on the protected network. Convenien
 defaults, including open self-registration and bootstrap accounts, assume this trusted-network
 context; deploying SeqDesk on a publicly reachable host is not a supported or secure configuration.
 
+The public demo at [demo.seqdesk.com](https://demo.seqdesk.com) is the intentional exception. It is
+a sandbox for exploring the UI, and demo workspace URLs, including admin views such as
+`https://demo.seqdesk.com/admin?workspace=test123`, are intentionally reachable by design. This does
+not change the deployment guidance for real SeqDesk instances.
+
 ## Requirements
 
 - Node.js 18+
