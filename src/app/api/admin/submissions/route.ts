@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { decryptSecret } from "@/lib/security/secret-store";
 import {
   submitStudyToENA,
   submitSamplesToENA,
@@ -486,7 +487,7 @@ export async function POST(request: Request) {
 
       const credentials = {
         username: settings!.enaUsername!,
-        password: settings!.enaPassword!,
+        password: decryptSecret(settings!.enaPassword!),
         testMode: isTestServer,
       };
 

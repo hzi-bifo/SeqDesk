@@ -74,6 +74,9 @@ import { GET as getPipelineDefinitionPublic } from "./pipelines/definitions/[id]
 import { GET as getAdminUsers } from "./admin/users/route";
 import { GET as getEnaSettings, PUT as putEnaSettings } from "./admin/settings/ena/route";
 import { POST as validateMetadata } from "./pipelines/validate-metadata/route";
+import { decryptSecret, isEncrypted } from "@/lib/security/secret-store";
+
+process.env.NEXTAUTH_SECRET ||= "test-secret-for-secret-store-unit-tests";
 
 let cwd = "";
 let tempDir = "";
@@ -586,26 +589,25 @@ describe("settings and misc route quick wins", () => {
       })
     );
     expect(successEnaPut.status).toBe(200);
-    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledWith({
-      where: { id: "singleton" },
-      update: {
-        enaUsername: "Webin-54321",
-        enaPassword: "secret",
-        enaTestMode: true,
-      },
-      create: {
-        id: "singleton",
-        enaUsername: "Webin-54321",
-        enaPassword: "secret",
-        enaTestMode: true,
-        extraSettings: JSON.stringify({
-          ena: {
-            brokerAccount: false,
-            centerName: "",
-          },
-        }),
-      },
-    });
+    const enaCall = mocks.db.siteSettings.upsert.mock.lastCall![0] as {
+      where: { id: string };
+      update: Record<string, unknown>;
+      create: Record<string, unknown>;
+    };
+    expect(enaCall.where).toEqual({ id: "singleton" });
+    expect(enaCall.update.enaUsername).toBe("Webin-54321");
+    expect(enaCall.update.enaTestMode).toBe(true);
+    expect(enaCall.create.enaUsername).toBe("Webin-54321");
+    expect(enaCall.create.enaTestMode).toBe(true);
+    expect(enaCall.create.extraSettings).toBe(
+      JSON.stringify({ ena: { brokerAccount: false, centerName: "" } })
+    );
+    // Password is encrypted at rest (trimmed first), never stored verbatim.
+    for (const stored of [enaCall.update.enaPassword, enaCall.create.enaPassword]) {
+      expect(stored).not.toBe("secret");
+      expect(isEncrypted(stored as string)).toBe(true);
+      expect(decryptSecret(stored as string)).toBe("secret");
+    }
     expect(await successEnaPut.json()).toEqual({ success: true });
 
     mocks.db.siteSettings.upsert.mockRejectedValueOnce(new Error("db down"));

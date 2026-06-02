@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { encryptSecret } from "./secret-store.mjs";
 
 const SITE_SETTINGS_ID = "singleton";
 const ORDER_FORM_ID = "singleton";
@@ -167,6 +168,7 @@ function loadDatabaseConfigFromConfig() {
     return {
       databaseUrl: toOptionalString(runtime.databaseUrl),
       directUrl: toOptionalString(runtime.directUrl),
+      nextAuthSecret: toOptionalString(runtime.nextAuthSecret),
     };
   } catch {
     return {};
@@ -174,11 +176,20 @@ function loadDatabaseConfigFromConfig() {
 }
 
 function ensureDatabaseEnv() {
-  if (process.env.DATABASE_URL) return;
+  const needsDatabase = !process.env.DATABASE_URL;
+  // The encryption key (mirrors runtime-env.ts) is required to encrypt the ENA
+  // password at rest when a profile provisions one.
+  const needsSecret =
+    !process.env.NEXTAUTH_SECRET && !process.env.SEQDESK_ENCRYPTION_KEY;
+  if (!needsDatabase && !needsSecret) return;
+
   const loaded = loadDatabaseConfigFromConfig();
-  if (loaded.databaseUrl) {
+  if (needsDatabase && loaded.databaseUrl) {
     process.env.DATABASE_URL = loaded.databaseUrl;
     process.env.DIRECT_URL = loaded.directUrl || loaded.databaseUrl;
+  }
+  if (needsSecret && loaded.nextAuthSecret) {
+    process.env.NEXTAUTH_SECRET = loaded.nextAuthSecret;
   }
 }
 
@@ -981,7 +992,8 @@ async function applySiteProfile(prisma, profile) {
   const enaCenterName = toOptionalString(ena.centerName);
   const enaBrokerAccount = toOptionalBoolean(ena.brokerAccount);
   if (enaUsername) update.enaUsername = enaUsername;
-  if (enaPassword) update.enaPassword = enaPassword;
+  // Encrypt at rest to match the in-app save path (src/lib/security/secret-store).
+  if (enaPassword) update.enaPassword = encryptSecret(enaPassword);
   if (enaTestMode !== undefined) update.enaTestMode = enaTestMode;
   if (enaCenterName || enaBrokerAccount !== undefined) {
     extra.ena = {

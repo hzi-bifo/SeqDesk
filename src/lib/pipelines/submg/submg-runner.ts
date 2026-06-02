@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import { db } from "@/lib/db";
+import { decryptSecret } from "@/lib/security/secret-store";
 import type { ExecutionSettings } from "@/lib/pipelines/generic-executor";
 import { resolveAssemblySelection } from "@/lib/pipelines/assembly-selection";
 import { resolveOrderPlatform } from "@/lib/pipelines/order-platform";
@@ -1415,7 +1416,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     },
     credentials: {
       username: siteSettings.enaUsername,
-      password: siteSettings.enaPassword,
+      password: decryptSecret(siteSettings.enaPassword),
       testMode: siteSettings.enaTestMode !== false,
     },
   });

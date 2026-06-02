@@ -24,6 +24,9 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { GET, PUT } from "./route";
+import { decryptSecret, isEncrypted } from "@/lib/security/secret-store";
+
+process.env.NEXTAUTH_SECRET ||= "test-secret-for-secret-store-unit-tests";
 
 const adminSession = { user: { id: "admin-1", role: "FACILITY_ADMIN" } };
 const userSession = { user: { id: "user-1", role: "RESEARCHER" } };
@@ -131,16 +134,17 @@ describe("PUT /api/admin/settings/ena", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "singleton" },
-        update: {
-          enaUsername: "Webin-12345",
-          enaPassword: "newpass",
-          enaTestMode: true,
-        },
-      })
-    );
+    const call = mocks.db.siteSettings.upsert.mock.lastCall![0] as {
+      where: { id: string };
+      update: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ id: "singleton" });
+    expect(call.update.enaUsername).toBe("Webin-12345");
+    expect(call.update.enaTestMode).toBe(true);
+    // Password is encrypted at rest, not stored verbatim.
+    expect(call.update.enaPassword).not.toBe("newpass");
+    expect(isEncrypted(call.update.enaPassword as string)).toBe(true);
+    expect(decryptSecret(call.update.enaPassword as string)).toBe("newpass");
   });
 
   it("stores broker account metadata in extraSettings", async () => {

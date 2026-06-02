@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { encryptSecret } from "@/lib/security/secret-store";
 
 function parseExtraSettings(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
@@ -92,8 +93,8 @@ export async function PUT(request: Request) {
 
     if (enaPassword !== undefined) {
       // Only update password if explicitly provided (not empty string means "keep existing")
-      // Empty string means "clear password"
-      updateData.enaPassword = enaPassword || null;
+      // Empty string means "clear password". Encrypt at rest before storing.
+      updateData.enaPassword = enaPassword ? encryptSecret(enaPassword) : null;
     }
 
     if (enaTestMode !== undefined) {
@@ -125,7 +126,7 @@ export async function PUT(request: Request) {
       create: {
         id: "singleton",
         enaUsername: enaUsername || null,
-        enaPassword: enaPassword || null,
+        enaPassword: enaPassword ? encryptSecret(enaPassword) : null,
         enaTestMode: enaTestMode ?? true,
         extraSettings: JSON.stringify({
           ...extraSettings,

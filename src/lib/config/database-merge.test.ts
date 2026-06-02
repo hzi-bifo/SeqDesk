@@ -27,6 +27,9 @@ import {
   saveConfigToDatabase,
   getConfigSection,
 } from "./database-merge";
+import { decryptSecret, isEncrypted } from "@/lib/security/secret-store";
+
+process.env.NEXTAUTH_SECRET ||= "test-secret-for-secret-store-unit-tests";
 
 function makeResolvedConfig(overrides?: Partial<ResolvedConfig>): ResolvedConfig {
   return {
@@ -296,7 +299,10 @@ describe("database-merge", () => {
     expect(callArg.data.contactEmail).toBe("new@example.com");
     expect(callArg.data.enaTestMode).toBe(false);
     expect(callArg.data.enaUsername).toBe("ena-user");
-    expect(callArg.data.enaPassword).toBe("ena-pass");
+    // Password is encrypted at rest, not stored verbatim.
+    expect(callArg.data.enaPassword).not.toBe("ena-pass");
+    expect(isEncrypted(callArg.data.enaPassword as string)).toBe(true);
+    expect(decryptSecret(callArg.data.enaPassword as string)).toBe("ena-pass");
     expect(callArg.data.postSubmissionInstructions).toBe("Updated instructions");
 
     const extra = JSON.parse(String(callArg.data.extraSettings));

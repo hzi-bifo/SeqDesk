@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { decryptSecret } from "@/lib/security/secret-store";
 
 // POST /api/admin/settings/ena/test - Test ENA connection
 // Accepts credentials in request body (for testing before save) or uses saved credentials
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
             error: "No saved password found. Please enter your password.",
           });
         }
-        enaPassword = settings.enaPassword;
+        enaPassword = decryptSecret(settings.enaPassword);
       } else {
         // Use fully saved credentials
         if (!settings?.enaUsername || !settings?.enaPassword) {
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
           });
         }
         enaUsername = settings.enaUsername;
-        enaPassword = settings.enaPassword;
+        enaPassword = decryptSecret(settings.enaPassword);
         enaTestMode = settings.enaTestMode;
       }
     }

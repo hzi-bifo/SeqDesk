@@ -7,6 +7,7 @@
 
 import { db } from '@/lib/db';
 import { loadConfig, clearConfigCache } from './loader';
+import { decryptSecret, encryptSecret } from '@/lib/security/secret-store';
 import type { SeqDeskConfig, ResolvedConfig, ConfigSource } from './types';
 
 function parseStoredJsonObject(value: unknown): Record<string, unknown> | undefined {
@@ -75,7 +76,7 @@ export async function mergeWithDatabase(): Promise<ResolvedConfig> {
       ena: {
         testMode: siteSettings.enaTestMode ?? undefined,
         username: siteSettings.enaUsername || undefined,
-        password: siteSettings.enaPassword || undefined,
+        password: decryptSecret(siteSettings.enaPassword) || undefined,
         brokerAccount: extraSettings.ena?.brokerAccount ?? undefined,
         centerName: extraSettings.ena?.centerName || undefined,
       },
@@ -262,7 +263,7 @@ export async function saveConfigToDatabase(
     updateData.enaUsername = updates.ena.username;
   }
   if (updates.ena?.password !== undefined) {
-    updateData.enaPassword = updates.ena.password;
+    updateData.enaPassword = encryptSecret(updates.ena.password);
   }
 
   // Auth settings
