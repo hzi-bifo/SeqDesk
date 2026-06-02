@@ -1,0 +1,56 @@
+name: ENA Submission E2E (test server)
+
+# Registers a study against the ENA TEST server (wwwdev.ebi.ac.uk) end to end,
+# proving that SeqDesk can actually submit to ENA and receive a real accession
+# rather than only exercising mocked HTTP.
+#
+# Test submissions are non-permanent (the ENA test server expires them) and
+# never reach production. A dedicated Webin TEST account is required, supplied
+# as repository secrets WEBIN_TEST_USERNAME / WEBIN_TEST_PASSWORD. When those
+# are not set, the live test self-skips, so this workflow stays green without a
+# configured account.
+#
+# Network-dependent, so it is scheduled + manual only (never on push/PR) and is
+# not a required check / README badge.
+
+on:
+  schedule:
+    - cron: "30 6 * * 1" # Mondays 06:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ena-submission-e2e
+  cancel-in-progress: false
+
+jobs:
+  ena-test-server:
+    name: "Register a study on the ENA test server"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WEBIN_TEST_USERNAME: ${{ secrets.WEBIN_TEST_USERNAME }}
+      WEBIN_TEST_PASSWORD: ${{ secrets.WEBIN_TEST_PASSWORD }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Submit a study to the ENA test server (wwwdev.ebi.ac.uk)
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBIN_TEST_USERNAME:-}" ] || [ -z "${WEBIN_TEST_PASSWORD:-}" ]; then
+            echo "WEBIN_TEST_USERNAME / WEBIN_TEST_PASSWORD secrets are not set — the live ENA submission test will self-skip."
+          else
+            echo "Webin test credentials present — submitting a study to the ENA test server."
+          fi
+          SEQDESK_TEST_TIER=live npx vitest run src/lib/ena/submit-test-server.live.test.ts
