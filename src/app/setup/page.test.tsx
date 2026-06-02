@@ -251,7 +251,9 @@ describe("SetupPage", () => {
     render(<SetupPage />);
 
     expect(await screen.findByText("Creating initial data")).toBeTruthy();
-    expect(screen.getByText("Seeding initial data")).toBeTruthy();
+    // Use an async query: the page polls /api/setup/status, and a refetch can
+    // transiently swap in a spinner, so a synchronous getByText here is racy.
+    expect(await screen.findByText("Seeding initial data")).toBeTruthy();
   });
 
   it("shows seed failure command", async () => {
