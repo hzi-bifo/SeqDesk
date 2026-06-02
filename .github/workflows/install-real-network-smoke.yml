@@ -210,6 +210,9 @@ jobs:
       DB_NAME: seqdesk_realnet_npm_mac
       PGPORT: "5432"
     steps:
+      - name: Check out repository (for the auth-e2e verification helper)
+        uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -293,7 +296,19 @@ jobs:
           node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("/tmp/providers-mac.json","utf8"));if(!p||typeof p!=="object"||!p.credentials){console.error("No credentials provider in /api/auth/providers");process.exit(1)}'
           curl -fsS "http://127.0.0.1:${PORT}/api/setup/status" -o /tmp/setup-mac.json
           node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/setup-mac.json","utf8"));console.log("setup status:",JSON.stringify(s));'
-          echo "OK: real-network npm install booted + migrated on macOS (node 20)."
+          # Prove the installed app is not just reachable but usable: a real login
+          # round-trip (CSRF -> credentials -> session -> role-gated request) for the
+          # seeded admin and researcher accounts, using the repo's auth-e2e helper.
+          echo "Verifying login round-trip (admin + researcher) on macOS..."
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" --password "admin" \
+            --expected-role "FACILITY_ADMIN" --check-path "/api/admin/users"
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "user@example.com" --password "user" \
+            --expected-role "RESEARCHER"
+          echo "OK: real-network npm install booted, migrated, and authenticated (admin + researcher) on macOS (node 20)."
 
       - name: Upload logs
         if: always()
