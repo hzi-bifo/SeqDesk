@@ -199,3 +199,109 @@ jobs:
             ${{ env.SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 14
+
+  npm-global-install-macos:
+    name: "npm i -g seqdesk (macOS, node 20)"
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      PORT: "8895"
+      DB_NAME: seqdesk_realnet_npm_mac
+      PGPORT: "5432"
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure paths
+        run: |
+          {
+            echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-realnet-npm-mac"
+            echo "INSTALL_LOG=$RUNNER_TEMP/realnet-npm-mac-install.log"
+            echo "SERVER_LOG=$RUNNER_TEMP/realnet-npm-mac-server.log"
+            echo "NPM_PREFIX=$RUNNER_TEMP/realnet-npm-mac-prefix"
+          } >> "$GITHUB_ENV"
+
+      - name: Start PostgreSQL (Homebrew, throwaway DB)
+        run: |
+          set -euo pipefail
+          # macOS runners use Homebrew rather than systemd; install/start PostgreSQL there.
+          brew install postgresql@16
+          PG_BIN="$(brew --prefix postgresql@16)/bin"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          export PATH="$PG_BIN:$PATH"
+          brew services start postgresql@16
+          READY=0
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p "$PGPORT" >/dev/null 2>&1; then READY=1; break; fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then echo "PostgreSQL did not become ready"; exit 1; fi
+          # On a Homebrew install the current user is a superuser via local trust auth;
+          # create the seqdesk role and the throwaway database it will own.
+          psql -h 127.0.0.1 -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk' SUPERUSER; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! psql -h 127.0.0.1 -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+            createdb -h 127.0.0.1 -p "$PGPORT" -O seqdesk "${DB_NAME}"
+          fi
+
+      - name: Install the published launcher from the real npm registry
+        run: |
+          set -euo pipefail
+          SPEC="${{ github.event.inputs.npm_spec || 'seqdesk@latest' }}"
+          echo "Installing $SPEC from npm..."
+          npm install -g "$SPEC" --prefix "$NPM_PREFIX"
+          "$NPM_PREFIX/bin/seqdesk" --version
+
+      - name: Run the REAL install (downloads release from seqdesk.com)
+        run: |
+          set -euo pipefail
+          # No SEQDESK_API / SEQDESK_INSTALL_URL overrides => the launcher resolves
+          # the real https://seqdesk.com release metadata and downloads the real
+          # tarball, exactly as a macOS user would.
+          PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk \
+              -y \
+              --without-pipelines \
+              --no-pm2 \
+              --dir "$INSTALL_DIR" \
+              --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public" \
+              --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public"
+
+      - name: Verify the installed app boots and the DB migrated
+        run: |
+          set -euo pipefail
+          if [ ! -f "$INSTALL_DIR/start.sh" ]; then
+            echo "start.sh missing in $INSTALL_DIR"; ls -la "$INSTALL_DIR" || true; exit 1
+          fi
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" -o /tmp/providers-mac.json; then READY=1; break; fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "App did not become ready in time."; tail -n 200 "$SERVER_LOG" || true; exit 1
+          fi
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("/tmp/providers-mac.json","utf8"));if(!p||typeof p!=="object"||!p.credentials){console.error("No credentials provider in /api/auth/providers");process.exit(1)}'
+          curl -fsS "http://127.0.0.1:${PORT}/api/setup/status" -o /tmp/setup-mac.json
+          node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/setup-mac.json","utf8"));console.log("setup status:",JSON.stringify(s));'
+          echo "OK: real-network npm install booted + migrated on macOS (node 20)."
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realnet-npm-macos
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 14
