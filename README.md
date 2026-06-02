@@ -26,6 +26,14 @@ runs self-hosted on your own infrastructure.
 - **ENA submission** — register studies and samples and submit reads, assemblies, and bins to ENA.
 - **Self-hosted** — runs on your own infrastructure; your data stays with you.
 
+## Deployment Environment
+
+SeqDesk is designed to run inside a closed, trusted network, for example behind a VPN or restricted
+to an internal/institutional intranet. It should not be exposed directly to the public internet.
+Access should be limited to authorized users on the protected network. Convenience-oriented
+defaults, including open self-registration and bootstrap accounts, assume this trusted-network
+context; deploying SeqDesk on a publicly reachable host is not a supported or secure configuration.
+
 ## Requirements
 
 - Node.js 18+
