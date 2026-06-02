@@ -79,10 +79,46 @@ npm run dev                                           # http://localhost:3000
 On macOS with Homebrew PostgreSQL, `npm run dev:mac` starts/creates the local database, runs
 migrations and seed data, and launches the dev server in one step.
 
-Default seeded users:
+Default seeded users are intended for local development/bootstrap only:
 
 - Admin — `admin@example.com` / `admin`
 - Researcher — `user@example.com` / `user`
+
+For any shared or network-reachable instance, prefer configuring real bootstrap accounts before
+the first seed/install. If you use the defaults, change or remove those accounts immediately after
+first login. Later config edits do not rotate passwords for accounts that already exist.
+
+Generate one bcrypt password hash per account after `npm ci`:
+
+```bash
+node -e 'const { hashSync } = require("bcryptjs"); console.log(hashSync(process.argv[1], 12));' 'replace-with-strong-password'
+```
+
+Then add the accounts to `seqdesk.config.json` before running `npm run db:seed`:
+
+```json
+{
+  "bootstrap": {
+    "users": {
+      "admin": {
+        "email": "seqdesk-admin@your-org.example",
+        "passwordHash": "$2b$12$...",
+        "firstName": "SeqDesk",
+        "lastName": "Admin",
+        "facilityName": "Your Facility"
+      },
+      "researcher": {
+        "email": "first-user@your-org.example",
+        "passwordHash": "$2b$12$...",
+        "firstName": "First",
+        "lastName": "User",
+        "institution": "Your Institution",
+        "researcherRole": "POSTDOC"
+      }
+    }
+  }
+}
+```
 
 For configuration details, testing, the live test dashboard, background workers, and the pipeline
 e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
