@@ -77,6 +77,19 @@ Full installation, configuration, unattended, and hosted-profile options are doc
 > **not** change the live installer until the matching `public/install.sh` in the SeqDesk.com
 > repository has been updated and deployed.
 
+### Tested installation methods
+
+Each path is exercised end to end by continuous integration (install → boot → reachable over HTTP → database migrated; see the badges above for live status):
+
+| Method | Command | Verified in CI |
+| --- | --- | --- |
+| npm launcher (recommended) | `npm i -g seqdesk` | Ubuntu · AlmaLinux · macOS |
+| One-line installer | `curl -fsSL https://seqdesk.com/install.sh \| bash` | Ubuntu |
+| From source | `bash scripts/install.sh` | Ubuntu · AlmaLinux |
+| Hosted install profile | `seqdesk --profile <id> --profile-code <code>` | Ubuntu · AlmaLinux |
+
+The npm-launcher and source installs are also exercised under PM2, and the npm/AlmaLinux/macOS runs verify an administrator can log in to the running app.
+
 ## Local development
 
 ```bash
