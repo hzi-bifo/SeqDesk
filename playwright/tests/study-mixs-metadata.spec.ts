@@ -65,7 +65,9 @@ test("a study's MIxS metadata form renders the checklist fields and round-trips 
     await expect(firstField).toBeVisible();
     await firstField.fill(value);
     await page.getByRole("button", { name: "Save Changes" }).click();
-    await expect(page.getByText(/Metadata saved/i)).toBeVisible({ timeout: 15000 });
+    await expect(
+      page.getByText("Metadata saved successfully"),
+    ).toBeVisible({ timeout: 15000 });
 
     await page.reload();
     await expect(page.getByRole("textbox").first()).toHaveValue(value, {
