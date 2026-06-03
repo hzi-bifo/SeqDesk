@@ -83,8 +83,8 @@ jobs:
       - name: Cleanup Conda environment
         if: ${{ always() }}
         run: |
-          conda env remove -n "$PIPELINE_CONDA_ENV" || true
           rm -rf "$PIPELINE_E2E_TMPDIR" "$NXF_HOME"
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
 
   self_hosted:
     name: Order Pipeline E2E (Self-hosted Twincore)
@@ -153,8 +153,8 @@ jobs:
       - name: Cleanup Conda environment
         if: ${{ always() }}
         run: |
-          conda env remove -n "$PIPELINE_CONDA_ENV" || true
           rm -rf "$PIPELINE_E2E_TMPDIR" "$NXF_HOME"
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
 
   writeback_integration:
     name: Order Writeback Integration (read-cleaning promotion)
