@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -860,5 +861,132 @@ describe("installer", () => {
     ).rejects.toThrow("Checksum verification failed - download may be corrupted");
 
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes the install when a real sha256 checksum matches the download", async () => {
+    configureInstallerShell();
+    // The mocked downloader writes the literal bytes "archive" as the tarball, so a
+    // matching sha256 must pass verification and let the install proceed. This is the
+    // positive counterpart to the mismatch case above (which only the failure branch
+    // exercised), covering the actualHash === expectedHash success path in hashFile.
+    const checksum = `sha256:${crypto.createHash("sha256").update("archive").digest("hex")}`;
+    const progress: string[] = [];
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease({ checksum }), (entry) => {
+      progress.push(`${entry.status}:${entry.progress}`);
+    });
+
+    expect(progress).toContain("complete:100");
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts the update and rolls back when migrations silently drop data", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "current"));
+    configureInstallerShell();
+    // `migrate deploy` exits 0, but the post-migration snapshot reports fewer orders
+    // than the pre-migration snapshot. This is the silent data-loss case (no thrown
+    // migration error), distinct from the migration-failure test above, and the
+    // describeDataLoss guard must treat it as a hard abort and roll current back.
+    mocks.dbMock.order.count
+      .mockResolvedValueOnce(4) // before migrations
+      .mockResolvedValueOnce(1); // after migrations
+    const mod = await loadInstallerModule();
+
+    await expect(mod.installUpdate(createRelease())).rejects.toThrow(
+      "Aborting update: data loss detected after migrations (orders 4 → 1)"
+    );
+
+    // The current symlink is flipped back to the previous release...
+    await expect(fs.readlink(path.join(tempDir, "current"))).resolves.toBe("releases/1.1.80");
+    // ...and the failure is recorded with the previous release active again.
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "error",
+        activeRelease: path.join(tempDir, "releases", "1.1.80"),
+      })
+    );
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a repair when migrations silently drop data", async () => {
+    configureInstallerShell();
+    // Same silent data-loss guard, but on the in-place repair path: the user count
+    // shrinks across the migration, so the repair must refuse to report success.
+    mocks.dbMock.user.count
+      .mockResolvedValueOnce(3) // before migrations
+      .mockResolvedValueOnce(0); // after migrations
+    const mod = await loadInstallerModule();
+
+    await expect(mod.repairInstalledUpdate("1.2.0")).rejects.toThrow(
+      "Aborting repair: data loss detected after migrations (users 3 → 0)"
+    );
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to roll back a flat (non-release-layout) install", async () => {
+    // The default seeded install has no `current` symlink, so there is no previous
+    // release to return to; rollback must refuse rather than touch a flat tree.
+    const mod = await loadInstallerModule();
+
+    await expect(mod.rollbackInstalledUpdate()).rejects.toThrow(
+      "Rollback is only available for release-layout installations."
+    );
+    expect(patchUpdateStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "error" })
+    );
+    expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to roll back when no previous release is recorded", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "current"));
+    // readUpdateState defaults to null, so there is no recorded previousRelease.
+    const mod = await loadInstallerModule();
+
+    await expect(mod.rollbackInstalledUpdate()).rejects.toThrow(
+      "No previous release is recorded for rollback."
+    );
+  });
+
+  it("refuses to roll back when the recorded previous release is missing on disk", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "current"));
+    const missingRelease = path.join(tempDir, "releases", "9.9.9");
+    readUpdateStateMock.mockResolvedValue({
+      phase: "complete",
+      startedAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:01:00.000Z",
+      previousRelease: missingRelease,
+      targetRelease: path.join(tempDir, "releases", "1.1.80"),
+      activeRelease: path.join(tempDir, "releases", "1.1.80"),
+      targetVersion: "1.1.80",
+    });
+    const mod = await loadInstallerModule();
+
+    await expect(mod.rollbackInstalledUpdate()).rejects.toThrow(
+      `Previous release is missing: ${missingRelease}`
+    );
+  });
+
+  it("refuses to roll back when already running the recorded previous release", async () => {
+    await seedReleaseLayout("1.1.80");
+    process.chdir(path.join(tempDir, "current"));
+    const activeRelease = path.join(tempDir, "releases", "1.1.80");
+    readUpdateStateMock.mockResolvedValue({
+      phase: "complete",
+      startedAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:01:00.000Z",
+      previousRelease: activeRelease,
+      targetRelease: activeRelease,
+      activeRelease,
+      targetVersion: "1.1.80",
+    });
+    const mod = await loadInstallerModule();
+
+    await expect(mod.rollbackInstalledUpdate()).rejects.toThrow(
+      "SeqDesk is already running the recorded previous release."
+    );
   });
 });
