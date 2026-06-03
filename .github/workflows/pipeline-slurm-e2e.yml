@@ -309,8 +309,58 @@ jobs:
             wait "$APP_PID" >/dev/null 2>&1 || true
           fi
 
+      - name: Collect SLURM + pipeline diagnostics
+        if: always()
+        run: |
+          set +e
+          DIAG="$RUNNER_TEMP/slurm-diag"
+          mkdir -p "$DIAG"
+
+          # 1) Run-folder tree + every relevant log, echoed to the console AND staged.
+          if [ -n "${SEQDESK_RUN_DIR:-}" ] && [ -d "$SEQDESK_RUN_DIR" ]; then
+            find "$SEQDESK_RUN_DIR" -maxdepth 5 -printf '%y %10s  %p\n' 2>/dev/null | tee "$DIAG/run-dir-tree.txt"
+            find "$SEQDESK_RUN_DIR" -type f \( \
+                 -name 'pipeline.out' -o -name 'pipeline.err' \
+              -o -name 'slurm-*.out' -o -name 'slurm-*.err' \
+              -o -name '.nextflow.log*' -o -name 'run.sh' -o -name 'trace.txt' \
+              -o -name '.command.err' -o -name '.command.log' -o -name '.command.out' \) 2>/dev/null \
+            | while IFS= read -r f; do
+                echo "::group::$f"
+                sed -n '1,500p' "$f"
+                echo "::endgroup::"
+              done
+          else
+            echo "No run dir at '${SEQDESK_RUN_DIR:-<unset>}'."
+          fi
+
+          # 2) SLURM's own view — the only clue when a job fails before writing any log
+          #    (e.g. compute node can't see the run dir, so --output can't be opened).
+          if command -v sacct >/dev/null 2>&1; then
+            echo "### sacct (last 2h)" | tee "$DIAG/sacct.txt"
+            sacct -u "$USER" --starttime=now-2hours \
+              --format=JobID,JobName%45,State,ExitCode,Reason%50,WorkDir%140,NodeList 2>&1 \
+              | tee -a "$DIAG/sacct.txt"
+            if command -v scontrol >/dev/null 2>&1; then
+              for jid in $(sacct -u "$USER" --starttime=now-2hours --noheader --format=JobID -P 2>/dev/null | grep -E '^[0-9]+$' | sort -u); do
+                echo "### scontrol show job $jid" | tee -a "$DIAG/scontrol.txt"
+                scontrol show job "$jid" 2>&1 | tee -a "$DIAG/scontrol.txt"
+                # cat the StdOut/StdErr paths SLURM actually resolved, wherever they landed
+                for kind in StdOut StdErr; do
+                  p="$(scontrol show job "$jid" 2>/dev/null | tr ' ' '\n' | sed -n "s/^${kind}=//p")"
+                  if [ -n "$p" ] && [ -f "$p" ]; then
+                    echo "::group::$kind($jid) = $p"; sed -n '1,300p' "$p"; echo "::endgroup::"
+                    cp "$p" "$DIAG/" 2>/dev/null
+                  fi
+                done
+              done
+            fi
+          else
+            echo "sacct not on PATH; cannot capture SLURM accounting." | tee "$DIAG/sacct.txt"
+          fi
+          true
+
       - name: Upload SLURM pipeline E2E artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-slurm-e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -321,6 +371,7 @@ jobs:
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
+            ${{ runner.temp }}/slurm-diag
           if-no-files-found: warn
           retention-days: 14
 
