@@ -150,11 +150,16 @@ try {
       fail(`Expected pipeline '${expectedPipeline}' to be enabled`);
     }
   }
-  const unexpectedEnabledPipelines = enabledPipelines.filter(
-    (pipelineId) => !expectedEnabledPipelines.includes(pipelineId)
-  );
-  if (unexpectedEnabledPipelines.length > 0) {
-    fail(`Unexpected enabled pipeline(s): ${unexpectedEnabledPipelines.join(", ")}`);
+  // ci-runner's enabled pipeline set is admin-configurable (the profile is no
+  // longer pinned), so only require the core pipeline to be present and allow
+  // additional admin-enabled pipelines. Other profiles stay strict.
+  if (expectedProfileId !== "ci-runner") {
+    const unexpectedEnabledPipelines = enabledPipelines.filter(
+      (pipelineId) => !expectedEnabledPipelines.includes(pipelineId)
+    );
+    if (unexpectedEnabledPipelines.length > 0) {
+      fail(`Unexpected enabled pipeline(s): ${unexpectedEnabledPipelines.join(", ")}`);
+    }
   }
 
   if (expectedProfileId === "twincore") {
