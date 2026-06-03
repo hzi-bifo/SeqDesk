@@ -6,7 +6,14 @@ on:
       - "v*"
 
 jobs:
+  update-rollback-gate:
+    # Block the release on the in-app update + rollback E2E gate: a release cannot
+    # publish unless an existing install can update to a new release and roll back
+    # without losing data. Runs the real updater path on a PM2 install.
+    uses: ./.github/workflows/update-rollback-e2e-ubuntu.yml
+
   build:
+    needs: update-rollback-gate
     runs-on: ubuntu-latest
 
     steps:
