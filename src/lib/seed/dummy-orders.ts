@@ -349,8 +349,10 @@ export function buildDummySeedDataset(
 
   // Order 1 — SUBMITTED gut-recovery cohort linked to the primary study.
   // GR-01 carries dataClass variety: an active "cleaned" read (preferred by selectRead),
-  // an active "raw" read, plus an inactive superseded "raw" read. GR-02/03 carry a single
-  // active "raw" read each (read-cleaning input candidates).
+  // plus inactive "raw" reads (an upload and a superseded one). Only one read per sample
+  // may be active — enforced by the Read_one_active_per_sample partial unique index — so the
+  // raw reads are inactive here. GR-02/03 carry a single active "raw" read each
+  // (read-cleaning input candidates).
   const submittedSamples: DummySampleSpec[] = [
     fromTemplate(SAMPLE_GR_01, 1, 1, (id) => [
       buildRead(id, `${id}_cleaned`, primaryPlatform.pairedEnd, {
@@ -361,7 +363,7 @@ export function buildDummySeedDataset(
       buildRead(id, `${id}_raw`, primaryPlatform.pairedEnd, {
         dataClass: "raw",
         dataClassSource: "upload",
-        isActive: true,
+        isActive: false,
       }),
       buildRead(id, `${id}_raw_superseded`, primaryPlatform.pairedEnd, {
         dataClass: "raw",
