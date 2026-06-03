@@ -40,11 +40,15 @@ test("an admin availability toggle removes a checklist from the new-study picker
     await expect(page.getByRole("heading", { name: "MIxS Checklists" })).toBeVisible({
       timeout: 20000,
     });
+    // The Switch is a styled <input type="checkbox"> (sr-only) wrapped in a
+    // <label> whose visible track is the click target; assert state with
+    // toBeChecked and toggle by clicking the label.
     const toggle = page.locator(`#avail-${TARGET_ACCESSION}`);
-    await expect(toggle).toBeVisible({ timeout: 20000 });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    const toggleLabel = page.locator(`label:has(#avail-${TARGET_ACCESSION})`);
+    await expect(toggleLabel).toBeVisible({ timeout: 20000 });
+    await expect(toggle).toBeChecked();
+    await toggleLabel.click();
+    await expect(toggle).not.toBeChecked();
     await page.getByRole("button", { name: /Save Changes/i }).click();
 
     // The picker's data source no longer offers it, while a still-available
