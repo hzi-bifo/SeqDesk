@@ -13,6 +13,8 @@ concurrency:
 jobs:
   install-twincore-alma:
     name: Side-by-side canary install on Twincore AlmaLinux
+    # Self-hosted runner lives only on the private CI mirror; never run on the public repo.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]

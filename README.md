@@ -8,8 +8,8 @@
 | [![Order Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml) | Order-level pipelines (simulate-reads, FASTQ checksum, FastQC) run end to end, plus read-cleaning promotion writeback |
 | [![Study Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml) | Study-level pipelines (simulate-reads, study demo report, nf-core/mag assembly) run end to end |
 | [![Install E2E (Ubuntu)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml) | Install (tarball, npm, source, PM2, profile) → boot → admin login, on Ubuntu |
-| [![Pipeline SLURM E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/pipeline-slurm-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/pipeline-slurm-e2e.yml) | Pipeline execution on a real SLURM cluster — self-hosted runner on the same AlmaLinux instance mirroring our production system |
-| [![Alma Install E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-profile-alma.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-profile-alma.yml) | Install + hosted profile on AlmaLinux — self-hosted runner on an instance mirroring our production system |
+
+Additional **self-hosted** checks — AlmaLinux production-mirror install and SLURM pipeline execution — run on a private CI mirror (`hzi-bifo/SeqDesk-ci`) so the self-hosted runner is never exposed to this public repository.
 
 **Sequencing facility management — from order submission to data publishing.** SeqDesk handles
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and

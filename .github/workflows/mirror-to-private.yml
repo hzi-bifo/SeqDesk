@@ -1,0 +1,59 @@
+name: Mirror to private CI
+
+# Mirrors the public repository's `main` to the private CI repo
+# (hzi-bifo/SeqDesk-ci) on every push. The private repo holds the self-hosted
+# (Twincore AlmaLinux / SLURM) workflows and the self-hosted runner; this keeps
+# the self-hosted runner entirely off the public repository.
+#
+# Only the public source repo mirrors (the `github.repository` guard prevents
+# the mirror from running again once the code lands on the private side).
+#
+# Setup required (one-time):
+#   1. Generate an SSH key:  ssh-keygen -t ed25519 -f mirror_key -N "" -C seqdesk-mirror
+#   2. On hzi-bifo/SeqDesk-ci -> Settings -> Deploy keys -> Add deploy key:
+#        paste mirror_key.pub, tick "Allow write access".
+#   3. On hzi-bifo/SeqDesk (this repo) -> Settings -> Secrets and variables ->
+#        Actions -> New repository secret named MIRROR_SSH_KEY = contents of mirror_key.
+# Until the secret exists, this workflow self-skips (stays green).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-to-private
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push main to the private CI mirror
+        env:
+          MIRROR_SSH_KEY: ${{ secrets.MIRROR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MIRROR_SSH_KEY:-}" ]; then
+            echo "MIRROR_SSH_KEY secret is not set — skipping mirror."
+            echo "Add the deploy key (see this workflow's header) to enable mirroring."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$MIRROR_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git -c core.sshCommand="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
+            push --force git@github.com:hzi-bifo/SeqDesk-ci.git HEAD:refs/heads/main
+          echo "Mirrored $(git rev-parse --short HEAD) to hzi-bifo/SeqDesk-ci (main)."

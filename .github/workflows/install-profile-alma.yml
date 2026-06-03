@@ -24,6 +24,8 @@ concurrency:
 jobs:
   build-install-artifacts:
     name: Build release and npm launcher artifacts
+    # The whole Alma E2E (build + self-hosted installs) runs only on the private CI mirror.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -79,6 +81,7 @@ jobs:
   install-without-profile:
     name: Install without profile on AlmaLinux
     needs: build-install-artifacts
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
@@ -378,6 +381,7 @@ jobs:
   install-with-profile:
     name: Install with hosted profile on AlmaLinux
     needs: build-install-artifacts
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]

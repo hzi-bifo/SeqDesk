@@ -89,7 +89,8 @@ jobs:
   self_hosted:
     name: Study Pipeline E2E (Self-hosted Twincore)
     needs: github_hosted
-    if: ${{ inputs.run_self_hosted && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
+    # Self-hosted leg runs only on the private CI mirror (auto on its mirrored push).
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]

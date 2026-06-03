@@ -35,6 +35,8 @@ concurrency:
 jobs:
   slurm_app_e2e:
     name: Pipeline SLURM E2E (Self-hosted Alma)
+    # Self-hosted runner lives only on the private CI mirror; never run on the public repo.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
