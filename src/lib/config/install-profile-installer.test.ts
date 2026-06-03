@@ -204,7 +204,10 @@ describe("install profile installer wiring", () => {
   });
 
   it("defines bifo_dmz AlmaLinux canaries for plain and hosted-profile installs", () => {
-    expect(profileWorkflow).toContain("push:");
+    // Self-hosted runs on demand + on a daily schedule (the private CI mirror),
+    // not on push — see the github.repository guard on the jobs.
+    expect(profileWorkflow).toContain("schedule:");
+    expect(profileWorkflow).toContain("workflow_dispatch:");
     expect(profileWorkflow).toContain('PROFILE_ID: ${{ github.event.inputs.profile_id || \'ci-runner\' }}');
     expect(profileWorkflow).toContain("PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}");
     expect(profileWorkflow).toContain("group: bifo_dmz");

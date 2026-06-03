@@ -5,16 +5,13 @@
 | [![CI](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/test.yml) | Unit & integration test suite, run on every push |
 | [![codecov](https://codecov.io/gh/hzi-bifo/SeqDesk/branch/main/graph/badge.svg?token=SMQXMDYACH)](https://codecov.io/gh/hzi-bifo/SeqDesk) | Source-code coverage of `src/**`, reported to Codecov |
 | [![Playwright E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/playwright.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/playwright.yml) | Browser (UI) end-to-end tests against a live instance |
-| [![Order Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml) | Order-level pipelines (simulate-reads, FASTQ checksum, FastQC) run end to end, plus read-cleaning promotion writeback |
-| [![Study Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml) | Study-level pipelines (simulate-reads, study demo report, nf-core/mag assembly) run end to end |
+| [![Order Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml) | Order-level pipelines (simulate-reads, FASTQ checksum, FastQC) run end to end on small synthetic reads, plus read-cleaning promotion writeback |
+| [![Study Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml) | Study-level pipelines (simulate-reads, study demo report, nf-core/mag) run end to end on small synthetic reads; nf-core/mag runs a reduced configuration (megahit assembly only — bin QC, GTDB-Tk taxonomy, and annotation are skipped), verifying the wiring rather than producing a real assembly |
 | [![Install E2E (Ubuntu)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml) | Install (tarball, npm, source, PM2, profile) → boot → admin login, on Ubuntu |
+| _private CI_ | SLURM pipeline execution as a real Slurm job (`sbatch`/`squeue`/`sacct`), on small synthetic reads |
+| _private CI_ | AlmaLinux install with a hosted profile, then boot |
 
-Two further checks need infrastructure we deliberately keep off a public repository — a real **SLURM** cluster and an **AlmaLinux** server configured like our production deployment. Because exposing a self-hosted runner to a public repo is a known security risk (a fork pull request could run code on that machine), these run on a private mirror (`hzi-bifo/SeqDesk-ci`) that is kept in sync with `main`. On that production-like hardware they verify:
-
-- **SLURM pipeline execution** — a pipeline submitted and run as a real Slurm job (`sbatch` / `squeue` / `sacct`).
-- **AlmaLinux installation** — installing SeqDesk (including a hosted profile) on AlmaLinux and booting it.
-
-Only reviewed, merged code ever reaches that runner (the mirror tracks `main`), so pull requests run exclusively the GitHub-hosted checks in the table above.
+_The last two run on a private self-hosted mirror (a real SLURM cluster and a production-like AlmaLinux box) and are not publicly badged here._
 
 **Sequencing facility management — from order submission to data publishing.** SeqDesk handles
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
