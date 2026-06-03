@@ -1,8 +1,10 @@
 name: Alma Install E2E
 
 on:
-  # Manual only — the self-hosted AlmaLinux run is started on demand (on the
-  # private mirror), not automatically on every commit.
+  # Runs once a day on the private mirror (jobs are guarded to SeqDesk-ci), plus
+  # on demand — not on every commit.
+  schedule:
+    - cron: "0 4 * * *" # daily 04:00 UTC (staggered after the SLURM run)
   workflow_dispatch:
     inputs:
       profile_id:

@@ -15,8 +15,10 @@
 name: Pipeline SLURM E2E
 
 on:
-  # Manual only — the self-hosted SLURM run is started on demand (on the private
-  # mirror), not automatically on every commit.
+  # Runs once a day on the private mirror (jobs are guarded to SeqDesk-ci), plus
+  # on demand — not on every commit.
+  schedule:
+    - cron: "0 2 * * *" # daily 02:00 UTC
   workflow_dispatch:
     inputs:
       runtime_pipeline_id:
