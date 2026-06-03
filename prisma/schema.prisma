@@ -126,6 +126,7 @@ model Study {
   description        String?
   generatedByE2E     Boolean       @default(false)
   checklistType      String?
+  mixsVersion        Int?
   studyMetadata      String?
   readyForSubmission Boolean       @default(false)
   readyAt            DateTime?

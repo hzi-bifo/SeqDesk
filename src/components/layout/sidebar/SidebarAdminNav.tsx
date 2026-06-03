@@ -229,7 +229,7 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
           <div
             className={cn(
               "overflow-hidden transition-all duration-200",
-              adminExpanded ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"
+              adminExpanded ? "max-h-[28rem] opacity-100 mt-1" : "max-h-0 opacity-0"
             )}
           >
             <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
@@ -237,6 +237,9 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             </Link>
             <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
               Study Forms
+            </Link>
+            <Link href="/admin/mixs-checklists" className={adminSubItemClass("/admin/mixs-checklists")}>
+              MIxS Checklists
             </Link>
             <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
               Modules
