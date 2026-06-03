@@ -60,8 +60,13 @@ test("a study's MIxS metadata form renders the checklist fields and round-trips 
     ).toBeVisible();
 
     // Round-trip: enter a value in the first MIxS field, save, reload, confirm it
-    // persisted (study-level fields are expanded by default).
-    const firstField = page.getByRole("textbox").first();
+    // persisted (study-level fields are expanded by default). Scope to the
+    // Study-Level Fields card so we don't grab the sidebar's "Search studies..."
+    // input, which is the first textbox on the page.
+    const studyCard = page
+      .locator("div", { has: page.getByRole("heading", { name: /Study-Level Fields/i }) })
+      .last();
+    const firstField = studyCard.getByRole("textbox").first();
     await expect(firstField).toBeVisible();
     await firstField.fill(value);
     await page.getByRole("button", { name: "Save Changes" }).click();
@@ -70,9 +75,7 @@ test("a study's MIxS metadata form renders the checklist fields and round-trips 
     ).toBeVisible({ timeout: 15000 });
 
     await page.reload();
-    await expect(page.getByRole("textbox").first()).toHaveValue(value, {
-      timeout: 20000,
-    });
+    await expect(firstField).toHaveValue(value, { timeout: 20000 });
   } finally {
     if (createdTitle) await deleteStudyFromList(page, createdTitle).catch(() => {});
   }
