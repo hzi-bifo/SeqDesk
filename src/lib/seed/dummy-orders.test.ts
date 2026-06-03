@@ -137,17 +137,24 @@ describe("dummy order seed dataset", () => {
 
     expect(allReads.some((r) => r.dataClass === "raw")).toBe(true);
     expect(allReads.some((r) => r.dataClass === "cleaned")).toBe(true);
-    // At least one sample exposes both an active cleaned read and an active raw read.
-    const sampleWithBoth = dataset.orders
+    // At least one sample exposes an active "cleaned" read alongside an inactive
+    // "raw" read (dataClass variety), honoring the one-active-read-per-sample
+    // invariant enforced by the Read_one_active_per_sample partial unique index.
+    const sampleWithVariety = dataset.orders
       .flatMap((o) => o.samples)
       .find(
         (s) =>
           s.reads.some((r) => r.dataClass === "cleaned" && r.isActive) &&
-          s.reads.some((r) => r.dataClass === "raw" && r.isActive)
+          s.reads.some((r) => r.dataClass === "raw" && !r.isActive)
       );
-    expect(sampleWithBoth).toBeDefined();
+    expect(sampleWithVariety).toBeDefined();
     // And there is an inactive (superseded) read for the read-cleaning promotion path.
     expect(allReads.some((r) => !r.isActive)).toBe(true);
+    // Invariant: a sample may have at most one active read (DB partial unique index).
+    for (const sample of dataset.orders.flatMap((o) => o.samples)) {
+      const activeCount = sample.reads.filter((r) => r.isActive).length;
+      expect(activeCount).toBeLessThanOrEqual(1);
+    }
     // Every read carries a valid dataClassSource provenance marker.
     for (const read of allReads) {
       expect(typeof read.dataClassSource).toBe("string");

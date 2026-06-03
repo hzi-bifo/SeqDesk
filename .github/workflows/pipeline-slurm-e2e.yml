@@ -335,5 +335,7 @@ jobs:
           if command -v psql >/dev/null 2>&1; then
             PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_slurm_missing}" >/dev/null 2>&1 || true
           fi
-          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          # Remove temp dirs BEFORE the conda env: this shell runs with the env
+          # active on PATH, so deleting it first leaves `rm` unresolvable (exit 127).
           rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" "${SEQDESK_DB_DIR:-}"
+          conda env remove -n "$PIPELINE_CONDA_ENV" || true
