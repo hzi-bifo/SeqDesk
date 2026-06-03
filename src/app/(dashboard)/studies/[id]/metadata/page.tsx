@@ -27,6 +27,7 @@ import { HelpBox } from "@/components/ui/help-box";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { PageNotice } from "@/components/ui/page-notice";
 import { notifyPanel } from "@/lib/notifications/client";
+import { resolveChecklistRef } from "@/lib/mixs/checklist-aliases";
 import {
   ArrowLeft,
   Loader2,
@@ -53,6 +54,7 @@ interface Study {
   title: string;
   description: string | null;
   checklistType: string | null;
+  mixsVersion: number | null;
   studyMetadata: string | null;
   submitted: boolean;
   samples: Sample[];
@@ -167,22 +169,6 @@ function SelectCell({ getValue, row, column, table }: CellContext<Sample, unknow
   );
 }
 
-const CHECKLIST_MAP: Record<string, string> = {
-  "human-gut": "GSC MIxS human gut",
-  "human-oral": "GSC MIxS human oral",
-  "human-skin": "GSC MIxS human skin",
-  "human-associated": "GSC MIxS human associated",
-  "host-associated": "GSC MIxS host associated",
-  "plant-associated": "GSC MIxS plant associated",
-  "soil": "GSC MIxS soil",
-  "water": "GSC MIxS water",
-  "wastewater-sludge": "GSC MIxS wastewater sludge",
-  "air": "GSC MIxS air",
-  "sediment": "GSC MIxS sediment",
-  "microbial-mat": "GSC MIxS microbial mat biolfilm",
-  "misc-environment": "GSC MIxS miscellaneous natural or artificial environment",
-};
-
 export default function StudyMetadataPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -203,6 +189,9 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
   // MIxS fields
   const [checklistFields, setChecklistFields] = useState<MixsField[]>([]);
   const [selectedField, setSelectedField] = useState<MixsField | null>(null);
+  // Display name resolved from the loaded checklist (registry name, not the raw
+  // stored accession / legacy slug).
+  const [checklistName, setChecklistName] = useState<string | null>(null);
   const apiStudyId = study?.id ?? id;
 
   useEffect(() => {
@@ -243,7 +232,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
 
       // Load MIxS checklist fields if checklist type is set
       if (data.checklistType) {
-        await loadChecklistFields(data.checklistType);
+        await loadChecklistFields(data.checklistType, data.mixsVersion);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load study");
@@ -252,15 +241,33 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
     }
   };
 
-  const loadChecklistFields = async (checklistType: string) => {
+  const loadChecklistFields = async (
+    checklistType: string,
+    mixsVersion?: number | null
+  ) => {
     try {
-      const checklistName = CHECKLIST_MAP[checklistType];
-      if (!checklistName) return;
+      // New studies store the accession; legacy studies store a slug or a free
+      // form name. Resolve to a registry lookup ref either way.
+      const ref = resolveChecklistRef(checklistType);
+      const params = new URLSearchParams();
+      if (ref.accession) {
+        params.set("accession", ref.accession);
+      } else if (ref.name) {
+        params.set("name", ref.name);
+      } else {
+        return;
+      }
+      if (mixsVersion) {
+        params.set("version", String(mixsVersion));
+      }
 
-      const res = await fetch(`/api/mixs/checklists?name=${encodeURIComponent(checklistName)}`);
+      const res = await fetch(`/api/mixs-checklists?${params.toString()}`);
       if (!res.ok) return;
 
       const data = await res.json();
+      if (typeof data.name === "string") {
+        setChecklistName(data.name);
+      }
       if (data.fields) {
         // Filter to visible fields only
         const visibleFields = data.fields.filter((f: MixsField) => f.visible !== false);
@@ -555,7 +562,7 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
               MIxS Metadata
             </h1>
             <p className="text-muted-foreground mt-1">
-              {study.title} - {samples.length} samples - {CHECKLIST_MAP[study.checklistType] || study.checklistType}
+              {study.title} - {samples.length} samples - {checklistName || study.checklistType}
             </p>
           </div>
           <Button onClick={handleSave} disabled={saving || !hasChanges}>

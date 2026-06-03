@@ -29,6 +29,8 @@ npm run test:e2e
 | ENA submission (UI) | The "Register at ENA" view surfaces a Submission Requirements checklist derived from the study (title, description, samples, taxonomy ID); a sample missing its taxId renders the Taxonomy ID check as **"Missing"**; submitting an incomplete study is rejected server-side (HTTP 400) with **no real ENA submission** and no accession side effects | `ena-submission-ui.spec.ts` |
 | Notifications | A created in-app notification is returned by the notifications API and surfaces in the dashboard footer bell — unread badge count and the notification in the opened panel (self-skips where in-app notifications are disabled) | `notifications.spec.ts` |
 | Studies — multi-order | A study built from samples drawn from **two different orders** shows both samples and both source orders on its Samples tab, then transitions Mark as Ready → Back to Draft | `multi-order-study.spec.ts` |
+| MIxS checklist picker | The new-study checklist picker is **populated from the registry** (not a hardcoded list): it offers checklists that were never hardcoded (a GSC environment package and a non-environmental genome checklist); creating a study with one persists its **ENA accession**; the metadata page then resolves that accession to the checklist name (the previously broken fetch is fixed) | `study-checklist-picker.spec.ts` |
+| MIxS checklist availability | An admin toggling a checklist's **availability off** (admin → MIxS Checklists → Save) removes it from the new-study picker — verified both via the picker's data source and in the wizard UI (the disabled checklist is gone, an available one remains); the config is restored afterward | `mixs-checklist-availability.spec.ts` |
 
 ## Not yet covered end to end (in the UI tests)
 
