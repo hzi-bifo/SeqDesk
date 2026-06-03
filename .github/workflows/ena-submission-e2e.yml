@@ -54,3 +54,89 @@ jobs:
             echo "Webin test credentials present — submitting a study to the ENA test server."
           fi
           SEQDESK_TEST_TIER=live npx vitest run src/lib/ena/submit-test-server.live.test.ts
+
+  install-load-submit:
+    name: "Install, load samples, submit to the ENA test server"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WEBIN_TEST_USERNAME: ${{ secrets.WEBIN_TEST_USERNAME }}
+      WEBIN_TEST_PASSWORD: ${{ secrets.WEBIN_TEST_PASSWORD }}
+      NEXT_TELEMETRY_DISABLED: 1
+      PORT: "8896"
+      DB_NAME: seqdesk_ena_e2e
+    steps:
+      - name: Check out repository (for the submission helper script)
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure paths
+        run: |
+          {
+            echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-ena-e2e"
+            echo "INSTALL_LOG=$RUNNER_TEMP/ena-e2e-install.log"
+            echo "SERVER_LOG=$RUNNER_TEMP/ena-e2e-server.log"
+            echo "NPM_PREFIX=$RUNNER_TEMP/ena-e2e-prefix"
+          } >> "$GITHUB_ENV"
+
+      - name: Start PostgreSQL (throwaway DB)
+        if: ${{ env.WEBIN_TEST_USERNAME != '' }}
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER seqdesk"
+          fi
+
+      - name: Install the published app (npm i -g seqdesk)
+        if: ${{ env.WEBIN_TEST_USERNAME != '' }}
+        run: |
+          set -euo pipefail
+          npm install -g seqdesk@latest --prefix "$NPM_PREFIX"
+          PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
+            seqdesk -y --without-pipelines --no-pm2 \
+              --dir "$INSTALL_DIR" --port "$PORT" \
+              --nextauth-url "http://127.0.0.1:$PORT" \
+              --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public" \
+              --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public"
+
+      - name: Boot, load samples, and submit to the ENA test server
+        if: ${{ env.WEBIN_TEST_USERNAME != '' }}
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >/dev/null; then READY=1; break; fi
+            sleep 2
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "App did not become ready in time."; tail -n 200 "$SERVER_LOG" || true; exit 1
+          fi
+          node "$GITHUB_WORKSPACE/scripts/run-ena-submission-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --email "admin@example.com" --password "admin" \
+            --webin-username "${WEBIN_TEST_USERNAME}" --webin-password "${WEBIN_TEST_PASSWORD}"
+
+      - name: Note when skipped (no Webin secret)
+        if: ${{ env.WEBIN_TEST_USERNAME == '' }}
+        run: echo "WEBIN_TEST_USERNAME / WEBIN_TEST_PASSWORD secrets not set — ENA install->load->submit E2E skipped."
+
+      - name: Upload logs
+        if: ${{ always() && env.WEBIN_TEST_USERNAME != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ena-install-load-submit
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 14
