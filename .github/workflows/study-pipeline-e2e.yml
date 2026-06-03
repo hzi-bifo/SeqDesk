@@ -1,4 +1,4 @@
-name: Study Pipeline End-to-End
+name: Study Pipeline
 
 on:
   push:

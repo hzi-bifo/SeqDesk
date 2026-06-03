@@ -15,15 +15,15 @@
   <td>Browser (UI) end-to-end tests against a live instance (see <a href="./PLAYWRIGHT_TESTS.md">PLAYWRIGHT_TESTS.md</a>)</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml"><img alt="Order Pipeline E2E" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml/badge.svg?branch=main"></a></td>
+  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml"><img alt="Order Pipeline" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/order-pipeline-e2e.yml/badge.svg?branch=main"></a></td>
   <td>Order-level pipelines (simulate-reads, FASTQ checksum, FastQC) run end to end on small synthetic reads, plus read-cleaning promotion writeback</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml"><img alt="Study Pipeline E2E" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main"></a></td>
+  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml"><img alt="Study Pipeline" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main"></a></td>
   <td>Study-level pipelines (simulate-reads, study demo report, nf-core/mag) run end to end on small synthetic reads; nf-core/mag runs a reduced configuration (megahit assembly only — bin QC, GTDB-Tk taxonomy, and annotation are skipped), verifying the wiring rather than producing a real assembly</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml"><img alt="Install E2E (Ubuntu)" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main"></a></td>
+  <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml"><img alt="Install (Ubuntu)" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main"></a></td>
   <td>Install (tarball, npm, source, PM2, profile) → boot → admin &amp; researcher login, on Ubuntu</td>
 </tr>
 <tr>

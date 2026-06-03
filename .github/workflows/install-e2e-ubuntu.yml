@@ -1,4 +1,4 @@
-name: Install E2E (Ubuntu)
+name: Install (Ubuntu)
 
 on:
   push:

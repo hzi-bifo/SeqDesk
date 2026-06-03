@@ -1,4 +1,4 @@
-name: Order Pipeline End-to-End
+name: Order Pipeline
 
 on:
   push:
