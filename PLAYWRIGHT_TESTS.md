@@ -31,6 +31,7 @@ npm run test:e2e
 | Studies — multi-order | A study built from samples drawn from **two different orders** shows both samples and both source orders on its Samples tab, then transitions Mark as Ready → Back to Draft | `multi-order-study.spec.ts` |
 | MIxS checklist picker | The new-study checklist picker is **populated from the registry** (not a hardcoded list): it offers checklists that were never hardcoded (a GSC environment package and a non-environmental genome checklist); creating a study with one persists its **ENA accession**; the metadata page then resolves that accession to the checklist name (the previously broken fetch is fixed) | `study-checklist-picker.spec.ts` |
 | MIxS checklist availability | An admin toggling a checklist's **availability off** (admin → MIxS Checklists → Save) removes it from the new-study picker — verified both via the picker's data source and in the wizard UI (the disabled checklist is gone, an available one remains); the config is restored afterward | `mixs-checklist-availability.spec.ts` |
+| MIxS metadata page | A study's MIxS metadata page builds its form from the **registry-resolved** checklist: the resolved checklist name is shown and the checklist's fields render (study-level inputs, required-field legend) | `study-mixs-metadata.spec.ts` |
 
 ## Not yet covered end to end (in the UI tests)
 
@@ -48,8 +49,11 @@ genuine gaps we intend to close:
   (`notifications.spec.ts`); the per-channel preference toggles and email/relay delivery are not.
 - **Software updates / rollback** — the staged-release and one-click rollback admin flow.
 - **Pipeline failure & retry** path (the happy path is covered above).
-- **Standalone MIxS metadata validation** as a dedicated UI test (currently exercised indirectly via
-  the form-builder required-field tests).
+- **MIxS metadata save round-trip / required-field enforcement** — the metadata page's *render* from
+  the resolved checklist is now covered (`study-mixs-metadata.spec.ts`); the save round-trip is
+  role-specific (study-level metadata persists verbatim only for FACILITY_ADMIN), and required-field
+  enforcement is exercised at the new-study wizard (`form-config-roundtrip.spec.ts`) and the ENA
+  submit gate (`ena-submission-ui.spec.ts`) rather than here.
 
 Pipeline *execution* on real infrastructure (a SLURM cluster, AlmaLinux) is covered by separate
 self-hosted CI, described in the README.
