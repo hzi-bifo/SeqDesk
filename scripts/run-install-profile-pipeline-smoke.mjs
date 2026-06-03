@@ -129,13 +129,19 @@ function loadInstalledConfig(installDir) {
 }
 
 function loadPrismaClient(installDir) {
-  const requireFromInstall = createRequire(path.join(installDir, "package.json"));
+  // The npm launcher installs the app (node_modules) under <installDir>/current
+  // while seqdesk.config.json stays at <installDir>; resolve @prisma/client from
+  // the release dir when present.
+  const appDir = fsSync.existsSync(path.join(installDir, "current", "package.json"))
+    ? path.join(installDir, "current")
+    : installDir;
+  const requireFromInstall = createRequire(path.join(appDir, "package.json"));
   try {
     const { PrismaClient } = requireFromInstall("@prisma/client");
     return PrismaClient;
   } catch (error) {
     fail(
-      `Failed to load @prisma/client from installed app at ${installDir}`,
+      `Failed to load @prisma/client from installed app at ${appDir}`,
       error instanceof Error ? error.message : String(error)
     );
   }
