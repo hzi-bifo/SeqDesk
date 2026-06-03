@@ -1,0 +1,345 @@
+name: Update Rollback (Ubuntu)
+
+# Tier-2 pre-release gate: proves a real, PM2-supervised SeqDesk install can apply
+# an in-app update to a NEW release and then roll back, without losing data, by
+# driving the actual /api/admin/updates/install + /rollback routes against a local
+# mock release server. Not run on push — call it before a release (workflow_call)
+# or run it manually (workflow_dispatch).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-from-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build "from" release tarball
+        env:
+          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
+          mkdir -p "$RUNNER_TEMP/update-from-tarball"
+          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$RUNNER_TEMP/update-from-tarball/"
+
+      - name: Upload "from" release tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-from-tarball
+          path: ${{ runner.temp }}/update-from-tarball/*
+          if-no-files-found: error
+          retention-days: 14
+
+  update-rollback-gate:
+    needs: build-from-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE seqdesk OWNER seqdesk"
+          fi
+
+      - name: Configure paths
+        run: |
+          {
+            echo "PORT=8795"
+            echo "MOCK_RELEASE_PORT=8796"
+            echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-update"
+            echo "PM2_HOME=$RUNNER_TEMP/update-pm2-home"
+            echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-update.json"
+            echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/update-from-artifact"
+            echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/update-release-server"
+            echo "DERIVE_WORK_DIR=$RUNNER_TEMP/derive-work"
+            echo "INSTALL_LOG=$RUNNER_TEMP/update-install.log"
+            echo "SERVER_LOG=$RUNNER_TEMP/update-pm2.log"
+            echo "MOCK_SERVER_LOG=$RUNNER_TEMP/update-mock-server.log"
+            echo "MOCK_PID_FILE=$RUNNER_TEMP/update-mock-server.pid"
+            echo "UPDATE_RESULT=$RUNNER_TEMP/update-result.json"
+            echo "ROLLBACK_RESULT=$RUNNER_TEMP/rollback-result.json"
+            echo "PGPASSWORD=seqdesk"
+          } >> "$GITHUB_ENV"
+
+      - name: Download "from" release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: update-from-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Derive "to" release tarball + stage mock release server
+        run: |
+          set -euo pipefail
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/install-api" "$MOCK_RELEASE_ROOT/downloads"
+
+          FROM_TARBALL="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$FROM_TARBALL" ]; then
+            echo "from tarball not found in $RELEASE_ARTIFACT_DIR"; exit 1
+          fi
+
+          # Derive a genuinely distinct "to" tarball (re-stamped version + one
+          # additive migration) with NO second build; emits VFROM/VTO/UPDATE_TARBALL/UPDATE_CHECKSUM.
+          node "$GITHUB_WORKSPACE/scripts/ci/derive-update-tarball.mjs" \
+            --from-tarball "$FROM_TARBALL" \
+            --work-dir "$DERIVE_WORK_DIR" \
+            --out-dir "$MOCK_RELEASE_ROOT/downloads" \
+            --github-env "$GITHUB_ENV"
+
+          # Serve the "from" tarball too, with its real checksum.
+          FROM_NAME="$(basename "$FROM_TARBALL")"
+          cp "$FROM_TARBALL" "$MOCK_RELEASE_ROOT/downloads/$FROM_NAME"
+          FROM_CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$FROM_NAME" | cut -d' ' -f1)"
+          echo "FROM_TARBALL_NAME=$FROM_NAME" >> "$GITHUB_ENV"
+          echo "FROM_CHECKSUM=$FROM_CHECKSUM" >> "$GITHUB_ENV"
+
+      - name: Write mock manifests (install=Vfrom, update=Vto)
+        run: |
+          set -euo pipefail
+          BASE="http://127.0.0.1:${MOCK_RELEASE_PORT}"
+          # Installer fetches $SEQDESK_API/version -> serve Vfrom here.
+          node "$GITHUB_WORKSPACE/scripts/ci/write-mock-manifest.mjs" \
+            --version "$VFROM" \
+            --download-url "${BASE}/downloads/${FROM_TARBALL_NAME}" \
+            --checksum "$FROM_CHECKSUM" \
+            --update-available false \
+            --out "$MOCK_RELEASE_ROOT/install-api/version"
+          # In-app updater fetches $SEQDESK_UPDATE_SERVER/api/version -> serve Vto here.
+          node "$GITHUB_WORKSPACE/scripts/ci/write-mock-manifest.mjs" \
+            --version "$VTO" \
+            --download-url "${BASE}/downloads/seqdesk-${VTO}.tar.gz" \
+            --checksum "$UPDATE_CHECKSUM" \
+            --update-available true \
+            --out "$MOCK_RELEASE_ROOT/api/version"
+
+      - name: Start mock release server (persistent)
+        run: |
+          set -euo pipefail
+          cd "$MOCK_RELEASE_ROOT"
+          nohup python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          echo $! > "$MOCK_PID_FILE"
+          disown || true
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/install-api/version" >/dev/null \
+               && curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              echo "mock release server is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "mock release server did not come up"; cat "$MOCK_SERVER_LOG" || true; exit 1
+
+      - name: Create infrastructure JSON
+        run: |
+          cat > "$INFRA_CONFIG" <<EOF
+          {
+            "port": $PORT,
+            "pipelinesEnabled": false,
+            "nextAuthUrl": "http://127.0.0.1:$PORT",
+            "databaseUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public",
+            "directUrl": "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public"
+          }
+          EOF
+
+      - name: Install the "from" release under PM2
+        run: |
+          set -euo pipefail
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/install-api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --without-pipelines --use-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+
+      - name: Resolve PM2 binary
+        run: |
+          set -euo pipefail
+          if command -v pm2 >/dev/null 2>&1; then
+            PM2_BIN="$(command -v pm2)"
+          elif [ -x "$INSTALL_DIR/node_modules/.bin/pm2" ]; then
+            PM2_BIN="$INSTALL_DIR/node_modules/.bin/pm2"
+          else
+            echo "PM2 binary not found"; exit 1
+          fi
+          echo "PM2_BIN=$PM2_BIN" >> "$GITHUB_ENV"
+
+      - name: Point the app's update server at the mock (runtime.updateServer)
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const [file, url] = [process.argv[1], process.argv[2]];
+            const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+            cfg.runtime = cfg.runtime || {};
+            cfg.runtime.updateServer = url;
+            fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+            console.log("patched runtime.updateServer ->", url);
+          ' "$INSTALL_DIR/seqdesk.config.json" "http://127.0.0.1:${MOCK_RELEASE_PORT}"
+          "$PM2_BIN" restart seqdesk
+
+      - name: Wait for the app to be ready
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >/dev/null; then
+              echo "app ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "app did not become ready"; "$PM2_BIN" logs seqdesk --nostream --lines 200 || true; exit 1
+
+      - name: PM2 pre-flight (must be online so restart cannot fall through to exit)
+        run: |
+          set -euo pipefail
+          "$PM2_BIN" jlist | node -e '
+            const list = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const proc = list.find((p) => p.name === "seqdesk");
+            if (!proc) { console.error("no pm2 process named seqdesk"); process.exit(1); }
+            if (proc.pm2_env.status !== "online") {
+              console.error("seqdesk pm2 status is " + proc.pm2_env.status + " (need online)");
+              process.exit(1);
+            }
+            console.log("pm2 seqdesk online (pid " + proc.pid + ")");
+          '
+
+      - name: Record baseline data counts
+        run: |
+          set -euo pipefail
+          # One statement, one row, four comma-separated columns (a single
+          # multi-statement `psql -tAc` would print only the LAST statement's row).
+          LINE="$(psql -h 127.0.0.1 -U seqdesk -d seqdesk -t -A -F ',' -c \
+            'SELECT (SELECT count(*) FROM "Order"),(SELECT count(*) FROM "Sample"),(SELECT count(*) FROM "Study"),(SELECT count(*) FROM "User")')"
+          IFS=',' read -r O S ST U <<< "$LINE"
+          {
+            echo "BASE_ORDER=$O"
+            echo "BASE_SAMPLE=$S"
+            echo "BASE_STUDY=$ST"
+            echo "BASE_USER=$U"
+          } >> "$GITHUB_ENV"
+          echo "baseline: orders=$O samples=$S studies=$ST users=$U"
+
+      - name: Drive in-app update (Vfrom -> Vto)
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/ci/drive-update-rollback-e2e.mjs" \
+            --phase update \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --from-version "$VFROM" \
+            --to-version "$VTO" \
+            --result-file "$UPDATE_RESULT" \
+            --timeout-ms 600000
+
+      - name: Assert update applied (layout, migration, data preserved)
+        run: |
+          set -euo pipefail
+          # Disk layout: both releases on disk, current -> Vto.
+          test -d "$INSTALL_DIR/releases/$VFROM"
+          test -d "$INSTALL_DIR/releases/$VTO"
+          CUR="$(readlink "$INSTALL_DIR/current")"
+          case "$CUR" in
+            *"releases/$VTO") echo "current -> $CUR" ;;
+            *) echo "current symlink is $CUR, expected releases/$VTO"; exit 1 ;;
+          esac
+          # migrate deploy actually applied the additive migration from the Vto tree.
+          PROBE="$(psql -h 127.0.0.1 -U seqdesk -d seqdesk -tAc "SELECT to_regclass('public._ci_e2e_probe') IS NOT NULL")"
+          if [ "$PROBE" != "t" ]; then echo "_ci_e2e_probe table missing — migrate deploy did not run"; exit 1; fi
+          # No data loss vs baseline.
+          LINE="$(psql -h 127.0.0.1 -U seqdesk -d seqdesk -t -A -F ',' -c \
+            'SELECT (SELECT count(*) FROM "Order"),(SELECT count(*) FROM "Sample"),(SELECT count(*) FROM "Study"),(SELECT count(*) FROM "User")')"
+          IFS=',' read -r O S ST U <<< "$LINE"
+          [ "$O" -ge "$BASE_ORDER" ] || { echo "orders $O < baseline $BASE_ORDER"; exit 1; }
+          [ "$S" -ge "$BASE_SAMPLE" ] || { echo "samples $S < baseline $BASE_SAMPLE"; exit 1; }
+          [ "$ST" -ge "$BASE_STUDY" ] || { echo "studies $ST < baseline $BASE_STUDY"; exit 1; }
+          [ "$U" -ge "$BASE_USER" ] || { echo "users $U < baseline $BASE_USER"; exit 1; }
+          echo "post-update counts ok: orders=$O samples=$S studies=$ST users=$U"
+
+      - name: Drive in-app rollback (Vto -> Vfrom)
+        run: |
+          set -euo pipefail
+          SENTINEL="$(node -p "require('$UPDATE_RESULT').sentinelOrderId")"
+          node "$GITHUB_WORKSPACE/scripts/ci/drive-update-rollback-e2e.mjs" \
+            --phase rollback \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --to-version "$VFROM" \
+            --sentinel-order-id "$SENTINEL" \
+            --result-file "$ROLLBACK_RESULT" \
+            --timeout-ms 300000
+
+      - name: Assert rollback applied (layout, data preserved)
+        run: |
+          set -euo pipefail
+          CUR="$(readlink "$INSTALL_DIR/current")"
+          case "$CUR" in
+            *"releases/$VFROM") echo "current -> $CUR" ;;
+            *) echo "current symlink is $CUR, expected releases/$VFROM"; exit 1 ;;
+          esac
+          LINE="$(psql -h 127.0.0.1 -U seqdesk -d seqdesk -t -A -F ',' -c \
+            'SELECT (SELECT count(*) FROM "Order"),(SELECT count(*) FROM "Sample"),(SELECT count(*) FROM "Study"),(SELECT count(*) FROM "User")')"
+          IFS=',' read -r O S ST U <<< "$LINE"
+          [ "$O" -ge "$BASE_ORDER" ] || { echo "orders $O < baseline $BASE_ORDER"; exit 1; }
+          [ "$S" -ge "$BASE_SAMPLE" ] || { echo "samples $S < baseline $BASE_SAMPLE"; exit 1; }
+          [ "$ST" -ge "$BASE_STUDY" ] || { echo "studies $ST < baseline $BASE_STUDY"; exit 1; }
+          [ "$U" -ge "$BASE_USER" ] || { echo "users $U < baseline $BASE_USER"; exit 1; }
+          echo "post-rollback counts ok: orders=$O samples=$S studies=$ST users=$U"
+
+      - name: Capture PM2 logs
+        if: always()
+        run: |
+          if [ -n "${PM2_BIN:-}" ]; then
+            "$PM2_BIN" logs seqdesk --nostream --lines 300 >"$SERVER_LOG" 2>&1 || true
+          fi
+
+      - name: Upload update-e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-rollback-e2e-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.UPDATE_RESULT }}
+            ${{ env.ROLLBACK_RESULT }}
+            ${{ env.INSTALL_DIR }}/.update-status.json
+            ${{ env.INSTALL_DIR }}/.update-state.json
+            ${{ env.MOCK_RELEASE_ROOT }}/api/version
+            ${{ env.MOCK_RELEASE_ROOT }}/install-api/version
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -n "${PM2_BIN:-}" ]; then
+            "$PM2_BIN" delete seqdesk >/dev/null 2>&1 || true
+            "$PM2_BIN" kill >/dev/null 2>&1 || true
+          fi
+          if [ -f "${MOCK_PID_FILE:-}" ]; then
+            kill "$(cat "$MOCK_PID_FILE")" >/dev/null 2>&1 || true
+          fi
