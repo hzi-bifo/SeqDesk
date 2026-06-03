@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getActiveMixsConfig: vi.fn(),
   db: {
     study: {
       findMany: vi.fn(),
@@ -21,6 +22,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/mixs/config", () => ({
+  getActiveMixsConfig: mocks.getActiveMixsConfig,
 }));
 
 import { GET, POST } from "./route";
@@ -110,6 +115,11 @@ describe("POST /api/studies", () => {
       id: "study-1",
       ...data,
     }));
+    mocks.getActiveMixsConfig.mockResolvedValue({
+      version: 6,
+      checklists: [],
+      deprecated: [],
+    });
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -185,5 +195,71 @@ describe("POST /api/studies", () => {
     expect(response.status).toBe(201);
     const args = mocks.db.study.create.mock.calls[0][0].data;
     expect(args.generatedByE2E).toBe(false);
+  });
+
+  it("pins the active MIxS version when a checklist type is supplied", async () => {
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "MIxS study", checklistType: "  ERC000022  " }),
+    });
+
+    const response = await POST(req);
+    expect(response.status).toBe(201);
+    expect(mocks.getActiveMixsConfig).toHaveBeenCalledWith(mocks.db);
+    const args = mocks.db.study.create.mock.calls[0][0].data;
+    expect(args.checklistType).toBe("ERC000022");
+    expect(args.mixsVersion).toBe(6);
+  });
+
+  it("does not resolve a MIxS version when no checklist type is supplied", async () => {
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "No checklist study" }),
+    });
+
+    const response = await POST(req);
+    expect(response.status).toBe(201);
+    expect(mocks.getActiveMixsConfig).not.toHaveBeenCalled();
+    const args = mocks.db.study.create.mock.calls[0][0].data;
+    expect(args.checklistType).toBeNull();
+    expect(args.mixsVersion).toBeNull();
+  });
+
+  it("creates the study with a null MIxS version when version resolution fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getActiveMixsConfig.mockRejectedValue(new Error("registry unavailable"));
+
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Resilient study", checklistType: "ERC000022" }),
+    });
+
+    const response = await POST(req);
+    expect(response.status).toBe(201);
+    const args = mocks.db.study.create.mock.calls[0][0].data;
+    expect(args.checklistType).toBe("ERC000022");
+    expect(args.mixsVersion).toBeNull();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("returns 500 when creating the study throws", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.db.study.create.mockRejectedValue(new Error("db error"));
+
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Doomed study" }),
+    });
+
+    const response = await POST(req);
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Failed to create study");
+    consoleError.mockRestore();
   });
 });

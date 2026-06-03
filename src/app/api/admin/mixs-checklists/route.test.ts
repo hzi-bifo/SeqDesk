@@ -226,6 +226,46 @@ describe("PUT /api/admin/mixs-checklists", () => {
     expect(saved.checklists[0].localOverrides).toBe(true);
   });
 
+  it("preserves a provided deprecated array and defaults version when absent", async () => {
+    // Covers the `Array.isArray(config.deprecated) ? config.deprecated : []`
+    // truthy branch and the `config.version ?? 1` fallback branch.
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.saveActiveMixsConfig.mockResolvedValue(undefined);
+
+    const deprecated = [checklist("GSC-OLD", "Old", [], { deprecated: true })];
+    const config = {
+      checklists: [checklist("GSC-A", "Checklist A", [field("f1")])],
+      deprecated,
+      // no version, no syncUrl
+    };
+
+    const response = await PUT(makeRequest({ config }));
+    expect(response.status).toBe(200);
+    const saved = mocks.saveActiveMixsConfig.mock.calls[0][1];
+    expect(saved.deprecated).toEqual(deprecated);
+    expect(saved.version).toBe(1);
+    // Falls back to the default sync URL when none supplied.
+    expect(saved.syncUrl).toBe(DEFAULT_SYNC_URL);
+  });
+
+  it("defaults a non-array deprecated to an empty list", async () => {
+    // Covers the `: []` else branch of the deprecated normalization.
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.saveActiveMixsConfig.mockResolvedValue(undefined);
+
+    const config = {
+      checklists: [checklist("GSC-A", "Checklist A", [field("f1")])],
+      deprecated: "nope",
+      version: 7,
+    };
+
+    const response = await PUT(makeRequest({ config }));
+    expect(response.status).toBe(200);
+    const saved = mocks.saveActiveMixsConfig.mock.calls[0][1];
+    expect(saved.deprecated).toEqual([]);
+    expect(saved.version).toBe(7);
+  });
+
   it("returns 500 when save throws", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.saveActiveMixsConfig.mockRejectedValue(new Error("DB down"));
@@ -369,6 +409,51 @@ describe("POST /api/admin/mixs-checklists", () => {
     expect(mocks.saveActiveMixsConfig).not.toHaveBeenCalled();
   });
 
+  it("check-updates surfaces a non-ok registry HTTP response as an error", async () => {
+    // Exercises fetchRemoteRegistry's `!response.ok` throw (route line 45).
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getActiveMixsConfig.mockResolvedValue(baseConfig);
+    mocks.fetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    });
+
+    const response = await POST(makeRequest({ action: "check-updates" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.hasUpdates).toBe(false);
+    expect(body.error).toBe(true);
+    expect(body.message).toContain("Failed to check");
+    expect(mocks.saveActiveMixsConfig).not.toHaveBeenCalled();
+  });
+
+  it("check-updates reports hasUpdates when remote version is newer but no field diffs", async () => {
+    // Drives the `remoteVersion > currentVersion` branch of hasUpdates in
+    // isolation (no added/removed/changed) and the summarizeUpdate no-detail path.
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getActiveMixsConfig.mockResolvedValue(baseConfig);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        version: 5,
+        checklists: [checklist("GSC-A", "Checklist A", [field("f1")])],
+      }),
+    });
+
+    const response = await POST(makeRequest({ action: "check-updates" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.hasUpdates).toBe(true);
+    expect(body.remoteVersion).toBe(5);
+    expect(body.added).toEqual([]);
+    expect(body.removed).toEqual([]);
+    expect(body.changed).toEqual([]);
+    // No (added/removed/changed) detail parenthetical when only version bumped.
+    expect(body.message).toBe("Update available: v5.");
+    expect(mocks.saveActiveMixsConfig).not.toHaveBeenCalled();
+  });
+
   it("apply snapshots then saves, deprecates removed, and protects localOverrides", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     const current = {
@@ -440,6 +525,87 @@ describe("POST /api/admin/mixs-checklists", () => {
         (d: { accession: string }) => d.accession === "GSC-GONE"
       ).deprecated
     ).toBe(true);
+  });
+
+  it("apply unwraps a { config } registry envelope and revives a re-listed deprecated checklist", async () => {
+    // Covers: the remoteData.config envelope branch in fetchRemoteRegistry,
+    // and the pre-existing deprecated loop in mergeChecklists (route lines
+    // 181-184) for both the "reappears upstream -> skip" (line 183) and
+    // "stays deprecated -> keep" (line 184) branches.
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    const current = {
+      version: 2,
+      checklists: [checklist("GSC-A", "Checklist A", [field("f1")])],
+      deprecated: [
+        // Reappears in the remote payload below -> must be dropped from deprecated.
+        checklist("GSC-REVIVE", "Revived", [field("r1")], { deprecated: true }),
+        // Absent upstream -> must remain deprecated.
+        checklist("GSC-STAYGONE", "Still Gone", [field("s1")], {
+          deprecated: true,
+        }),
+      ],
+      syncUrl: DEFAULT_SYNC_URL,
+    };
+    mocks.getActiveMixsConfig.mockResolvedValue(current);
+    mocks.snapshotMixsConfig.mockResolvedValue(undefined);
+    mocks.saveActiveMixsConfig.mockResolvedValue(undefined);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        // Envelope form: payload nested under `config`.
+        config: {
+          version: 3,
+          lastUpdated: "2026-06-02",
+          checklists: [
+            checklist("GSC-A", "Checklist A", [field("f1")]),
+            checklist("GSC-REVIVE", "Revived", [field("r1")]),
+          ],
+        },
+      }),
+    });
+
+    const response = await POST(makeRequest({ action: "apply" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied).toBe(true);
+    expect(body.config.version).toBe(3);
+
+    const saved = mocks.saveActiveMixsConfig.mock.calls[0][1];
+    const activeAcc = saved.checklists.map(
+      (c: { accession: string }) => c.accession
+    );
+    // Revived accession is active again, not deprecated.
+    expect(activeAcc).toContain("GSC-REVIVE");
+    const deprecatedAcc = saved.deprecated.map(
+      (d: { accession: string }) => d.accession
+    );
+    expect(deprecatedAcc).not.toContain("GSC-REVIVE");
+    // The genuinely-absent one survives as deprecated.
+    expect(deprecatedAcc).toContain("GSC-STAYGONE");
+    expect(
+      saved.deprecated.find(
+        (d: { accession: string }) => d.accession === "GSC-STAYGONE"
+      ).deprecated
+    ).toBe(true);
+  });
+
+  it("apply surfaces a non-ok registry HTTP response as an error", async () => {
+    // fetchRemoteRegistry `!response.ok` throw (route line 45) via the apply path.
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getActiveMixsConfig.mockResolvedValue(baseConfig);
+    mocks.fetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    });
+
+    const response = await POST(makeRequest({ action: "apply" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied).toBe(false);
+    expect(body.error).toBe(true);
+    expect(body.message).toContain("Failed to apply");
+    expect(mocks.saveActiveMixsConfig).not.toHaveBeenCalled();
   });
 
   it("apply returns error info when fetch fails", async () => {

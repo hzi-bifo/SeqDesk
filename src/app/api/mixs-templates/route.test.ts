@@ -100,4 +100,16 @@ describe("GET /api/mixs-templates", () => {
     const response = await GET(request);
     expect(response.status).toBe(404);
   });
+
+  it("returns 500 when loading the active config throws", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getActiveMixsConfig.mockRejectedValue(new Error("db down"));
+    const request = new NextRequest("http://localhost:3000/api/mixs-templates");
+    const response = await GET(request);
+    const data = await response.json();
+    expect(response.status).toBe(500);
+    expect(data.error).toBe("Failed to fetch templates");
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });

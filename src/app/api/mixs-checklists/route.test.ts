@@ -95,6 +95,18 @@ describe("GET /api/mixs-checklists", () => {
     );
   });
 
+  it("falls back to null version when the version param is non-numeric", async () => {
+    mocks.getChecklistForStudy.mockResolvedValue(sampleChecklist);
+    const request = new NextRequest(
+      "http://localhost:3000/api/mixs-checklists?accession=ERC000022&version=abc"
+    );
+    await GET(request);
+    expect(mocks.getChecklistForStudy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ version: null })
+    );
+  });
+
   it("returns 404 for unknown accession", async () => {
     mocks.getChecklistForStudy.mockResolvedValue(undefined);
     const request = new NextRequest("http://localhost:3000/api/mixs-checklists?accession=NONEXISTENT");
