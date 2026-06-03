@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getActiveMixsConfig } from "@/lib/mixs/config";
 
 // GET all studies for the current user
 export async function GET() {
@@ -98,11 +99,24 @@ export async function POST(request: NextRequest) {
 
     const sanitizedChecklist = typeof checklistType === "string" ? checklistType.trim() : "";
 
+    // Pin the study to the MIxS checklist version it is authored against, so a
+    // later registry update never retroactively changes its fields. Only
+    // stamped when the study actually uses a MIxS checklist.
+    let mixsVersion: number | null = null;
+    if (sanitizedChecklist) {
+      try {
+        mixsVersion = (await getActiveMixsConfig(db)).version;
+      } catch (error) {
+        console.error("Could not resolve active MIxS version for study:", error);
+      }
+    }
+
     const study = await db.study.create({
       data: {
         title: title.trim(),
         description: description?.trim() || null,
         checklistType: sanitizedChecklist || null,
+        mixsVersion,
         userId: session.user.id,
         generatedByE2E,
         studyMetadata: studyMetadata !== undefined
