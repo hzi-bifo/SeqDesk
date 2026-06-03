@@ -4,12 +4,18 @@ import {
   createStudyFromOrderSamples,
 } from "./helpers";
 
-// Researcher context. The study MIxS metadata page is a draft editor: it renders
-// the study's resolved checklist fields (required ones marked with *) and persists
+// Admin context. The study MIxS metadata page is a draft editor: it renders the
+// study's resolved checklist fields (required ones marked with *) and persists
 // edits without blocking on required fields — required-field enforcement lives at
 // the new-study wizard (form-config-roundtrip) and ENA submission (ena-submission-ui),
-// which are tested separately. This spec covers what the metadata page itself does:
-// the MIxS form renders from the registry-resolved checklist and round-trips on save.
+// tested separately. This spec covers what the metadata page itself does: the MIxS
+// form renders from the registry-resolved checklist and round-trips on save.
+//
+// Runs as FACILITY_ADMIN because the studies PUT route persists study-level
+// studyMetadata verbatim for admins, whereas for researchers it filters it to the
+// configured study FORM fields (so MIxS checklist study-level keys would not
+// round-trip). Sample-level checklistData persists for either role.
+test.use({ storageState: "playwright/.auth/admin.json" });
 test.setTimeout(120000);
 
 async function deleteStudyFromList(page: Page, studyTitle: string) {
