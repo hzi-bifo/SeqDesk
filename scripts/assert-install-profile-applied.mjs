@@ -55,6 +55,13 @@ const expectedDeviceId = args["expected-device-id"] || "ont-minion-mk1d";
 if (!installDir) fail("Missing required --dir");
 if (!expectedProfileId) fail("Missing required --profile-id");
 
+// The npm launcher installs the app under <installDir>/current (a versioned
+// release), while seqdesk.config.json lives at <installDir>. Resolve app code
+// (node_modules, pipelines) from the release dir when present.
+const appDir = fs.existsSync(path.join(installDir, "current", "package.json"))
+  ? path.join(installDir, "current")
+  : installDir;
+
 const installedConfig = loadInstallConfig(installDir);
 const databaseUrl = installedConfig?.runtime?.databaseUrl;
 const directUrl = installedConfig?.runtime?.directUrl || databaseUrl;
@@ -65,13 +72,13 @@ if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
 process.env.DATABASE_URL = databaseUrl;
 process.env.DIRECT_URL = directUrl;
 
-const requireFromInstall = createRequire(path.join(installDir, "package.json"));
+const requireFromInstall = createRequire(path.join(appDir, "package.json"));
 let PrismaClient;
 try {
   ({ PrismaClient } = requireFromInstall("@prisma/client"));
 } catch (error) {
   fail(
-    `Failed to load @prisma/client from installed app at ${installDir}: ${
+    `Failed to load @prisma/client from installed app at ${appDir}: ${
       error instanceof Error ? error.message : String(error)
     }`
   );
@@ -151,7 +158,7 @@ try {
   }
 
   if (expectedProfileId === "twincore") {
-    const metaxpathManifest = path.join(installDir, "pipelines", "metaxpath", "manifest.json");
+    const metaxpathManifest = path.join(appDir, "pipelines", "metaxpath", "manifest.json");
     if (!fs.existsSync(metaxpathManifest)) {
       fail(`Expected private MetaxPath package to be installed at ${metaxpathManifest}`);
     }
