@@ -15,8 +15,8 @@
 name: Pipeline SLURM E2E
 
 on:
-  push:
-    branches: [main]
+  # Manual only — the self-hosted SLURM run is started on demand (on the private
+  # mirror), not automatically on every commit.
   workflow_dispatch:
     inputs:
       runtime_pipeline_id:

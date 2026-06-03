@@ -9,7 +9,12 @@
 | [![Study Pipeline E2E](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml) | Study-level pipelines (simulate-reads, study demo report, nf-core/mag assembly) run end to end |
 | [![Install E2E (Ubuntu)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main)](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml) | Install (tarball, npm, source, PM2, profile) → boot → admin login, on Ubuntu |
 
-Additional **self-hosted** checks — AlmaLinux production-mirror install and SLURM pipeline execution — run on a private CI mirror (`hzi-bifo/SeqDesk-ci`) so the self-hosted runner is never exposed to this public repository.
+Two further checks need infrastructure we deliberately keep off a public repository — a real **SLURM** cluster and an **AlmaLinux** server configured like our production deployment. Because exposing a self-hosted runner to a public repo is a known security risk (a fork pull request could run code on that machine), these run on a private mirror (`hzi-bifo/SeqDesk-ci`) that is kept in sync with `main`. On that production-like hardware they verify:
+
+- **SLURM pipeline execution** — a pipeline submitted and run as a real Slurm job (`sbatch` / `squeue` / `sacct`).
+- **AlmaLinux installation** — installing SeqDesk (including a hosted profile) on AlmaLinux and booting it.
+
+Only reviewed, merged code ever reaches that runner (the mirror tracks `main`), so pull requests run exclusively the GitHub-hosted checks in the table above.
 
 **Sequencing facility management — from order submission to data publishing.** SeqDesk handles
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
