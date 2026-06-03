@@ -117,6 +117,24 @@ PostgreSQL. Covered flows include:
 Codecov tracks `src/**` source coverage; Playwright browser coverage is tracked separately from the
 Codecov percentage in the README.
 
+## Update + rollback E2E (release gate)
+
+`update-rollback-e2e-ubuntu.yml` is a pre-release gate (run via **workflow_dispatch**, or chained
+before a release with **workflow_call**) that proves the in-app updater works end to end. It builds
+the current release, derives a distinct "to" release from that same tarball with no second build
+(re-stamped `package.json` version + one additive `CREATE TABLE IF NOT EXISTS` migration), installs
+the "from" release under PM2, then drives the real `POST /api/admin/updates/install` and
+`POST /api/admin/updates/rollback` routes against the running app. It asserts the running version
+flips, the new migration applies (`migrate deploy` ran), the `current/` symlink moves between
+`releases/<version>` directories, data is preserved (orders/samples/studies/users counts stay at or
+above the pre-update baseline and a sentinel order survives both transitions), and admin/researcher
+login still work on each release. Completion is judged on the disk-persisted update state, so it
+tolerates the PM2 restart window.
+
+```bash
+gh workflow run update-rollback-e2e-ubuntu.yml --ref main
+```
+
 ## Background workers
 
 Two long-lived helper processes run alongside the Next.js server:

@@ -34,9 +34,13 @@
   <td><em>private CI</em></td>
   <td>AlmaLinux install with a hosted profile, then boot</td>
 </tr>
+<tr>
+  <td><em>release gate</em></td>
+  <td>In-app update to a new release + one-click rollback, applied on a real PM2 install and verified to preserve data (run before each release)</td>
+</tr>
 </table>
 
-_The last two run on a private self-hosted mirror (a real SLURM cluster and a production-like AlmaLinux box) and are not publicly badged here._
+_The SLURM and AlmaLinux rows run on a private self-hosted mirror (a real SLURM cluster and a production-like AlmaLinux box); the update/rollback release gate runs before each release through the in-app updater. These are exercised on demand rather than on every push, so they are not badged here._
 
 **Sequencing facility management — from order submission to data publishing.** SeqDesk handles
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
