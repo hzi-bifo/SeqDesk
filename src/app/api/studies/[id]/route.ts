@@ -58,6 +58,7 @@ const studyBaseSelect = {
   alias: true,
   description: true,
   checklistType: true,
+  mixsVersion: true,
   studyMetadata: true,
   readyForSubmission: true,
   readyAt: true,

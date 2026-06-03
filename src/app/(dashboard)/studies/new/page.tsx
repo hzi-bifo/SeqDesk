@@ -39,6 +39,8 @@ import {
   Search,
   AlertTriangle,
   Shield,
+  Dna,
+  TreePine,
 } from "lucide-react";
 import {
   Dialog,
@@ -701,21 +703,60 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
   );
 });
 
-const CHECKLIST_TYPES = [
-  { id: "human-gut", name: "Human Gut", icon: User, description: "Samples from human gastrointestinal tract", templateName: "MIxS Human Gut" },
-  { id: "human-oral", name: "Human Oral", icon: User, description: "Samples from human oral cavity", templateName: "MIxS Human Oral" },
-  { id: "human-skin", name: "Human Skin", icon: User, description: "Samples from human skin", templateName: "MIxS Human Skin" },
-  { id: "human-associated", name: "Human Associated", icon: User, description: "Other human-associated samples", templateName: "MIxS Human Associated" },
-  { id: "host-associated", name: "Host Associated", icon: Bug, description: "Samples from non-human hosts", templateName: "MIxS Host Associated" },
-  { id: "plant-associated", name: "Plant Associated", icon: Leaf, description: "Samples associated with plants", templateName: "MIxS Plant Associated" },
-  { id: "soil", name: "Soil", icon: Mountain, description: "Terrestrial soil samples", templateName: "MIxS Soil" },
-  { id: "water", name: "Water", icon: Droplets, description: "Freshwater or marine samples", templateName: "MIxS Water" },
-  { id: "wastewater-sludge", name: "Wastewater/Sludge", icon: Waves, description: "Wastewater treatment samples", templateName: "MIxS Wastewater Sludge" },
-  { id: "air", name: "Air", icon: Wind, description: "Atmospheric or aerosol samples", templateName: "MIxS Air" },
-  { id: "sediment", name: "Sediment", icon: Mountain, description: "Aquatic or terrestrial sediments", templateName: "MIxS Sediment" },
-  { id: "microbial-mat", name: "Microbial Mat/Biofilm", icon: Microscope, description: "Biofilm or microbial mat samples", templateName: "MIxS Microbial Mat Biofilm" },
-  { id: "misc-environment", name: "Miscellaneous", icon: FlaskConical, description: "Other environment types", templateName: "MIxS Miscellaneous" },
-];
+// Registry checklist as served by GET /api/mixs-checklists.
+interface RegistryChecklist {
+  name: string;
+  accession: string;
+  description?: string;
+}
+
+// Map a registry checklist to a representative lucide icon. The picker is now
+// registry-driven, so this resolves by accession first (for the known GSC MIxS
+// environment packages) and falls back to keyword matching on the name so newly
+// added checklists (pathogen, viral/UViG, MAG/SAG, Tara Oceans, Tree of Life,
+// ...) still get a sensible icon instead of always defaulting.
+function iconForChecklist({
+  accession,
+  name,
+}: {
+  accession?: string;
+  name?: string;
+}): React.ComponentType<{ className?: string }> {
+  const byAccession: Record<string, React.ComponentType<{ className?: string }>> = {
+    ERC000014: User,
+    ERC000015: User,
+    ERC000016: User,
+    ERC000017: User,
+    ERC000013: Bug,
+    ERC000020: Leaf,
+    ERC000022: Mountain,
+    ERC000024: Droplets,
+    ERC000023: Waves,
+    ERC000012: Wind,
+    ERC000021: Mountain,
+    ERC000019: Microscope,
+    ERC000025: FlaskConical,
+  };
+  if (accession && byAccession[accession.toUpperCase()]) {
+    return byAccession[accession.toUpperCase()];
+  }
+
+  const n = (name || "").toLowerCase();
+  if (n.includes("human")) return User;
+  if (n.includes("host")) return Bug;
+  if (n.includes("plant")) return Leaf;
+  if (n.includes("soil")) return Mountain;
+  if (n.includes("water") || n.includes("ocean") || n.includes("tara")) return Droplets;
+  if (n.includes("wastewater") || n.includes("sludge")) return Waves;
+  if (n.includes("air")) return Wind;
+  if (n.includes("sediment")) return Mountain;
+  if (n.includes("microbial mat") || n.includes("biofilm")) return Microscope;
+  if (n.includes("pathogen")) return Shield;
+  if (n.includes("virus") || n.includes("uvig") || n.includes("viral")) return Dna;
+  if (n.includes("mag") || n.includes("sag") || n.includes("genome") || n.includes("assembl")) return Dna;
+  if (n.includes("tree of life")) return TreePine;
+  return FlaskConical;
+}
 
 // Field definitions for help sidebar
 const FIELD_DEFINITIONS = {
@@ -846,6 +887,10 @@ export default function NewStudyPage() {
   // MIxS template fields
   const [mixsTemplate, setMixsTemplate] = useState<MixsTemplate | null>(null);
   const [loadingMixs, setLoadingMixs] = useState(false);
+
+  // Active checklists from the registry (populate the picker dynamically).
+  const [registryChecklists, setRegistryChecklists] = useState<RegistryChecklist[]>([]);
+  const [loadingChecklists, setLoadingChecklists] = useState(true);
   const [selectedMixsFields, setSelectedMixsFields] = useState<Set<string>>(new Set());
   const [mixsFieldSearch, setMixsFieldSearch] = useState("");
 
@@ -986,7 +1031,36 @@ export default function NewStudyPage() {
     fetchConfig();
   }, []);
 
-  // Fetch MIxS template when checklist type changes
+  // Load the active checklists from the registry so the picker offers whatever
+  // is currently available (not a hardcoded environmental subset).
+  useEffect(() => {
+    const fetchChecklists = async () => {
+      try {
+        const res = await fetch("/api/mixs-checklists");
+        if (res.ok) {
+          const data = await res.json();
+          const checklists: RegistryChecklist[] = (data.checklists || []).map(
+            (c: { name: string; accession: string; description?: string }) => ({
+              name: c.name,
+              accession: c.accession,
+              description: c.description,
+            })
+          );
+          setRegistryChecklists(checklists);
+        } else {
+          console.error("Failed to load MIxS checklists:", res.status);
+        }
+      } catch (err) {
+        console.error("Failed to load MIxS checklists:", err);
+      } finally {
+        setLoadingChecklists(false);
+      }
+    };
+    fetchChecklists();
+  }, []);
+
+  // Fetch the selected checklist's full field set when the picker changes. The
+  // selection value is the accession, so resolve the checklist by accession.
   useEffect(() => {
     if (!checklistType || !formConfig?.modules.mixs) {
       setMixsTemplate(null);
@@ -994,13 +1068,10 @@ export default function NewStudyPage() {
       return;
     }
 
-    const checklist = CHECKLIST_TYPES.find(c => c.id === checklistType);
-    if (!checklist) return;
-
     const fetchMixsTemplate = async () => {
       setLoadingMixs(true);
       try {
-        const res = await fetch(`/api/mixs-templates?name=${encodeURIComponent(checklist.templateName)}`);
+        const res = await fetch(`/api/mixs-checklists?accession=${encodeURIComponent(checklistType)}`);
         if (res.ok) {
           const data = await res.json();
           setMixsTemplate(data);
@@ -2227,50 +2298,63 @@ export default function NewStudyPage() {
                   </div>
                 )}
               </div>
-              <div
-                className="grid grid-cols-2 md:grid-cols-3 gap-3"
-                onFocus={() => setFocusedField(FIELD_DEFINITIONS.checklistType)}
-              >
-                {CHECKLIST_TYPES.map((checklist) => {
-                  const Icon = checklist.icon;
-                  const isSelected = checklistType === checklist.id;
-                  return (
-                    <button
-                      key={checklist.id}
-                      type="button"
-                      onClick={() => {
-                        setChecklistType(checklist.id);
-                        markTouched("checklistType");
-                      }}
-                      disabled={isLoading}
-                      className={cn(
-                        "relative p-4 rounded-lg border-2 text-left transition-all",
-                        "bg-white hover:border-primary/50 hover:bg-stone-50",
-                        isSelected
-                          ? "border-green-500"
-                          : "border-border"
-                      )}
-                    >
-                      {isSelected && (
-                        <div className="absolute top-2 right-2">
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
-                        </div>
-                      )}
-                      <Icon className={cn(
-                        "h-6 w-6 mb-2",
-                        isSelected ? "text-green-600" : "text-muted-foreground"
-                      )} />
-                      <p className={cn(
-                        "font-medium text-sm",
-                        isSelected && "text-green-700"
-                      )}>{checklist.name}</p>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                        {checklist.description}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
+              {registryChecklists.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  {loadingChecklists ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading checklists...
+                    </span>
+                  ) : (
+                    "No checklists available."
+                  )}
+                </div>
+              ) : (
+                <div
+                  className="grid grid-cols-2 md:grid-cols-3 gap-3"
+                  onFocus={() => setFocusedField(FIELD_DEFINITIONS.checklistType)}
+                >
+                  {registryChecklists.map((checklist) => {
+                    const Icon = iconForChecklist(checklist);
+                    const isSelected = checklistType === checklist.accession;
+                    return (
+                      <button
+                        key={checklist.accession}
+                        type="button"
+                        onClick={() => {
+                          setChecklistType(checklist.accession);
+                          markTouched("checklistType");
+                        }}
+                        disabled={isLoading}
+                        className={cn(
+                          "relative p-4 rounded-lg border-2 text-left transition-all",
+                          "bg-white hover:border-primary/50 hover:bg-stone-50",
+                          isSelected
+                            ? "border-green-500"
+                            : "border-border"
+                        )}
+                      >
+                        {isSelected && (
+                          <div className="absolute top-2 right-2">
+                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          </div>
+                        )}
+                        <Icon className={cn(
+                          "h-6 w-6 mb-2",
+                          isSelected ? "text-green-600" : "text-muted-foreground"
+                        )} />
+                        <p className={cn(
+                          "font-medium text-sm",
+                          isSelected && "text-green-700"
+                        )}>{checklist.name}</p>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {checklist.description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {renderInlineFieldHelp(FIELD_DEFINITIONS.checklistType, false, "md")}
             </div>
 
@@ -2597,7 +2681,7 @@ export default function NewStudyPage() {
         return <SampleMetadataTableStep />;
 
       case "review":
-        const selectedChecklist = CHECKLIST_TYPES.find(c => c.id === checklistType);
+        const selectedChecklist = registryChecklists.find(c => c.accession === checklistType);
 
         // Check if all required fields are valid
         const allValid = isTitleValid && isChecklistValid && isSamplesValid;
