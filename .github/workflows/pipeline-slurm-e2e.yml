@@ -18,14 +18,20 @@ on:
   # Runs once a day on the private mirror (jobs are guarded to SeqDesk-ci), plus
   # on demand — not on every commit.
   schedule:
-    - cron: "0 2 * * *" # daily 02:00 UTC
+    - cron: "0 2 * * *" # daily 02:00 UTC — light pipeline sweep
+    - cron: "0 3 * * 0" # weekly Sun 03:00 UTC — light sweep + heavy pipelines
   workflow_dispatch:
     inputs:
       runtime_pipeline_id:
-        description: "Consuming pipeline id for the runtime (local + SLURM) E2E"
-        required: true
-        default: "fastq-checksum"
+        description: "Single pipeline id to drive (leave blank to sweep all light pipelines)"
+        required: false
+        default: ""
         type: string
+      run_heavy:
+        description: "Also run the heavy pipelines (mag, read-cleaning)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -42,7 +48,9 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    timeout-minutes: 90
+    # Generous budget so the weekly heavy tier (real assembly/binning) can finish;
+    # the daily light sweep uses only a fraction of this.
+    timeout-minutes: 240
     defaults:
       run:
         shell: bash -el {0}
@@ -61,8 +69,17 @@ jobs:
       SEQDESK_SLURM_E2E_CORES: "1"
       SEQDESK_SLURM_E2E_MEMORY: "1G"
       SEQDESK_SLURM_E2E_TIME_LIMIT: "10"
-      # Pipeline id the runtime smoke drives through both local and SLURM modes.
-      RUNTIME_PIPELINE_ID: ${{ github.event.inputs.runtime_pipeline_id || 'fastq-checksum' }}
+      # When dispatched with a specific pipeline id, the runtime smoke drives only that
+      # one; otherwise it sweeps the full light-pipeline set (see LIGHT_PIPELINES).
+      RUNTIME_PIPELINE_ID: ${{ github.event.inputs.runtime_pipeline_id || '' }}
+      # Light pipelines exercised on every (nightly) run: real execution through the app
+      # on SLURM with synthetic FASTQ and no external reference databases.
+      LIGHT_PIPELINES: "fastq-checksum fastqc reads-qc simulate-reads study-demo-report"
+      # Heavy pipelines run on the weekly schedule or via the run_heavy dispatch input.
+      # Real nf-core execution (assembly/binning, contaminant screening). Reference-DB
+      # heavy steps use their pipeline default skips unless the runner provides DB paths
+      # via SEQDESK_CI_GTDB_DB / SEQDESK_CI_CHECKM_DB / SEQDESK_CI_KRAKEN2_DB.
+      HEAVY_PIPELINES: "read-cleaning mag"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -96,6 +113,12 @@ jobs:
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          # Persistent Nextflow/conda cache on the runner so per-process pipeline envs are
+          # reused across pipelines and runs instead of being re-solved every time.
+          CACHE_ROOT="${SEQDESK_CI_CACHE_ROOT:-$HOME/.cache/seqdesk-ci}"
+          mkdir -p "$CACHE_ROOT/nxf-conda" "$CACHE_ROOT/conda-pkgs"
+          echo "NXF_CONDA_CACHEDIR=$CACHE_ROOT/nxf-conda" >> "$GITHUB_ENV"
+          echo "CONDA_PKGS_DIRS=$CACHE_ROOT/conda-pkgs" >> "$GITHUB_ENV"
 
       - name: Verify SLURM is available on the runner
         run: |
@@ -285,11 +308,57 @@ jobs:
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
           SEQDESK_RUNTIME_E2E_PASSWORD: admin
         run: |
-          set -euo pipefail
-          npm run pipeline:e2e:runtime -- \
-            --ensure-dummy-data \
-            --pipeline-id "$RUNTIME_PIPELINE_ID" \
-            2>&1 | tee "$RUNTIME_E2E_LOG"
+          set -uo pipefail
+          # Drive the dispatched pipeline if one was given, else sweep the light set.
+          PIPELINES="${RUNTIME_PIPELINE_ID:-}"
+          if [ -z "$PIPELINES" ]; then PIPELINES="$LIGHT_PIPELINES"; fi
+          first=1
+          failed=""
+          for pid in $PIPELINES; do
+            # Seed dummy data once; later pipelines reuse the same seeded orders.
+            if [ "$first" -eq 1 ]; then ensure="--ensure-dummy-data"; first=0; else ensure=""; fi
+            echo "::group::runtime E2E: $pid"
+            if ! npm run pipeline:e2e:runtime -- $ensure --pipeline-id "$pid" 2>&1 | tee -a "$RUNTIME_E2E_LOG"; then
+              failed="$failed $pid"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "Runtime pipeline E2E failed for:$failed" >&2
+            exit 1
+          fi
+          echo "Runtime pipeline E2E passed for: $PIPELINES"
+
+      - name: Run heavy pipeline E2E (weekly / opt-in)
+        # Only on the weekly cron or an explicit run_heavy dispatch — never on the
+        # daily light sweep, so the nightly run stays fast.
+        if: ${{ github.event.schedule == '0 3 * * 0' || github.event.inputs.run_heavy == 'true' }}
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -uo pipefail
+          # Reference databases are optional: when the runner exports these paths the
+          # pipelines use them; otherwise they fall back to their default skip params and
+          # still exercise the real assembly/binning/screening execution path on SLURM.
+          [ -n "${SEQDESK_CI_GTDB_DB:-}" ] && echo "Using GTDB DB: $SEQDESK_CI_GTDB_DB"
+          [ -n "${SEQDESK_CI_CHECKM_DB:-}" ] && echo "Using CheckM DB: $SEQDESK_CI_CHECKM_DB"
+          [ -n "${SEQDESK_CI_KRAKEN2_DB:-}" ] && echo "Using Kraken2 DB: $SEQDESK_CI_KRAKEN2_DB"
+          failed=""
+          for pid in $HEAVY_PIPELINES; do
+            echo "::group::heavy pipeline E2E: $pid"
+            # Dummy data was already seeded by the light sweep above.
+            if ! npm run pipeline:e2e:runtime -- --pipeline-id "$pid" 2>&1 | tee -a "$RUNTIME_E2E_LOG"; then
+              failed="$failed $pid"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "Heavy pipeline E2E failed for:$failed" >&2
+            exit 1
+          fi
+          echo "Heavy pipeline E2E passed for: $HEAVY_PIPELINES"
 
       - name: Run SLURM-only pipeline smoke through the app
         env:
