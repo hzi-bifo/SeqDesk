@@ -321,8 +321,11 @@ test("facility fields added in admin form-builder appear on existing order facil
 
     // Navigate to the order's facility section and click Edit Order Fields
     await page.goto(`/orders/${orderId}?section=facility`);
+    // The facility-edit link is rendered in both the mobile and desktop layouts,
+    // so the bare href locator is ambiguous; click the visible one.
     await page
-      .locator(`a[href="/orders/${orderId}/edit?step=_facility&scope=facility"]`)
+      .locator(`a[href="/orders/${orderId}/edit?step=_facility&scope=facility"]:visible`)
+      .first()
       .click();
     await page.waitForURL(new RegExp(`/orders/${orderId}/edit\\?step=_facility(?:&scope=facility)?`));
     await expect(page.getByRole("heading", { name: "Edit Facility Fields" })).toBeVisible();
