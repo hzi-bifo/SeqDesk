@@ -68,9 +68,12 @@ defaults, including open self-registration and bootstrap accounts, assume this t
 context; deploying SeqDesk on a publicly reachable host is not a supported or secure configuration.
 
 The public demo at [demo.seqdesk.com](https://demo.seqdesk.com) is the intentional exception. It is
-a sandbox for exploring the UI, and demo workspace URLs, including admin views such as
-`https://demo.seqdesk.com/admin?workspace=test123`, are intentionally reachable by design. This does
-not change the deployment guidance for real SeqDesk instances.
+a sandbox for exploring the UI, and demo workspace URLs are intentionally reachable by design. A
+named workspace key opens (or resumes) a disposable, isolated demo: `https://demo.seqdesk.com/demo`
+for the researcher view, and `https://demo.seqdesk.com/demo/admin?workspace=test123` for the
+facility-admin view (the key, `test123` here, can be any string you choose). These demo entry points
+bootstrap a temporary demo session; the plain `/admin` route is the normal protected dashboard and is
+not a demo entry point. This does not change the deployment guidance for real SeqDesk instances.
 
 ## Requirements
 
