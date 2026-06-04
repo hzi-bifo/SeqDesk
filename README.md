@@ -113,15 +113,17 @@ Full installation, configuration, and unattended options are documented at
 > **not** change the live installer until the matching `public/install.sh` in the SeqDesk.com
 > repository has been updated and deployed.
 
-### Tested installation methods
+### Ways to install SeqDesk
 
-Each path is exercised end to end by continuous integration (install → boot → reachable over HTTP → database migrated; see the badges above for live status):
+Every path boots the same app — pick by your scenario. The methods below are exercised end to end by continuous integration (install → boot → reachable over HTTP → database migrated; see the badges above for live status):
 
-| Method | Command | Verified in CI |
-| --- | --- | --- |
-| npm launcher (recommended) | `npm i -g seqdesk` | Ubuntu · AlmaLinux · macOS |
-| One-line installer | `curl -fsSL https://seqdesk.com/install.sh \| bash` | Ubuntu |
-| From source | `bash scripts/install.sh` | Ubuntu · AlmaLinux |
+| Method | Command | Best for | Verified in CI |
+| --- | --- | --- | --- |
+| npm launcher (recommended) | `npm i -g seqdesk` then `seqdesk` | Almost everyone — supported install + upgrade path | Ubuntu · AlmaLinux · macOS |
+| One-line installer | `curl -fsSL https://seqdesk.com/install.sh \| bash` | Fallback when npm is unavailable | Ubuntu |
+| macOS (Homebrew) | `npm i -g seqdesk && seqdesk` | Local Mac workstation / dev installs | macOS |
+| Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; update in place with `--reconfigure` | Ubuntu |
+| From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu · AlmaLinux |
 
 The npm-launcher and source installs are also exercised under PM2, and the npm/AlmaLinux/macOS runs verify an administrator can log in to the running app.
 
