@@ -37,6 +37,7 @@
 #   SEQDESK_PROFILE_REGISTRY_URL=https://www.seqdesk.com/api/install-profiles
 #   SEQDESK_ADDITIONAL_SETTINGS_FILE=/etc/seqdesk/install-overrides.json - Optional local JSON overrides
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
+#   SEQDESK_OVERWRITE_EXISTING=1   - With -y, back up an existing install dir and replace it
 #   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
 #   SEQDESK_PREPARE_POSTGRES=1     - Prepare local PostgreSQL role/database, then exit
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
@@ -125,6 +126,7 @@ SEQDESK_PROFILE_CONFIG_FILE=""
 SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
 SEQDESK_ADDITIONAL_SETTINGS=()
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
+SEQDESK_OVERWRITE_EXISTING="${SEQDESK_OVERWRITE_EXISTING:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_PREPARE_POSTGRES="${SEQDESK_PREPARE_POSTGRES:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
@@ -1143,6 +1145,7 @@ Options:
   --additional-settings-file <path>
                               JSON overrides applied after --profile/--config
   --dir <path>                 Install directory
+  --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and replace it
   --version <version>          Release version (default: latest)
   --with-pipelines             Enable pipeline dependencies
   --without-pipelines          Disable pipeline dependencies
@@ -1378,6 +1381,9 @@ parse_args() {
                 ;;
             --reconfigure)
                 SEQDESK_RECONFIGURE="1"
+                ;;
+            --overwrite-existing|--overwrite_existing)
+                SEQDESK_OVERWRITE_EXISTING="1"
                 ;;
             --reseed-db|--reseed_db)
                 SEQDESK_RESEED_DB="1"
@@ -3424,6 +3430,9 @@ print_step "Download SeqDesk"
 
 LATEST_VERSION=""
 TEMP_FILE=""
+# Ensure the downloaded release tarball never leaks if a later step (backup mv,
+# extraction) fails; TEMP_FILE is "" until mktemp runs, so this is a no-op early.
+trap 'rm -f "$TEMP_FILE"' EXIT
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_info "Reconfigure mode enabled; skipping release download."
 else
@@ -3504,20 +3513,28 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
         APP_DIR="$SEQDESK_DIR"
     fi
 else
-    if [ -d "$SEQDESK_DIR" ]; then
+    if [ -e "$SEQDESK_DIR" ]; then
         if is_truthy "$SEQDESK_YES"; then
-            print_error "Directory $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
-            rm -f "$TEMP_FILE"
-            exit 1
+            if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+                print_error "Target path $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path, remove it, or pass --overwrite-existing to back it up and replace it."
+                rm -f "$TEMP_FILE"
+                exit 1
+            fi
+        else
+            print_warning "Target path already exists: $SEQDESK_DIR"
+            response=$(read_input "Backup and replace? (y/N): ")
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                echo "Installation cancelled."
+                rm -f "$TEMP_FILE"
+                exit 0
+            fi
         fi
-        print_warning "Directory exists: $SEQDESK_DIR"
-        response=$(read_input "Backup and replace? (y/N): ")
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            echo "Installation cancelled."
-            rm -f "$TEMP_FILE"
-            exit 0
-        fi
-        mv "$SEQDESK_DIR" "${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+        existing_backup_path="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+        while [ -e "$existing_backup_path" ]; do
+            existing_backup_path="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S).$$.${RANDOM}"
+        done
+        mv "$SEQDESK_DIR" "$existing_backup_path"
+        print_success "Moved existing install to $existing_backup_path"
     fi
 
     RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"

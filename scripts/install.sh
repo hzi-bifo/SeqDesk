@@ -12,6 +12,7 @@
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
 #   SEQDESK_WITH_PIPELINES=1       - Install pipeline dependencies (Conda + Nextflow)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
+#   SEQDESK_OVERWRITE_EXISTING=1   - With -y, back up an existing install dir and replace it
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
@@ -65,6 +66,7 @@ SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
+SEQDESK_OVERWRITE_EXISTING="${SEQDESK_OVERWRITE_EXISTING:-}"
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
@@ -217,6 +219,7 @@ Options:
   -y, --yes                    Non-interactive mode (accept defaults)
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
   --dir <path>                 Install directory
+  --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and replace it
   --branch <branch>            Git branch to install (source installer)
   --with-pipelines             Enable pipeline dependencies
   --without-pipelines          Disable pipeline dependencies
@@ -525,6 +528,9 @@ parse_args() {
                 fi
                 SEQDESK_STUDY_FORM_SETTINGS="$2"
                 shift
+                ;;
+            --overwrite-existing|--overwrite_existing)
+                SEQDESK_OVERWRITE_EXISTING="1"
                 ;;
             -h|--help)
                 print_usage
@@ -1872,16 +1878,22 @@ print_step "Downloading SeqDesk"
 EXISTING_BACKUP_PATH=""
 if [ -e "$SEQDESK_DIR" ]; then
     if is_truthy "$SEQDESK_YES"; then
-        print_error "Target path $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path or remove it."
-        exit 1
-    fi
-    print_warning "Target path already exists: $SEQDESK_DIR"
-    overwrite_reply=$(read_input "Backup and replace? (y/N) ")
-    if [[ ! "$overwrite_reply" =~ ^[Yy]$ ]]; then
-        print_error "Installation cancelled"
-        exit 1
+        if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+            print_error "Target path $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path, remove it, or pass --overwrite-existing to back it up and replace it."
+            exit 1
+        fi
+    else
+        print_warning "Target path already exists: $SEQDESK_DIR"
+        overwrite_reply=$(read_input "Backup and replace? (y/N) ")
+        if [[ ! "$overwrite_reply" =~ ^[Yy]$ ]]; then
+            print_error "Installation cancelled"
+            exit 1
+        fi
     fi
     EXISTING_BACKUP_PATH="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+    while [ -e "$EXISTING_BACKUP_PATH" ]; do
+        EXISTING_BACKUP_PATH="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S).$$.${RANDOM}"
+    done
     mv "$SEQDESK_DIR" "$EXISTING_BACKUP_PATH"
     print_success "Moved existing install to $EXISTING_BACKUP_PATH"
 fi
