@@ -129,6 +129,42 @@ Each path is exercised end to end by continuous integration (install → boot �
 
 The npm-launcher and source installs are also exercised under PM2, and the npm/AlmaLinux/macOS runs verify an administrator can log in to the running app.
 
+## FAQ
+
+A few common installation and setup questions. See the full
+**[FAQ](https://www.seqdesk.com/docs/faq)** for more.
+
+**What do I need to run SeqDesk?** Node.js 18+ (20 LTS recommended), a PostgreSQL
+database, and Linux or macOS. Pipelines are optional and add Conda/Nextflow (plus
+SLURM for cluster execution).
+
+**Does it work with SQLite?** No — SeqDesk is PostgreSQL-only. An existing SQLite
+instance must stay on its last SQLite-compatible release until it is migrated to
+PostgreSQL.
+
+**How do I log in the first time?** Browse to the instance URL — the setup wizard
+checks the database and applies the schema automatically. Seeded bootstrap
+accounts are `admin@example.com` / `admin` and `user@example.com` / `user`;
+**change or remove them immediately** on any shared instance.
+
+**The installer aborts because the directory already exists.** With `-y` it
+refuses to overwrite. Pass `--overwrite-existing` to back the old directory up to
+`<dir>.backup.<timestamp>` and replace it.
+
+**Migrations hang or time out on a pooled database (e.g. Neon).** Point
+`DIRECT_URL` at the *unpooled* endpoint — `migrate deploy` needs a session-level
+advisory lock a transaction pooler can't hold. SeqDesk also derives the unpooled
+URL automatically as a safety net.
+
+**Can I expose SeqDesk to the public internet?** No — it assumes a trusted,
+closed network (VPN or intranet). The public demo at `demo.seqdesk.com` is the
+only intentional exception.
+
+**How do I check an install is healthy, or update and roll back?** `seqdesk
+doctor` (read-only) verifies layout, database reachability, and HTTP. Updates go
+through the npm launcher; a failed update automatically restores the timestamped
+backup.
+
 ## Local development
 
 ```bash
