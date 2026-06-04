@@ -175,6 +175,25 @@ function applyTransform(
 }
 
 /**
+ * Escape a single field for RFC-4180 delimited output (csv/tsv).
+ *
+ * A field is wrapped in double quotes (and any embedded double quotes are
+ * doubled) when it contains the delimiter, a double quote, CR, or LF.
+ * This prevents user-supplied free text (e.g. sampleId) from corrupting rows.
+ */
+function escapeDelimitedField(value: string, delimiter: string): string {
+  if (
+    value.includes(delimiter) ||
+    value.includes('"') ||
+    value.includes('\n') ||
+    value.includes('\r')
+  ) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+/**
  * Generic samplesheet generator based on pipeline definition
  */
 export class SamplesheetGenerator {
@@ -312,8 +331,12 @@ export class SamplesheetGenerator {
 
     // Build CSV content
     const delimiter = sheet.format === 'tsv' ? '\t' : ',';
-    const header = sheet.columns.map(c => c.name).join(delimiter);
-    const dataRows = rows.map(row => row.join(delimiter));
+    const header = sheet.columns
+      .map(c => escapeDelimitedField(c.name, delimiter))
+      .join(delimiter);
+    const dataRows = rows.map(row =>
+      row.map(field => escapeDelimitedField(field, delimiter)).join(delimiter)
+    );
     const content = [header, ...dataRows].join('\n');
 
     return {

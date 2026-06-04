@@ -452,4 +452,66 @@ describe("samplesheet-generator", () => {
     expect(result.sampleCount).toBe(1);
     expect(result.content).toContain("Linked Study");
   });
+
+  it("escapes csv fields containing the delimiter, quotes, or newlines (RFC-4180)", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        sampleId: 'S,1 "weird"\nID',
+        reads: [{ file1: "reads/S1_R1.fastq.gz", file2: "reads/S1_R2.fastq.gz" }],
+        order: { id: "order-1", platform: "illumina", customFields: null },
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("mag");
+    const result = await generator.generate({
+      target: { type: "study", studyId: "study-1" },
+      dataBasePath: "/data/base",
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.sampleCount).toBe(1);
+    // The escaped sampleId itself contains a newline, so splitting on "\n" would
+    // split inside the quoted field. Assert on the full content instead.
+    const expectedRow = [
+      '"S,1 ""weird""\nID"',
+      "reads/S1_R1.fastq.gz",
+      "reads/S1_R2.fastq.gz",
+      "ILLUMINA",
+      "Study Title",
+      "/data/base/reads/S1_R1.fastq.gz",
+      "ILMN",
+    ].join(",");
+    expect(result.content).toBe(
+      `sample,r1,r2,platform,study,r1_full,mapped\n${expectedRow}`
+    );
+  });
+
+  it("escapes tsv fields containing a tab or quote", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig("tsv"));
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        sampleId: 'S\t1"x',
+        reads: [{ file1: "reads/S1_R1.fastq.gz", file2: "reads/S1_R2.fastq.gz" }],
+        order: { id: "order-1", platform: "illumina", customFields: null },
+      },
+    ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("mag");
+    const result = await generator.generate({
+      target: { type: "study", studyId: "study-1" },
+      dataBasePath: "/data/base",
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.content.split("\n")[1].startsWith('"S\t1""x"\t')).toBe(true);
+  });
 });

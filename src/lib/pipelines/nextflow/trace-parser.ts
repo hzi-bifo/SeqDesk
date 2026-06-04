@@ -114,12 +114,17 @@ export function parseTraceContent(content: string): TraceParseResult {
     tasks.push(task);
   }
 
+  // Collapse retried tasks (a FAILED attempt + a later COMPLETED/CACHED retry of the
+  // same logical task) to one row per identity before aggregating, so progress and
+  // per-process counts are not deflated by superseded attempts.
+  const dedupedTasks = dedupeRetriedTasks(tasks);
+
   // Aggregate by process
-  const processes = aggregateByProcess(tasks);
+  const processes = aggregateByProcess(dedupedTasks);
 
   // Calculate overall progress
-  const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(
+  const totalTasks = dedupedTasks.length;
+  const completedTasks = dedupedTasks.filter(
     (t) => t.status === 'COMPLETED' || t.status === 'CACHED'
   ).length;
   const overallProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
@@ -154,6 +159,34 @@ function parseProcessName(fullName: string): { process: string; tag: string | nu
   const process = parts[parts.length - 1] || fullName;
 
   return { process, tag };
+}
+
+/**
+ * Collapse retried tasks (a FAILED attempt plus a later COMPLETED/CACHED retry of the
+ * same logical task) to one row per logical identity (name + tag), preferring a
+ * terminal-success row over an earlier failed attempt. Used only for progress and
+ * per-process aggregation; the returned task list keeps every row.
+ */
+function dedupeRetriedTasks(tasks: NextflowTask[]): NextflowTask[] {
+  const isSuccess = (status: NextflowTaskStatus): boolean =>
+    status === 'COMPLETED' || status === 'CACHED';
+
+  const byIdentity = new Map<string, NextflowTask>();
+
+  for (const task of tasks) {
+    const identity = `${task.name}\u0000${task.tag ?? ''}`;
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      byIdentity.set(identity, task);
+      continue;
+    }
+    // Prefer a terminal-success row over a non-success (e.g. failed) attempt.
+    if (!isSuccess(existing.status) && isSuccess(task.status)) {
+      byIdentity.set(identity, task);
+    }
+  }
+
+  return Array.from(byIdentity.values());
 }
 
 /**
@@ -264,12 +297,13 @@ function parseDurationToMs(duration: string): number | null {
   const secMatch = duration.match(/(\d+(?:\.\d+)?)\s*s/i);
   const msMatch = duration.match(/(\d+)\s*ms/i);
 
-  if (hourMatch) totalMs += parseFloat(hourMatch[1]) * 3600000;
-  if (minMatch) totalMs += parseFloat(minMatch[1]) * 60000;
-  if (secMatch) totalMs += parseFloat(secMatch[1]) * 1000;
-  if (msMatch) totalMs += parseInt(msMatch[1], 10);
+  let matched = false;
+  if (hourMatch) { totalMs += parseFloat(hourMatch[1]) * 3600000; matched = true; }
+  if (minMatch) { totalMs += parseFloat(minMatch[1]) * 60000; matched = true; }
+  if (secMatch) { totalMs += parseFloat(secMatch[1]) * 1000; matched = true; }
+  if (msMatch) { totalMs += parseInt(msMatch[1], 10); matched = true; }
 
-  return totalMs > 0 ? totalMs : null;
+  return matched ? totalMs : null;
 }
 
 function parseBytesOrNull(val: string | undefined): number | null {

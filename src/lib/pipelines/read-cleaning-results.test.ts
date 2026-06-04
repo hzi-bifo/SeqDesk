@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
     updateMany: vi.fn(),
     update: vi.fn(),
   },
+  txPipelineRun: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
   getResolvedDataBasePath: vi.fn(),
 }));
 
@@ -108,8 +112,10 @@ describe("read-cleaning-results", () => {
     mocks.txRead.create.mockResolvedValue({ id: "read-cleaned" });
     mocks.txRead.updateMany.mockResolvedValue({ count: 1 });
     mocks.txRead.update.mockResolvedValue({ id: "read-cleaned" });
+    mocks.txPipelineRun.findUnique.mockResolvedValue({ results: null });
+    mocks.txPipelineRun.update.mockResolvedValue({});
     mocks.db.$transaction.mockImplementation(async (callback) =>
-      callback({ read: mocks.txRead }),
+      callback({ read: mocks.txRead, pipelineRun: mocks.txPipelineRun }),
     );
   });
 
@@ -212,7 +218,7 @@ describe("read-cleaning-results", () => {
         dataClassSource: "pipeline",
         isActive: false,
         pipelineRunId: "run-1",
-        pipelineSources: JSON.stringify({ "read-cleaning": "run-1" }),
+        pipelineSources: JSON.stringify({ "read-cleaning": "run-1", __runs: ["run-1"] }),
         classifiedById: "admin-1",
         classificationNote: "Promoted cleaned reads from RUN-001",
       }),

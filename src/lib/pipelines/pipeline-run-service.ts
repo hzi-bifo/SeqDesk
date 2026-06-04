@@ -44,6 +44,7 @@ import {
 } from '@/lib/pipelines/runtime-compatibility';
 import {
   getPipelineRunConfigIssues,
+  getReadCleaningPathIssues,
   normalizePipelineRunConfig,
 } from '@/lib/pipelines/simulate-reads-config';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
@@ -204,6 +205,25 @@ function resolveEffectiveProfile(profileOverride?: string): string {
 
 function buildSbatchSubmitArgs(scriptPath: string): string[] {
   return ['--parsable', scriptPath];
+}
+
+// Persist a DB write with a few quick retries. Used to record a freshly
+// submitted SLURM job id so a transient DB blip does not orphan the job.
+async function persistWithRetry(
+  fn: () => Promise<unknown>,
+  attempts = 3
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await fn();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 // Statuses from which a local run may still transition to a terminal state.
@@ -829,6 +849,32 @@ export async function startPipelineRunForOperator({
     executionSource: executionPolicy.source,
   });
 
+  const pathValidation = getReadCleaningPathIssues(
+    run.pipelineId,
+    config,
+    executionPolicy.mode,
+  );
+  for (const warning of pathValidation.warnings) {
+    console.warn('[Start Pipeline] WARNING:', warning);
+  }
+  if (pathValidation.issues.length > 0) {
+    const message = pathValidation.issues.join('\n');
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'failed',
+        errorTail: message,
+        completedAt: new Date(),
+        statusSource: 'launcher',
+        lastEventAt: new Date(),
+      },
+    });
+    return jsonResponse(
+      { error: 'Pipeline config validation failed', details: pathValidation.issues },
+      400
+    );
+  }
+
   const resolvedDataBasePath = await getResolvedDataBasePath();
 
   if (!resolvedDataBasePath.dataBasePath) {
@@ -1019,35 +1065,91 @@ export async function startPipelineRunForOperator({
     });
   }
 
-  const prepResult = isSubmgPipeline
-    ? await prepareSubmgRun({
-        runId: run.id,
-        studyId: run.studyId!,
-        sampleIds: selectedSampleIds,
-        config,
-        executionSettings: {
-          ...effectiveExecutionSettings,
+  // BUG #11: atomically claim the run BEFORE prepare. The run.status !== 'pending'
+  // check at the top of this function is a pure read; every validation between it
+  // and here is read-only and returns while the run is still 'pending' (so a
+  // rejected start never strands the run). Two concurrent starts (or a
+  // double-click) for the same runId both pass those reads, then both call
+  // prepareGenericRun/prepareSubmgRun, which allocate a run folder and overwrite
+  // runFolder/outputPath/errorPath on the DB row -- the loser clobbers the
+  // winner's paths, so the monitor parses the wrong trace, results are not
+  // ingested, and an orphan folder is left behind. This conditional updateMany
+  // lets only the first caller transition pending -> queued; the loser gets a 409
+  // and never prepares or launches. A claimed run that then fails prepare/launch
+  // is reset to 'failed' by the existing failure branches below.
+  const prepareClaim = await db.pipelineRun.updateMany({
+    where: { id: runId, status: 'pending' },
+    data: {
+      status: 'queued',
+      statusSource: 'launcher',
+      currentStep: 'Preparing',
+      lastEventAt: new Date(),
+    },
+  });
+  if (prepareClaim.count === 0) {
+    const current = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { status: true },
+    });
+    return jsonResponse(
+      { error: `Run has already been started (status: ${current?.status ?? 'unknown'})` },
+      409
+    );
+  }
+
+  // The run has been claimed ('queued') above. prepareGenericRun returns
+  // { success: false } on error, but prepareSubmgRun can THROW (mkdir/writeFile/
+  // decryptSecret), which would otherwise propagate uncaught and strand the
+  // claimed run in non-terminal 'queued' forever (no reaper, and the
+  // status !== 'pending' guard rejects every retry). Catch any throw and land
+  // the run in terminal 'failed', mirroring the !prepResult.success branch.
+  let prepResult:
+    | Awaited<ReturnType<typeof prepareSubmgRun>>
+    | Awaited<ReturnType<typeof prepareGenericRun>>;
+  try {
+    prepResult = isSubmgPipeline
+      ? await prepareSubmgRun({
+          runId: run.id,
+          studyId: run.studyId!,
+          sampleIds: selectedSampleIds,
+          config,
+          executionSettings: {
+            ...effectiveExecutionSettings,
+            dataBasePath: resolvedDataBasePath.dataBasePath,
+            nextflowProfile: effectiveProfile,
+          },
           dataBasePath: resolvedDataBasePath.dataBasePath,
-          nextflowProfile: effectiveProfile,
-        },
-        dataBasePath: resolvedDataBasePath.dataBasePath,
-      })
-    : await prepareGenericRun({
-        runId: run.id,
-        pipelineId,
-        target:
-          selectedSampleIds && selectedSampleIds.length > 0
-            ? { ...target, sampleIds: selectedSampleIds }
-            : target,
-        config,
-        executionSettings: {
-          ...effectiveExecutionSettings,
-          dataBasePath: resolvedDataBasePath.dataBasePath,
-          nextflowProfile: effectiveProfile,
-          skipConda,
-        },
-        userId,
-      });
+        })
+      : await prepareGenericRun({
+          runId: run.id,
+          pipelineId,
+          target:
+            selectedSampleIds && selectedSampleIds.length > 0
+              ? { ...target, sampleIds: selectedSampleIds }
+              : target,
+          config,
+          executionSettings: {
+            ...effectiveExecutionSettings,
+            dataBasePath: resolvedDataBasePath.dataBasePath,
+            nextflowProfile: effectiveProfile,
+            skipConda,
+          },
+          userId,
+        });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: {
+        status: 'failed',
+        errorTail: `Failed to prepare run: ${message}`,
+        completedAt: new Date(),
+        statusSource: 'launcher',
+        lastEventAt: new Date(),
+      },
+    });
+    return jsonResponse({ error: 'Failed to prepare run', details: [message] }, 500);
+  }
 
   if (!prepResult.success) {
     const prepWarnings =
@@ -1144,6 +1246,9 @@ export async function startPipelineRunForOperator({
         return jsonResponse({ error: message }, 500);
       }
 
+      // Declared in the try's outer scope so the catch can scancel a job that
+      // was successfully submitted but whose DB record failed to persist.
+      let submittedJobId = '';
       try {
         const sbatchArgs = buildSbatchSubmitArgs(scriptPath);
         const sbatchProcess = spawn('sbatch', sbatchArgs, {
@@ -1186,12 +1291,26 @@ export async function startPipelineRunForOperator({
           });
         });
 
+        // The job is now live in SLURM. Persist its id FIRST, on its own, with a
+        // small retry: a DB blip on the full status write below would otherwise
+        // orphan the job (running untracked, with queueJobId never saved). Once
+        // submittedJobId is set, the catch can scancel it if anything fails.
+        submittedJobId = jobId;
+        await persistWithRetry(() =>
+          db.pipelineRun.update({
+            where: { id: runId },
+            data: {
+              queueJobId: jobId,
+              queuedAt: new Date(),
+            },
+          })
+        );
+
         await db.pipelineRun.update({
           where: { id: runId },
           data: {
             status: 'queued',
             queueJobId: jobId,
-            queuedAt: new Date(),
             queueStatus: 'PENDING',
             queueReason: null,
             queueUpdatedAt: new Date(),
@@ -1211,6 +1330,23 @@ export async function startPipelineRunForOperator({
       } catch (error) {
         const message = error instanceof Error ? error.message : 'SLURM submission failed';
         console.error('[Pipeline Run] SLURM submission failed:', message);
+
+        // If sbatch already queued a job but we could not record it, the job
+        // would run untracked. Cancel it so we never leave an orphan behind.
+        if (submittedJobId) {
+          try {
+            await execAsync(`scancel ${submittedJobId}`, { timeout: 5000 });
+            console.error(
+              `[Pipeline Run] Cancelled orphaned SLURM job ${submittedJobId} after persistence failure.`
+            );
+          } catch (cancelError) {
+            console.error(
+              `[Pipeline Run] Failed to scancel orphaned SLURM job ${submittedJobId}:`,
+              cancelError instanceof Error ? cancelError.message : cancelError
+            );
+          }
+        }
+
         await db.pipelineRun.update({
           where: { id: runId },
           data: {

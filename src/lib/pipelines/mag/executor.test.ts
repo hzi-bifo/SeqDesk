@@ -117,6 +117,16 @@ describe('generateRunNumber', () => {
     const result = await generateRunNumber();
     expect(result).toMatch(/-\d{3}$/);
   });
+
+  it('keeps incrementing past 999 instead of stalling', async () => {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    mocks.db.pipelineRun.findMany.mockResolvedValue([
+      { runNumber: `MAG-${todayStr}-999` },
+    ]);
+
+    const result = await generateRunNumber();
+    expect(result).toBe(`MAG-${todayStr}-1000`);
+  });
 });
 
 describe('prepareMagRun', () => {
@@ -297,6 +307,50 @@ describe('prepareMagRun', () => {
     const script = scriptWrite![1] as string;
     expect(script).toContain('--skip_megahit');
     expect(script).toContain('--skip_spades');
+  });
+
+  it('shell-quotes the gtdb_db path so it cannot inject commands', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const options = baseStartRunOptions({
+      config: { gtdbDb: '/db/gtdb; rm -rf /' },
+    });
+
+    await prepareMagRun(options as any);
+
+    const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
+      (c[0] as string).endsWith('run.sh')
+    );
+    const script = scriptWrite![1] as string;
+    expect(script).toContain("--gtdb_db '/db/gtdb; rm -rf /'");
+    expect(script).not.toContain('--gtdb_db /db/gtdb; rm -rf /');
+  });
+
+  it('rejects malformed SLURM header values instead of injecting them', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const options = baseStartRunOptions({
+      executionSettings: {
+        ...baseExecutionSettings(),
+        useSlurm: true,
+        slurmQueue: 'evil queue; rm -rf /',
+        slurmMemory: "32GB'; rm -rf /; echo '",
+        slurmOptions: '--gres=gpu:1\nmalicious line',
+      },
+    });
+
+    await prepareMagRun(options as any);
+
+    const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
+      (c[0] as string).endsWith('run.sh')
+    );
+    const script = scriptWrite![1] as string;
+    expect(script).toContain('#SBATCH -p cpu');
+    expect(script).toContain("#SBATCH --mem='64GB'");
+    expect(script).not.toContain('rm -rf /');
+    expect(script).not.toContain('malicious line');
   });
 
   it('writes nextflow.config when weblogUrl is provided', async () => {

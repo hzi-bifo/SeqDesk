@@ -47,14 +47,22 @@ function summarizeProcessStatuses(tasks: TraceTask[]): TraceProcessSummary {
 
   for (const task of tasks) {
     const status = normalizeStatus(task.status);
-    if (status.includes('fail') || status.includes('error') || status.includes('aborted')) {
+    if (
+      status.includes('fail') ||
+      status.includes('error') ||
+      status.includes('aborted') ||
+      (task.exit !== undefined && task.exit !== 0)
+    ) {
       hasFailed = true;
     } else if (status.includes('run') || status.includes('start') || status.includes('submit')) {
       hasRunning = true;
-    } else if (status.includes('complete') || status.includes('done') || status.includes('success')) {
+    } else if (
+      status.includes('complete') ||
+      status.includes('done') ||
+      status.includes('success') ||
+      status.includes('cache')
+    ) {
       hasCompleted = true;
-    } else if (task.exit !== undefined && task.exit !== 0) {
-      hasFailed = true;
     }
   }
 
@@ -64,6 +72,40 @@ function summarizeProcessStatuses(tasks: TraceTask[]): TraceProcessSummary {
   else if (hasCompleted) status = 'completed';
 
   return { name: tasks[0]?.process || 'unknown', status, totalTasks: tasks.length };
+}
+
+function isSuccessStatus(status: string): boolean {
+  return (
+    status.includes('complete') ||
+    status.includes('done') ||
+    status.includes('success') ||
+    status.includes('cache')
+  );
+}
+
+/**
+ * Collapse retried tasks (a FAILED attempt row plus a later COMPLETED/CACHED retry
+ * row for the same logical task) to one row per logical identity (process + tag),
+ * preferring a terminal-success row over an earlier failed attempt. Used only for
+ * progress aggregation; the returned task list keeps every row.
+ */
+function dedupeRetriedTasks(tasks: TraceTask[]): TraceTask[] {
+  const byIdentity = new Map<string, TraceTask>();
+
+  for (const task of tasks) {
+    const identity = `${task.process}\u0000${task.tag ?? ''}`;
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      byIdentity.set(identity, task);
+      continue;
+    }
+    // Prefer a success row over a non-success (e.g. failed) attempt.
+    if (!isSuccessStatus(normalizeStatus(existing.status)) && isSuccessStatus(normalizeStatus(task.status))) {
+      byIdentity.set(identity, task);
+    }
+  }
+
+  return Array.from(byIdentity.values());
 }
 
 export async function findTraceFile(runFolder: string): Promise<string | null> {
@@ -136,10 +178,16 @@ export async function parseTraceFile(tracePath: string): Promise<TraceResult> {
     processes.set(processName, summary);
   }
 
-  const total = tasks.length || 1;
-  const completed = tasks.filter((task) => {
+  const dedupedTasks = dedupeRetriedTasks(tasks);
+  const total = dedupedTasks.length || 1;
+  const completed = dedupedTasks.filter((task) => {
     const status = normalizeStatus(task.status);
-    return status.includes('complete') || status.includes('done') || status.includes('success');
+    return (
+      status.includes('complete') ||
+      status.includes('done') ||
+      status.includes('success') ||
+      status.includes('cache')
+    );
   }).length;
   const overallProgress = Math.round((completed / total) * 100);
 

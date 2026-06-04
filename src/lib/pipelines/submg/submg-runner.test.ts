@@ -172,6 +172,11 @@ describe("submg runner", () => {
     const script = await fs.readFile(result.scriptPath!, "utf8");
     expect(script).toContain('"$SUBMG_BIN" submit');
     expect(script).toContain("export ENA_TEST_MODE=false");
+    // The SBATCH header is built from sanitized SLURM settings; valid values
+    // pass through unchanged (the sanitizers reject metacharacters/newlines,
+    // matching the generic/mag executors).
+    expect(script).toContain("#SBATCH -p cpu");
+    expect(script).toContain("#SBATCH --mem='16GB'");
 
     const metadata = JSON.parse(
       await fs.readFile(path.join(result.runFolder!, "submg-metadata.json"), "utf8")

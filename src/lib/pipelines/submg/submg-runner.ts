@@ -193,6 +193,47 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+// Wrap a value as a single POSIX shell token. Safe values are emitted verbatim;
+// anything else is single-quoted with embedded single quotes escaped.
+function shellQuote(value: string): string {
+  if (value === "") return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+// SLURM header fields are interpolated into the generated SBATCH preamble, so
+// they must never contain shell/SBATCH metacharacters. These validators reduce
+// each field to a safe default when the admin-supplied value is malformed.
+function sanitizeSlurmMemory(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^\d+[KMGT]?B?$/.test(trimmed)) return trimmed;
+  return fallback;
+}
+
+function sanitizeSlurmQueue(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^[A-Za-z0-9_-]+$/.test(trimmed)) return trimmed;
+  return fallback;
+}
+
+function sanitizeSlurmTimeLimit(value: number | undefined, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  return fallback;
+}
+
+// slurmOptions is free-form admin text (e.g. "--gres=gpu:1"). Reject embedded
+// newlines (which would inject extra SBATCH/script lines) and shell-quote each
+// whitespace-separated token so it cannot break out of the directive.
+function sanitizeSlurmOptions(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  if (/[\r\n]/.test(trimmed)) return "";
+  return trimmed
+    .split(/\s+/)
+    .map((token) => shellQuote(token))
+    .join(" ");
+}
+
 function escapeYaml(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\"/g, '\\"').replace(/\n/g, " ");
 }
@@ -562,14 +603,16 @@ async function generateRunNumber(pipelineId: string): Promise<string> {
       runNumber: { startsWith: prefix },
     },
     select: { runNumber: true },
-    orderBy: { runNumber: "desc" },
-    take: 1,
   });
 
+  // Compute the numeric max of the trailing counter across all rows. We cannot
+  // rely on `orderBy: { runNumber: "desc" }` because that sort is lexicographic
+  // ("999" sorts after "1000"), which would stall the sequence at 999. Parsing
+  // everything after the prefix keeps the counter incrementing past 999.
   let nextNum = 1;
-  if (existingRuns.length > 0) {
-    const lastNum = Number.parseInt(existingRuns[0].runNumber.slice(-3), 10);
-    if (!Number.isNaN(lastNum)) {
+  for (const run of existingRuns) {
+    const lastNum = Number.parseInt(run.runNumber.slice(prefix.length), 10);
+    if (!Number.isNaN(lastNum) && lastNum + 1 > nextNum) {
       nextNum = lastNum + 1;
     }
   }
@@ -602,16 +645,27 @@ function buildSubmgScript(params: {
   const { runFolder, entries, executionSettings, config, credentials } = params;
   const lines: string[] = [];
 
+  const slurmQueue = sanitizeSlurmQueue(executionSettings.slurmQueue, "cpu");
+  const slurmCores =
+    typeof executionSettings.slurmCores === "number" &&
+    Number.isFinite(executionSettings.slurmCores) &&
+    executionSettings.slurmCores > 0
+      ? Math.floor(executionSettings.slurmCores)
+      : 4;
+  const slurmMemory = sanitizeSlurmMemory(executionSettings.slurmMemory, "32GB");
+  const slurmTimeLimit = sanitizeSlurmTimeLimit(executionSettings.slurmTimeLimit, 6);
+  const slurmOptions = sanitizeSlurmOptions(executionSettings.slurmOptions);
+
   lines.push("#!/bin/bash");
-  lines.push(`#SBATCH -p ${executionSettings.slurmQueue || "cpu"}`);
-  lines.push(`#SBATCH -c ${executionSettings.slurmCores || 4}`);
-  lines.push(`#SBATCH --mem='${executionSettings.slurmMemory || "32GB"}'`);
-  lines.push(`#SBATCH -t ${executionSettings.slurmTimeLimit || 6}:0:0`);
+  lines.push(`#SBATCH -p ${slurmQueue}`);
+  lines.push(`#SBATCH -c ${slurmCores}`);
+  lines.push(`#SBATCH --mem='${slurmMemory}'`);
+  lines.push(`#SBATCH -t ${slurmTimeLimit}:0:0`);
   lines.push(`#SBATCH -D ${runFolder}`);
   lines.push('#SBATCH --output="logs/slurm-%j.out"');
   lines.push('#SBATCH --error="logs/slurm-%j.err"');
-  if (executionSettings.slurmOptions) {
-    lines.push(`#SBATCH ${executionSettings.slurmOptions}`);
+  if (slurmOptions) {
+    lines.push(`#SBATCH ${slurmOptions}`);
   }
   lines.push("");
   lines.push("set -euo pipefail");

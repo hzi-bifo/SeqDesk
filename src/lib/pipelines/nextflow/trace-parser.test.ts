@@ -114,6 +114,40 @@ describe("trace-parser", () => {
     });
   });
 
+  it("de-duplicates a failed attempt and its completed retry for progress and aggregation", () => {
+    const content = [
+      "task_id\thash\tnative_id\tname\tstatus\texit\tsubmit\tstart\tcomplete",
+      "t1\th1\tn1\tNFCORE:MAG:FASTQC (sampleA)\tFAILED\t1\t-\t2024-01-01 10:00:00\t2024-01-01 10:01:00",
+      "t2\th2\tn2\tNFCORE:MAG:FASTQC (sampleA)\tCOMPLETED\t0\t-\t2024-01-01 10:02:00\t2024-01-01 10:03:00",
+    ].join("\n");
+
+    const result = parseTraceContent(content);
+
+    // Both rows remain in the task list (output shape unchanged)...
+    expect(result.tasks).toHaveLength(2);
+    // ...but the retry supersedes the failed attempt for progress and aggregation.
+    expect(result.overallProgress).toBe(100);
+    expect(result.processes.get("FASTQC")).toMatchObject({
+      totalTasks: 1,
+      completedTasks: 1,
+      failedTasks: 0,
+      status: "completed",
+    });
+  });
+
+  it("parses zero durations as 0 instead of null", () => {
+    const content = [
+      "task_id\thash\tnative_id\tname\tstatus\texit\tsubmit\tstart\tcomplete\tduration\trealtime",
+      "t1\th1\tn1\tSAMPLE\tCOMPLETED\t0\t-\t-\t-\t0s\t0ms",
+    ].join("\n");
+
+    const result = parseTraceContent(content);
+    const task = result.tasks[0];
+
+    expect(task.duration).toBe(0);
+    expect(task.realtime).toBe(0);
+  });
+
   it("returns empty parse result for blank content", () => {
     const result = parseTraceContent("   \n  \t\n");
 

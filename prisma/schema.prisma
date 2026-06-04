@@ -413,6 +413,10 @@ model Assembly {
   // Track which pipeline created this assembly
   createdByPipelineRunId String?
   createdByPipelineRun   PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
+
+  // Idempotency: one assembly per (run, sample, file). Concurrent resolution
+  // (weblog workflow_complete + monitor/sync finalize) must not double-create.
+  @@unique([createdByPipelineRunId, sampleId, assemblyFile])
 }
 
 model Bin {
@@ -427,6 +431,10 @@ model Bin {
   // Track which pipeline created this bin
   createdByPipelineRunId String?
   createdByPipelineRun   PipelineRun? @relation(fields: [createdByPipelineRunId], references: [id])
+
+  // Idempotency: one bin per (run, sample, file). Concurrent resolution must not
+  // double-create.
+  @@unique([createdByPipelineRunId, sampleId, binFile])
 }
 
 // ============================================================================
@@ -566,6 +574,9 @@ model PipelineArtifact {
   metadata         String? // JSON for tool-specific info
   createdAt        DateTime     @default(now())
 
+  // Idempotency: one artifact per (run, path). Concurrent resolution (weblog
+  // workflow_complete + monitor/sync finalize) must not double-create.
+  @@unique([pipelineRunId, path])
   @@index([outputId])
 }
 

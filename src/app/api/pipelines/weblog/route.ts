@@ -427,6 +427,13 @@ export async function POST(request: NextRequest) {
     const receivedAt = new Date();
     const eventAt = resolveEventAt(parsedEventTime, receivedAt);
 
+    // BUG #2: A terminal run must never be resurrected (e.g. cancelled->completed)
+    // or have its completedAt/lifecycle fields overwritten by a late/duplicate
+    // workflow_complete / workflow_error event. Mirror the ops-service invariant
+    // that only gates terminal writes behind active states. The event row is
+    // still recorded below; only lifecycle mutations are skipped.
+    const runIsTerminal = !['pending', 'queued', 'running'].includes(run.status);
+
     const processName = getProcessName(trace, payload);
     const stepDefinition = processName
       ? findStepByProcess(run.pipelineId, processName)
@@ -454,8 +461,15 @@ export async function POST(request: NextRequest) {
         existingStep?.completedAt ||
         (stepStatus === 'completed' || stepStatus === 'failed' ? parsedEventTime : undefined);
 
+      // 'failed' and 'completed' are terminal step states. A step shared by
+      // multiple Nextflow processes must never regress from a terminal state
+      // back to 'running' when a sibling process emits process_start.
       const nextStatus: StepStatus =
-        existingStep?.status === 'failed' ? 'failed' : stepStatus;
+        existingStep?.status === 'failed'
+          ? 'failed'
+          : existingStep?.status === 'completed'
+            ? 'completed'
+            : stepStatus;
 
       await db.pipelineRunStep.upsert({
         where: {
@@ -492,7 +506,7 @@ export async function POST(request: NextRequest) {
       runUpdates.lastWeblogAt = eventAt;
     }
 
-    if (event.includes('workflow_start') || event.includes('workflow_begin')) {
+    if (!runIsTerminal && (event.includes('workflow_start') || event.includes('workflow_begin'))) {
       if (!run.startedAt) {
         runUpdates.startedAt = parsedEventTime || eventAt;
       }
@@ -501,7 +515,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (stepStatus === 'running' && stepName) {
+    if (!runIsTerminal && stepStatus === 'running' && stepName) {
       runUpdates.currentStep = stepName;
       if (run.status === 'pending' || run.status === 'queued') {
         runUpdates.status = 'running';
@@ -511,7 +525,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (stepStatus === 'failed' && stepName) {
+    if (!runIsTerminal && stepStatus === 'failed' && stepName) {
       // A failed process event can still be non-fatal (e.g. errorStrategy 'ignore').
       // Keep the run active and wait for workflow-level completion/error events.
       runUpdates.currentStep = `Process failed: ${stepName}`;
@@ -521,7 +535,7 @@ export async function POST(request: NextRequest) {
       delete runUpdates.completedAt;
     }
 
-    if (event.includes('workflow_complete') || event.includes('workflow_finish')) {
+    if (!runIsTerminal && (event.includes('workflow_complete') || event.includes('workflow_finish'))) {
       const queueSnapshot = await readQueueState(run.queueJobId);
       if (queueSnapshot.state) {
         runUpdates.queueStatus = queueSnapshot.state;
@@ -571,23 +585,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (event.includes('workflow_error') || event.includes('workflow_fail')) {
+    if (!runIsTerminal && (event.includes('workflow_error') || event.includes('workflow_fail'))) {
       runUpdates.status = 'failed';
       runUpdates.currentStep = 'Failed';
       runUpdates.completedAt = parsedEventTime || eventAt;
     }
 
-    if (stepStatus === 'completed' || stepStatus === 'failed') {
+    if (!runIsTerminal && (stepStatus === 'completed' || stepStatus === 'failed')) {
       const pipelineSteps = getStepsForPipeline(run.pipelineId);
       const totalSteps = pipelineSteps.length;
       const completedCount = await db.pipelineRunStep.count({
         where: { pipelineRunId: runId, status: 'completed' },
       });
       if (totalSteps > 0) {
-        runUpdates.progress = Math.min(
+        // BUG #7: a late step event must never decrease progress below the
+        // run's existing value. Clamp the recomputed progress to the floor of
+        // the current run.progress (capped at 99 to leave headroom for 100%).
+        const recomputed = Math.min(
           99,
           Math.round((completedCount / totalSteps) * 100)
         );
+        const floor = typeof run.progress === 'number' ? run.progress : 0;
+        runUpdates.progress = Math.max(recomputed, Math.min(floor, 99));
       }
     }
 

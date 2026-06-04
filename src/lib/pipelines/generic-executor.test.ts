@@ -996,6 +996,112 @@ describe("generic-executor", () => {
     expect(result.errors[0]).toContain("Failed to prepare run");
     expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps incrementing run numbers past 999 instead of stalling", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([{ runNumber: "MAG-20260303-999" }]);
+
+    const result = await prepareGenericRun({
+      runId: "run-1000",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(updateCall.data.runNumber).toMatch(/^MAG-\d{8}-1000$/);
+  });
+
+  it("rejects malformed SLURM header values instead of injecting them", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-slurm-inject",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+        slurmQueue: "evil queue; rm -rf /",
+        slurmMemory: "64GB'; rm -rf /; echo '",
+        slurmOptions: "--gres=gpu:1\nmalicious line",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    // Malformed queue/memory fall back to safe defaults.
+    expect(script).toContain("#SBATCH -p cpu");
+    expect(script).toContain("#SBATCH --mem='64GB'");
+    expect(script).not.toContain("rm -rf /");
+    // slurmOptions with an embedded newline is dropped entirely.
+    expect(script).not.toContain("malicious line");
+  });
+
+  it("shell-quotes well-formed multi-token slurmOptions", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-slurm-opts",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+        slurmOptions: "--gres=gpu:1 --constraint=intel",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("#SBATCH --gres=gpu:1 --constraint=intel");
+  });
 });
 
 describe("mergeProfiles", () => {

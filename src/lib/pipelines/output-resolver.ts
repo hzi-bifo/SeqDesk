@@ -27,6 +27,21 @@ import {
 } from '@/lib/sequencing/constants';
 
 /**
+ * Detect a Prisma unique-constraint violation (P2002). Concurrent resolution
+ * (weblog workflow_complete racing monitor/sync finalize) can pass the
+ * findFirst idempotency check and then both call create; the DB-level
+ * @@unique on (pipelineRunId, path) / (run, sample, file) makes the loser
+ * throw P2002. We treat that as an idempotent skip, not an error.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
+}
+
+/**
  * Result of resolving outputs to database records
  */
 export interface ResolveResult {
@@ -267,6 +282,11 @@ async function createAssembly(
     });
     return { success: true };
   } catch (error) {
+    // A concurrent resolution created the same (run, sample, file) assembly
+    // between our findFirst and create; the unique constraint rejected ours.
+    if (isUniqueConstraintViolation(error)) {
+      return { success: true, skipped: true };
+    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: `Failed to create assembly: ${msg}` };
   }
@@ -314,6 +334,11 @@ async function createBin(
     });
     return { success: true };
   } catch (error) {
+    // A concurrent resolution created the same (run, sample, file) bin between
+    // our findFirst and create; the unique constraint rejected ours.
+    if (isUniqueConstraintViolation(error)) {
+      return { success: true, skipped: true };
+    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: `Failed to create bin: ${msg}` };
   }
@@ -360,6 +385,12 @@ async function createArtifact(
     });
     return { success: true };
   } catch (error) {
+    // A concurrent resolution created the same (run, path) artifact between our
+    // findFirst and create; the unique constraint rejected ours. Treat as an
+    // idempotent skip so the candidate is not double-counted as pending.
+    if (isUniqueConstraintViolation(error)) {
+      return { success: true, skipped: true };
+    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: `Failed to create artifact: ${msg}` };
   }
@@ -876,29 +907,23 @@ export async function saveRunResults(
   runId: string,
   result: ResolveResult
 ): Promise<void> {
-  // Preserve the existing pending-writeback count when this resolution staged no
-  // new candidates. Re-resolving a completed run (manual re-resolve, duplicate
-  // completion, or weblog re-fire) skips already-created candidate artifacts, so
-  // result.pendingWritebacks is undefined; clobbering the stored value would
-  // either resurface already-promoted candidates (resetting 0 -> N) or hide
-  // still-pending ones (resetting N -> undefined). Promotion owns lowering the
-  // count via persistPendingWritebackCount.
+  // result.pendingWritebacks is the number of candidate artifacts *newly created*
+  // by THIS resolution pass (resolveOutputs only counts non-skipped candidates).
+  // It is a delta, not an absolute total. Re-resolving a completed run skips
+  // already-created candidates, so:
+  //   - undefined  => no new candidates this pass; keep the stored total as-is
+  //                   (promotion owns lowering it via persistPendingWritebackCount).
+  //   - 0          => same as undefined (no new candidates).
+  //   - N (> 0)    => N brand-new candidates were staged; ADD them to the stored
+  //                   total instead of clobbering it, so a partial re-resolution
+  //                   that creates some new candidates does not erase the count of
+  //                   candidates staged (and possibly already promoted) earlier.
   let pendingWritebacks = result.pendingWritebacks;
-  if (pendingWritebacks === undefined) {
-    try {
-      const existing = await db.pipelineRun.findUnique({
-        where: { id: runId },
-        select: { results: true },
-      });
-      if (existing?.results) {
-        const parsed = JSON.parse(existing.results) as { pendingWritebacks?: unknown };
-        if (typeof parsed.pendingWritebacks === 'number') {
-          pendingWritebacks = parsed.pendingWritebacks;
-        }
-      }
-    } catch {
-      // Ignore unreadable/legacy results JSON and fall back to undefined.
-    }
+  if (pendingWritebacks === undefined || pendingWritebacks === 0) {
+    pendingWritebacks = await readStoredPendingWritebacks(runId);
+  } else {
+    const stored = await readStoredPendingWritebacks(runId);
+    pendingWritebacks = (stored ?? 0) + pendingWritebacks;
   }
 
   const results = {
@@ -916,4 +941,30 @@ export async function saveRunResults(
       results: JSON.stringify(results),
     },
   });
+}
+
+/**
+ * Read the persisted pendingWritebacks total from a run's results JSON.
+ * Returns undefined when the run has no results, the JSON is unreadable/legacy,
+ * or pendingWritebacks is absent. Promotion lowers this total; resolution adds
+ * to it (see saveRunResults).
+ */
+async function readStoredPendingWritebacks(
+  runId: string
+): Promise<number | undefined> {
+  try {
+    const existing = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { results: true },
+    });
+    if (existing?.results) {
+      const parsed = JSON.parse(existing.results) as { pendingWritebacks?: unknown };
+      if (typeof parsed.pendingWritebacks === 'number') {
+        return parsed.pendingWritebacks;
+      }
+    }
+  } catch {
+    // Ignore unreadable/legacy results JSON.
+  }
+  return undefined;
 }

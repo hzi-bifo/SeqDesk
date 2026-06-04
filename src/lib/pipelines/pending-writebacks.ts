@@ -174,14 +174,32 @@ function parsePipelineSources(value: string | null | undefined): Record<string, 
   }
 }
 
+// Reserved key in pipelineSources holding an append-only list of every run id
+// that has promoted reads onto this Read lineage. The flat map still records
+// the CURRENT owner per pipeline ("latest run owns the active read"), but the
+// list lets an earlier run still recognize its own promotion after a later
+// same-pipeline run supersedes the active read (otherwise that earlier run's
+// candidate would flip back to "candidate" in the review panel — BUG #17).
+const PROMOTED_RUNS_KEY = "__runs";
+
+function parsePromotedRuns(value: string | null | undefined): string[] {
+  const sources = parsePipelineSources(value) as Record<string, unknown>;
+  const raw = sources[PROMOTED_RUNS_KEY];
+  return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : [];
+}
+
 function mergePipelineSources(
   existing: string | null | undefined,
   pipelineId: string,
   runId: string
 ): string {
+  const sources = parsePipelineSources(existing) as Record<string, unknown>;
+  const runs = parsePromotedRuns(existing);
+  if (!runs.includes(runId)) runs.push(runId);
   return JSON.stringify({
-    ...parsePipelineSources(existing),
+    ...sources,
     [pipelineId]: runId,
+    [PROMOTED_RUNS_KEY]: runs,
   });
 }
 
@@ -209,7 +227,11 @@ function isReadPromotedFromRun(
   if (!read) return false;
   if (normalizeReadDataClass(read.dataClass) !== targetDataClass) return false;
   if (read.pipelineRunId === run.id) return true;
-  return parsePipelineSources(read.pipelineSources)[run.pipelineId] === run.id;
+  if (parsePipelineSources(read.pipelineSources)[run.pipelineId] === run.id) return true;
+  // A later same-pipeline run may now own the flat-map slot / pipelineRunId, but
+  // this run still promoted reads onto the lineage — recognize it so its
+  // candidate does not flip back to "candidate".
+  return parsePromotedRuns(read.pipelineSources).includes(run.id);
 }
 
 async function getPipelineRun(runId: string): Promise<RunRecord | null> {
@@ -455,17 +477,75 @@ async function copyCandidateFile(args: {
   };
 }
 
+/**
+ * Recompute and persist the remaining pending-writeback count from the LIVE
+ * candidate rows, atomically.
+ *
+ * This must not be a read-modify-write of a stale in-memory results blob: a
+ * concurrent promotion (or a concurrent re-resolution touching sibling result
+ * fields) would be clobbered, and the count would drift. Instead we:
+ *   1. open a transaction and re-read the run's results inside it,
+ *   2. count, from the live DB, how many of this run's read candidates are
+ *      still un-promoted (no active Read promoted from this run for that
+ *      sample + target data class),
+ *   3. merge ONLY the pendingWritebacks key back into the freshly-read blob.
+ *
+ * candidates is the full candidate set for the run (status as observed before
+ * promotion); we re-derive promotion state from the DB so the written count
+ * reflects every promotion that has committed, not just this caller's.
+ */
 async function persistPendingWritebackCount(
-  run: Pick<RunRecord, "id" | "results">,
-  pendingWritebacks: number
+  run: Pick<RunRecord, "id" | "pipelineId">,
+  candidates: Array<Pick<PendingReadCandidate, "sampleId" | "targetDataClass">>
 ): Promise<void> {
-  const results = parseMetadata(run.results);
-  if (results.pendingWritebacks === pendingWritebacks) return;
-  results.pendingWritebacks = pendingWritebacks;
-  await db.pipelineRun.update({
-    where: { id: run.id },
-    data: { results: JSON.stringify(results) },
+  await db.$transaction(async (tx) => {
+    const remaining = await countRemainingCandidates(tx, run, candidates);
+
+    const fresh = await tx.pipelineRun.findUnique({
+      where: { id: run.id },
+      select: { results: true },
+    });
+    const results = parseMetadata(fresh?.results ?? null);
+    if (results.pendingWritebacks === remaining) return;
+    results.pendingWritebacks = remaining;
+
+    await tx.pipelineRun.update({
+      where: { id: run.id },
+      data: { results: JSON.stringify(results) },
+    });
   });
+}
+
+type WritebackTx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+
+/**
+ * Count how many of the run's read candidates are still un-promoted, reading
+ * the live Read rows inside the given transaction. A candidate is "promoted"
+ * once an active Read for its sample + target data class carries this run's id
+ * in pipelineRunId or in pipelineSources[run.pipelineId].
+ */
+async function countRemainingCandidates(
+  tx: WritebackTx,
+  run: Pick<RunRecord, "id" | "pipelineId">,
+  candidates: Array<Pick<PendingReadCandidate, "sampleId" | "targetDataClass">>
+): Promise<number> {
+  let remaining = 0;
+  for (const candidate of candidates) {
+    const promoted = await tx.read.findFirst({
+      where: {
+        sampleId: candidate.sampleId,
+        dataClass: candidate.targetDataClass,
+        isActive: true,
+        OR: [
+          { pipelineRunId: run.id },
+          { pipelineSources: { contains: `"${run.pipelineId}":"${run.id}"` } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!promoted) remaining += 1;
+  }
+  return remaining;
 }
 
 export async function promotePendingWritebacks(args: {
@@ -623,13 +703,10 @@ export async function promotePendingWritebacks(args: {
   }
 
   // Refresh the denormalized pending-writeback count so run badges/actions stop
-  // advertising candidates that have now been promoted.
-  const remainingPending = Math.max(
-    0,
-    summary.readCandidates.filter((entry) => entry.status === "candidate").length -
-      promotedReadIds.length
-  );
-  await persistPendingWritebackCount(run, remainingPending);
+  // advertising candidates that have now been promoted. The count is recomputed
+  // atomically from the live promoted-read rows inside persistPendingWritebackCount,
+  // so concurrent promotions cannot clobber each other's count or sibling fields.
+  await persistPendingWritebackCount(run, summary.readCandidates);
 
   return {
     promoted: promotedReadIds.length,

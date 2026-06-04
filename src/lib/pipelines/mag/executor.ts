@@ -57,24 +57,27 @@ export async function generateRunNumber(): Promise<string> {
   const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
   const prefix = `MAG-${dateStr}-`;
 
-  // Find the highest existing run number for today
+  // Find all existing run numbers for today.
   const existingRuns = await db.pipelineRun.findMany({
     where: {
       runNumber: { startsWith: prefix },
     },
     select: { runNumber: true },
-    orderBy: { runNumber: 'desc' },
-    take: 1,
   });
 
+  // Compute the numeric max of the trailing counter across all rows. We cannot
+  // rely on `orderBy: { runNumber: 'desc' }` because that sort is lexicographic
+  // ("999" sorts after "1000"), which would stall the sequence at 999. Parsing
+  // everything after the prefix keeps the counter incrementing past 999.
   let nextNum = 1;
-  if (existingRuns.length > 0) {
-    const lastNum = parseInt(existingRuns[0].runNumber.slice(-3), 10);
-    if (!isNaN(lastNum)) {
+  for (const run of existingRuns) {
+    const lastNum = parseInt(run.runNumber.slice(prefix.length), 10);
+    if (!isNaN(lastNum) && lastNum + 1 > nextNum) {
       nextNum = lastNum + 1;
     }
   }
 
+  // Pad to at least 3 digits but allow wider counters once a day exceeds 999 runs.
   return `${prefix}${nextNum.toString().padStart(3, '0')}`;
 }
 
@@ -142,6 +145,49 @@ function escapeNextflowString(value: string): string {
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
     .replace(/\r?\n/g, ' ');
+}
+
+// Wrap a value as a single POSIX shell token. Safe values are emitted verbatim;
+// anything else is single-quoted with embedded single quotes escaped via the
+// standard '\'' dance. This prevents config values from becoming shell syntax
+// when written into run.sh.
+function shellQuote(value: string): string {
+  if (value === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+// SLURM header fields are interpolated into the generated SBATCH preamble, so
+// they must never contain shell/SBATCH metacharacters. These validators reduce
+// each field to a safe default when the admin-supplied value is malformed.
+function sanitizeSlurmMemory(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^\d+[KMGT]?B?$/.test(trimmed)) return trimmed;
+  return fallback;
+}
+
+function sanitizeSlurmQueue(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^[A-Za-z0-9_-]+$/.test(trimmed)) return trimmed;
+  return fallback;
+}
+
+function sanitizeSlurmTimeLimit(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+  return fallback;
+}
+
+// slurmOptions is free-form admin text (e.g. "--gres=gpu:1"). Reject embedded
+// newlines (which would inject extra SBATCH/script lines) and shell-quote each
+// whitespace-separated token so it cannot break out of the directive.
+function sanitizeSlurmOptions(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return '';
+  if (/[\r\n]/.test(trimmed)) return '';
+  return trimmed
+    .split(/\s+/)
+    .map((token) => shellQuote(token))
+    .join(' ');
 }
 
 function buildRunConfig(
@@ -227,7 +273,7 @@ function buildMagFlags(config: MagConfig): string[] {
   const skipGtdbtk = config.skipGtdbtk ?? config.skipGtdb;
   if (!config.skipBinQc && config.skipQuast) flags.push('--skip_quast');
   if (!config.skipBinQc && skipGtdbtk) flags.push('--skip_gtdbtk');
-  if (config.gtdbDb) flags.push(`--gtdb_db ${config.gtdbDb}`);
+  if (config.gtdbDb) flags.push(`--gtdb_db ${shellQuote(String(config.gtdbDb))}`);
 
   return flags;
 }
@@ -314,15 +360,24 @@ function generateSlurmScript(
     ...flags,
   ].filter(Boolean).join(' \\\n  ');
 
+  const slurmQueue = sanitizeSlurmQueue(settings.slurmQueue, 'cpu');
+  const slurmCores =
+    typeof settings.slurmCores === 'number' && Number.isFinite(settings.slurmCores) && settings.slurmCores > 0
+      ? Math.floor(settings.slurmCores)
+      : 4;
+  const slurmMemory = sanitizeSlurmMemory(settings.slurmMemory, '64GB');
+  const slurmTimeLimit = sanitizeSlurmTimeLimit(settings.slurmTimeLimit, 12);
+  const slurmOptions = sanitizeSlurmOptions(settings.slurmOptions);
+
   return `#!/bin/bash
-#SBATCH -p ${settings.slurmQueue || 'cpu'}
-#SBATCH -c ${settings.slurmCores || 4}
-#SBATCH --mem='${settings.slurmMemory || '64GB'}'
-#SBATCH -t ${settings.slurmTimeLimit || 12}:0:0
+#SBATCH -p ${slurmQueue}
+#SBATCH -c ${slurmCores}
+#SBATCH --mem='${slurmMemory}'
+#SBATCH -t ${slurmTimeLimit}:0:0
 #SBATCH -D "${runFolder}"
 #SBATCH --output="logs/slurm-%j.out"
 #SBATCH --error="logs/slurm-%j.err"
-${settings.slurmOptions ? `#SBATCH ${settings.slurmOptions}` : ''}
+${slurmOptions ? `#SBATCH ${slurmOptions}` : ''}
 
 set -euo pipefail
 

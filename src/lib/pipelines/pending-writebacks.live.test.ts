@@ -195,7 +195,7 @@ describe("pending-writebacks (live DB)", () => {
       isActive: true,
       pipelineRunId: seed.runId,
     });
-    expect(promoted?.pipelineSources).toBe(JSON.stringify({ "read-cleaning": seed.runId }));
+    expect(promoted?.pipelineSources).toBe(JSON.stringify({ "read-cleaning": seed.runId, __runs: [seed.runId] }));
 
     // The candidate file was copied into the canonical data base path.
     expect(promoted?.file1).toBeTruthy();

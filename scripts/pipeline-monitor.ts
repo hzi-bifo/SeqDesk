@@ -2,9 +2,12 @@ import { db } from '../src/lib/db';
 import { parseTraceFile, findTraceFile, readTail } from '../src/lib/pipelines/nextflow';
 import { findStepByProcess, getStepsForPipeline } from '../src/lib/pipelines/definitions';
 import {
+  aggregateStepStatus,
+  combineTaskStatuses,
   deriveStepStatus,
   normalizeStatus,
   reconcileRunStatus,
+  resolveLocalLiveness,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
 import { inferPipelineExitCode } from '../src/lib/pipelines/run-completion';
@@ -49,6 +52,18 @@ async function checkSlurmStatus(jobId: string): Promise<RunStatus | null> {
   return null;
 }
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    // The PID is gone (ESRCH) or now owned by an unrelated, recycled process
+    // (EPERM). Either way our Nextflow process is no longer the live owner, so
+    // it is not safe to treat the PID as proof the run is still executing.
+    return false;
+  }
+}
+
 async function checkLocalStatus(
   jobId: string,
   runFolder: string | null,
@@ -57,22 +72,15 @@ async function checkLocalStatus(
   const pid = Number.parseInt(pidStr, 10);
   if (!Number.isFinite(pid) || pid <= 0) return null;
 
-  try {
-    process.kill(pid, 0);
-    return 'running';
-  } catch {
-    // The PID is gone (ESRCH) or now owned by an unrelated, recycled process
-    // (EPERM) -- either way our Nextflow process has exited. A successful local
-    // run also makes the PID disappear, so DO NOT assume failure: infer the real
-    // outcome from the run's exit marker. Return null (unknown) when it cannot
-    // be determined so a stuck trace status is left untouched rather than wrongly
-    // flipped to failed.
-  }
-
-  if (!runFolder) return null;
-  const exitCode = await inferPipelineExitCode(runFolder);
-  if (exitCode === null) return null;
-  return exitCode === 0 ? 'completed' : 'failed';
+  // Exit-marker-first: if the run already wrote a terminal exit code, it is
+  // terminal regardless of PID liveness. This stops a RECYCLED PID -- now owned
+  // by an unrelated live process -- from pinning a finished run as 'running'.
+  // PID liveness is only the fallback when no exit marker exists yet. A
+  // successful local run also makes the PID disappear, so a gone PID with no
+  // marker is 'unknown' (null), leaving a stuck trace status untouched rather
+  // than wrongly flipped to failed.
+  const exitCode = runFolder ? await inferPipelineExitCode(runFolder) : null;
+  return resolveLocalLiveness(exitCode, isPidAlive(pid));
 }
 
 async function syncRun(run: {
@@ -98,6 +106,11 @@ async function syncRun(run: {
       const stepMap = new Map<string, {
         stepName: string;
         status: 'pending' | 'running' | 'completed' | 'failed';
+        // Attempts grouped by logical task identity (process + tag). A step can
+        // map several DISTINCT processes/per-sample tasks to one id, so we keep
+        // each task's attempts separate to resolve retries WITHOUT letting one
+        // task's success mask a different task's failure.
+        attemptsByTask: Map<string, ('pending' | 'running' | 'completed' | 'failed')[]>;
         startedAt?: Date;
         completedAt?: Date;
       }>();
@@ -108,16 +121,19 @@ async function syncRun(run: {
         const stepName = stepDef?.name || task.process;
 
         if (!stepMap.has(stepId)) {
-          stepMap.set(stepId, { stepName, status: 'pending' });
+          stepMap.set(stepId, { stepName, status: 'pending', attemptsByTask: new Map() });
         }
 
         const entry = stepMap.get(stepId)!;
-        const nextStatus = deriveStepStatus(task.status, task.exit);
-        if (entry.status !== 'failed') {
-          if (nextStatus === 'failed') entry.status = 'failed';
-          else if (nextStatus === 'running') entry.status = 'running';
-          else if (nextStatus === 'completed' && entry.status === 'pending') entry.status = 'completed';
-        }
+        // Group attempts by logical task identity (process + tag). Retries of the
+        // SAME task resolve together below (a later COMPLETED/CACHED clears its
+        // own earlier FAILED), while a DISTINCT sibling task can never clear
+        // another task's failure -- otherwise a genuinely failed task would be
+        // masked and the run falsely reported completed.
+        const taskIdentity = `${task.process}\u0000${task.tag ?? ''}`;
+        const attempts = entry.attemptsByTask.get(taskIdentity) ?? [];
+        attempts.push(deriveStepStatus(task.status, task.exit));
+        entry.attemptsByTask.set(taskIdentity, attempts);
 
         const startedAt = task.start || task.submit;
         if (startedAt && (!entry.startedAt || startedAt < entry.startedAt)) {
@@ -126,6 +142,13 @@ async function syncRun(run: {
         if (task.complete && (!entry.completedAt || task.complete > entry.completedAt)) {
           entry.completedAt = task.complete;
         }
+      }
+
+      for (const entry of stepMap.values()) {
+        // Resolve each distinct task (retry-aware), then combine across tasks so
+        // a genuinely-failed sibling is never hidden by another task's success.
+        const taskStatuses = Array.from(entry.attemptsByTask.values()).map(aggregateStepStatus);
+        entry.status = combineTaskStatuses(taskStatuses);
       }
 
       for (const [stepId, entry] of stepMap) {

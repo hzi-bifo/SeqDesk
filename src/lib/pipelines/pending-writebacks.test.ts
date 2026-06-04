@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
     updateMany: vi.fn(),
     update: vi.fn(),
   },
+  txPipelineRun: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
   getPackage: vi.fn(),
   getResolvedDataBasePath: vi.fn(),
 }));
@@ -126,11 +130,11 @@ function createRun(runFolder: string, candidatePath: string) {
             {
               id: "read-raw",
               file1: "orders/order-1/S1.fastq",
-              file2: null,
+              file2: null as string | null,
               dataClass: "raw",
               isActive: true,
-              pipelineRunId: null,
-              pipelineSources: null,
+              pipelineRunId: null as string | null,
+              pipelineSources: null as string | null,
             },
           ],
         },
@@ -148,8 +152,14 @@ describe("pending-writebacks", () => {
     mocks.txRead.create.mockResolvedValue({ id: "read-cleaned" });
     mocks.txRead.updateMany.mockResolvedValue({ count: 1 });
     mocks.txRead.update.mockResolvedValue({ id: "read-cleaned" });
+    // The count-recompute transaction re-reads results and, for each candidate,
+    // checks whether a promoted read now exists. By default the promotion
+    // transaction's tx.read.findFirst returns null (no prior promotion), and the
+    // count-recompute's tx.read.findFirst sees the just-promoted read.
+    mocks.txPipelineRun.findUnique.mockResolvedValue({ results: null });
+    mocks.txPipelineRun.update.mockResolvedValue({});
     mocks.db.$transaction.mockImplementation(async (callback) =>
-      callback({ read: mocks.txRead }),
+      callback({ read: mocks.txRead, pipelineRun: mocks.txPipelineRun }),
     );
   });
 
@@ -204,6 +214,11 @@ describe("pending-writebacks", () => {
       isImplicit: false,
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValue(createRun(runFolder, candidatePath));
+    // Promotion-transaction guard sees no prior promotion (null); the subsequent
+    // count-recompute transaction sees the freshly promoted read for the sample.
+    mocks.txRead.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: "read-cleaned" });
 
     const result = await promotePendingWritebacks({
       runId: "run-1",
@@ -230,12 +245,14 @@ describe("pending-writebacks", () => {
           .digest("hex"),
         readCount1: 2,
         pipelineRunId: "run-1",
-        pipelineSources: JSON.stringify({ "host-filter": "run-1" }),
+        pipelineSources: JSON.stringify({ "host-filter": "run-1", __runs: ["run-1"] }),
         classifiedById: "admin-1",
         classificationNote: "Promoted cleaned reads from RUN-001",
       }),
     });
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+    // The count is recomputed from live rows and written inside the transaction,
+    // merging only the pendingWritebacks key into the freshly re-read results.
+    expect(mocks.txPipelineRun.update).toHaveBeenCalledWith({
       where: { id: "run-1" },
       data: { results: JSON.stringify({ pendingWritebacks: 0 }) },
     });
@@ -376,5 +393,36 @@ describe("pending-writebacks", () => {
     expect(mocks.txRead.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ dataClass: "cleaned", dataClassSource: "pipeline" }),
     });
+  });
+
+  it("keeps an earlier run's candidate marked promoted after a later same-pipeline run supersedes the active read", async () => {
+    // Run-1 promoted a cleaned read; a later run-2 of the SAME pipeline then
+    // promoted its own read and now owns the flat-map slot + pipelineRunId.
+    // Run-1 must still see its candidate as promoted (BUG #17), because run-1
+    // is recorded in the per-run __runs provenance list.
+    const runFolder = path.join(tempDir, "run");
+    const candidatePath = path.join(runFolder, "output", "filtered", "S1.fastq");
+    const run = createRun(runFolder, candidatePath);
+    // The active read is now owned by run-2, but __runs records both runs.
+    run.order.samples[0].reads = [
+      {
+        id: "read-cleaned-2",
+        file1: "x/S1_cleaned.fastq",
+        file2: null,
+        dataClass: "cleaned",
+        isActive: true,
+        pipelineRunId: "run-2",
+        pipelineSources: JSON.stringify({
+          "host-filter": "run-2",
+          __runs: ["run-1", "run-2"],
+        }),
+      },
+    ];
+    mocks.db.pipelineRun.findUnique.mockResolvedValue(run);
+
+    const summary = await listPendingWritebacks("run-1");
+
+    expect(summary.readCandidates).toHaveLength(1);
+    expect(summary.readCandidates[0].status).toBe("promoted");
   });
 });

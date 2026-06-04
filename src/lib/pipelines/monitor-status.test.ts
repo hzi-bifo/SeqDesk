@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateStepStatus,
+  combineTaskStatuses,
   deriveStepStatus,
   reconcileRunStatus,
+  resolveLocalLiveness,
 } from "./monitor-status";
 
 describe("reconcileRunStatus", () => {
@@ -65,5 +68,94 @@ describe("deriveStepStatus", () => {
   it("defaults unknown states to pending", () => {
     expect(deriveStepStatus("UNKNOWN")).toBe("pending");
     expect(deriveStepStatus("")).toBe("pending");
+  });
+});
+
+describe("aggregateStepStatus", () => {
+  it("lets a later COMPLETED retry clear an earlier FAILED for the same step", () => {
+    // The exact production bug: a failed attempt followed by a successful retry
+    // must aggregate to completed, not stay stuck on failed.
+    expect(aggregateStepStatus(["failed", "completed"])).toBe("completed");
+    // Attempt order does not matter; the success still wins.
+    expect(aggregateStepStatus(["completed", "failed"])).toBe("completed");
+  });
+
+  it("treats CACHED retries (mapped to completed) as clearing an earlier failure", () => {
+    expect(aggregateStepStatus(["failed", deriveStepStatus("CACHED")])).toBe(
+      "completed"
+    );
+  });
+
+  it("stays running while any attempt is still in flight", () => {
+    expect(aggregateStepStatus(["failed", "running"])).toBe("running");
+    expect(aggregateStepStatus(["completed", "running"])).toBe("running");
+  });
+
+  it("reports failed only when every terminal attempt failed and none succeeded", () => {
+    expect(aggregateStepStatus(["failed"])).toBe("failed");
+    expect(aggregateStepStatus(["failed", "failed"])).toBe("failed");
+  });
+
+  it("defaults to pending when nothing has started", () => {
+    expect(aggregateStepStatus([])).toBe("pending");
+    expect(aggregateStepStatus(["pending", "pending"])).toBe("pending");
+  });
+});
+
+describe("combineTaskStatuses", () => {
+  it("does NOT let a distinct sibling task's success mask another task's failure", () => {
+    // The exact production false-success bug: a MAG "binning" step maps METABAT2,
+    // MAXBIN2 and CONCOCT to one step id. If CONCOCT fails but METABAT2 completes,
+    // the step (and run) must be failed -- not falsely reported completed.
+    expect(combineTaskStatuses(["completed", "failed"])).toBe("failed");
+    expect(combineTaskStatuses(["failed", "completed"])).toBe("failed");
+  });
+
+  it("stays running while any task is still in flight, even if another failed", () => {
+    expect(combineTaskStatuses(["failed", "running"])).toBe("running");
+    expect(combineTaskStatuses(["completed", "running"])).toBe("running");
+  });
+
+  it("is completed only when every distinct task completed", () => {
+    expect(combineTaskStatuses(["completed", "completed"])).toBe("completed");
+    expect(combineTaskStatuses(["completed"])).toBe("completed");
+  });
+
+  it("is pending when some tasks are not yet done and none failed or run", () => {
+    expect(combineTaskStatuses(["completed", "pending"])).toBe("pending");
+    expect(combineTaskStatuses([])).toBe("pending");
+  });
+
+  it("composes with per-task retry resolution: a retried task does not fail the step", () => {
+    // Each distinct task is first resolved retry-aware via aggregateStepStatus,
+    // then combined. CONCOCT retried to success + METABAT2 completed -> completed.
+    const concot = aggregateStepStatus(["failed", "completed"]); // retry of one task
+    const metabat = aggregateStepStatus(["completed"]);
+    expect(combineTaskStatuses([concot, metabat])).toBe("completed");
+    // But a genuinely failed (never-retried) distinct task still fails the step.
+    const failedConcot = aggregateStepStatus(["failed"]);
+    expect(combineTaskStatuses([failedConcot, metabat])).toBe("failed");
+  });
+});
+
+describe("resolveLocalLiveness", () => {
+  it("prefers the exit marker over a live PID so a recycled PID cannot pin a finished run", () => {
+    // The exact production bug: the run already wrote exit code 0, but the PID
+    // was recycled to an unrelated live process -- the run must be terminal.
+    expect(resolveLocalLiveness(0, true)).toBe("completed");
+    expect(resolveLocalLiveness(1, true)).toBe("failed");
+  });
+
+  it("uses the exit marker when the PID is gone", () => {
+    expect(resolveLocalLiveness(0, false)).toBe("completed");
+    expect(resolveLocalLiveness(2, false)).toBe("failed");
+  });
+
+  it("falls back to PID-liveness 'running' only when no exit marker exists", () => {
+    expect(resolveLocalLiveness(null, true)).toBe("running");
+  });
+
+  it("returns null (unknown) when there is no marker and the PID is gone", () => {
+    expect(resolveLocalLiveness(null, false)).toBeNull();
   });
 });

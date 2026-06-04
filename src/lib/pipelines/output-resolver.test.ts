@@ -2215,4 +2215,155 @@ describe("output-resolver", () => {
       },
     });
   });
+
+  it("treats a concurrent unique-constraint (P2002) artifact create as a skip, not an error", async () => {
+    const candidatePath = path.join(tempDir, "sample-1_filtered.fastq.gz");
+    await fs.writeFile(candidatePath, "reads");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "cleaned_read_candidates",
+            scope: "sample",
+            destination: "run_artifact",
+            type: "artifact",
+            result: {
+              kind: "sample_read_candidate",
+              writebackPolicy: "admin_review",
+            },
+            discovery: { pattern: "filter/filtered/*_filtered.fastq.gz" },
+          },
+        ],
+      },
+    });
+    // findFirst sees no row (race), but create loses to a concurrent writer and
+    // the unique constraint throws P2002.
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockRejectedValue({ code: "P2002" });
+
+    const result = await resolveOutputs("read-cleaning", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1 cleaned reads",
+          path: candidatePath,
+          sampleId: "sample-1",
+          outputId: "cleaned_read_candidates",
+          metadata: { sourceFile1: candidatePath },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+    // Skipped (lost the race) -> not counted as a newly pending candidate.
+    expect(result.pendingWritebacks).toBeUndefined();
+  });
+
+  it("treats a concurrent unique-constraint (P2002) assembly create as a skip", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "asm-output",
+            scope: "sample",
+            destination: "sample_assemblies",
+            type: "assembly",
+            discovery: { pattern: "asm.fasta" },
+          },
+        ],
+      },
+    });
+    mocks.db.assembly.findFirst.mockResolvedValue(null);
+    mocks.db.assembly.create.mockRejectedValue({ code: "P2002" });
+
+    const result = await resolveOutputs("mag", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "assembly",
+          name: "sample-1.fasta",
+          path: "/tmp/sample-1.fasta",
+          sampleId: "sample-1",
+          outputId: "asm-output",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+    // Counted as resolved (skipped path still increments the destination count).
+    expect(result.assembliesCreated).toBe(1);
+  });
+
+  it("treats a concurrent unique-constraint (P2002) bin create as a skip", async () => {
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "bin-output",
+            scope: "sample",
+            destination: "sample_bins",
+            type: "bin",
+            discovery: { pattern: "bins.tsv" },
+          },
+        ],
+      },
+    });
+    mocks.db.bin.findFirst.mockResolvedValue(null);
+    mocks.db.bin.create.mockRejectedValue({ code: "P2002" });
+
+    const result = await resolveOutputs("mag", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "bin",
+          name: "bins.fa",
+          path: "/tmp/bins.fa",
+          sampleId: "sample-1",
+          outputId: "bin-output",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.binsCreated).toBe(1);
+  });
+
+  it("adds newly-staged candidates to the stored pending count instead of clobbering it", async () => {
+    // A prior pass staged 2 candidates and they are still pending.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      results: JSON.stringify({ pendingWritebacks: 2 }),
+    });
+    mocks.db.pipelineRun.update.mockResolvedValue({});
+
+    await saveRunResults("run-id", {
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 1,
+      // This pass created 1 brand-new candidate.
+      pendingWritebacks: 1,
+      errors: [],
+      warnings: [],
+    });
+
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
+      where: { id: "run-id" },
+      data: {
+        results: JSON.stringify({
+          assembliesCreated: 0,
+          binsCreated: 0,
+          artifactsCreated: 1,
+          // 2 stored + 1 new = 3, not clobbered to 1.
+          pendingWritebacks: 3,
+          errors: undefined,
+          warnings: undefined,
+        }),
+      },
+    });
+  });
 });

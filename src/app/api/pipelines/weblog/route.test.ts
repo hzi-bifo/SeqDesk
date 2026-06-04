@@ -876,4 +876,155 @@ describe("POST /api/pipelines/weblog", () => {
     expect(res.status).toBe(200);
     expect(mocks.findStepByProcess).toHaveBeenCalledWith("mag", "MEGAHIT");
   });
+
+  it("preserves completed step status when a sibling process emits process_start", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.db.pipelineRunStep.findUnique.mockResolvedValue({
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    const req = makeRequest("run-1", {
+      event: "process_start",
+      trace: { process: "FASTQC", status: "RUNNING" },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const upsertArgs = mocks.db.pipelineRunStep.upsert.mock.calls[0][0];
+    // BUG #6: must not downgrade a shared step from completed back to running
+    expect(upsertArgs.update.status).toBe("completed");
+    expect(upsertArgs.create.status).toBe("completed");
+  });
+
+  it("does not resurrect a terminal (cancelled) run on a late workflow_complete", async () => {
+    mocks.execFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: "cancelled",
+      completedAt: new Date("2025-01-01T01:00:00Z"),
+    });
+
+    const req = makeRequest("run-1", {
+      event: "workflow_complete",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // The event row is still recorded, but no lifecycle status flip happens.
+    expect(mocks.notifyPipelineRunTerminalInApp).toHaveBeenCalledWith(
+      "run-1",
+      "cancelled",
+      "cancelled"
+    );
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    // The event must still be recorded.
+    expect(txMock.pipelineRunEvent.create).toHaveBeenCalledTimes(1);
+
+    // No status/currentStep/completedAt/progress mutation on a terminal run.
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    expect(updateData.status).toBeUndefined();
+    expect(updateData.currentStep).toBeUndefined();
+    expect(updateData.completedAt).toBeUndefined();
+    expect(updateData.progress).toBeUndefined();
+  });
+
+  it("does not overwrite a terminal (completed) run on a late workflow_error", async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: "completed",
+      completedAt: new Date("2025-01-01T01:00:00Z"),
+    });
+
+    const req = makeRequest("run-1", {
+      event: "workflow_error",
+      message: "late duplicate error",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.notifyPipelineRunTerminalInApp).toHaveBeenCalledWith(
+      "run-1",
+      "completed",
+      "completed"
+    );
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    // BUG #2: a terminal completed run must not be flipped to failed.
+    expect(updateData.status).toBeUndefined();
+    expect(updateData.completedAt).toBeUndefined();
+  });
+
+  it("never decreases progress below the run's existing progress on a late step event", async () => {
+    mocks.findStepByProcess.mockReturnValue({ id: "step-qc", name: "QC" });
+    mocks.getStepsForPipeline.mockReturnValue([
+      { id: "step-qc" },
+      { id: "step-assembly" },
+      { id: "step-binning" },
+      { id: "step-annotation" },
+    ]);
+    // Only 1 of 4 completed => recomputed 25%, but run already at 80%.
+    mocks.db.pipelineRunStep.count.mockResolvedValue(1);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      progress: 80,
+    });
+
+    const req = makeRequest("run-1", {
+      event: "process_complete",
+      trace: { process: "FASTQC", status: "COMPLETED", exit: 0 },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const txCallback = mocks.db.$transaction.mock.calls[0][0];
+    const txMock = {
+      pipelineRunEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn(),
+      },
+      pipelineRun: {
+        update: vi.fn(),
+      },
+    };
+    await txCallback(txMock);
+
+    const updateData = txMock.pipelineRun.update.mock.calls[0][0].data;
+    // BUG #7: clamp to existing 80, never drop to recomputed 25.
+    expect(updateData.progress).toBe(80);
+  });
 });
