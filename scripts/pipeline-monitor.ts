@@ -1,18 +1,18 @@
 import { db } from '../src/lib/db';
 import { parseTraceFile, findTraceFile, readTail } from '../src/lib/pipelines/nextflow';
 import { findStepByProcess, getStepsForPipeline } from '../src/lib/pipelines/definitions';
+import {
+  deriveStepStatus,
+  normalizeStatus,
+  reconcileRunStatus,
+  type RunStatus,
+} from '../src/lib/pipelines/monitor-status';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-type RunStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-
 const DEFAULT_INTERVAL_MS = 15000;
-
-function normalizeStatus(value?: string): string {
-  return value ? value.toLowerCase() : '';
-}
 
 async function checkSlurmStatus(jobId: string): Promise<RunStatus | null> {
   try {
@@ -58,20 +58,6 @@ async function checkLocalStatus(jobId: string): Promise<RunStatus | null> {
   } catch {
     return 'failed';
   }
-}
-
-function deriveStepStatus(status: string, exit?: number): 'pending' | 'running' | 'completed' | 'failed' {
-  const normalized = normalizeStatus(status);
-  if (normalized.includes('fail') || normalized.includes('error') || (exit !== undefined && exit !== 0)) {
-    return 'failed';
-  }
-  if (normalized.includes('run') || normalized.includes('start') || normalized.includes('submit')) {
-    return 'running';
-  }
-  if (normalized.includes('complete') || normalized.includes('done') || normalized.includes('success')) {
-    return 'completed';
-  }
-  return 'pending';
 }
 
 async function syncRun(run: {
@@ -173,12 +159,25 @@ async function syncRun(run: {
     }
   }
 
-  if (!derivedStatus && run.queueJobId) {
-    if (run.queueJobId.startsWith('local-')) {
-      derivedStatus = await checkLocalStatus(run.queueJobId);
-    } else {
-      derivedStatus = await checkSlurmStatus(run.queueJobId);
-    }
+  // Always reconcile against the live scheduler job. A wedged Nextflow trace can
+  // report "running 99%" long after the SLURM/local job has actually finished;
+  // a terminal scheduler state overrides a stuck non-terminal trace status so a
+  // completed/failed run does not hang as running.
+  let schedulerStatus: RunStatus | null = null;
+  if (run.queueJobId) {
+    schedulerStatus = run.queueJobId.startsWith('local-')
+      ? await checkLocalStatus(run.queueJobId)
+      : await checkSlurmStatus(run.queueJobId);
+  }
+  derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus);
+
+  if (derivedStatus === 'completed') {
+    progress = 100;
+    if (!currentStep) currentStep = 'Completed';
+  } else if (derivedStatus === 'failed' && !currentStep) {
+    currentStep = 'Failed';
+  } else if (derivedStatus === 'cancelled' && !currentStep) {
+    currentStep = 'Cancelled';
   }
 
   if (derivedStatus) {
