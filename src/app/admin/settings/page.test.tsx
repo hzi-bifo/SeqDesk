@@ -381,9 +381,15 @@ describe("admin settings seed status", () => {
 
     render(<SettingsPage />);
 
-    await waitFor(() => {
-      expect(screen.getByText("Retry update")).toBeTruthy();
-    });
+    // The page fans out several async fetches before the failed-update controls
+    // render; give the initial load extra headroom so a slow CI run (coverage +
+    // parallel suites) doesn't trip the default 1s waitFor timeout.
+    await waitFor(
+      () => {
+        expect(screen.getByText("Retry update")).toBeTruthy();
+      },
+      { timeout: 5000 }
+    );
     expect(screen.getByText("Roll back release")).toBeTruthy();
     expect(screen.getByText("Prisma CLI Version : 7.8.0")).toBeTruthy();
 
