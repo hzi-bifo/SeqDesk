@@ -7,6 +7,7 @@ import {
   GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER,
   GEMMA_METAXPATH_EXAMPLE_PROFILE_ID,
   getGemmaMetaxPathExampleStatus,
+  seedGemmaMetaxPathExampleDataset,
 } from "./gemma-metaxpath-example";
 
 const marker = JSON.stringify({
@@ -21,9 +22,11 @@ const marker = JSON.stringify({
 function buildPrismaMock({
   order,
   study,
+  extraSettings,
 }: {
   order: unknown;
   study: unknown;
+  extraSettings?: string | null;
 }) {
   return {
     order: {
@@ -32,8 +35,31 @@ function buildPrismaMock({
     study: {
       findFirst: vi.fn().mockResolvedValue(study),
     },
+    siteSettings: {
+      findUnique: vi.fn().mockResolvedValue(
+        extraSettings === undefined ? null : { extraSettings }
+      ),
+    },
   };
 }
+
+const PROFILE_SEED_DATA = JSON.stringify({
+  installProfileSeedData: {
+    enabled: true,
+    fixtures: [
+      {
+        id: GEMMA_METAXPATH_EXAMPLE_FIXTURE_ID,
+        kind: "exampleDataset",
+        orderNumber: GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER,
+        source: {
+          type: "downloadedFastqBundle",
+          url: "https://profile-host.example/gemma.tar.gz",
+          sha256: "deadbeef",
+        },
+      },
+    ],
+  },
+});
 
 function buildAppliedOrder() {
   return {
@@ -139,5 +165,37 @@ describe("getGemmaMetaxPathExampleStatus", () => {
       `Seed order ${GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER} is missing.`,
     ]);
     expect(status.studyId).toBe("study-1");
+  });
+
+  it("resolves the dataset source from the applied hosted profile seedData", async () => {
+    const prisma = buildPrismaMock({
+      order: null,
+      study: null,
+      extraSettings: PROFILE_SEED_DATA,
+    });
+
+    const status = await getGemmaMetaxPathExampleStatus(prisma as never);
+
+    expect(status.sourceUrl).toBe("https://profile-host.example/gemma.tar.gz");
+    expect(status.sha256).toBe("deadbeef");
+  });
+
+  it("reports an empty source when no hosted profile provides it", async () => {
+    const prisma = buildPrismaMock({ order: null, study: null });
+
+    const status = await getGemmaMetaxPathExampleStatus(prisma as never);
+
+    expect(status.sourceUrl).toBe("");
+    expect(status.sha256).toBe("");
+  });
+});
+
+describe("seedGemmaMetaxPathExampleDataset", () => {
+  it("refuses to seed when no hosted profile provides the dataset source", async () => {
+    const prisma = buildPrismaMock({ order: null, study: null });
+
+    await expect(
+      seedGemmaMetaxPathExampleDataset({ prisma: prisma as never })
+    ).rejects.toThrow(/not configured/);
   });
 });

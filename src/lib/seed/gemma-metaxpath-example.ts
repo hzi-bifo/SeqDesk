@@ -6,10 +6,6 @@ export const GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER = "DEV-GEMMA-ONT-001";
 export const GEMMA_METAXPATH_EXAMPLE_STUDY_ALIAS =
   "gemma-nanopore-metaxpath";
 export const GEMMA_METAXPATH_EXAMPLE_PROFILE_ID = "dev";
-export const GEMMA_METAXPATH_EXAMPLE_BUNDLE_URL =
-  "https://research.bifo.helmholtz-hzi.de/downloads/genomenet/gemma_nanopore_metaxpath_5sample_seqdesk.tar.gz";
-export const GEMMA_METAXPATH_EXAMPLE_BUNDLE_SHA256 =
-  "a05363abca66b4012caf9953a4a5beb6062e668334860efb4276718e8143e2ad";
 const GEMMA_METAXPATH_EXAMPLE_EXPECTED_SAMPLES = 5;
 const GEMMA_METAXPATH_EXAMPLE_EXPECTED_READS = 5;
 const GEMMA_METAXPATH_EXAMPLE_READ_PREFIX = `fixtures/${GEMMA_METAXPATH_EXAMPLE_PROFILE_ID}/${GEMMA_METAXPATH_EXAMPLE_FIXTURE_ID}/reads/`;
@@ -65,6 +61,56 @@ function parseJsonRecord(value: string | null | undefined): Record<string, unkno
   }
 }
 
+export interface GemmaMetaxPathSource {
+  url: string;
+  sha256: string;
+}
+
+/**
+ * Resolve the Gemma example dataset bundle source from the applied hosted
+ * install profile's seedData (SiteSettings.extraSettings.installProfileSeedData).
+ * The download URL and checksum live only in the gated hosted profile, never in
+ * this (public) source tree. Returns null when no hosted profile provided the
+ * fixture source.
+ */
+export async function resolveGemmaMetaxPathSource(
+  prisma: PrismaLike = db
+): Promise<GemmaMetaxPathSource | null> {
+  let extraSettingsValue: string | null | undefined;
+  try {
+    const settings = await prisma.siteSettings?.findUnique?.({
+      where: { id: "singleton" },
+      select: { extraSettings: true },
+    });
+    extraSettingsValue = settings?.extraSettings ?? undefined;
+  } catch {
+    return null;
+  }
+
+  const extra = parseJsonRecord(extraSettingsValue);
+  const seedData = extra.installProfileSeedData;
+  if (!seedData || typeof seedData !== "object" || Array.isArray(seedData)) {
+    return null;
+  }
+  const fixtures = (seedData as Record<string, unknown>).fixtures;
+  if (!Array.isArray(fixtures)) return null;
+
+  for (const fixture of fixtures) {
+    if (!fixture || typeof fixture !== "object") continue;
+    const record = fixture as Record<string, unknown>;
+    if (record.id !== GEMMA_METAXPATH_EXAMPLE_FIXTURE_ID) continue;
+    const source = record.source;
+    if (!source || typeof source !== "object") continue;
+    const sourceRecord = source as Record<string, unknown>;
+    const url =
+      typeof sourceRecord.url === "string" ? sourceRecord.url.trim() : "";
+    const sha256 =
+      typeof sourceRecord.sha256 === "string" ? sourceRecord.sha256.trim() : "";
+    if (url) return { url, sha256 };
+  }
+  return null;
+}
+
 function hasExpectedFixtureMarker(value: string | null | undefined): boolean {
   const marker = parseJsonRecord(value)._installProfileFixture;
   if (!marker || typeof marker !== "object" || Array.isArray(marker)) {
@@ -81,7 +127,7 @@ function readLinkIsFromFixture(filePath: string | null | undefined): boolean {
   return typeof filePath === "string" && filePath.startsWith(GEMMA_METAXPATH_EXAMPLE_READ_PREFIX);
 }
 
-export function getGemmaMetaxPathExampleProfile() {
+export function getGemmaMetaxPathExampleProfile(source: GemmaMetaxPathSource) {
   return {
     id: GEMMA_METAXPATH_EXAMPLE_PROFILE_ID,
     seedData: {
@@ -93,8 +139,8 @@ export function getGemmaMetaxPathExampleProfile() {
           orderNumber: GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER,
           source: {
             type: "downloadedFastqBundle",
-            url: GEMMA_METAXPATH_EXAMPLE_BUNDLE_URL,
-            sha256: GEMMA_METAXPATH_EXAMPLE_BUNDLE_SHA256,
+            url: source.url,
+            sha256: source.sha256,
           },
         },
       ],
@@ -105,6 +151,9 @@ export function getGemmaMetaxPathExampleProfile() {
 export async function getGemmaMetaxPathExampleStatus(
   prisma: PrismaLike = db
 ): Promise<GemmaMetaxPathExampleStatus> {
+  const source = await resolveGemmaMetaxPathSource(prisma);
+  const sourceUrl = source?.url ?? "";
+  const sha256 = source?.sha256 ?? "";
   const [order, study] = await Promise.all([
     prisma.order.findUnique({
       where: { orderNumber: GEMMA_METAXPATH_EXAMPLE_ORDER_NUMBER },
@@ -144,8 +193,8 @@ export async function getGemmaMetaxPathExampleStatus(
       studyId: null,
       samplesCount: 0,
       readsCount: 0,
-      sourceUrl: GEMMA_METAXPATH_EXAMPLE_BUNDLE_URL,
-      sha256: GEMMA_METAXPATH_EXAMPLE_BUNDLE_SHA256,
+      sourceUrl,
+      sha256,
     };
   }
 
@@ -212,8 +261,8 @@ export async function getGemmaMetaxPathExampleStatus(
     studyId: study?.id ?? null,
     samplesCount,
     readsCount,
-    sourceUrl: GEMMA_METAXPATH_EXAMPLE_BUNDLE_URL,
-    sha256: GEMMA_METAXPATH_EXAMPLE_BUNDLE_SHA256,
+    sourceUrl,
+    sha256,
   };
 }
 
@@ -228,6 +277,13 @@ export async function seedGemmaMetaxPathExampleDataset({
   logger?: SeedLogger;
   activity?: SeedActivity;
 } = {}): Promise<ApplyProfileSeedDataResult> {
+  const source = await resolveGemmaMetaxPathSource(prisma);
+  if (!source) {
+    throw new Error(
+      "The Gemma MetaxPath dataset source is not configured. It is provided by a hosted install profile."
+    );
+  }
+
   const seedModule = (await import(
     "../../../scripts/lib/install-profile-assets.mjs"
   )) as {
@@ -242,7 +298,7 @@ export async function seedGemmaMetaxPathExampleDataset({
 
   return seedModule.applyProfileSeedData({
     prisma,
-    profile: getGemmaMetaxPathExampleProfile(),
+    profile: getGemmaMetaxPathExampleProfile(source),
     rootDir,
     logger,
     activity,

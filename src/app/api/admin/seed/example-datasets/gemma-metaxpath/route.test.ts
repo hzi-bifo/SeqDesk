@@ -63,9 +63,8 @@ const seededStatus = {
   studyId: "study-1",
   samplesCount: 5,
   readsCount: 5,
-  sourceUrl:
-    "https://research.bifo.helmholtz-hzi.de/downloads/genomenet/gemma_nanopore_metaxpath_5sample_seqdesk.tar.gz",
-  sha256: "a05363abca66b4012caf9953a4a5beb6062e668334860efb4276718e8143e2ad",
+  sourceUrl: "https://profile-host.example/gemma.tar.gz",
+  sha256: "test-sha256",
 };
 
 describe("Gemma MetaxPath example dataset seed API", () => {
