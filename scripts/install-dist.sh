@@ -2389,7 +2389,7 @@ gating_disk_kb() {
         return 0
     fi
     local line avail_kb
-    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2')
+    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2') || line=""
     if [ -z "$line" ]; then
         return 0
     fi

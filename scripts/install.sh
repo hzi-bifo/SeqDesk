@@ -85,6 +85,9 @@ SEQDESK_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}"
 SEQDESK_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
+# Set after an existing install is moved aside; cleared once the new clone is in
+# place. on_error uses it to restore the backup if the install fails early.
+RESTORE_BACKUP_PATH=""
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
 SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
@@ -1627,6 +1630,73 @@ main().catch((error) => {
 NODE
 }
 
+gating_preflight() {
+    # Fail before the destructive backup/clone if the target is not writable or
+    # free disk is below a 2GB floor (a source install needs room for the git
+    # checkout plus node_modules).
+    local target="$SEQDESK_DIR"
+    local parent="$target"
+    while [ -n "$parent" ] && [ ! -e "$parent" ] && [ "$parent" != "/" ] && [ "$parent" != "." ]; do
+        parent="$(dirname "$parent")"
+    done
+    [ -z "$parent" ] && parent="."
+
+    if [ -e "$target" ]; then
+        if [ ! -w "$target" ]; then
+            print_error "Cannot install to $target: target is not writable."
+            print_info "Fix permissions, choose a different --dir, or run as a user that can write it, then re-run."
+            exit 1
+        fi
+    elif [ ! -w "$parent" ]; then
+        print_error "Cannot create $target: parent directory $parent is not writable."
+        print_info "Fix permissions, choose a different --dir, or run as a user that can write it, then re-run."
+        exit 1
+    fi
+
+    if command_exists df; then
+        local free_kb
+        free_kb=$(df -Pk "$parent" 2>/dev/null | awk 'NR==2 {print $4}') || free_kb=""
+        if [[ "$free_kb" =~ ^[0-9]+$ ]]; then
+            local required_kb=2097152   # 2 GB floor
+            if [ "$free_kb" -lt "$required_kb" ]; then
+                print_error "Not enough free disk space on $parent to install safely."
+                print_info "Available: $(( free_kb / 1024 ))MB, need at least $(( required_kb / 1024 ))MB. Free up space or use a --dir on a larger filesystem."
+                exit 1
+            fi
+        fi
+    fi
+}
+
+postgres_url_host_port() {
+    # Print "host<TAB>port" for a postgres URL, or nothing if unparseable.
+    local raw_url="${1:-}"
+    if [ -z "$raw_url" ]; then
+        return 1
+    fi
+
+    DATABASE_URL="$raw_url" node <<'NODE'
+const raw = process.env.DATABASE_URL || "";
+try {
+  const url = new URL(raw);
+  const protocol = url.protocol.replace(/:$/, "");
+  if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
+  const host = url.hostname || "";
+  if (!host) process.exit(2);
+  const port = url.port || "5432";
+  process.stdout.write(host + "\t" + port);
+} catch {
+  process.exit(2);
+}
+NODE
+}
+
+db_tcp_reachable() {
+    # Bounded TCP connect to host:port. Returns 0 if reachable, 1 if not.
+    local host="$1"
+    local port="$2"
+    timeout 8 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1
+}
+
 on_error() {
     local exit_code=$?
     set +e
@@ -1634,6 +1704,24 @@ on_error() {
     if [ -n "$SEQDESK_LOG" ]; then
         print_error "See log: $SEQDESK_LOG"
     fi
+
+    # Restore-on-failure: if an existing install was moved aside but the new
+    # clone is not yet in place, put the backup back so the host is not left
+    # without a working install.
+    if [ -n "${RESTORE_BACKUP_PATH:-}" ] && [ -d "$RESTORE_BACKUP_PATH" ]; then
+        if [ ! -e "$SEQDESK_DIR/package.json" ]; then
+            print_warning "Restoring previous install from backup (new install did not complete)."
+            if [ ! -e "$SEQDESK_DIR" ] && mv "$RESTORE_BACKUP_PATH" "$SEQDESK_DIR" 2>/dev/null; then
+                print_success "Restored previous install: $SEQDESK_DIR"
+            else
+                print_error "Could not automatically restore the previous install."
+                print_warning "Your previous install is preserved at: $RESTORE_BACKUP_PATH"
+                print_warning "To restore it manually, remove the failed target and run:"
+                print_info "  rm -rf $(printf '%q' "$SEQDESK_DIR") && mv $(printf '%q' "$RESTORE_BACKUP_PATH") $(printf '%q' "$SEQDESK_DIR")"
+            fi
+        fi
+    fi
+
     exit $exit_code
 }
 
@@ -1925,6 +2013,9 @@ fi
 # Clone repository
 print_step "Downloading SeqDesk"
 
+# Fail fast (writability, disk) before moving any existing install aside.
+gating_preflight
+
 EXISTING_BACKUP_PATH=""
 if [ -e "$SEQDESK_DIR" ]; then
     if is_truthy "$SEQDESK_YES"; then
@@ -1940,17 +2031,59 @@ if [ -e "$SEQDESK_DIR" ]; then
             exit 1
         fi
     fi
+    # Before moving the existing install aside, fail fast if a configured
+    # database host:port is known but unreachable. Skip cleanly when no
+    # host/port is derivable, and for installer-managed loopback databases.
+    db_probe_target=""
+    if command_exists node && command_exists timeout; then
+        db_probe_url="${SEQDESK_DATABASE_DIRECT_URL:-}"
+        if [ -z "$db_probe_url" ]; then
+            db_probe_url="${SEQDESK_DATABASE_URL:-}"
+        fi
+        if [ -n "$db_probe_url" ]; then
+            db_probe_target="$(postgres_url_host_port "$db_probe_url" 2>/dev/null || true)"
+        fi
+    fi
+    if [ -n "$db_probe_target" ]; then
+        db_probe_host="${db_probe_target%%$'\t'*}"
+        db_probe_port="${db_probe_target##*$'\t'}"
+        db_probe_host="${db_probe_host#[}"
+        db_probe_host="${db_probe_host%]}"
+        if [ -n "$db_probe_host" ] && [ -n "$db_probe_port" ]; then
+            case "$db_probe_host" in
+                127.0.0.1|localhost|::1)
+                    # Loopback DB may be started later by the install user; do
+                    # not abort if it is not up yet.
+                    :
+                    ;;
+                *)
+                    if db_tcp_reachable "$db_probe_host" "$db_probe_port"; then
+                        print_success "Database reachable at ${db_probe_host}:${db_probe_port}"
+                    else
+                        print_error "Database is not reachable at ${db_probe_host}:${db_probe_port}."
+                        print_info "Refusing to move the existing install aside until the database is reachable."
+                        exit 1
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+    unset db_probe_target db_probe_url db_probe_host db_probe_port 2>/dev/null || true
+
     EXISTING_BACKUP_PATH="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
     while [ -e "$EXISTING_BACKUP_PATH" ]; do
         EXISTING_BACKUP_PATH="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S).$$.${RANDOM}"
     done
     mv "$SEQDESK_DIR" "$EXISTING_BACKUP_PATH"
+    RESTORE_BACKUP_PATH="$EXISTING_BACKUP_PATH"
     print_success "Moved existing install to $EXISTING_BACKUP_PATH"
 fi
 
 print_info "Cloning repository..."
 git clone --branch "$SEQDESK_BRANCH" --depth 1 "$SEQDESK_REPO" "$SEQDESK_DIR"
 cd "$SEQDESK_DIR"
+# New clone is in place; a later failure must not restore the old backup over it.
+RESTORE_BACKUP_PATH=""
 
 print_success "Downloaded to $SEQDESK_DIR"
 
