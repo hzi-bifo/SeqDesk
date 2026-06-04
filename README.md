@@ -24,7 +24,7 @@
 </tr>
 <tr>
   <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml"><img alt="Install (Ubuntu)" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main"></a></td>
-  <td>Install (tarball, npm, source, PM2, profile) → boot → admin &amp; researcher login, on Ubuntu</td>
+  <td>Install (tarball, npm, source, PM2) → boot → admin &amp; researcher login, on Ubuntu</td>
 </tr>
 <tr>
   <td><em>private CI</em></td>
@@ -32,7 +32,7 @@
 </tr>
 <tr>
   <td><em>private CI</em></td>
-  <td>AlmaLinux install with a hosted profile, then boot</td>
+  <td>AlmaLinux install, then boot</td>
 </tr>
 <tr>
   <td><em>release gate</em></td>
@@ -97,18 +97,15 @@ Installer flags pass straight through the launcher, for example:
 
 ```bash
 seqdesk -y --config ./infrastructure-setup.json
-seqdesk -y --profile <id> --profile-code <code>   # apply a hosted install profile
 ```
 
-Organizations can create install profiles at [seqdesk.com](https://www.seqdesk.com) that bundle form
-fields, pipeline settings, and module configuration; the installer fetches and applies them during
-setup. Fallback when npm is unavailable:
+Fallback when npm is unavailable:
 
 ```bash
 curl -fsSL https://seqdesk.com/install.sh | bash
 ```
 
-Full installation, configuration, unattended, and hosted-profile options are documented at
+Full installation, configuration, and unattended options are documented at
 **[seqdesk.com/docs/installation](https://www.seqdesk.com/docs/installation)**.
 
 > The npm package is the supported public entry point; it downloads and runs the public installer
@@ -125,7 +122,6 @@ Each path is exercised end to end by continuous integration (install → boot �
 | npm launcher (recommended) | `npm i -g seqdesk` | Ubuntu · AlmaLinux · macOS |
 | One-line installer | `curl -fsSL https://seqdesk.com/install.sh \| bash` | Ubuntu |
 | From source | `bash scripts/install.sh` | Ubuntu · AlmaLinux |
-| Hosted install profile | `seqdesk --profile <id> --profile-code <code>` | Ubuntu · AlmaLinux |
 
 The npm-launcher and source installs are also exercised under PM2, and the npm/AlmaLinux/macOS runs verify an administrator can log in to the running app.
 
