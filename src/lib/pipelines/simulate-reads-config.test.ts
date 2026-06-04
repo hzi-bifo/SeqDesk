@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   READ_CLEANING_PIPELINE_ID,
-  getReadCleaningPathIssues,
   getSimulateReadsConfigIssues,
   getPipelineRunConfigIssues,
   normalizeSimulateReadsConfig,
 } from "./simulate-reads-config";
+import { getReadCleaningPathIssues } from "./read-cleaning-path-validation";
 
 const SIMULATE_READS_PIPELINE_ID_FALLBACK = "simulate-reads";
 

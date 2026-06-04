@@ -44,9 +44,9 @@ import {
 } from '@/lib/pipelines/runtime-compatibility';
 import {
   getPipelineRunConfigIssues,
-  getReadCleaningPathIssues,
   normalizePipelineRunConfig,
 } from '@/lib/pipelines/simulate-reads-config';
+import { getReadCleaningPathIssues } from '@/lib/pipelines/read-cleaning-path-validation';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
 import type { PipelineTarget } from '@/lib/pipelines/types';
