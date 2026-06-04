@@ -48,9 +48,27 @@ const missingGemmaStatus = {
   sha256: "sha256",
 };
 
-function createSettingsFetchMock(gemmaStatus: unknown) {
+const hostedInstallProfileResponse = {
+  profile: {
+    id: "hosted-profile-1",
+    name: "Hosted Profile",
+    version: "1.0.0",
+    source: "database",
+  },
+  profileRegistryUrl: "https://profiles.example/registry",
+  profileCodeEnvName: "SEQDESK_PROFILE_CODE",
+  profileCodeEnvAvailable: false,
+};
+
+function createSettingsFetchMock(
+  gemmaStatus: unknown,
+  installProfile: unknown = hostedInstallProfileResponse
+) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url === "/api/admin/install-profile/reload") {
+      return jsonResponse(installProfile);
+    }
     if (url === "/api/admin/seed/dummy-data") {
       return jsonResponse({ seeded: false, ordersCount: 0, dummyDataEnabled: false });
     }
@@ -104,6 +122,9 @@ describe("admin settings seed status", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        if (url === "/api/admin/install-profile/reload") {
+          return jsonResponse(hostedInstallProfileResponse);
+        }
         if (url === "/api/admin/seed/dummy-data") {
           return jsonResponse(
             {
@@ -257,6 +278,29 @@ describe("admin settings seed status", () => {
       .closest(".rounded-lg");
     expect(card?.className).toContain("border-border");
     expect(card?.className).toContain("bg-white");
+  });
+
+  it("hides the Gemma dataset section when no hosted profile is applied", async () => {
+    vi.stubGlobal(
+      "fetch",
+      createSettingsFetchMock(appliedGemmaStatus, {
+        profile: null,
+        profileRegistryUrl: null,
+        profileCodeEnvName: null,
+        profileCodeEnvAvailable: false,
+      })
+    );
+
+    render(<SettingsPage />);
+
+    // The Demo data section ("Load dummy data") still renders, so once it is
+    // present the page has settled and the Gemma section is confirmed absent.
+    await waitFor(() => {
+      expect(screen.getByText("Load dummy data")).toBeTruthy();
+    });
+    expect(
+      screen.queryByText("Gemma Nanopore MetaxPath dataset")
+    ).toBeNull();
   });
 
   it("lets admins retry or clear failed update state", async () => {

@@ -1861,6 +1861,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {currentInstallProfile?.id && (
             <div
               className={`flex items-start justify-between gap-4 rounded-lg border px-4 py-3 ${getGemmaFixtureCardClassName(
                 gemmaFixtureDisplayState
@@ -1944,6 +1945,7 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </div>
+            )}
           </div>
         </section>
 

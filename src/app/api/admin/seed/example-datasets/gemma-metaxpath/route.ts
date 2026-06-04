@@ -15,6 +15,8 @@ import {
   readRedactedLogTail,
   updateAdminActivityJob,
 } from "@/lib/admin/activity";
+import { checkDatabaseStatus } from "@/lib/db-status";
+import { readInstallProfileFromConfig } from "@/lib/setup-status";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,9 +25,22 @@ const GEMMA_ACTIVITY_ID = "seed:example-dataset:gemma-metaxpath";
 const RUNNING_JOB_STALE_MS = 2 * 60 * 60 * 1000;
 const runningGemmaJobs = new Set<string>();
 
+const HOSTED_PROFILE_REQUIRED_ERROR =
+  "The Gemma MetaxPath dataset is only available on hosted-profile installs.";
+
 async function requireFacilityAdmin() {
   const session = await getServerSession(authOptions);
   return session?.user?.role === "FACILITY_ADMIN";
+}
+
+async function getAppliedProfile() {
+  const databaseStatus = await checkDatabaseStatus().catch(() => null);
+  return databaseStatus?.installProfile || readInstallProfileFromConfig();
+}
+
+async function hasHostedProfile(): Promise<boolean> {
+  const profile = await getAppliedProfile();
+  return typeof profile?.id === "string" && profile.id.trim().length > 0;
 }
 
 async function ensureWritableDataBasePath(): Promise<
@@ -164,12 +179,26 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!(await hasHostedProfile())) {
+    return NextResponse.json(
+      { error: HOSTED_PROFILE_REQUIRED_ERROR },
+      { status: 403 }
+    );
+  }
+
   return NextResponse.json(await getGemmaMetaxPathExampleStatus());
 }
 
 export async function POST() {
   if (!(await requireFacilityAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!(await hasHostedProfile())) {
+    return NextResponse.json(
+      { error: HOSTED_PROFILE_REQUIRED_ERROR },
+      { status: 403 }
+    );
   }
 
   const dataPath = await ensureWritableDataBasePath();

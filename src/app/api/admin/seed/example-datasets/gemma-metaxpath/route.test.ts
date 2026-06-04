@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   getAdminActivityJob: vi.fn(),
   readRedactedLogTail: vi.fn(),
   updateAdminActivityJob: vi.fn(),
+  checkDatabaseStatus: vi.fn(),
+  readInstallProfileFromConfig: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -39,6 +41,14 @@ vi.mock("@/lib/admin/activity", () => ({
   getAdminActivityJob: mocks.getAdminActivityJob,
   readRedactedLogTail: mocks.readRedactedLogTail,
   updateAdminActivityJob: mocks.updateAdminActivityJob,
+}));
+
+vi.mock("@/lib/db-status", () => ({
+  checkDatabaseStatus: mocks.checkDatabaseStatus,
+}));
+
+vi.mock("@/lib/setup-status", () => ({
+  readInstallProfileFromConfig: mocks.readInstallProfileFromConfig,
 }));
 
 import { GET, POST } from "./route";
@@ -86,6 +96,17 @@ describe("Gemma MetaxPath example dataset seed API", () => {
       seeded: 1,
       results: [{ fixtureId: "gemma-nanopore-metaxpath-5sample" }],
     });
+    mocks.checkDatabaseStatus.mockResolvedValue({
+      exists: true,
+      configured: true,
+      reason: "configured",
+      installProfile: {
+        id: "hosted-profile-1",
+        name: "Hosted Profile",
+        source: "database",
+      },
+    });
+    mocks.readInstallProfileFromConfig.mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -111,6 +132,42 @@ describe("Gemma MetaxPath example dataset seed API", () => {
     const res = await GET();
 
     expect(res.status).toBe(401);
+  });
+
+  it("blocks GET when no hosted install profile is applied", async () => {
+    mocks.checkDatabaseStatus.mockResolvedValue({
+      exists: true,
+      configured: true,
+      reason: "configured",
+    });
+    mocks.readInstallProfileFromConfig.mockReturnValue(undefined);
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.error).toBe(
+      "The Gemma MetaxPath dataset is only available on hosted-profile installs."
+    );
+    expect(mocks.getGemmaMetaxPathExampleStatus).not.toHaveBeenCalled();
+  });
+
+  it("blocks POST when no hosted install profile is applied", async () => {
+    mocks.checkDatabaseStatus.mockResolvedValue({
+      exists: true,
+      configured: true,
+      reason: "configured",
+    });
+    mocks.readInstallProfileFromConfig.mockReturnValue(undefined);
+
+    const res = await POST();
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.error).toBe(
+      "The Gemma MetaxPath dataset is only available on hosted-profile installs."
+    );
+    expect(mocks.seedGemmaMetaxPathExampleDataset).not.toHaveBeenCalled();
   });
 
   it("starts the dataset seed as a tracked background activity", async () => {
