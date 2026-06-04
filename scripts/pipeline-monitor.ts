@@ -7,6 +7,7 @@ import {
   reconcileRunStatus,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
+import { inferPipelineExitCode } from '../src/lib/pipelines/run-completion';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -48,16 +49,30 @@ async function checkSlurmStatus(jobId: string): Promise<RunStatus | null> {
   return null;
 }
 
-async function checkLocalStatus(jobId: string): Promise<RunStatus | null> {
+async function checkLocalStatus(
+  jobId: string,
+  runFolder: string | null,
+): Promise<RunStatus | null> {
   const pidStr = jobId.replace(/^local-/, '');
   const pid = Number.parseInt(pidStr, 10);
   if (!Number.isFinite(pid) || pid <= 0) return null;
+
   try {
     process.kill(pid, 0);
     return 'running';
   } catch {
-    return 'failed';
+    // The PID is gone (ESRCH) or now owned by an unrelated, recycled process
+    // (EPERM) -- either way our Nextflow process has exited. A successful local
+    // run also makes the PID disappear, so DO NOT assume failure: infer the real
+    // outcome from the run's exit marker. Return null (unknown) when it cannot
+    // be determined so a stuck trace status is left untouched rather than wrongly
+    // flipped to failed.
   }
+
+  if (!runFolder) return null;
+  const exitCode = await inferPipelineExitCode(runFolder);
+  if (exitCode === null) return null;
+  return exitCode === 0 ? 'completed' : 'failed';
 }
 
 async function syncRun(run: {
@@ -166,7 +181,7 @@ async function syncRun(run: {
   let schedulerStatus: RunStatus | null = null;
   if (run.queueJobId) {
     schedulerStatus = run.queueJobId.startsWith('local-')
-      ? await checkLocalStatus(run.queueJobId)
+      ? await checkLocalStatus(run.queueJobId, run.runFolder)
       : await checkSlurmStatus(run.queueJobId);
   }
   derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus);

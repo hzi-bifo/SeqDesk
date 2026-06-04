@@ -30,9 +30,13 @@ export function isTerminalRunStatus(status: RunStatus | null): boolean {
 
 export function deriveStepStatus(status: string, exit?: number): StepStatus {
   const normalized = normalizeStatus(status);
+  // ABORTED tasks (workflow torn down) are failures, matching the trace parser,
+  // the weblog handler, and the ops-service. Check the exit code independently
+  // so a non-zero exit is failed even when the label looks benign.
   if (
     normalized.includes('fail') ||
     normalized.includes('error') ||
+    normalized.includes('abort') ||
     (exit !== undefined && exit !== 0)
   ) {
     return 'failed';
@@ -42,10 +46,12 @@ export function deriveStepStatus(status: string, exit?: number): StepStatus {
   if (normalized.includes('run') || normalized.includes('start')) {
     return 'running';
   }
+  // CACHED tasks (reused via -resume) are finished work, not pending.
   if (
     normalized.includes('complete') ||
     normalized.includes('done') ||
-    normalized.includes('success')
+    normalized.includes('success') ||
+    normalized.includes('cache')
   ) {
     return 'completed';
   }

@@ -49,13 +49,21 @@ describe("deriveStepStatus", () => {
     expect(deriveStepStatus("FAILED")).toBe("failed");
   });
 
+  it("treats CACHED (resumed) tasks as completed, matching the other code paths", () => {
+    expect(deriveStepStatus("CACHED")).toBe("completed");
+  });
+
+  it("treats ABORTED tasks as failed, matching the other code paths", () => {
+    expect(deriveStepStatus("ABORTED")).toBe("failed");
+  });
+
   it("treats a non-zero exit code as failed even when the label is benign", () => {
     expect(deriveStepStatus("COMPLETED", 1)).toBe("failed");
     expect(deriveStepStatus("COMPLETED", 0)).toBe("completed");
   });
 
   it("defaults unknown states to pending", () => {
-    expect(deriveStepStatus("CACHED")).toBe("pending");
+    expect(deriveStepStatus("UNKNOWN")).toBe("pending");
     expect(deriveStepStatus("")).toBe("pending");
   });
 });
