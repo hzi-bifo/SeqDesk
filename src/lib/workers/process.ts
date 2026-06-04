@@ -160,6 +160,43 @@ export async function startWorker(
 }
 
 /**
+ * Idempotently ensure a worker is running, without a human starter. If a row is
+ * RUNNING/STOPPING with a live PID, leave it as-is; otherwise clear stale rows
+ * and spawn a fresh one. Used for boot-time autostart of the safety-net daemons
+ * so they survive app restarts/updates instead of needing a manual start.
+ *
+ * Mirrors the single-instance guard in the admin start route. Never throws for
+ * an "expected" condition (unknown/dev-only/paused worker) — it returns a
+ * "skipped" action so a caller in the server boot path stays best-effort.
+ */
+export async function ensureWorkerStarted(
+  name: string,
+): Promise<{ action: "already-running" | "started" | "skipped"; pid?: number; reason?: string }> {
+  const spec = getWorkerSpec(name);
+  if (!spec) return { action: "skipped", reason: `unknown worker: ${name}` };
+  if (spec.devOnly && process.env.NODE_ENV === "production") {
+    return { action: "skipped", reason: `${name} is dev-only` };
+  }
+
+  const existing = await db.backgroundWorkerProcess.findFirst({
+    where: { name, status: { in: ["RUNNING", "STOPPING", "ZOMBIE"] } },
+    orderBy: { startedAt: "desc" },
+  });
+  if (existing && existing.status !== "ZOMBIE" && isProcessAlive(existing.pid)) {
+    return { action: "already-running", pid: existing.pid };
+  }
+  if (existing) {
+    await db.backgroundWorkerProcess.update({
+      where: { id: existing.id },
+      data: { status: "STOPPED", stoppedAt: existing.stoppedAt ?? new Date() },
+    });
+  }
+
+  const row = await startWorker(spec);
+  return { action: "started", pid: row.pid };
+}
+
+/**
  * Send SIGTERM, then SIGKILL after a grace period. Returns when the process is
  * no longer alive or the deadline elapses. Updates the DB row to STOPPING then
  * STOPPED on success.

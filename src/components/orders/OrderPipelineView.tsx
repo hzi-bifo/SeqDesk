@@ -50,6 +50,7 @@ import type {
 } from "@/lib/pipelines/types";
 import {
   AlertCircle,
+  Ban,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -915,6 +916,7 @@ export function OrderPipelineView({
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
+  const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -1278,6 +1280,36 @@ export function OrderPipelineView({
       }
     },
     [runsResponse, onSampleDataChanged]
+  );
+
+  const handleStopRun = useCallback(
+    async (runId: string) => {
+      if (
+        typeof window !== "undefined" &&
+        !window.confirm(
+          "Stop this run? The SLURM/local job will be cancelled and the run marked as cancelled."
+        )
+      ) {
+        return;
+      }
+      setStoppingRunId(runId);
+      setError("");
+      try {
+        const res = await fetch(`/api/pipelines/runs/${runId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(getApiErrorMessage(payload, "Failed to stop run"));
+        }
+        await runsResponse.mutate();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to stop run");
+      } finally {
+        setStoppingRunId(null);
+      }
+    },
+    [runsResponse]
   );
 
   const handleBulkDelete = useCallback(async () => {
@@ -2650,6 +2682,22 @@ export function OrderPipelineView({
                                   Hide from user
                                 </DropdownMenuItem>
                               )}
+                              {isFacilityAdmin &&
+                                !isDemo &&
+                                ["pending", "queued", "running"].includes(
+                                  run.status
+                                ) && (
+                                  <DropdownMenuItem
+                                    disabled={stoppingRunId === run.id}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void handleStopRun(run.id);
+                                    }}
+                                  >
+                                    <Ban className="h-4 w-4" />
+                                    Stop run
+                                  </DropdownMenuItem>
+                                )}
                               {!isDemo && (
                                 <DropdownMenuItem
                                   variant="destructive"

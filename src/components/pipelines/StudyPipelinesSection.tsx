@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
+  Ban,
   FlaskConical,
   Loader2,
   Play,
@@ -886,6 +887,7 @@ export function StudyPipelinesSection({
   // --- Delete run state ---
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
+  const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [deleteRunError, setDeleteRunError] = useState<string | null>(null);
   const [selectionUpdatingRunId, setSelectionUpdatingRunId] = useState<string | null>(null);
 
@@ -1250,6 +1252,36 @@ export function StudyPipelinesSection({
       setError(runError instanceof Error ? runError.message : "Failed to start pipeline");
     } finally {
       setStartingPipelineId(null);
+    }
+  };
+
+  const handleStopRun = async (runId: string) => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Stop this run? The SLURM/local job will be cancelled and the run marked as cancelled."
+      )
+    ) {
+      return;
+    }
+    setStoppingRunId(runId);
+    setError("");
+    try {
+      const res = await fetch(`/api/pipelines/runs/${runId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setError(
+          getApiErrorMessage(payload as { error?: unknown }, "Failed to stop run")
+        );
+        return;
+      }
+      await mutateRuns();
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : "Failed to stop run");
+    } finally {
+      setStoppingRunId(null);
     }
   };
 
@@ -2366,6 +2398,21 @@ export function StudyPipelinesSection({
                                   Clear final
                                 </DropdownMenuItem>
                               )}
+                              {isFacilityAdmin &&
+                                ["pending", "queued", "running"].includes(
+                                  run.status
+                                ) && (
+                                  <DropdownMenuItem
+                                    disabled={stoppingRunId === run.id}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void handleStopRun(run.id);
+                                    }}
+                                  >
+                                    <Ban className="h-4 w-4" />
+                                    Stop run
+                                  </DropdownMenuItem>
+                                )}
                               <DropdownMenuItem
                                 variant="destructive"
                                 disabled={displayStatus === "running" || deletingRun}

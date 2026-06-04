@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     backgroundWorkerProcess: {
       create: vi.fn(),
       update: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
   spawn: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock("fs", async () => {
   };
 });
 
-import { startWorker } from "./process";
+import { ensureWorkerStarted, startWorker } from "./process";
 import { getWorkerSpec } from "./registry";
 
 class FakeChildProcess extends EventEmitter {
@@ -221,5 +222,69 @@ describe("startWorker", () => {
     // Should not throw, even with the rejected update.
     await new Promise((r) => setImmediate(r));
     expect(mocks.db.backgroundWorkerProcess.update).toHaveBeenCalled();
+  });
+});
+
+describe("ensureWorkerStarted", () => {
+  it("starts the worker when no row exists", async () => {
+    mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue(null);
+    const child = new FakeChildProcess(4242);
+    mocks.spawn.mockReturnValue(child);
+
+    const result = await ensureWorkerStarted("pipeline-monitor");
+
+    expect(result).toMatchObject({ action: "started", pid: 4242 });
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("is idempotent: does not spawn when a row is RUNNING with a live PID", async () => {
+    // process.pid is alive, so the guard short-circuits without spawning.
+    mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
+      id: "row-live",
+      name: "pipeline-monitor",
+      pid: process.pid,
+      status: "RUNNING",
+      startedAt: new Date(),
+    });
+
+    const result = await ensureWorkerStarted("pipeline-monitor");
+
+    expect(result).toMatchObject({ action: "already-running", pid: process.pid });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.db.backgroundWorkerProcess.update).not.toHaveBeenCalled();
+  });
+
+  it("clears a stale (dead-PID) row, then starts a fresh worker", async () => {
+    mocks.db.backgroundWorkerProcess.findFirst.mockResolvedValue({
+      id: "row-stale",
+      name: "pipeline-monitor",
+      pid: 99_999_999, // not a real PID -> isProcessAlive false
+      status: "RUNNING",
+      startedAt: new Date(),
+      stoppedAt: null,
+    });
+    mocks.db.backgroundWorkerProcess.update.mockResolvedValue({});
+    const child = new FakeChildProcess(555);
+    mocks.spawn.mockReturnValue(child);
+
+    const result = await ensureWorkerStarted("pipeline-monitor");
+
+    // Stale row marked STOPPED, then a new worker spawned.
+    expect(mocks.db.backgroundWorkerProcess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "row-stale" },
+        data: expect.objectContaining({ status: "STOPPED" }),
+      }),
+    );
+    expect(result.action).toBe("started");
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips an unknown worker without touching the DB or spawning", async () => {
+    const result = await ensureWorkerStarted("does-not-exist");
+
+    expect(result.action).toBe("skipped");
+    expect(mocks.db.backgroundWorkerProcess.findFirst).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 });
