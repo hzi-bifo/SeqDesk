@@ -70,7 +70,8 @@ context; deploying SeqDesk on a publicly reachable host is not a supported or se
 The public demo at [demo.seqdesk.com](https://demo.seqdesk.com) is the intentional exception. It is
 a sandbox for exploring the UI. Open `https://demo.seqdesk.com/demo` for the researcher view or
 `https://demo.seqdesk.com/demo/admin` for the facility-admin view; each visitor gets their own
-disposable, isolated demo workspace (tracked by a browser cookie and cleaned up automatically). You
+disposable, isolated demo workspace (tracked by a browser cookie and cleaned up automatically after a
+few hours of inactivity). You
 can optionally append `?workspace=<key>` to open or resume a specific named workspace — handy for
 sharing a populated sandbox or returning to one later — but anyone using the same key shares that
 workspace and its data, so leave it off to get a fresh private one. These entry points bootstrap a

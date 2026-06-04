@@ -87,7 +87,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("./config", () => ({
   DEMO_SEED_VERSION: 1,
-  DEMO_SESSION_TTL_HOURS: 12,
+  DEMO_SESSION_TTL_HOURS: 6,
   DEMO_WORKSPACE_COOKIE: "seqdesk-demo-workspace",
   isPublicDemoEnabled: () => true,
 }));

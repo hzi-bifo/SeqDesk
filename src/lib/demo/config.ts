@@ -1,5 +1,8 @@
 export const DEMO_WORKSPACE_COOKIE = "seqdesk-demo-workspace";
-export const DEMO_SESSION_TTL_HOURS = 12;
+// Demo workspaces expire this many hours after their last activity; each visit
+// refreshes the window. Expired workspaces are reaped by the /api/demo/cleanup
+// cron and lazily on next access.
+export const DEMO_SESSION_TTL_HOURS = 6;
 export const DEMO_SEED_VERSION = 2;
 export const PUBLIC_DEMO_FLAG =
   process.env.SEQDESK_ENABLE_PUBLIC_DEMO === "true" ||
