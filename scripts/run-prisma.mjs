@@ -67,6 +67,30 @@ function isPostgresDatabaseUrl(value) {
   );
 }
 
+// `migrate deploy` acquires a session-level Postgres advisory lock, which a
+// transaction-mode pooler cannot hold — it hangs and fails with P1002. Derive
+// an unpooled connection string so migrations bypass the pooler. Neon exposes
+// its pooled endpoint as "<id>-pooler.<region>.<host>"; the direct endpoint is
+// the same host without the "-pooler" label. Non-pooled URLs pass through
+// unchanged.
+function toUnpooledUrl(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.hostname.includes("-pooler.")) {
+      url.hostname = url.hostname.replace("-pooler.", ".");
+    }
+    // `pgbouncer=true` only applies to the pooled connection.
+    url.searchParams.delete("pgbouncer");
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -88,7 +112,17 @@ if (!envDatabaseUrl && runtime.databaseUrl) {
 }
 
 if (!envDirectUrl) {
-  process.env.DIRECT_URL = envDatabaseUrl || runtime.directUrl || process.env.DATABASE_URL;
+  // Prefer an explicitly configured direct URL, otherwise fall back to
+  // DATABASE_URL.
+  process.env.DIRECT_URL = runtime.directUrl || process.env.DATABASE_URL;
+}
+
+// Migrations must bypass any connection pooler regardless of how DIRECT_URL was
+// supplied: a transaction-mode pooler can't hold the session-level advisory
+// lock `migrate deploy` needs, so it hangs and fails with P1002 (Neon's
+// `-pooler` endpoint / PgBouncer). Normalize to the unpooled host here.
+if (process.env.DIRECT_URL) {
+  process.env.DIRECT_URL = toUnpooledUrl(process.env.DIRECT_URL);
 }
 
 if (!process.env.DATABASE_URL) {

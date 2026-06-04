@@ -24,6 +24,7 @@ if (process.argv.includes("--version")) {
   console.log("prisma                  : ${version}");
   process.exit(0);
 }
+console.log("DIRECT_URL=" + (process.env.DIRECT_URL || ""));
 console.log(process.argv.slice(2).join(" "));
 `,
     "utf8"
@@ -65,6 +66,100 @@ describe("scripts/run-prisma.mjs", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Local Prisma CLI not found");
     expect(result.stderr).toContain("npm ci --omit=dev");
+  });
+
+  it("derives an unpooled DIRECT_URL from a pooled Neon DATABASE_URL", async () => {
+    await writeFakePrisma("5.22.0");
+
+    const pooled =
+      "postgresql://user:pass@ep-cool-darkness-123456-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&pgbouncer=true";
+    const result = spawnSync(process.execPath, [scriptPath, "generate"], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        DATABASE_URL: pooled,
+        DIRECT_URL: "",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "DIRECT_URL=postgresql://user:pass@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    );
+    expect(result.stdout).not.toContain("-pooler.");
+    expect(result.stdout).not.toContain("pgbouncer");
+  });
+
+  it("prefers a config directUrl over the pooled DATABASE_URL", async () => {
+    await writeFakePrisma("5.22.0");
+    await fs.writeFile(
+      path.join(tempDir, "seqdesk.config.json"),
+      JSON.stringify({
+        runtime: {
+          directUrl:
+            "postgresql://user:pass@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require",
+        },
+      }),
+      "utf8"
+    );
+
+    const result = spawnSync(process.execPath, [scriptPath, "generate"], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        DATABASE_URL:
+          "postgresql://user:pass@ep-cool-darkness-123456-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&pgbouncer=true",
+        DIRECT_URL: "",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "DIRECT_URL=postgresql://user:pass@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    );
+  });
+
+  it("de-pools even an explicitly provided pooled DIRECT_URL", async () => {
+    await writeFakePrisma("5.22.0");
+
+    const result = spawnSync(process.execPath, [scriptPath, "generate"], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        DATABASE_URL:
+          "postgresql://user:pass@ep-cool-darkness-123456-pooler.us-east-2.aws.neon.tech/neondb",
+        DIRECT_URL:
+          "postgresql://user:pass@ep-cool-darkness-123456-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "DIRECT_URL=postgresql://user:pass@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    );
+    expect(result.stdout).not.toContain("-pooler.");
+  });
+
+  it("leaves a non-pooled DIRECT_URL untouched", async () => {
+    await writeFakePrisma("5.22.0");
+
+    const explicit =
+      "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public";
+    const result = spawnSync(process.execPath, [scriptPath, "generate"], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        DATABASE_URL: explicit,
+        DIRECT_URL: explicit,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`DIRECT_URL=${explicit}`);
   });
 
   it("rejects Prisma 7", async () => {

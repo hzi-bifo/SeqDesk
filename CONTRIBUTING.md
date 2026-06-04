@@ -30,6 +30,12 @@ Set at least the `runtime` block:
 }
 ```
 
+On a pooled provider (e.g. Neon), point `databaseUrl` at the pooled endpoint and `directUrl` at the
+**direct, unpooled** endpoint. `migrate deploy` acquires a session-level advisory lock that a
+transaction-mode pooler can't hold (it fails with `P1002`), so migrations always run through
+`directUrl`. As a safety net, `scripts/run-prisma.mjs` strips Neon's `-pooler` host label from the
+resolved `DIRECT_URL` automatically, so a deploy still works if only the pooled URL is configured.
+
 For `npm run dev`, keep `runtime.nextAuthUrl` aligned with the URL you open in the browser
 (typically `http://localhost:3000`). The installer-oriented config example uses port `8000`, which
 is for installed service mode rather than local Next.js development.
