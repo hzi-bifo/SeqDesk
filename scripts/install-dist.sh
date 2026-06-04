@@ -157,6 +157,8 @@ INSTALL_START_TS=$(date +%s)
 INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
 TOTAL_STEPS=9
 CURRENT_STEP=0
+RESTORE_BACKUP_PATH=""
+INSTALL_PHASE="init"
 
 print_header() {
     echo ""
@@ -749,6 +751,36 @@ try {
   process.exit(2);
 }
 NODE
+}
+
+postgres_url_host_port() {
+    # Print "host<TAB>port" for a postgres URL, or nothing if unparseable.
+    local raw_url="${1:-}"
+    if [ -z "$raw_url" ]; then
+        return 1
+    fi
+
+    DATABASE_URL="$raw_url" node <<'NODE'
+const raw = process.env.DATABASE_URL || "";
+try {
+  const url = new URL(raw);
+  const protocol = url.protocol.replace(/:$/, "");
+  if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
+  const host = url.hostname || "";
+  if (!host) process.exit(2);
+  const port = url.port || "5432";
+  process.stdout.write(host + "\t" + port);
+} catch {
+  process.exit(2);
+}
+NODE
+}
+
+db_tcp_reachable() {
+    # Bounded TCP connect to host:port. Returns 0 if reachable, 1 if not.
+    local host="$1"
+    local port="$2"
+    timeout 8 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1
 }
 
 postgres_connection_ready() {
@@ -2350,6 +2382,70 @@ is_writable_target() {
     [ -w "$parent" ]
 }
 
+gating_disk_kb() {
+    # Print raw free kilobytes on the filesystem backing $1, or empty if unknown.
+    local target="$1"
+    if ! command_exists df; then
+        return 0
+    fi
+    local line avail_kb
+    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2')
+    if [ -z "$line" ]; then
+        return 0
+    fi
+    avail_kb=$(echo "$line" | awk '{print $4}')
+    if [[ "$avail_kb" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$avail_kb"
+    fi
+}
+
+gating_preflight() {
+    # Fail BEFORE anything destructive (download/backup mv/extract) if the
+    # target parent is not writable or free disk is below the required floor.
+    # $1 = tarball size in bytes (may be empty/0 when unknown).
+    local tarball_bytes="${1:-0}"
+    if ! [[ "$tarball_bytes" =~ ^[0-9]+$ ]]; then
+        tarball_bytes=0
+    fi
+
+    local parent_dir
+    parent_dir="$(resolve_parent_dir "$SEQDESK_DIR")"
+
+    if ! is_writable_target "$SEQDESK_DIR"; then
+        print_error "Cannot install to $SEQDESK_DIR: target is not writable."
+        print_info "Parent directory: $parent_dir"
+        print_info "Fix permissions, choose a different --dir, or run with sufficient privileges, then re-run."
+        exit 1
+    fi
+
+    # Required free space floor: max(3x tarball, 2GB). 2GB == 2097152 KB.
+    local floor_kb=2097152
+    local required_kb=$floor_kb
+    if [ "$tarball_bytes" -gt 0 ]; then
+        local tarball_kb=$(( tarball_bytes / 1024 ))
+        local triple_kb=$(( tarball_kb * 3 ))
+        if [ "$triple_kb" -gt "$required_kb" ]; then
+            required_kb=$triple_kb
+        fi
+    fi
+
+    local free_kb
+    free_kb="$(gating_disk_kb "$parent_dir")"
+    if [ -z "$free_kb" ]; then
+        print_warning "Could not determine free disk space on $parent_dir; skipping disk gate."
+        return 0
+    fi
+
+    if [ "$free_kb" -lt "$required_kb" ]; then
+        print_error "Not enough free disk space to install safely."
+        print_kv "Location" "$parent_dir"
+        print_kv "Available" "$(format_kb "$free_kb")"
+        print_kv "Required" "$(format_kb "$required_kb")"
+        print_info "Free up space or choose a --dir on a larger filesystem, then re-run."
+        exit 1
+    fi
+}
+
 print_preflight_summary() {
     local target_status="new"
     if [ -d "$SEQDESK_DIR" ]; then
@@ -2364,14 +2460,22 @@ print_preflight_summary() {
     local parent_dir
     parent_dir="$(resolve_parent_dir "$SEQDESK_DIR")"
 
-    local conda_status="not found"
+    local conda_status
     if command_exists conda; then
         conda_status="found"
+    elif [ "$PIPELINES_ENABLED" = "true" ]; then
+        conda_status="not found (will install Miniconda)"
+    else
+        conda_status="not needed"
     fi
 
-    local nextflow_status="not found"
+    local nextflow_status
     if command_exists nextflow; then
         nextflow_status="found"
+    elif [ "$PIPELINES_ENABLED" = "true" ]; then
+        nextflow_status="provided by conda env (will be installed)"
+    else
+        nextflow_status="not needed"
     fi
 
     local pipelines_status="pending"
@@ -2463,6 +2567,59 @@ print_node_install_instructions() {
             ;;
         *)
             echo "  https://nodejs.org"
+            ;;
+    esac
+}
+
+map_unknown_distro() {
+    # Map an unknown Linux distro to debian/redhat via /etc/os-release so
+    # existing install hints still fire. Echoes the mapped distro, or
+    # "unknown" if it cannot be classified. set -u safe.
+    local osr="/etc/os-release"
+    if [ ! -r "$osr" ]; then
+        echo "unknown"
+        return 0
+    fi
+    local id="" id_like=""
+    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    local token=""
+    for token in $id $id_like; do
+        case "$token" in
+            ubuntu|debian|raspbian)
+                echo "debian"
+                return 0
+                ;;
+            rhel|centos|rocky|almalinux|fedora|amzn)
+                echo "redhat"
+                return 0
+                ;;
+        esac
+    done
+    echo "unknown"
+    return 0
+}
+
+print_required_tool_install_instructions() {
+    print_info "Install the missing tools, then re-run this installer."
+    case "$OS:$DISTRO" in
+        macos:macos)
+            echo "  xcode-select --install   # provides curl, tar, shasum"
+            echo "  # or via Homebrew:"
+            echo "  brew install curl coreutils"
+            ;;
+        linux:debian)
+            echo "  sudo apt-get install -y curl tar coreutils"
+            ;;
+        linux:redhat)
+            if command_exists dnf; then
+                echo "  sudo dnf install -y curl tar coreutils"
+            else
+                echo "  sudo yum install -y curl tar coreutils"
+            fi
+            ;;
+        *)
+            echo "  Install: curl, tar, and sha256sum (coreutils) or shasum"
             ;;
     esac
 }
@@ -3152,6 +3309,27 @@ on_error() {
     if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
         rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
     fi
+
+    # Restore-on-failure: if we moved an existing install aside but the new
+    # install never activated a working 'current', put the backup back so the
+    # user is not left without a working install.
+    if [ -n "${RESTORE_BACKUP_PATH:-}" ] && [ -d "$RESTORE_BACKUP_PATH" ]; then
+        if [ ! -e "$SEQDESK_DIR/current" ]; then
+            echo ""
+            print_warning "Restoring previous install from backup (new install did not activate)."
+            if [ ! -e "$SEQDESK_DIR" ] && mv "$RESTORE_BACKUP_PATH" "$SEQDESK_DIR" 2>/dev/null; then
+                print_success "Restored previous install: $SEQDESK_DIR"
+            else
+                print_error "Could not automatically restore the previous install."
+                print_warning "Your previous install is preserved at: $RESTORE_BACKUP_PATH"
+                print_warning "To restore it manually, remove the failed target and run:"
+                print_info "  rm -rf $(shell_quote "$SEQDESK_DIR") && mv $(shell_quote "$RESTORE_BACKUP_PATH") $(shell_quote "$SEQDESK_DIR")"
+            fi
+        else
+            print_warning "Previous install backed up at: $RESTORE_BACKUP_PATH"
+        fi
+    fi
+
     echo ""
     print_error "Install failed after $(format_elapsed "$elapsed")."
     print_info "Command: ${BASH_COMMAND}"
@@ -3201,6 +3379,7 @@ print_step "Detect system"
 OS="unknown"
 ARCH=$(uname -m)
 DISTRO="unknown"
+ENV_UNTESTED_REASONS=""
 
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS="linux"
@@ -3208,6 +3387,13 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         DISTRO="debian"
     elif [ -f /etc/redhat-release ]; then
         DISTRO="redhat"
+    fi
+    if [ "$DISTRO" = "unknown" ]; then
+        DISTRO=$(map_unknown_distro)
+        if [ "$DISTRO" = "unknown" ]; then
+            print_warning "Untested Linux distribution detected. SeqDesk is tested on Debian/Ubuntu and RHEL/Fedora; proceeding at your own risk."
+            ENV_UNTESTED_REASONS="${ENV_UNTESTED_REASONS:+$ENV_UNTESTED_REASONS, }unrecognized Linux distribution"
+        fi
     fi
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
@@ -3217,8 +3403,21 @@ else
     exit 1
 fi
 
+case "$ARCH" in
+    x86_64|amd64|aarch64|arm64)
+        ;;
+    *)
+        print_warning "Untested CPU architecture: $ARCH. Release artifacts and native modules are validated on x86_64 and arm64 only; proceeding at your own risk."
+        ENV_UNTESTED_REASONS="${ENV_UNTESTED_REASONS:+$ENV_UNTESTED_REASONS, }untested architecture ($ARCH)"
+        ;;
+esac
+
 print_success "OS: $OS ($DISTRO)"
 print_success "Architecture: $ARCH"
+
+if [ -n "$ENV_UNTESTED_REASONS" ]; then
+    print_kv "Environment" "UNTESTED (reasons: $ENV_UNTESTED_REASONS) — proceeding at your own risk"
+fi
 
 # Dependencies
 print_step "Check dependencies"
@@ -3262,6 +3461,31 @@ if ! command_exists npm; then
 fi
 NPM_VERSION=$(npm -v)
 print_success "npm $NPM_VERSION"
+
+# Required tools for downloading, extracting, and verifying the release tarball.
+# Missing curl previously surfaced as a misleading "Could not connect to
+# SeqDesk server"; check upfront and fail with an honest, actionable message.
+missing_tools=()
+if ! command_exists curl; then
+    missing_tools+=("curl (download release tarball)")
+fi
+if ! command_exists tar; then
+    missing_tools+=("tar (extract release tarball)")
+fi
+if ! command_exists sha256sum && ! command_exists shasum; then
+    missing_tools+=("sha256sum or shasum (verify release checksum)")
+fi
+
+if [ "${#missing_tools[@]}" -gt 0 ]; then
+    print_error "Required tools are missing:"
+    for tool in "${missing_tools[@]}"; do
+        print_error "  - $tool"
+    done
+    print_required_tool_install_instructions
+    exit 1
+fi
+
+print_success "curl, tar, and checksum tools available"
 
 resolve_install_profile
 
@@ -3472,6 +3696,10 @@ else
         print_info "File size: ${SIZE_MB}MB"
     fi
 
+    # GATING preflight: fail fast before downloading/backing up/extracting if
+    # the target is not writable or free disk is below max(3x tarball, 2GB).
+    gating_preflight "${FILE_SIZE:-0}"
+
     run_with_spinner "Release package download" curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 
     if [ -n "$CHECKSUM" ]; then
@@ -3529,11 +3757,55 @@ else
                 exit 0
             fi
         fi
+        # Before moving the existing install aside, fail fast if a configured
+        # database host:port is known but unreachable. Skip cleanly when no
+        # host/port is derivable (e.g. local default URL not yet assigned).
+        db_probe_target=""
+        if command_exists node && command_exists timeout; then
+            db_probe_url="$SEQDESK_DATABASE_DIRECT_URL"
+            if [ -z "$db_probe_url" ]; then
+                db_probe_url="$SEQDESK_DATABASE_URL"
+            fi
+            if [ -n "$db_probe_url" ]; then
+                db_probe_target="$(postgres_url_host_port "$db_probe_url" 2>/dev/null || true)"
+            fi
+        fi
+        if [ -n "$db_probe_target" ]; then
+            db_probe_host="${db_probe_target%%$'\t'*}"
+            db_probe_port="${db_probe_target##*$'\t'}"
+            # Strip IPv6 brackets so the host matches the loopback set below and
+            # forms a valid /dev/tcp path (bash rejects "/dev/tcp/[::1]/port").
+            db_probe_host="${db_probe_host#[}"
+            db_probe_host="${db_probe_host%]}"
+            if [ -n "$db_probe_host" ] && [ -n "$db_probe_port" ]; then
+                case "$db_probe_host" in
+                    127.0.0.1|localhost|::1)
+                        # Loopback DB is provisioned/started by the installer
+                        # later; do not abort if it is not up yet.
+                        :
+                        ;;
+                    *)
+                        if db_tcp_reachable "$db_probe_host" "$db_probe_port"; then
+                            print_success "Database reachable at ${db_probe_host}:${db_probe_port}"
+                        else
+                            print_error "Database is not reachable at ${db_probe_host}:${db_probe_port}."
+                            print_info "Refusing to move the existing install aside until the database is reachable."
+                            print_postgres_setup_instructions
+                            exit 1
+                        fi
+                        ;;
+                esac
+            fi
+        fi
+        unset db_probe_target db_probe_url db_probe_host db_probe_port 2>/dev/null || true
+
         existing_backup_path="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S)"
         while [ -e "$existing_backup_path" ]; do
             existing_backup_path="${SEQDESK_DIR}.backup.$(date +%Y%m%d%H%M%S).$$.${RANDOM}"
         done
         mv "$SEQDESK_DIR" "$existing_backup_path"
+        RESTORE_BACKUP_PATH="$existing_backup_path"
+        INSTALL_PHASE="backup_moved"
         print_success "Moved existing install to $existing_backup_path"
     fi
 
@@ -3546,6 +3818,10 @@ else
     activate_current_release "$LATEST_VERSION"
     link_root_release_metadata
     APP_DIR="$SEQDESK_DIR/current"
+    # New release is activated and 'current' resolves; a later failure must not
+    # restore the old backup over the freshly installed tree.
+    INSTALL_PHASE="release_activated"
+    RESTORE_BACKUP_PATH=""
 fi
 
 cd "$APP_DIR"

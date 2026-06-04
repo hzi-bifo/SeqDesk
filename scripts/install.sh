@@ -294,6 +294,35 @@ print_git_install_instructions() {
     esac
 }
 
+map_unknown_distro() {
+    # Map an unknown Linux distro to debian/redhat via /etc/os-release so
+    # existing install hints still fire. Echoes the mapped distro, or
+    # "unknown" if it cannot be classified. set -u safe.
+    local osr="/etc/os-release"
+    if [ ! -r "$osr" ]; then
+        echo "unknown"
+        return 0
+    fi
+    local id="" id_like=""
+    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    local token=""
+    for token in $id $id_like; do
+        case "$token" in
+            ubuntu|debian|raspbian)
+                echo "debian"
+                return 0
+                ;;
+            rhel|centos|rocky|almalinux|fedora|amzn)
+                echo "redhat"
+                return 0
+                ;;
+        esac
+    done
+    echo "unknown"
+    return 0
+}
+
 generate_postgres_password() {
     if command_exists openssl; then
         openssl rand -hex 16
@@ -1649,6 +1678,7 @@ print_step "Detecting system"
 OS="unknown"
 ARCH=$(uname -m)
 DISTRO="unknown"
+ENV_UNTESTED_REASONS=""
 
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS="linux"
@@ -1656,6 +1686,13 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         DISTRO="debian"
     elif [ -f /etc/redhat-release ]; then
         DISTRO="redhat"
+    fi
+    if [ "$DISTRO" = "unknown" ]; then
+        DISTRO=$(map_unknown_distro)
+        if [ "$DISTRO" = "unknown" ]; then
+            print_warning "Untested Linux distribution detected. SeqDesk is tested on Debian/Ubuntu and RHEL/Fedora; proceeding at your own risk."
+            ENV_UNTESTED_REASONS="${ENV_UNTESTED_REASONS:+$ENV_UNTESTED_REASONS, }unrecognized Linux distribution"
+        fi
     fi
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
@@ -1665,8 +1702,21 @@ else
     exit 1
 fi
 
+case "$ARCH" in
+    x86_64|amd64|aarch64|arm64)
+        ;;
+    *)
+        print_warning "Untested CPU architecture: $ARCH. Release artifacts and native modules are validated on x86_64 and arm64 only; proceeding at your own risk."
+        ENV_UNTESTED_REASONS="${ENV_UNTESTED_REASONS:+$ENV_UNTESTED_REASONS, }untested architecture ($ARCH)"
+        ;;
+esac
+
 print_success "OS: $OS ($DISTRO)"
 print_success "Architecture: $ARCH"
+
+if [ -n "$ENV_UNTESTED_REASONS" ]; then
+    print_warning "Environment: UNTESTED (reasons: $ENV_UNTESTED_REASONS) — proceeding at your own risk"
+fi
 
 # Check dependencies
 print_step "Checking dependencies"
