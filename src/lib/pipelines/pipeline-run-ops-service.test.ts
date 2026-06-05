@@ -709,6 +709,31 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     expect(mocks.db.pipelineRunStep.upsert).toHaveBeenCalled();
   });
 
+  it('does not resurrect a terminal run when a stale trace task still reads running', async () => {
+    // Regression: a completed run re-synced against a trace whose task still reads
+    // RUNNING (or a momentarily-active queue) must stay completed — not flip back to
+    // running and lose its completedAt.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...traceRun,
+      status: 'completed',
+      completedAt: new Date('2026-03-03T11:00:00Z'),
+    });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'ALIGN', status: 'RUNNING', start: new Date('2026-03-03T10:00:00Z') }],
+        overallProgress: 50,
+        startedAt: new Date('2026-03-03T10:00:00Z'),
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    // status is only written when it changes; it must NOT be flipped to running.
+    expect(update.data.status).not.toBe('running');
+    expect(update.data.completedAt ?? undefined).not.toBeNull();
+  });
+
   it('completes the run when all trace tasks finished and progress is 100', async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
     mocks.parseTraceFile.mockResolvedValue(

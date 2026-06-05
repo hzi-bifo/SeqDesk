@@ -1384,9 +1384,17 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   const workflowCompletionReadyToFinalize =
     workflowCompletionObserved && progress >= 90;
 
+  // Once a run is terminal (completed/failed/cancelled), a later re-sync must NOT
+  // resurrect it to a non-terminal status: a stale/wedged trace task still reading
+  // "running", or a queue snapshot that momentarily looks active, would otherwise
+  // un-complete a finished run (and null its completedAt). Mirrors the weblog path's
+  // runIsTerminal guard. (Surfaced by a slow pipeline whose post-completion re-sync
+  // flipped a completed run back to running.)
+  const runWasTerminal = ['completed', 'failed', 'cancelled'].includes(run.status);
+
   let nextStatus = run.status;
   let resolvedOutputsInThisSync = false;
-  if (hasRunning) {
+  if (hasRunning && !runWasTerminal) {
     nextStatus = 'running';
   } else if (traceCompletedKnownWork) {
     nextStatus = 'completed';
@@ -1434,7 +1442,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
 
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
-    queueIsActive;
+    queueIsActive &&
+    !runWasTerminal;
   if (forceRunningFromQueue) {
     nextStatus = 'running';
     statusDeterminedByQueue = true;
