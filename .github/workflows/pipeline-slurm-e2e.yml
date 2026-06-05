@@ -107,6 +107,7 @@ jobs:
           echo "SERVER_LOG=$RUNNER_TEMP/server-slurm-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "RUNTIME_E2E_LOG=$RUNNER_TEMP/runtime-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "SLURM_E2E_LOG=$RUNNER_TEMP/slurm-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "FAILURE_E2E_LOG=$RUNNER_TEMP/slurm-failure-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           # The SLURM compute node must see the pipeline's inputs (data), its run dir
           # (outputs/logs) AND any reference DBs, so place all three on the shared FS
@@ -385,6 +386,20 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:slurm 2>&1 | tee "$SLURM_E2E_LOG"
 
+      - name: Run SLURM failure-path E2E through the app
+        env:
+          SEQDESK_SLURM_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_SLURM_E2E_EMAIL: admin@example.com
+          SEQDESK_SLURM_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Deliberately runs a SLURM job that FAILS (missing FASTQ) to prove SeqDesk
+          # reconciles the run to status=failed in the DB. The expected FAILED job in
+          # sacct below is therefore intentional, not a regression. Runs after the
+          # success smokes; the script restores the moved FASTQs in a finally block,
+          # and the data dir is per-run and wiped in cleanup either way.
+          npm run pipeline:e2e:slurm-failure 2>&1 | tee "$FAILURE_E2E_LOG"
+
       - name: SLURM shared-filesystem canary (diagnostic)
         if: always()
         run: |
@@ -484,6 +499,7 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.RUNTIME_E2E_LOG }}
             ${{ env.SLURM_E2E_LOG }}
+            ${{ env.FAILURE_E2E_LOG }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
