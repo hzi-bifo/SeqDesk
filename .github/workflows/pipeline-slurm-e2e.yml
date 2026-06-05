@@ -108,6 +108,7 @@ jobs:
           echo "RUNTIME_E2E_LOG=$RUNNER_TEMP/runtime-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "SLURM_E2E_LOG=$RUNNER_TEMP/slurm-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "FAILURE_E2E_LOG=$RUNNER_TEMP/slurm-failure-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "CANCEL_E2E_LOG=$RUNNER_TEMP/slurm-cancel-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           # The SLURM compute node must see the pipeline's inputs (data), its run dir
           # (outputs/logs) AND any reference DBs, so place all three on the shared FS
@@ -414,6 +415,18 @@ jobs:
           # and the data dir is per-run and wiped in cleanup either way.
           npm run pipeline:e2e:slurm-failure 2>&1 | tee "$FAILURE_E2E_LOG"
 
+      - name: Run SLURM cancel/stop E2E through the app
+        env:
+          SEQDESK_SLURM_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_SLURM_E2E_EMAIL: admin@example.com
+          SEQDESK_SLURM_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Starts a SLURM run and immediately cancels it (DELETE -> scancel), asserting
+          # the run reconciles to status=cancelled and the SLURM job is gone. The
+          # expected CANCELLED job in sacct below is intentional.
+          npm run pipeline:e2e:slurm-cancel 2>&1 | tee "$CANCEL_E2E_LOG"
+
       - name: SLURM shared-filesystem canary (diagnostic)
         if: always()
         run: |
@@ -514,6 +527,7 @@ jobs:
             ${{ env.RUNTIME_E2E_LOG }}
             ${{ env.SLURM_E2E_LOG }}
             ${{ env.FAILURE_E2E_LOG }}
+            ${{ env.CANCEL_E2E_LOG }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
