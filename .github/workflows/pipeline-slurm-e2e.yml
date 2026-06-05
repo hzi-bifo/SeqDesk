@@ -179,8 +179,12 @@ jobs:
           # locate them while still leaving the system SLURM binaries reachable.
           if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
             CONDA_BASE="$SLURM_SHARED_CONDA_BASE"
-            # PIPELINE_CONDA_ENV is a full prefix path in this mode, so its bin is <prefix>/bin.
-            echo "$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
+            # The env is referenced by full prefix path on this cluster (names don't
+            # resolve across nodes). Pin it for the app from the stable variable —
+            # NOT via PIPELINE_CONDA_ENV, whose job-level env default makes its value
+            # ambiguous against $GITHUB_ENV. Its bin is <prefix>/bin.
+            echo "SEQDESK_CONDA_ENV=$SLURM_SHARED_CONDA_ENV" >> "$GITHUB_ENV"
+            echo "$SLURM_SHARED_CONDA_ENV/bin" >> "$GITHUB_PATH"
           else
             CONDA_BASE="$(conda info --base)"
             echo "$CONDA_BASE/envs/$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
@@ -310,8 +314,10 @@ jobs:
           export SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_DB_DIR"
           export SEQDESK_CONDA_ENABLED=true
           export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH"
-          export SEQDESK_CONDA_ENV="$PIPELINE_CONDA_ENV"
+          # Prefer the stable shared-cluster env path; fall back to the per-run name.
+          export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-$PIPELINE_CONDA_ENV}"
           export SEQDESK_SLURM_ENABLED=true
+          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR"
           PORT="$PORT" npm run start >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
