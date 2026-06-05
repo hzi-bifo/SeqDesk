@@ -392,6 +392,23 @@ jobs:
             --pipeline-id study-demo-report \
             2>&1 | tee "$RUNNER_TEMP/study-demo-report-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
+      - name: Run fastqc E2E (local + SLURM, artifacts)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # fastqc (order target). RUN_FASTQC declares conda 'bioconda::fastqc=0.12.1',
+          # so Nextflow builds a per-process conda env at runtime ON THE COMPUTE NODE
+          # (the shared env only has the launcher toolchain) — this step also verifies
+          # the compute node can build per-process bioconda envs. Asserts the qc report
+          # artifacts (summary + sample_qc_reports) were ingested.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --pipeline-id fastqc \
+            2>&1 | tee "$RUNNER_TEMP/fastqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
       - name: Run simulate-reads E2E (local + SLURM, replace writeback)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
