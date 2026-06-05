@@ -1046,6 +1046,22 @@ export function OrderPipelineView({
     [localConfig, pipeline?.pipelineId]
   );
 
+  // Config keys the facility has pinned via install-profile/server config (a
+  // non-empty value in `pipeline.config`, not just the package default). Fields
+  // flagged `hideWhenServerConfigured` — e.g. read-cleaning's `kraken2Db` — are
+  // hidden from this per-run form so users don't re-enter the managed path.
+  const serverManagedKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const serverConfig = pipeline?.config;
+    if (!serverConfig) return keys;
+    for (const [key, value] of Object.entries(serverConfig)) {
+      if (typeof value === "string" ? value.trim() !== "" : value != null) {
+        keys.add(key);
+      }
+    }
+    return keys;
+  }, [pipeline?.config]);
+
   const updateSimulateReadsConfig = useCallback(
     (patch: Partial<SimulateReadsConfig>) => {
       setLocalConfig((prev) => {
@@ -1890,6 +1906,7 @@ export function OrderPipelineView({
           localConfig={localConfig}
           setLocalConfig={setLocalConfig}
           derivedSettings={loadingMetadata ? [] : metadataValidation?.derivedSettings}
+          serverManagedKeys={serverManagedKeys}
         />
       )}
 

@@ -74,6 +74,13 @@ export interface PipelineConfigSeqDeskUi {
   booleanMode?: PipelineConfigBooleanMode;
   derive?: PipelineConfigDeriveRule;
   helpText?: string;
+  /**
+   * Hide this field from the per-run order/study form when the value is already
+   * supplied by server-side (install-profile) configuration. Used for reference
+   * databases like `kraken2Db` that a facility admin pins once, so end users
+   * don't re-enter (or override) the managed path on every run.
+   */
+  hideWhenServerConfigured?: boolean;
 }
 
 export interface PipelineConfigProperty {

@@ -14,6 +14,17 @@
       }
     }
   ],
+  "read-cleaning": [
+    {
+      "id": "kraken2-db",
+      "label": "Kraken2 contaminant database",
+      "description": "Kraken2 reference index used to classify contaminant reads (--kraken2db). Pre-stage the extracted database directory (hash.k2d, opts.k2d, taxo.k2d) on a shared mount and use \"Link existing\" to point kraken2Db at that directory. The download URL fetches the published k2_minusb index as a .tar.gz that must be extracted before use.",
+      "version": "k2_minusb_20260226",
+      "fileName": "k2_minusb_20260226.tar.gz",
+      "downloadUrl": "https://genome-idx.s3.amazonaws.com/kraken/k2_minusb_20260226.tar.gz",
+      "configKey": "kraken2Db"
+    }
+  ],
   "mag": [
     {
       "id": "gtdb",

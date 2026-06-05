@@ -96,7 +96,8 @@
         "x-seqdesk": {
           "placement": "basic",
           "group": "databases",
-          "helpText": "Required when Kraken2 classification is enabled. SeqDesk will not silently choose or download a database."
+          "helpText": "Required when Kraken2 classification is enabled. SeqDesk will not silently choose or download a database.",
+          "hideWhenServerConfigured": true
         }
       },
       "classificationBbduk": {

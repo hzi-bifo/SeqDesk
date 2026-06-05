@@ -42,6 +42,12 @@ interface PipelineRunSettingsProps {
   setLocalConfig: Dispatch<SetStateAction<Record<string, unknown>>>;
   derivedSettings?: PipelineRunDerivedSetting[];
   enumLabels?: Record<string, Record<string, string>>;
+  /**
+   * Config keys that already have a non-empty server-side (install-profile)
+   * value. Fields flagged `x-seqdesk.hideWhenServerConfigured` are hidden from
+   * the form when their key is in this set, since the facility manages them.
+   */
+  serverManagedKeys?: Set<string>;
 }
 
 interface ConfigEntry {
@@ -94,6 +100,7 @@ export function PipelineRunSettings({
   setLocalConfig,
   derivedSettings = [],
   enumLabels = {},
+  serverManagedKeys,
 }: PipelineRunSettingsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const entries = useMemo<ConfigEntry[]>(
@@ -105,7 +112,15 @@ export function PipelineRunSettings({
     [configSchema?.properties]
   );
 
-  const editableEntries = entries.filter(({ property }) => isEditableRunSetting(property));
+  const editableEntries = entries
+    .filter(({ property }) => isEditableRunSetting(property))
+    .filter(
+      ({ key, property }) =>
+        !(
+          property["x-seqdesk"]?.hideWhenServerConfigured === true &&
+          serverManagedKeys?.has(key)
+        )
+    );
   const basicEntries = editableEntries.filter(({ property }) => {
     const placement = getPlacement(property);
     return placement === "basic" || (!placement && isDefaultVisibleProperty(property));
