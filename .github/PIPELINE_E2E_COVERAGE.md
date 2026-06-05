@@ -20,11 +20,11 @@ What the **Pipeline SLURM E2E** (`.github/workflows/pipeline-slurm-e2e.yml`, sel
 | metaxpath             | —     | —     | study  | taxonomy/path results                                                        | —            | **MetaXpath DB** (private pipeline)          | planned (needs DB staged)            |
 
 
-Legend: ✅ asserted · ⬜ known gap (fillable now, no blocker) · — not covered yet.
+Legend: ✅ asserted · — not covered yet.
 
-**Known gaps to fill (no external blocker):**
+**Open follow-ups (no external dataset needed — but not yet done):**
 
-- **fastqc / reads-qc** — first pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (~60–90s). The env build itself works (runner has bioconda network). Two real blockers found and fixed/deferred:
+- **fastqc / reads-qc** — ⚠️ **blocked on an internal test-isolation issue** (not fixed). First pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (~60–90s). The env build itself works (runner has bioconda network). Status:
   - **Fixed (app bug #5):** the slow run exposed a **completed→running resurrection** — `syncPipelineRunForOperator`'s with-trace branch had no terminal guard, so a re-sync could un-complete a finished run. Fixed in `pipeline-run-ops-service.ts` (`runWasTerminal` guard) + regression test.
   - **Open (test isolation):** fastqc runs **last** on the *shared* dummy order, but by then simulate-reads (replace mode) has repointed that order's reads at `simulated/…`, and the **failure-path test moved those FASTQs aside without fully restoring them** — so fastqc fails with "FASTQ file not found". Fix needs real isolation: give the destructive failure-path test (and/or fastqc) its **own order**, or make the sabotage restore bulletproof, so one pipeline's mutations don't bleed into the next.
   - Also: per-process conda env files in the run dir break the **artifact upload** step (symlinks/size) — exclude the `work/conda/` dir from the upload before re-enabling.
