@@ -13,7 +13,7 @@ export interface ExecutionSettings {
   runtimeMode: "conda";
   condaPath: string;
   condaEnv: string;
-  condaCacheDir: string;
+  condaCacheDir?: string;
   nextflowProfile: string;
   pipelineRunDir: string;
   pipelineDatabaseDir: string;
