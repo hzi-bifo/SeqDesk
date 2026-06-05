@@ -147,37 +147,39 @@ export function DemoBootstrapClient({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6">
-      <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-8 shadow-sm">
-        <div className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            SeqDesk Demo
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
-            {`Opening a disposable ${demoLabel}`}
-          </h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            {embedded
-              ? `Preparing the live ${demoExperience} view for the landing-page embed.`
-              : `Preparing the full-screen live ${demoExperience} demo.`}
-          </p>
+    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-10">
+      <div className="w-full max-w-md rounded-3xl border border-border bg-card p-8 text-center shadow-sm">
+        <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-foreground text-lg font-semibold text-background">
+          S
         </div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          SeqDesk Demo
+        </p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
+          {error ? "Demo unavailable" : `Opening a disposable ${demoLabel}`}
+        </h1>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+          {error
+            ? "We couldn't start this demo workspace just now. It usually clears on a retry."
+            : embedded
+              ? `Preparing the live ${demoExperience} view…`
+              : `Preparing the full-screen live ${demoExperience} demo…`}
+        </p>
 
         {error ? (
-          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4">
-            <p className="text-sm font-medium text-destructive">
-              Unable to start the demo
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">{error}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-5">
+            <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-left">
+              <p className="text-sm text-muted-foreground">{error}</p>
+            </div>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
               <Button onClick={() => window.location.reload()}>
                 <RotateCcw className="mr-2 h-4 w-4" />
-                Try Again
+                Try again
               </Button>
               {embedded ? (
                 <Button variant="outline" asChild>
                   <Link href={fullDemoHref} target="_blank" rel="noopener noreferrer">
-                    Open Full Demo
+                    Open full demo
                     <ExternalLink className="ml-2 h-4 w-4" />
                   </Link>
                 </Button>
@@ -185,18 +187,9 @@ export function DemoBootstrapClient({
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl border border-border bg-background p-5">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-5 w-5 animate-spin text-foreground" />
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  Creating or resuming your private demo data
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Orders, studies, and changes remain isolated to this demo workspace.
-                </p>
-              </div>
-            </div>
+          <div className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-foreground" />
+            Creating or resuming your private demo data…
           </div>
         )}
       </div>
