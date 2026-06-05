@@ -392,6 +392,20 @@ jobs:
             --pipeline-id study-demo-report \
             2>&1 | tee "$RUNNER_TEMP/study-demo-report-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
+      - name: Run simulate-reads E2E (local + SLURM, replace writeback)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # simulate-reads in BOTH local and SLURM (replace mode creates a new active
+          # Read per sample). The SLURM-only smoke also runs it; this adds local coverage.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --pipeline-id simulate-reads \
+            2>&1 | tee "$RUNNER_TEMP/simulate-reads-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
       - name: Run SLURM-only pipeline smoke through the app
         env:
           SEQDESK_SLURM_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}

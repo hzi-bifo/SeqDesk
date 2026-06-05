@@ -32,6 +32,7 @@ const STUDY_SCOPED_PIPELINES = new Set(["reads-qc", "study-demo-report"]);
 // pipelines gain coverage.
 const WRITEBACK_SPEC = {
   "fastq-checksum": { kind: "checksum" },
+  "simulate-reads": { kind: "replace" },
   "study-demo-report": {
     kind: "artifacts",
     requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
@@ -701,6 +702,8 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
   let writeback;
   if (spec.kind === "checksum") {
     writeback = await assertChecksumReads({ run, runId, client, baseUrl });
+  } else if (spec.kind === "replace") {
+    writeback = assertReplaceReads({ run, runId, baseUrl });
   } else if (spec.kind === "artifacts") {
     writeback = assertArtifactWriteback({ run, runId, baseUrl, spec });
   } else {
@@ -958,6 +961,73 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
     populatedChecksum1,
     md5Verified,
     md5Warnings,
+    debugEndpoint: debugEndpoint(baseUrl, runId),
+  };
+}
+
+// simulate-reads runs in REPLACE mode: on completion it creates a NEW active Read for
+// each sample (file1/2 + checksum1/2 + readCount1/2) and supersedes the prior reads.
+// Attribute via pipelineRunId/pipelineSources when the run GET exposes them, else fall
+// back to "an active read carries a valid md5 checksum1" (the seed sets none, so a
+// populated checksum proves this run wrote it). Mirrors run-slurm-pipeline-e2e.mjs.
+function assertReplaceReads({ run, runId, baseUrl }) {
+  const targetSamples =
+    run?.targetType === "order"
+      ? run?.order?.samples
+      : run?.targetType === "study"
+        ? run?.study?.samples
+        : run?.order?.samples || run?.study?.samples;
+  const samples = Array.isArray(targetSamples) ? targetSamples : [];
+  const reads = [];
+  for (const sample of samples) {
+    for (const read of sample?.reads ?? []) {
+      reads.push({ sampleId: sample?.sampleId, ...read });
+    }
+  }
+
+  let attributionMode;
+  let attributed = [];
+  if (reads.some((read) => "pipelineRunId" in read)) {
+    attributionMode = "pipelineRunId";
+    attributed = reads.filter((read) => read.pipelineRunId === runId);
+  } else if (reads.some((read) => typeof read.pipelineSources === "string")) {
+    attributionMode = "pipelineSources";
+    attributed = reads.filter((read) => String(read.pipelineSources || "").includes(runId));
+  } else {
+    attributionMode = "checksum1-fallback";
+    attributed = reads.filter(
+      (read) => typeof read.checksum1 === "string" && MD5_HEX.test(read.checksum1),
+    );
+  }
+
+  if (attributed.length === 0) {
+    fail(
+      `Replace writeback: run ${runId} produced no attributable active read (mode=${attributionMode})`,
+      JSON.stringify(
+        { runId, activeReads: reads.length, attributionMode, debugEndpoint: debugEndpoint(baseUrl, runId) },
+        null,
+        2,
+      ),
+    );
+  }
+  // readCount1 is a strong signal but isn't exposed by the run GET select today; only
+  // enforce when present.
+  if (attributionMode !== "checksum1-fallback") {
+    for (const read of attributed) {
+      if ("readCount1" in read && !(Number(read.readCount1) > 0)) {
+        fail(
+          `Replace writeback: attributed read ${read.id} has no positive readCount1`,
+          JSON.stringify({ runId, readCount1: read.readCount1 ?? null }, null, 2),
+        );
+      }
+    }
+  }
+
+  return {
+    runId,
+    attributionMode,
+    activeReadCount: reads.length,
+    attributedReadCount: attributed.length,
     debugEndpoint: debugEndpoint(baseUrl, runId),
   };
 }
