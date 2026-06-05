@@ -324,7 +324,7 @@ async function assertSlurmLogs(run, jobId) {
   for (let attempt = 0; attempt < 15; attempt += 1) {
     existing = logs.filter((logPath) => fs.existsSync(logPath));
     if (existing.length > 0) break;
-    await delay(1000);
+    await sleep(1000);
   }
   if (existing.length === 0) {
     console.warn(`WARN: SLURM capture logs not visible after wait (non-fatal): ${logs.join(", ")}`);
