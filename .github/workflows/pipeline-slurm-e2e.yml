@@ -380,13 +380,15 @@ jobs:
 
       # Runs EARLY on purpose: fastqc reads the order's FASTQs, and the fastq-checksum
       # step above is merge-mode (writes checksums, doesn't move/replace files), so the
-      # order still has its original intact reads here. simulate-reads (replace) and the
-      # failure-path test churn those reads LATER, so fastqc must run before them. fastqc
-      # declares a bioconda::fastqc conda directive, so this also verifies a per-process
-      # conda env can be built at runtime (local on the runner, and on the compute node
-      # for the SLURM run). A failure here skips the steps below — acceptable while we
-      # confirm fastqc is reliable on intact reads.
-      - name: Run fastqc E2E (local + SLURM, artifacts)
+      # order still has its original intact reads here (simulate-reads replace + the
+      # failure-path test churn them LATER). LOCAL ONLY: fastqc declares a
+      # bioconda::fastqc conda directive, so Nextflow builds a per-process conda env at
+      # runtime. That works on the runner (has network) but FAILS on the SLURM compute
+      # node, which is sealed off from conda-forge/bioconda — the conda create hangs at
+      # "Collecting package metadata" and fails. SLURM coverage for conda-tool pipelines
+      # needs a shared conda cacheDir pre-populated by the runner (TODO). So we assert the
+      # local path here; the SLURM path is covered by the (network-free) pipelines above.
+      - name: Run fastqc E2E (local only, artifacts)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
@@ -395,6 +397,7 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
+            --skip-slurm \
             --pipeline-id fastqc \
             2>&1 | tee "$RUNNER_TEMP/fastqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 

@@ -12,22 +12,24 @@ What the **Pipeline SLURM E2E** (`.github/workflows/pipeline-slurm-e2e.yml`, sel
 | **fastq-checksum**    | ✅     | ✅     | order  | `Read.checksum1/2` (merge) **+ md5 round-trip**                              | ✅            | —                                            | **covered**                          |
 | **simulate-reads**    | ✅     | ✅     | order  | new active `Read` (replace) + checksum/readCount                             | —            | —                                            | **covered** (runtime local+SLURM; also SLURM smoke) |
 | **study-demo-report** | ✅     | ✅     | study  | `PipelineArtifact` rows (`html_report`, `markdown_report`, `sample_summary`) | —            | —                                            | **covered**                          |
-| fastqc                | —     | —     | order  | `Read.fastqcReport/readCount/avgQuality` + artifacts                         | —            | — (needs `fastqc` conda tool at runtime)     | planned                              |
-| reads-qc              | —     | —     | study  | `Read.readCount/avgQuality` + artifacts                                      | —            | — (needs `seqkit`/`python` conda at runtime) | planned                              |
+| fastqc                | ✅     | 🚫    | order  | `PipelineArtifact` (`summary`, `sample_qc_reports`)                          | —            | per-process `fastqc` conda (compute node has no network) | **local covered**; SLURM blocked |
+| reads-qc              | —     | 🚫    | study  | `Read.readCount/avgQuality` + artifacts                                      | —            | per-process `seqkit`/`python` conda (compute node has no network) | planned (local); SLURM blocked |
 | read-cleaning         | —     | —     | order  | cleaned reads + artifacts                                                    | —            | **kraken2 DB**                               | planned (needs DB staged)            |
 | mag                   | —     | —     | study  | assemblies/bins + artifacts                                                  | —            | **GTDB** (large)                             | planned (needs DB staged)            |
 | submg                 | —     | —     | study  | ENA submission result                                                        | —            | ENA upload credentials                       | planned                              |
 | metaxpath             | —     | —     | study  | taxonomy/path results                                                        | —            | **MetaXpath DB** (private pipeline)          | planned (needs DB staged)            |
 
 
-Legend: ✅ asserted · — not covered yet.
+Legend: ✅ asserted · 🚫 blocked by infra (compute node has no conda network) · — not covered yet.
 
-**Open follow-ups (no external dataset needed — but not yet done):**
+**Open follow-ups:**
 
-- **fastqc / reads-qc** — ⚠️ **blocked on an internal test-isolation issue** (not fixed). First pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (~60–90s). The env build itself works (runner has bioconda network). Status:
-  - **Fixed (app bug #5):** the slow run exposed a **completed→running resurrection** — `syncPipelineRunForOperator`'s with-trace branch had no terminal guard, so a re-sync could un-complete a finished run. Fixed in `pipeline-run-ops-service.ts` (`runWasTerminal` guard) + regression test.
-  - **Fixed (test robustness):** the failure-path test now restores moved FASTQs **unconditionally** (the old `!existsSync(absolute)` guard could skip restore on a stale NFS positive), and per-process conda env dirs are **excluded from the artifact upload** (`**/work/conda/**`) so the upload no longer breaks. Both landed.
-  - **Open (data isolation — the real blocker):** fastqc still fails with the input "didn't exist". Root cause is structural, not a restore bug: fastqc runs on the **shared** dummy order, which by fastqc's turn has been churned through several simulate-reads `replace` runs (reads repointed at `simulated/…`) plus the failure-path test's sabotage — so the synthetic inputs aren't reliably on disk. The shared order can't satisfy both "fastqc needs intact reads" **and** "fastqc must run last (so a flake doesn't skip proven steps)". Fix = **give fastqc its own seeded order** (or a force-reseed before it), so it's independent of the other tests' mutations. Same applies to reads-qc.
+- **fastqc — LOCAL covered; SLURM blocked by infra.** fastqc runs **early** (right after the merge-mode fastq-checksum step, so the order still has its original intact reads) with `--skip-slurm`. Resolved along the way:
+  - **Fixed (app bug #5):** completed→running resurrection (`runWasTerminal` guard in `pipeline-run-ops-service.ts` + regression test).
+  - **Fixed (test robustness):** failure-path restore is now unconditional; `**/work/conda/**` excluded from the artifact upload.
+  - **Resolved (data isolation):** the earlier "input didn't exist" failures were contamination from running fastqc *after* simulate-reads (replace) + the failure test churned the shared order. Running fastqc **first**, on intact reads, fixed it — local fastqc now passes and ingests its artifacts.
+  - **🚫 Hard infra limit (SLURM):** the per-process `conda create` for `bioconda::fastqc` **hangs on the compute node** (`Collecting package metadata…` → fail) — the compute node has **no outbound network** to conda-forge/bioconda. So SLURM coverage for any conda-tool pipeline is blocked. **Fix:** a shared `conda.cacheDir` on the cluster FS that the runner pre-populates (it has network), so the compute node reuses the prebuilt env instead of fetching — needs app support for a conda-cache-dir setting. Until then, conda-tool pipelines are **local-only** in CI.
+- **reads-qc** — same shape (study target; per-process `seqkit`/`python` conda). Local-coverable like fastqc once wired; SLURM blocked by the same compute-node-network limit.
 
 ### What every covered run asserts
 
