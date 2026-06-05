@@ -13,6 +13,7 @@ export interface ExecutionSettings {
   runtimeMode: "conda";
   condaPath: string;
   condaEnv: string;
+  condaCacheDir: string;
   nextflowProfile: string;
   pipelineRunDir: string;
   pipelineDatabaseDir: string;
@@ -47,6 +48,7 @@ export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   runtimeMode: "conda",
   condaPath: "",
   condaEnv: "seqdesk-pipelines",
+  condaCacheDir: "",
   nextflowProfile: "",
   pipelineRunDir: "/data/pipeline_runs",
   pipelineDatabaseDir: "",
@@ -135,6 +137,11 @@ function getConfigExecutionOverrides(
       resolvedConfig,
       "pipelines.execution.conda.environment",
       execution?.conda?.environment
+    ),
+    condaCacheDir: getConfiguredValue(
+      resolvedConfig,
+      "pipelines.execution.conda.cacheDir",
+      execution?.conda?.cacheDir
     ),
     pipelineRunDir: getConfiguredValue(
       resolvedConfig,

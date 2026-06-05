@@ -346,8 +346,15 @@ jobs:
             mkdir -p "$SHARED_PIPELINES_DIR"
             cp -R pipelines/. "$SHARED_PIPELINES_DIR/"
             export SEQDESK_PIPELINES_DIR="$SHARED_PIPELINES_DIR"
+            # Shared, PERSISTENT Nextflow conda cacheDir (outside the per-run dir, so
+            # cleanup never removes it). A pipeline's LOCAL run (on the runner, which has
+            # network) builds the per-process env here; the later SLURM run on the
+            # network-isolated compute node reuses it by hash — no conda fetch needed.
+            SHARED_CONDA_CACHE="$(dirname "$SLURM_SHARED_RUN_ROOT")/conda-cache"
+            mkdir -p "$SHARED_CONDA_CACHE"
+            export SEQDESK_CONDA_CACHE_DIR="$SHARED_CONDA_CACHE"
           fi
-          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR SEQDESK_PIPELINES_DIR=${SEQDESK_PIPELINES_DIR:-<app default>}"
+          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR SEQDESK_PIPELINES_DIR=${SEQDESK_PIPELINES_DIR:-<app default>} SEQDESK_CONDA_CACHE_DIR=${SEQDESK_CONDA_CACHE_DIR:-<app default>}"
           PORT="$PORT" npm run start >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
@@ -381,14 +388,13 @@ jobs:
       # Runs EARLY on purpose: fastqc reads the order's FASTQs, and the fastq-checksum
       # step above is merge-mode (writes checksums, doesn't move/replace files), so the
       # order still has its original intact reads here (simulate-reads replace + the
-      # failure-path test churn them LATER). LOCAL ONLY: fastqc declares a
-      # bioconda::fastqc conda directive, so Nextflow builds a per-process conda env at
-      # runtime. That works on the runner (has network) but FAILS on the SLURM compute
-      # node, which is sealed off from conda-forge/bioconda — the conda create hangs at
-      # "Collecting package metadata" and fails. SLURM coverage for conda-tool pipelines
-      # needs a shared conda cacheDir pre-populated by the runner (TODO). So we assert the
-      # local path here; the SLURM path is covered by the (network-free) pipelines above.
-      - name: Run fastqc E2E (local only, artifacts)
+      # failure-path test churn them LATER). fastqc declares a bioconda::fastqc conda
+      # directive, so Nextflow builds a per-process conda env at runtime. The compute
+      # node has NO network, so the SLURM run can't build it directly — but with the
+      # shared SEQDESK_CONDA_CACHE_DIR set, the LOCAL run (on the networked runner) builds
+      # the env into that shared cache first, and the SLURM run reuses it by hash. So
+      # local+SLURM both work via the shared conda cache.
+      - name: Run fastqc E2E (local + SLURM, artifacts)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
@@ -397,7 +403,6 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
-            --skip-slurm \
             --pipeline-id fastqc \
             2>&1 | tee "$RUNNER_TEMP/fastqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 

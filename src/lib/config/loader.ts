@@ -40,6 +40,11 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
         // config-file conda.environment) are silently ignored and the executor falls
         // back to its hardcoded 'seqdesk-pipelines' default.
         environment: 'seqdesk-pipelines',
+        // Shared Nextflow conda cache dir. When set, per-process conda envs built with
+        // -profile conda are cached here (by hash) and reused across runs. Lets a host
+        // with network (e.g. a head/submit node) pre-build an env that network-isolated
+        // SLURM compute nodes can reuse without fetching from conda-forge/bioconda.
+        cacheDir: '',
       },
       slurm: {
         enabled: false,
@@ -124,6 +129,7 @@ const ENV_MAPPINGS: Record<string, string> = {
   SEQDESK_CONDA_ENABLED: 'pipelines.execution.conda.enabled',
   SEQDESK_CONDA_PATH: 'pipelines.execution.conda.path',
   SEQDESK_CONDA_ENV: 'pipelines.execution.conda.environment',
+  SEQDESK_CONDA_CACHE_DIR: 'pipelines.execution.conda.cacheDir',
 
   // SLURM
   SEQDESK_SLURM_ENABLED: 'pipelines.execution.slurm.enabled',

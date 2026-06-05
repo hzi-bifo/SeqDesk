@@ -23,6 +23,7 @@ const ENV_KEYS = [
   "SEQDESK_IN_APP_NOTIFICATIONS_ENABLED",
   "SEQDESK_CONDA_PATH",
   "SEQDESK_CONDA_ENV",
+  "SEQDESK_CONDA_CACHE_DIR",
 ] as const;
 
 let cwdBefore = "";
@@ -130,14 +131,17 @@ describe("config loader", () => {
     // silently falling back to the hardcoded 'seqdesk-pipelines' default.
     process.env.SEQDESK_CONDA_PATH = "/net/shared/conda";
     process.env.SEQDESK_CONDA_ENV = "/net/shared/conda/envs/pipelines";
+    process.env.SEQDESK_CONDA_CACHE_DIR = "/net/shared/conda-cache";
 
     const resolved = loadConfig(true);
 
     expect(resolved.config.pipelines?.execution?.conda?.environment).toBe(
       "/net/shared/conda/envs/pipelines"
     );
+    expect(resolved.config.pipelines?.execution?.conda?.cacheDir).toBe("/net/shared/conda-cache");
     expect(resolved.sources["pipelines.execution.conda.environment"]).toBe("env");
     expect(resolved.sources["pipelines.execution.conda.path"]).toBe("env");
+    expect(resolved.sources["pipelines.execution.conda.cacheDir"]).toBe("env");
   });
 
   it("getConfigValue returns value/source and respects fallback", () => {

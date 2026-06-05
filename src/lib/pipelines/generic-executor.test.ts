@@ -289,6 +289,45 @@ describe("generic-executor", () => {
     });
   });
 
+  it("emits conda.cacheDir in nextflow.config when condaCacheDir is set", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: { type: "nextflow", pipeline: "nf-core/mag", version: "2.0.0", profiles: ["conda"], defaultParams: {} },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-cache",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        condaCacheDir: "/net/shared/conda-cache",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+    expect(config).toContain("cacheDir = '/net/shared/conda-cache'");
+
+    // And NOT emitted when unset.
+    const result2 = await prepareGenericRun({
+      runId: "run-nocache",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+    const config2 = await fs.readFile(path.join(result2.runFolder!, "nextflow.config"), "utf8");
+    expect(config2).not.toContain("cacheDir");
+  });
+
   it("passes MetaxPath params files using Nextflow -params-file", async () => {
     const adapter = createAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);

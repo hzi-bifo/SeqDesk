@@ -20,6 +20,8 @@ export interface CondaConfig {
   enabled?: boolean;
   path?: string;
   environment?: string;
+  /** Shared Nextflow conda cacheDir so per-process envs are reused across runs. */
+  cacheDir?: string;
 }
 
 export interface SlurmConfig {

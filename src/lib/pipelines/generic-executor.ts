@@ -241,22 +241,27 @@ function buildRunConfig(
   }
 
   // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
-  sections.push(
-    [
-      `profiles {`,
-      `  standard {}`,
-      `  conda {`,
-      `    conda.enabled = true`,
-      `  }`,
-      `}`,
-      ``,
-      `conda {`,
-      `  channels = ['conda-forge', 'bioconda']`,
-      `  useMamba = false`,
-      `  createOptions = '--override-channels -c conda-forge -c bioconda'`,
-      `}`,
-    ].join('\n')
-  );
+  const condaBlock = [
+    `profiles {`,
+    `  standard {}`,
+    `  conda {`,
+    `    conda.enabled = true`,
+    `  }`,
+    `}`,
+    ``,
+    `conda {`,
+    `  channels = ['conda-forge', 'bioconda']`,
+    `  useMamba = false`,
+    `  createOptions = '--override-channels -c conda-forge -c bioconda'`,
+  ];
+  // Shared conda cacheDir: per-process envs are cached here by hash and reused across
+  // runs, so a host with network can pre-build an env that network-isolated SLURM
+  // compute nodes reuse without fetching from conda channels.
+  if (settings.condaCacheDir?.trim()) {
+    condaBlock.push(`  cacheDir = '${escapeNextflowString(settings.condaCacheDir.trim())}'`);
+  }
+  condaBlock.push(`}`);
+  sections.push(condaBlock.join('\n'));
 
   // CONCOCT can fail in newer Python environments due to missing pkg_resources.
   // Force a compatible interpreter + setuptools for the MAG CONCOCT tasks.
