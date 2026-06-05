@@ -109,6 +109,7 @@ jobs:
           echo "SLURM_E2E_LOG=$RUNNER_TEMP/slurm-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "FAILURE_E2E_LOG=$RUNNER_TEMP/slurm-failure-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "CANCEL_E2E_LOG=$RUNNER_TEMP/slurm-cancel-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "APPCHECK_E2E_LOG=$RUNNER_TEMP/appcheck-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           # The SLURM compute node must see the pipeline's inputs (data), its run dir
           # (outputs/logs) AND any reference DBs, so place all three on the shared FS
@@ -469,6 +470,48 @@ jobs:
           # expected CANCELLED job in sacct below is intentional.
           npm run pipeline:e2e:slurm-cancel 2>&1 | tee "$CANCEL_E2E_LOG"
 
+      # --- App-behaviour checks (ordered after the proven pipeline steps) ---
+
+      - name: Run pipeline no-data validation E2E
+        env:
+          SEQDESK_APPCHECK_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_APPCHECK_EMAIL: admin@example.com
+          SEQDESK_APPCHECK_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Creates a throwaway DRAFT order with a read-less sample, then proves that
+          # starting a run on it is rejected with a clean validation error (4xx, not a
+          # 500/crash). Pure HTTP — no SLURM, no pipeline execution. Cleans up the order.
+          echo "===== appcheck: nodata =====" | tee "$APPCHECK_E2E_LOG"
+          npm run pipeline:e2e:appcheck -- --check nodata 2>&1 | tee -a "$APPCHECK_E2E_LOG"
+
+      - name: Run pipeline access E2E (notifications + permissions)
+        env:
+          SEQDESK_APPCHECK_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_APPCHECK_EMAIL: admin@example.com
+          SEQDESK_APPCHECK_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Runs a fast LOCAL fastq-checksum run to completion, then asserts (a) a
+          # 'pipeline.completed' in-app notification fired, and (b) a non-admin
+          # researcher cannot read/cancel the admin's run (403) and anonymous is 401.
+          echo "===== appcheck: access =====" | tee -a "$APPCHECK_E2E_LOG"
+          npm run pipeline:e2e:appcheck -- --check access 2>&1 | tee -a "$APPCHECK_E2E_LOG"
+
+      - name: Run SLURM stuck-run reconciliation E2E
+        env:
+          SEQDESK_APPCHECK_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_APPCHECK_EMAIL: admin@example.com
+          SEQDESK_APPCHECK_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Starts a SLURM run, lets it reach running/queued, then scancels the job OUT
+          # OF BAND (behind the app's back) and asserts /sync reconciles the vanished job
+          # to a terminal status instead of leaving it wedged (the 99%-stuck regression).
+          # The expected CANCELLED job in sacct is intentional.
+          echo "===== appcheck: stuck =====" | tee -a "$APPCHECK_E2E_LOG"
+          npm run pipeline:e2e:appcheck -- --check stuck 2>&1 | tee -a "$APPCHECK_E2E_LOG"
+
       - name: SLURM shared-filesystem canary (diagnostic)
         if: always()
         run: |
@@ -570,6 +613,7 @@ jobs:
             ${{ env.SLURM_E2E_LOG }}
             ${{ env.FAILURE_E2E_LOG }}
             ${{ env.CANCEL_E2E_LOG }}
+            ${{ env.APPCHECK_E2E_LOG }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
