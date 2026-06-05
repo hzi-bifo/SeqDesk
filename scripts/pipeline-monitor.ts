@@ -10,7 +10,7 @@ import {
   resolveLocalLiveness,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
-import { inferPipelineExitCode } from '../src/lib/pipelines/run-completion';
+import { inferPipelineExitCode, processCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -238,6 +238,20 @@ async function syncRun(run: {
       where: { id: run.id },
       data: update,
     });
+
+    // When the monitor (the safety-net daemon) is the one that transitions a run to
+    // completed, it must also ingest the pipeline's outputs — otherwise a run finalized
+    // by the monitor instead of the /sync API would be marked completed but never have
+    // its artifacts/read writebacks persisted. run.status here is always non-terminal
+    // (runOnce only selects pending/queued/running), so this is the completion
+    // transition. Resolution is idempotent (re-resolving skips existing artifacts).
+    if (derivedStatus === 'completed') {
+      try {
+        await processCompletedPipelineRun(run.id, run.pipelineId);
+      } catch (error) {
+        console.error('[pipeline-monitor] Post-completion output resolution failed for run', run.id, error);
+      }
+    }
   }
 }
 
