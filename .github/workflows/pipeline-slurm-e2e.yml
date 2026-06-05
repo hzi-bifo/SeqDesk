@@ -155,13 +155,23 @@ jobs:
             CONDA_BIN="$SLURM_SHARED_CONDA_BASE/bin/conda"
             ENV_PREFIX="${SLURM_SHARED_CONDA_ENV:-$SLURM_SHARED_RUN_ROOT/conda-envs/seqdesk-pipelines}"
             echo "PIPELINE_CONDA_ENV=$ENV_PREFIX" >> "$GITHUB_ENV"
-            if "$CONDA_BIN" run -p "$ENV_PREFIX" nextflow -version >/dev/null 2>&1; then
-              echo "Reusing existing shared conda env at $ENV_PREFIX"
+            PIPELINE_PKGS="python=3.11 openjdk=17 nodejs coreutils nextflow nf-core"
+            # Pipelines run their process scripts inside this env on the compute node, so
+            # it needs the full launcher toolchain (node + java + coreutils), not just
+            # nextflow. Reuse only when the toolchain is complete; otherwise top up an
+            # existing env in place, or create a new one.
+            if "$CONDA_BIN" run -p "$ENV_PREFIX" nextflow -version >/dev/null 2>&1 \
+               && "$CONDA_BIN" run -p "$ENV_PREFIX" node --version >/dev/null 2>&1; then
+              echo "Reusing existing shared conda env at $ENV_PREFIX (toolchain present)"
+            elif [ -d "$ENV_PREFIX" ]; then
+              echo "Topping up existing shared conda env at $ENV_PREFIX"
+              "$CONDA_BIN" install -y -p "$ENV_PREFIX" \
+                --override-channels -c conda-forge -c bioconda $PIPELINE_PKGS
             else
+              echo "Creating shared conda env at $ENV_PREFIX"
               mkdir -p "$(dirname "$ENV_PREFIX")"
               "$CONDA_BIN" create -y -p "$ENV_PREFIX" \
-                --override-channels -c conda-forge -c bioconda \
-                python=3.11 openjdk=17 nodejs coreutils nextflow nf-core
+                --override-channels -c conda-forge -c bioconda $PIPELINE_PKGS
             fi
           else
             conda create -y -n "$PIPELINE_CONDA_ENV" \
