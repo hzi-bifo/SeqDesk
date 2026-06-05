@@ -587,6 +587,52 @@ describe("generic-executor", () => {
     expect(config).toContain("clusterOptions = '--gres=gpu:1'");
   });
 
+  it("runs the pipeline as a single SLURM job (local executor inside) when SEQDESK_SLURM_INLINE_EXECUTOR is set", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "2.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR = "1";
+    try {
+      const result = await prepareGenericRun({
+        runId: "run-slurm-inline",
+        pipelineId: "mag",
+        target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+        config: {},
+        executionSettings: {
+          ...baseExecutionSettings(tempDir),
+          useSlurm: true,
+          slurmQueue: "cpu",
+          slurmCores: 1,
+          slurmMemory: "1G",
+          slurmTimeLimit: 10,
+        },
+        userId: "user-1",
+      });
+
+      expect(result.success).toBe(true);
+      // Still a single SLURM job (sbatch wrapper), but Nextflow does NOT submit a job
+      // per process — no executor='slurm' block, so it uses the local executor inside.
+      const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+      expect(script).toContain("#SBATCH -p cpu");
+      const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
+      expect(config).not.toContain("executor = 'slurm'");
+    } finally {
+      delete process.env.SEQDESK_SLURM_INLINE_EXECUTOR;
+    }
+  });
+
   it("includes MAG CONCOCT workaround in nextflow config for mag pipeline", async () => {
     const adapter = createAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);

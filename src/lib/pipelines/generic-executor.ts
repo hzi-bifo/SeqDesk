@@ -203,7 +203,17 @@ function buildRunConfig(
     sections.push(`weblog {\n  enabled = true\n  url = "${weblogUrl}"\n}`);
   }
 
-  if (settings.useSlurm) {
+  // By default a SLURM run submits one SLURM job per process (executor='slurm').
+  // On clusters that cap concurrent submissions per user (e.g. QOS
+  // MaxSubmitJobsPerUser=1) that nested submission fails. Setting
+  // SEQDESK_SLURM_INLINE_EXECUTOR keeps the run wrapped in a single sbatch job but
+  // runs the processes with Nextflow's local executor inside that one allocation, so
+  // no further jobs are submitted — at the cost of single-node parallelism.
+  const slurmInlineExecutor =
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === '1' ||
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === 'true';
+
+  if (settings.useSlurm && !slurmInlineExecutor) {
     const processLines = [`process {`, `  executor = 'slurm'`];
     if (typeof settings.slurmCores === 'number' && Number.isFinite(settings.slurmCores) && settings.slurmCores > 0) {
       processLines.push(`  cpus = ${Math.floor(settings.slurmCores)}`);

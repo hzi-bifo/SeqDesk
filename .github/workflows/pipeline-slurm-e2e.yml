@@ -317,6 +317,10 @@ jobs:
           # Prefer the stable shared-cluster env path; fall back to the per-run name.
           export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-$PIPELINE_CONDA_ENV}"
           export SEQDESK_SLURM_ENABLED=true
+          # This cluster caps concurrent SLURM submissions per user (QOS
+          # MaxSubmitJobsPerUser=1), so run the pipeline as a single SLURM job with
+          # Nextflow's local executor inside instead of one job per process.
+          export SEQDESK_SLURM_INLINE_EXECUTOR=1
           # SLURM compute nodes can't see the app's _work tree, so the pipeline
           # packages (Nextflow workflow scripts) must live on the shared FS. Stage
           # them next to the shared run dir and point the app there.
