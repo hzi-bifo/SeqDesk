@@ -103,17 +103,18 @@ jobs:
           echo "RUNTIME_E2E_LOG=$RUNNER_TEMP/runtime-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "SLURM_E2E_LOG=$RUNNER_TEMP/slurm-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
-          echo "SEQDESK_DATA_DIR=$RUNNER_TEMP/seqdesk-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          # The run dir is the one path the SLURM compute node must also see (it writes
-          # logs/outputs there), so place it on the shared FS when configured. Data/DB
-          # dirs stay runner-local — only the app on the runner host reads them.
+          # The SLURM compute node must see the pipeline's inputs (data), its run dir
+          # (outputs/logs) AND any reference DBs, so place all three on the shared FS
+          # when configured. Server/PG logs stay runner-local — only the app reads them.
           if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
-            mkdir -p "$SLURM_SHARED_RUN_ROOT"
-            echo "SEQDESK_RUN_DIR=$SLURM_SHARED_RUN_ROOT/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+            SHARED_BASE="$SLURM_SHARED_RUN_ROOT"
+            mkdir -p "$SHARED_BASE"
           else
-            echo "SEQDESK_RUN_DIR=$RUNNER_TEMP/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+            SHARED_BASE="$RUNNER_TEMP"
           fi
-          echo "SEQDESK_DB_DIR=$RUNNER_TEMP/seqdesk-pipeline-dbs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "SEQDESK_DATA_DIR=$SHARED_BASE/seqdesk-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "SEQDESK_RUN_DIR=$SHARED_BASE/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "SEQDESK_DB_DIR=$SHARED_BASE/seqdesk-pipeline-dbs-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
