@@ -692,14 +692,99 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     );
   }
 
+  // App-surface coverage on the same completed run (independent of writeback kind):
+  // which path finalized the run, the per-step progress, and that the produced
+  // outputs/logs are actually retrievable through the app.
+  const observability = assertRunObservability(run, runId);
+  const retrieval = await assertRunRetrieval({ client, run, runId });
+
+  let writeback;
   if (spec.kind === "checksum") {
-    return assertChecksumReads({ run, runId, client, baseUrl });
+    writeback = await assertChecksumReads({ run, runId, client, baseUrl });
+  } else if (spec.kind === "artifacts") {
+    writeback = assertArtifactWriteback({ run, runId, baseUrl, spec });
+  } else {
+    fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
-  if (spec.kind === "artifacts") {
-    return assertArtifactWriteback({ run, runId, baseUrl, spec });
+
+  return { ...writeback, observability, retrieval };
+}
+
+// statusSource + step-level progress. statusSource records which path finalized the
+// run ('queue' = the /sync API, 'trace' = the pipeline-monitor, 'weblog', 'manual');
+// it is diagnostic on this cluster (no weblog), so we log it and require it to be set.
+// steps come from the Nextflow trace and must all be terminal once the run completed.
+function assertRunObservability(run, runId) {
+  // statusSource is diagnostic: it records which path won the finalization race
+  // (the e2e's frequent /sync usually wins -> 'queue'; the 15s monitor -> 'trace').
+  // Surface it rather than hard-fail, since a null is possible if the monitor
+  // finalizes without stamping it.
+  const statusSource = typeof run?.statusSource === "string" ? run.statusSource : null;
+  console.warn(`INFO: run ${runId} finalized via statusSource=${statusSource ?? "<unset>"}`);
+
+  const steps = Array.isArray(run?.steps) ? run.steps : [];
+  if (steps.length === 0) {
+    fail(
+      `Observability: run ${runId} exposed no pipeline steps`,
+      JSON.stringify({ runId }, null, 2),
+    );
   }
-  fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
-  return null;
+  const TERMINAL = new Set(["completed", "skipped", "cached"]);
+  const open = steps.filter((step) => !TERMINAL.has(String(step?.status || "").toLowerCase()));
+  if (open.length > 0) {
+    fail(
+      `Observability: run ${runId} completed but ${open.length} step(s) are non-terminal`,
+      JSON.stringify({ runId, open: open.map((s) => ({ process: s?.process, status: s?.status })) }, null, 2),
+    );
+  }
+  return { statusSource, stepCount: steps.length };
+}
+
+// Retrieve outputs + logs THROUGH the app (not just assert DB rows exist): the logs
+// endpoint must return the pipeline output, and the file endpoint must serve a real
+// produced file's bytes. Proves the output -> user loop closes.
+async function assertRunRetrieval({ client, run, runId }) {
+  // 1) Logs endpoint: the pipeline stdout must be retrievable and non-empty.
+  const logsPayload = await requestJson(
+    client,
+    `/api/pipelines/runs/${runId}/logs?type=output&tail=200`,
+    {},
+    "Fetch pipeline logs",
+  );
+  const logContent = typeof logsPayload?.content === "string" ? logsPayload.content : "";
+  if (!logContent.trim()) {
+    fail(
+      `Retrieval: logs endpoint returned no output for run ${runId}`,
+      JSON.stringify({ runId, logsPayload }, null, 2),
+    );
+  }
+
+  // 2) File endpoint: pick a produced file to download. Prefer a real artifact; fall
+  //    back to the run's own pipeline.out (always present) so the check works for
+  //    pipelines whose writeback is read-fields only (no artifact rows).
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const targetPath = artifacts.find((a) => a?.path)?.path || `${run?.runFolder}/logs/pipeline.out`;
+  const fileResponse = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(targetPath)}&download=1`,
+  );
+  if (!fileResponse.ok) {
+    const body = await fileResponse.text();
+    fail(
+      `Retrieval: file endpoint failed (${fileResponse.status}) for ${targetPath}`,
+      summarizeBody(body),
+    );
+  }
+  const bytes = Buffer.from(await fileResponse.arrayBuffer());
+  if (bytes.length === 0) {
+    fail(`Retrieval: file endpoint served 0 bytes for ${targetPath}`, JSON.stringify({ runId, targetPath }, null, 2));
+  }
+
+  return {
+    logBytes: logContent.length,
+    filePath: targetPath,
+    fileBytes: bytes.length,
+    fromArtifact: Boolean(artifacts.find((a) => a?.path)),
+  };
 }
 
 // Assert PipelineArtifact rows were persisted for a run (e.g. report/summary pipelines
