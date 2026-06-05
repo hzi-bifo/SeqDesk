@@ -378,6 +378,26 @@ jobs:
             --pipeline-id "$RUNTIME_PIPELINE_ID" \
             2>&1 | tee "$RUNTIME_E2E_LOG"
 
+      # Runs EARLY on purpose: fastqc reads the order's FASTQs, and the fastq-checksum
+      # step above is merge-mode (writes checksums, doesn't move/replace files), so the
+      # order still has its original intact reads here. simulate-reads (replace) and the
+      # failure-path test churn those reads LATER, so fastqc must run before them. fastqc
+      # declares a bioconda::fastqc conda directive, so this also verifies a per-process
+      # conda env can be built at runtime (local on the runner, and on the compute node
+      # for the SLURM run). A failure here skips the steps below — acceptable while we
+      # confirm fastqc is reliable on intact reads.
+      - name: Run fastqc E2E (local + SLURM, artifacts)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --pipeline-id fastqc \
+            2>&1 | tee "$RUNNER_TEMP/fastqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
       - name: Run study-demo-report E2E (local + SLURM, study target)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
