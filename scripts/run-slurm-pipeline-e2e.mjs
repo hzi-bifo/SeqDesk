@@ -332,6 +332,223 @@ async function assertSlurmLogs(run, jobId) {
   return existing;
 }
 
+const MD5_RE = /^[0-9a-f]{32}$/;
+
+function collectActiveOrderReads(run, orderId) {
+  // The run GET (getPipelineRunDetailsForOperator) already filters reads to
+  // isActive=true in its Prisma select, but we re-check the flag defensively in
+  // case the select changes. Reads live under run.order.samples[].reads[].
+  const order = run?.order;
+  if (orderId && order?.id && order.id !== orderId) {
+    fail(
+      `Run order id mismatch during writeback assertion`,
+      `expected ${orderId} but run.order.id is ${order.id}`
+    );
+  }
+  const samples = Array.isArray(order?.samples) ? order.samples : [];
+  const reads = [];
+  for (const sample of samples) {
+    for (const read of Array.isArray(sample?.reads) ? sample.reads : []) {
+      if (read?.isActive === false) continue;
+      reads.push({ ...read, sampleId: sample?.sampleId });
+    }
+  }
+  return reads;
+}
+
+// REPLACE-mode (simulate-reads) DB writeback assertion. On completion a NEW
+// active Read is created with file1/file2/checksum1/checksum2/readCount* and the
+// prior reads marked isActive=false. We confirm the run finalized and that at
+// least one active read is attributable to THIS run. Attribution preference:
+//   1. pipelineRunId === runId          (only if the run GET select exposes it)
+//   2. pipelineSources mentions runId   (only if exposed)
+//   3. FALLBACK: a populated md5 checksum1 on an active read.
+// The run GET select in pipeline-run-ops-service.ts currently exposes only
+// { id, file1, file2, checksum1, checksum2, dataClass, isActive } on reads, so in
+// practice the checksum fallback is what fires today. readCount1 is likewise not
+// exposed, so it is treated as an optional (warn-only) signal rather than a hard
+// requirement. A genuinely missing writeback (no attributable active read) is a
+// HARD fail; an unexposed optional field only degrades to the documented fallback.
+async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
+  // Dual-writer race: status + checksum/read writeback land via two async paths
+  // (weblog callback + the 15s pipeline-monitor) during finalization. Do ONE more
+  // sync, settle, then RE-FETCH so we never assert on the pre-writeback payload
+  // that first reported 'completed'.
+  await client.request(`/api/pipelines/runs/${runId}/sync`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  await sleep(3000);
+
+  const payload = await requestJson(
+    client,
+    `/api/pipelines/runs/${runId}`,
+    {},
+    "Re-fetch pipeline run for writeback assertion"
+  );
+  const run = payload?.run || payload;
+
+  if (run?.status !== "completed") {
+    fail(
+      `Writeback assertion: run ${runId} status is ${run?.status}, expected completed`,
+      JSON.stringify({ runId, status: run?.status, progress: run?.progress }, null, 2)
+    );
+  }
+  if (!run?.completedAt) {
+    fail(`Writeback assertion: run ${runId} has no completedAt after completion`);
+  }
+  if (run?.progress !== 100) {
+    fail(
+      `Writeback assertion: run ${runId} progress is ${run?.progress}, expected 100`
+    );
+  }
+
+  // Branch on the resolved pipeline id. fastq-checksum is MERGE mode (checksum
+  // written in place onto the existing active read, no new read); everything else
+  // here is the simulate-reads REPLACE-mode target. Never assert merge-mode facts
+  // on simulate-reads, or vice versa.
+  if (pipelineId === "fastq-checksum") {
+    return assertMergeWriteback({ run, runId, orderId });
+  }
+
+  const reads = collectActiveOrderReads(run, orderId);
+  if (reads.length === 0) {
+    fail(
+      `Writeback assertion: REPLACE-mode run ${runId} produced no active order reads`,
+      JSON.stringify({ runId, orderId, pipelineId }, null, 2)
+    );
+  }
+
+  // Preferred attribution: explicit pipelineRunId / pipelineSources, only used if
+  // the API actually exposes them (it does not today — see the select).
+  const exposesPipelineRunId = reads.some((read) => "pipelineRunId" in read);
+  const exposesPipelineSources = reads.some((read) => "pipelineSources" in read);
+
+  let attributionMode;
+  let attributedReads = [];
+
+  if (exposesPipelineRunId) {
+    attributionMode = "pipelineRunId";
+    attributedReads = reads.filter((read) => read.pipelineRunId === runId);
+  } else if (exposesPipelineSources) {
+    attributionMode = "pipelineSources";
+    attributedReads = reads.filter(
+      (read) =>
+        typeof read.pipelineSources === "string" && read.pipelineSources.includes(runId)
+    );
+  } else {
+    // Documented fallback: the run GET select does not expose pipelineRunId /
+    // pipelineSources, so attribute via a populated md5 checksum1 on an active read.
+    attributionMode = "checksum1-fallback";
+    attributedReads = reads.filter(
+      (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
+    );
+  }
+
+  if (attributedReads.length === 0) {
+    fail(
+      `Writeback assertion: no active read attributable to REPLACE-mode run ${runId} (mode=${attributionMode})`,
+      JSON.stringify(
+        {
+          runId,
+          orderId,
+          attributionMode,
+          activeReads: reads.map((read) => ({
+            id: read.id,
+            sampleId: read.sampleId,
+            checksum1: read.checksum1 ?? null,
+            pipelineRunId: read.pipelineRunId ?? null,
+          })),
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  // For the explicit-attribution modes, still require at least one attributed read
+  // to carry a populated md5 checksum1 so the pass is not vacuous.
+  if (attributionMode !== "checksum1-fallback") {
+    const withChecksum = attributedReads.filter(
+      (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
+    );
+    if (withChecksum.length === 0) {
+      fail(
+        `Writeback assertion: run ${runId} attributed reads (mode=${attributionMode}) but none carry a valid md5 checksum1`,
+        JSON.stringify(
+          attributedReads.map((read) => ({ id: read.id, checksum1: read.checksum1 ?? null })),
+          null,
+          2
+        )
+      );
+    }
+  }
+
+  // readCount1 is not in the run GET select today, so its absence is non-fatal.
+  const readCountValues = attributedReads
+    .map((read) => read.readCount1)
+    .filter((value) => typeof value === "number");
+  if (readCountValues.length > 0 && !readCountValues.some((value) => value > 0)) {
+    fail(
+      `Writeback assertion: run ${runId} attributed reads expose readCount1 but none is > 0`,
+      JSON.stringify(readCountValues, null, 2)
+    );
+  }
+  const readCountReported = readCountValues.some((value) => value > 0);
+  if (!readCountReported) {
+    console.warn(
+      `WARN: run ${runId} writeback: readCount1 not exposed by the run GET select (non-fatal; attributed via ${attributionMode}).`
+    );
+  }
+
+  return {
+    pipelineId,
+    mode: "replace",
+    attributionMode,
+    activeReadCount: reads.length,
+    attributedReadCount: attributedReads.length,
+    readCountReported,
+  };
+}
+
+// MERGE-mode (fastq-checksum) writeback: checksum1 = md5(file1) (and checksum2 if
+// file2 present) is written IN PLACE onto each order sample's existing active read.
+// No new read; no pipelineRunId set. discover-outputs SKIPS samples whose FASTQ is
+// missing, so we scope to reads with file1 != null and require >=1 populated
+// checksum to avoid a vacuous pass.
+function assertMergeWriteback({ run, runId, orderId }) {
+  const reads = collectActiveOrderReads(run, orderId).filter((read) => read?.file1);
+  if (reads.length === 0) {
+    fail(
+      `Writeback assertion: MERGE-mode run ${runId} produced no active order reads with file1`,
+      JSON.stringify({ runId, orderId }, null, 2)
+    );
+  }
+  const populated = reads.filter(
+    (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
+  );
+  if (populated.length === 0) {
+    fail(
+      `Writeback assertion: MERGE-mode run ${runId} left no active read with a valid md5 checksum1`,
+      JSON.stringify(
+        reads.map((read) => ({
+          id: read.id,
+          sampleId: read.sampleId,
+          checksum1: read.checksum1 ?? null,
+        })),
+        null,
+        2
+      )
+    );
+  }
+  return {
+    mode: "merge",
+    readsWithFile1: reads.length,
+    readsWithChecksum: populated.length,
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const baseUrl =
@@ -422,6 +639,15 @@ async function main() {
   });
   const logs = await assertSlurmLogs(result.run, jobId);
 
+  // DB-writeback assertion for the order-scoped reads pipelines. simulate-reads is
+  // REPLACE mode (new active read with checksums/readCount); fastq-checksum is
+  // MERGE mode (checksums written in place). Study-scoped runs (full MAG/metax)
+  // have no orderId and write no order reads, so skip the assertion there.
+  let writeback;
+  if (orderId) {
+    writeback = await assertReplaceWriteback({ client, runId, orderId, pipelineId });
+  }
+
   return {
     success: true,
     pipelineId,
@@ -434,6 +660,7 @@ async function main() {
     queue: result.queue,
     runFolder: result.run.runFolder,
     slurmLogs: logs,
+    ...(writeback ? { writeback } : {}),
     debugEndpoint: `${baseUrl.replace(/\/$/, "")}/api/pipelines/runs/${runId}/debug`,
   };
 }

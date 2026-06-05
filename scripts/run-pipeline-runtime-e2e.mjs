@@ -10,6 +10,8 @@
  * - verify run scripts/configs/logs match the requested runtime
  */
 import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -566,6 +568,192 @@ async function assertRunFiles({ mode, run, jobId, pipelineId }) {
   };
 }
 
+const MD5_HEX = /^[0-9a-f]{32}$/;
+
+function md5OfFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("md5");
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+// fastq-checksum runs in MERGE mode: on completion it writes checksum1 = md5(file1)
+// and checksum2 = md5(file2) IN PLACE onto each target sample's existing active Read
+// (no new Read, no pipelineRunId). discover-outputs SKIPS samples whose FASTQ is
+// missing, so we only assert over reads that actually have a file path.
+async function assertChecksumWriteback({ client, baseUrl, runId, pipelineId }) {
+  if (pipelineId !== "fastq-checksum") {
+    return { skipped: true, reason: `writeback assertions are merge-mode only (pipeline=${pipelineId})` };
+  }
+
+  // Dual-writer race: status + checksum writeback are produced by two async paths
+  // (weblog callback + the 15s pipeline-monitor), and the checksum writeback happens
+  // during finalization. The run payload that first reported "completed" can predate
+  // the read writeback, so force ONE sync, settle, then RE-FETCH before asserting.
+  await syncRun(client, runId);
+  await sleep(3000);
+
+  const runPayload = await requestJson(
+    client,
+    `/api/pipelines/runs/${runId}`,
+    {},
+    "Re-fetch pipeline run for checksum writeback",
+  );
+  const run = runPayload?.run || runPayload;
+
+  if (run?.status !== "completed") {
+    fail(
+      `Checksum writeback: run ${runId} status is ${run?.status}, expected completed`,
+      JSON.stringify({ runId, status: run?.status }, null, 2),
+    );
+  }
+  if (!run?.completedAt) {
+    fail(
+      `Checksum writeback: run ${runId} did not record completedAt`,
+      JSON.stringify({ runId, completedAt: run?.completedAt ?? null }, null, 2),
+    );
+  }
+  if (run?.progress !== 100) {
+    fail(
+      `Checksum writeback: run ${runId} progress is ${run?.progress}, expected 100`,
+      JSON.stringify({ runId, progress: run?.progress ?? null }, null, 2),
+    );
+  }
+
+  // Reads live under order.samples (order target) or study.samples (study target);
+  // the run GET already filters reads to isActive=true. Collect whichever is present.
+  const targetSamples =
+    run?.targetType === "order"
+      ? run?.order?.samples
+      : run?.targetType === "study"
+        ? run?.study?.samples
+        : run?.order?.samples || run?.study?.samples;
+  const samples = Array.isArray(targetSamples) ? targetSamples : [];
+
+  const reads = [];
+  for (const sample of samples) {
+    for (const read of sample?.reads ?? []) {
+      reads.push({ sampleId: sample?.sampleId, ...read });
+    }
+  }
+
+  const readsWithFile1 = reads.filter((read) => read.file1 != null);
+  if (readsWithFile1.length === 0) {
+    fail(
+      `Checksum writeback: run ${runId} exposed no active reads with a file1 to verify`,
+      JSON.stringify(
+        { runId, targetType: run?.targetType, sampleCount: samples.length, readCount: reads.length },
+        null,
+        2,
+      ),
+    );
+  }
+
+  // (A) FORMAT + COVERAGE: every read with a file path must carry a populated checksum.
+  let populatedChecksum1 = 0;
+  for (const read of readsWithFile1) {
+    if (typeof read.checksum1 !== "string" || !MD5_HEX.test(read.checksum1)) {
+      fail(
+        `Checksum writeback: read ${read.id} (sample ${read.sampleId}) has file1 but checksum1 is not a 32-char md5 hex`,
+        JSON.stringify({ runId, file1: read.file1, checksum1: read.checksum1 ?? null }, null, 2),
+      );
+    }
+    populatedChecksum1 += 1;
+  }
+  for (const read of reads) {
+    if (read.file2 != null && read.checksum2 == null) {
+      fail(
+        `Checksum writeback: read ${read.id} (sample ${read.sampleId}) has file2 but checksum2 is null`,
+        JSON.stringify({ runId, file2: read.file2, checksum2: read.checksum2 ?? null }, null, 2),
+      );
+    }
+  }
+  if (populatedChecksum1 < 1) {
+    fail(
+      `Checksum writeback: run ${runId} did not populate any checksum1 (vacuous pass)`,
+      JSON.stringify({ runId, readsWithFile1: readsWithFile1.length }, null, 2),
+    );
+  }
+
+  // (B) CORRECTNESS: independently recompute md5(file1) on disk for at least one read
+  // and require it to equal the stored checksum1. Read.file1 is stored RELATIVE to the
+  // pipeline data base path, so resolve it against that root (the script runs on the
+  // runner, which can read the shared data dir) before hashing. If the path still isn't
+  // readable, WARN and skip the equality (format + coverage above still hard-fail).
+  let md5Verified = 0;
+  const md5Warnings = [];
+
+  let dataBasePath = null;
+  try {
+    const settings = await requestJson(
+      client,
+      "/api/admin/settings/sequencing-files",
+      {},
+      "Fetch sequencing-files settings",
+    );
+    dataBasePath = typeof settings?.dataBasePath === "string" ? settings.dataBasePath : null;
+  } catch (error) {
+    md5Warnings.push(
+      `could not resolve data base path (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  const resolveOnDisk = (file1) => {
+    if (typeof file1 !== "string" || !file1) return null;
+    const candidates = [];
+    if (path.isAbsolute(file1)) candidates.push(file1);
+    if (dataBasePath) candidates.push(path.resolve(dataBasePath, file1));
+    candidates.push(path.resolve(file1)); // last-ditch: cwd-relative
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  };
+  for (const read of readsWithFile1) {
+    const onDisk = resolveOnDisk(read.file1);
+    if (!onDisk) {
+      md5Warnings.push(`read ${read.id}: file1 not readable here (${read.file1}, base=${dataBasePath ?? "<unknown>"})`);
+      continue;
+    }
+    let computed;
+    try {
+      computed = await md5OfFile(onDisk);
+    } catch (error) {
+      md5Warnings.push(
+        `read ${read.id}: md5 of ${onDisk} failed (${error instanceof Error ? error.message : String(error)})`,
+      );
+      continue;
+    }
+    if (computed !== read.checksum1) {
+      fail(
+        `Checksum writeback: stored checksum1 does not match recomputed md5 for read ${read.id} (sample ${read.sampleId})`,
+        JSON.stringify({ runId, file1: read.file1, onDisk, stored: read.checksum1, computed }, null, 2),
+      );
+    }
+    md5Verified += 1;
+    break; // one independently verified read is sufficient for the correctness claim
+  }
+
+  if (md5Verified === 0) {
+    console.warn(
+      `WARN: checksum writeback md5 equality could not be verified on disk for run ${runId} ` +
+        `(format + coverage still passed): ${md5Warnings.join("; ") || "no readable file1"}`,
+    );
+  }
+  for (const warning of md5Warnings) {
+    if (md5Verified > 0) console.warn(`WARN: ${warning}`);
+  }
+
+  return {
+    runId,
+    targetType: run?.targetType,
+    readsChecked: readsWithFile1.length,
+    populatedChecksum1,
+    md5Verified,
+    md5Warnings,
+    debugEndpoint: debugEndpoint(baseUrl, runId),
+  };
+}
+
 async function createAndStartRun({
   client,
   baseUrl,
@@ -715,6 +903,12 @@ async function main() {
       run: localResult.run,
       pipelineId,
     });
+    const checksumWriteback = await assertChecksumWriteback({
+      client,
+      baseUrl,
+      runId: localResult.runId,
+      pipelineId,
+    });
     runs.push({
       label: "local override",
       executionMode: "local",
@@ -723,6 +917,7 @@ async function main() {
       status: localResult.run.status,
       runFolder: localResult.run.runFolder,
       files,
+      checksumWriteback,
       debugEndpoint: debugEndpoint(baseUrl, localResult.runId),
     });
   }
@@ -746,6 +941,12 @@ async function main() {
       jobId,
       pipelineId,
     });
+    const checksumWriteback = await assertChecksumWriteback({
+      client,
+      baseUrl,
+      runId: slurmResult.runId,
+      pipelineId,
+    });
     runs.push({
       label: "SLURM override",
       executionMode: "slurm",
@@ -754,6 +955,7 @@ async function main() {
       status: slurmResult.run.status,
       runFolder: slurmResult.run.runFolder,
       files,
+      checksumWriteback,
       slurmLogs: slurmLogPaths(slurmResult.run.runFolder, jobId),
       debugEndpoint: debugEndpoint(baseUrl, slurmResult.runId),
     });
