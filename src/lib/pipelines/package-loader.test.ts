@@ -16,6 +16,7 @@ import {
   getPackageRegistry,
   getPackageSamplesheet,
   getPackageScriptPath,
+  getPipelinesDir,
   getParser,
   getStepsFromPackage,
   hasPackage,
@@ -825,5 +826,28 @@ describe("package-loader", () => {
 
     expect(getPackageScriptPath("noscripts", "samplesheet")).toBeNull();
     expect(getPackageScriptPath("noscripts", "discoverOutputs")).toBeNull();
+  });
+});
+
+describe("getPipelinesDir", () => {
+  const original = process.env.SEQDESK_PIPELINES_DIR;
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.SEQDESK_PIPELINES_DIR;
+    } else {
+      process.env.SEQDESK_PIPELINES_DIR = original;
+    }
+  });
+
+  it("honors SEQDESK_PIPELINES_DIR to relocate the packages root", () => {
+    process.env.SEQDESK_PIPELINES_DIR = "/net/shared/pipelines";
+    expect(getPipelinesDir()).toBe("/net/shared/pipelines");
+  });
+
+  it("ignores a blank SEQDESK_PIPELINES_DIR and falls back to the default", () => {
+    process.env.SEQDESK_PIPELINES_DIR = "   ";
+    expect(getPipelinesDir()).not.toBe("   ");
+    expect(getPipelinesDir().endsWith("pipelines")).toBe(true);
   });
 });

@@ -317,7 +317,17 @@ jobs:
           # Prefer the stable shared-cluster env path; fall back to the per-run name.
           export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-$PIPELINE_CONDA_ENV}"
           export SEQDESK_SLURM_ENABLED=true
-          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR"
+          # SLURM compute nodes can't see the app's _work tree, so the pipeline
+          # packages (Nextflow workflow scripts) must live on the shared FS. Stage
+          # them next to the shared run dir and point the app there.
+          if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
+            SHARED_PIPELINES_DIR="$(dirname "$SLURM_SHARED_RUN_ROOT")/pipelines"
+            rm -rf "$SHARED_PIPELINES_DIR"
+            mkdir -p "$SHARED_PIPELINES_DIR"
+            cp -R pipelines/. "$SHARED_PIPELINES_DIR/"
+            export SEQDESK_PIPELINES_DIR="$SHARED_PIPELINES_DIR"
+          fi
+          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR SEQDESK_PIPELINES_DIR=${SEQDESK_PIPELINES_DIR:-<app default>}"
           PORT="$PORT" npm run start >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
@@ -477,6 +487,9 @@ jobs:
           # Remove temp dirs BEFORE the conda env: this shell runs with the env
           # active on PATH, so deleting it first leaves `rm` unresolvable (exit 127).
           rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" "${SEQDESK_DB_DIR:-}"
+          if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
+            rm -rf "$(dirname "$SLURM_SHARED_RUN_ROOT")/pipelines" || true
+          fi
           # Only remove a throwaway per-run env. With the shared cluster conda
           # (SLURM_SHARED_CONDA_BASE set) the env is persistent and reused across runs.
           if [ -z "${SLURM_SHARED_CONDA_BASE:-}" ]; then

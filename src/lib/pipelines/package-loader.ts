@@ -349,6 +349,15 @@ let packagesScanned = false;
  * Get the path to the pipelines directory
  */
 export function getPipelinesDir(): string {
+  // Allow relocating the pipeline packages off the app install dir. On clusters
+  // where the SLURM compute nodes don't share the app's filesystem, the packages
+  // (and therefore the Nextflow workflow scripts) must live on shared storage the
+  // nodes can read; point this at that location.
+  const override = process.env.SEQDESK_PIPELINES_DIR?.trim();
+  if (override) {
+    return override;
+  }
+
   const possiblePaths = [
     path.join(process.cwd(), 'pipelines'),
     path.join(process.cwd(), '..', 'pipelines'),
