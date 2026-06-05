@@ -604,6 +604,57 @@ describe("generic-adapter", () => {
     });
   });
 
+  it("discovers manifest outputs whose pattern is a literal path (no wildcards)", async () => {
+    // Regression: a fixed-path discovery pattern (e.g. study-demo-report's
+    // report/demo-report.html) must be matched. Previously simpleGlob treated the
+    // whole literal path as the base dir, found it was a file, and discovered nothing.
+    const outputs: PackageOutput[] = [
+      {
+        id: "html_report",
+        scope: "study",
+        destination: "study_report",
+        type: "report",
+        discovery: { pattern: "report/demo-report.html" },
+      },
+      {
+        id: "sample_summary",
+        scope: "run",
+        destination: "run_artifact",
+        type: "artifact",
+        discovery: { pattern: "tables/sample-summary.tsv" },
+      },
+      {
+        id: "missing",
+        scope: "run",
+        destination: "run_artifact",
+        discovery: { pattern: "report/not-produced.txt" },
+      },
+    ];
+
+    const pkg = makePackageIdOnly("study-demo-report", [], outputs);
+    mocks.getPackage.mockReturnValue(pkg);
+    mocks.runAllParsers.mockResolvedValue(new Map());
+
+    await fs.mkdir(path.join(tempDir, "report"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "tables"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "report", "demo-report.html"), "<html></html>");
+    await fs.writeFile(path.join(tempDir, "tables", "sample-summary.tsv"), "a\tb\n");
+
+    const adapter = createGenericAdapter("study-demo-report");
+    const result = await adapter!.discoverOutputs({
+      runId: "run-1",
+      outputDir: tempDir,
+      target: { type: "study", studyId: "study-1" },
+      samples: [{ id: "db-s1", sampleId: "sample1" }],
+    });
+
+    // The two produced files are discovered; the absent literal path is not.
+    expect(result.files.map((f) => f.outputId).sort()).toEqual(["html_report", "sample_summary"]);
+    const html = result.files.find((f) => f.outputId === "html_report");
+    expect(html?.name).toBe("demo-report.html");
+    expect(html?.path).toBe(path.join(tempDir, "report", "demo-report.html"));
+  });
+
   it("attributes outputs to the correct sample for prefix-overlapping ids", async () => {
     const outputs: PackageOutput[] = [
       {

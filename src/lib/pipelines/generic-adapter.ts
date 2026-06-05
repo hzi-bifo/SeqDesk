@@ -28,15 +28,31 @@ async function simpleGlob(pattern: string): Promise<string[]> {
   const parts = pattern.split('/');
   const baseParts: string[] = [];
   let patternStart = 0;
+  let hasWildcard = false;
 
   // Find the base directory (before any wildcards)
   for (let i = 0; i < parts.length; i++) {
     if (parts[i].includes('*') || parts[i].includes('?') || parts[i].includes('{')) {
       patternStart = i;
+      hasWildcard = true;
       break;
     }
     baseParts.push(parts[i]);
     patternStart = i + 1;
+  }
+
+  // Literal pattern (no wildcards): the whole pattern is a concrete path. Match it
+  // directly if it exists as a file. Without this, the loop above treats the filename
+  // as part of the base dir, fs.stat reports it as a non-directory, and findFiles is
+  // never entered — so manifest outputs with fixed paths (no glob) discover nothing.
+  if (!hasWildcard) {
+    try {
+      const stat = await fs.stat(pattern);
+      if (stat.isFile()) return [pattern];
+    } catch {
+      // Path doesn't exist.
+    }
+    return [];
   }
 
   const baseDir = baseParts.length > 0 ? baseParts.join('/') : '.';
