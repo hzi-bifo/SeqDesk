@@ -692,11 +692,20 @@ set -euo pipefail
 
 # SLURM opens its own --output/--error as the slurm daemon user (often root),
 # which silently fails on a root-squashed NFS run dir, so they point at
-# node-local /tmp and are copied back below. Create the logs dir on the compute
-# node itself too: a just-created NFS subdir may not be visible to the node yet,
-# and slurmd cannot create it under root-squash. The pipeline logs below are
-# written by this script as the job user, which DOES work on NFS.
-mkdir -p "${runFolder}/logs"
+# node-local /tmp and are copied back below.
+#
+# The run dir is created on the submit node ~1s before this job starts; on a
+# shared NFS home the compute node may not see the fresh dir yet, so a plain
+# mkdir/redirect into it can fail. Retry creating the logs dir + a write probe
+# until NFS propagates (up to ~30s) before relying on it. The pipeline logs below
+# are then written by this script as the job user, which works on NFS.
+for _ in $(seq 1 15); do
+  if mkdir -p "${runFolder}/logs" 2>/dev/null && : > "${runFolder}/logs/.nfs-probe" 2>/dev/null; then
+    rm -f "${runFolder}/logs/.nfs-probe" 2>/dev/null || true
+    break
+  fi
+  sleep 2
+done
 
 # Log file paths (read by pipeline monitor)
 STDOUT_LOG="${runFolder}/logs/pipeline.out"

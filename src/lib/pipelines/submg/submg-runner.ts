@@ -673,9 +673,20 @@ function buildSubmgScript(params: {
   lines.push("set -euo pipefail");
   lines.push("");
   lines.push(`RUN_FOLDER=${shellEscape(runFolder)}`);
-  // Create logs on the compute node itself (a just-created NFS subdir may not be
-  // visible yet, and slurmd cannot create it under root-squash).
-  lines.push('mkdir -p "$RUN_FOLDER/logs"');
+  // The run dir is created on the submit node ~1s before this job starts; on a
+  // shared NFS home the compute node may not see the fresh dir yet, so a plain
+  // mkdir/redirect can fail. Retry creating the logs dir + a write probe until
+  // NFS propagates (up to ~30s). slurmd also cannot create it under root-squash,
+  // so this script (running as the job user) owns the logs dir.
+  lines.push("for _ in $(seq 1 15); do");
+  lines.push(
+    '  if mkdir -p "$RUN_FOLDER/logs" 2>/dev/null && : > "$RUN_FOLDER/logs/.nfs-probe" 2>/dev/null; then'
+  );
+  lines.push('    rm -f "$RUN_FOLDER/logs/.nfs-probe" 2>/dev/null || true');
+  lines.push("    break");
+  lines.push("  fi");
+  lines.push("  sleep 2");
+  lines.push("done");
   lines.push('STDOUT_LOG="$RUN_FOLDER/logs/pipeline.out"');
   lines.push('STDERR_LOG="$RUN_FOLDER/logs/pipeline.err"');
   lines.push('echo "Starting submg submission at $(date)" > "$STDOUT_LOG"');
