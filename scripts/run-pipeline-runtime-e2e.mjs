@@ -22,6 +22,22 @@ const PROFILE_SMOKE_ORDER_NUMBERS = new Set([
   "CI-RUNNER-SMOKE-001",
 ]);
 
+// Pipelines whose manifest targets.supported is ['study'] (not 'order'). The run is
+// created with a studyId instead of an orderId, and reads/samples come from the study.
+const STUDY_SCOPED_PIPELINES = new Set(["reads-qc", "study-demo-report"]);
+
+// Per-pipeline DB-writeback expectations, asserted after a run completes. 'checksum'
+// verifies md5 checksums merged onto the order's reads; 'artifacts' verifies the
+// expected PipelineArtifact rows (by outputId) were persisted. Add entries as more
+// pipelines gain coverage.
+const WRITEBACK_SPEC = {
+  "fastq-checksum": { kind: "checksum" },
+  "study-demo-report": {
+    kind: "artifacts",
+    requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
+  },
+};
+
 function fail(message, details) {
   const parts = [message];
   if (details) parts.push(details);
@@ -339,6 +355,57 @@ async function findOrder(client, { ensureSeededDummyData, dummyOrderPrefix }) {
   };
 }
 
+async function fetchStudies(client) {
+  // GET /api/studies returns a bare array of studies (each with samplesWithReads).
+  const payload = await requestJson(client, "/api/studies", {}, "List studies");
+  return Array.isArray(payload) ? payload : Array.isArray(payload?.studies) ? payload.studies : [];
+}
+
+function selectRuntimeStudy(studies) {
+  const withReads = studies.filter((study) => Number(study?.samplesWithReads || 0) > 0);
+  // Prefer the dataset seeded specifically for pipeline CI (on-disk reads); else any
+  // study that has samples with reads, picking the one with the most.
+  const ciSeeded = withReads.find((study) =>
+    String(study?.description || "").toLowerCase().includes("pipeline ci"),
+  );
+  if (ciSeeded) return ciSeeded;
+  return withReads.sort(
+    (a, b) => Number(b?.samplesWithReads || 0) - Number(a?.samplesWithReads || 0),
+  )[0];
+}
+
+async function findStudy(client, { ensureSeededDummyData }) {
+  let studies = await fetchStudies(client);
+  let selected = selectRuntimeStudy(studies);
+
+  if (!selected?.id) {
+    const dummyStatus = await getDummyDataStatus(client);
+    if (dummyStatus.ok && dummyStatus.seeded) {
+      studies = await fetchStudies(client);
+      selected = selectRuntimeStudy(studies);
+    } else if (ensureSeededDummyData) {
+      await ensureDummyData(client);
+      studies = await fetchStudies(client);
+      selected = selectRuntimeStudy(studies);
+    }
+  }
+
+  if (!selected?.id) {
+    fail(
+      "No study with on-disk reads was available for the runtime E2E. Pass --study-id, load dummy data in Admin > Settings, or run with --ensure-dummy-data.",
+    );
+  }
+
+  return {
+    id: selected.id,
+    title: selected.title || null,
+    samplesWithReads: Number(selected.samplesWithReads || 0),
+    source: String(selected?.description || "").toLowerCase().includes("pipeline ci")
+      ? "ci-study-dataset"
+      : "existing-study",
+  };
+}
+
 function defaultConfigForPipeline(pipelineId) {
   if (pipelineId === "simulate-reads") {
     return {
@@ -584,15 +651,16 @@ function md5OfFile(filePath) {
 // and checksum2 = md5(file2) IN PLACE onto each target sample's existing active Read
 // (no new Read, no pipelineRunId). discover-outputs SKIPS samples whose FASTQ is
 // missing, so we only assert over reads that actually have a file path.
-async function assertChecksumWriteback({ client, baseUrl, runId, pipelineId }) {
-  if (pipelineId !== "fastq-checksum") {
-    return { skipped: true, reason: `writeback assertions are merge-mode only (pipeline=${pipelineId})` };
+async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
+  const spec = WRITEBACK_SPEC[pipelineId];
+  if (!spec) {
+    return { skipped: true, reason: `no writeback spec defined for pipeline=${pipelineId}` };
   }
 
-  // Dual-writer race: status + checksum writeback are produced by two async paths
-  // (weblog callback + the 15s pipeline-monitor), and the checksum writeback happens
-  // during finalization. The run payload that first reported "completed" can predate
-  // the read writeback, so force ONE sync, settle, then RE-FETCH before asserting.
+  // Dual-writer race: status + the output writeback are produced by two async paths
+  // (weblog callback + the 15s pipeline-monitor), and writeback happens during
+  // finalization. The payload that first reported "completed" can predate it, so force
+  // ONE sync, settle, then RE-FETCH before asserting.
   await syncRun(client, runId);
   await sleep(3000);
 
@@ -600,29 +668,84 @@ async function assertChecksumWriteback({ client, baseUrl, runId, pipelineId }) {
     client,
     `/api/pipelines/runs/${runId}`,
     {},
-    "Re-fetch pipeline run for checksum writeback",
+    "Re-fetch pipeline run for writeback",
   );
   const run = runPayload?.run || runPayload;
 
+  // Universal run-shape gate (applies to every pipeline).
   if (run?.status !== "completed") {
     fail(
-      `Checksum writeback: run ${runId} status is ${run?.status}, expected completed`,
+      `Writeback: run ${runId} status is ${run?.status}, expected completed`,
       JSON.stringify({ runId, status: run?.status }, null, 2),
     );
   }
   if (!run?.completedAt) {
     fail(
-      `Checksum writeback: run ${runId} did not record completedAt`,
+      `Writeback: run ${runId} did not record completedAt`,
       JSON.stringify({ runId, completedAt: run?.completedAt ?? null }, null, 2),
     );
   }
   if (run?.progress !== 100) {
     fail(
-      `Checksum writeback: run ${runId} progress is ${run?.progress}, expected 100`,
+      `Writeback: run ${runId} progress is ${run?.progress}, expected 100`,
       JSON.stringify({ runId, progress: run?.progress ?? null }, null, 2),
     );
   }
 
+  if (spec.kind === "checksum") {
+    return assertChecksumReads({ run, runId, client, baseUrl });
+  }
+  if (spec.kind === "artifacts") {
+    return assertArtifactWriteback({ run, runId, baseUrl, spec });
+  }
+  fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
+  return null;
+}
+
+// Assert PipelineArtifact rows were persisted for a run (e.g. report/summary pipelines
+// that don't write Read fields). Requires at least one artifact per required outputId.
+function assertArtifactWriteback({ run, runId, baseUrl, spec }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  if (artifacts.length === 0) {
+    fail(
+      `Artifact writeback: run ${runId} persisted no PipelineArtifact rows`,
+      JSON.stringify({ runId, debugEndpoint: debugEndpoint(baseUrl, runId) }, null, 2),
+    );
+  }
+  const seenOutputIds = new Set(artifacts.map((artifact) => artifact?.outputId).filter(Boolean));
+  const missing = (spec.requiredOutputIds || []).filter((outputId) => !seenOutputIds.has(outputId));
+  if (missing.length > 0) {
+    fail(
+      `Artifact writeback: run ${runId} is missing artifacts for outputId(s): ${missing.join(", ")}`,
+      JSON.stringify(
+        { runId, present: Array.from(seenOutputIds), required: spec.requiredOutputIds },
+        null,
+        2,
+      ),
+    );
+  }
+  // Every required artifact must carry a non-empty path (i.e. it was actually written).
+  for (const artifact of artifacts) {
+    if ((spec.requiredOutputIds || []).includes(artifact?.outputId)) {
+      if (typeof artifact?.path !== "string" || !artifact.path) {
+        fail(
+          `Artifact writeback: artifact ${artifact?.id} (outputId ${artifact?.outputId}) has no path`,
+          JSON.stringify({ runId, artifact }, null, 2),
+        );
+      }
+    }
+  }
+  return {
+    runId,
+    artifactCount: artifacts.length,
+    outputIds: Array.from(seenOutputIds),
+    debugEndpoint: debugEndpoint(baseUrl, runId),
+  };
+}
+
+// fastq-checksum (MERGE): checksum1 = md5(file1) written in place onto each target
+// sample's existing active Read. Asserts format + coverage + an on-disk md5 round-trip.
+async function assertChecksumReads({ run, runId, client, baseUrl }) {
   // Reads live under order.samples (order target) or study.samples (study target);
   // the run GET already filters reads to isActive=true. Collect whichever is present.
   const targetSamples =
@@ -759,15 +882,17 @@ async function createAndStartRun({
   baseUrl,
   pipelineId,
   orderId,
+  studyId,
   config,
   executionMode,
   slurm,
   timeoutSeconds,
   label,
 }) {
+  // Exactly one of orderId / studyId is sent, matching the pipeline's manifest target.
   const createBody = {
     pipelineId,
-    orderId,
+    ...(studyId ? { studyId } : { orderId }),
     config,
     executionMode,
     ...(executionMode === "slurm" && slurm ? { slurm } : {}),
@@ -861,20 +986,37 @@ async function main() {
 
   const client = createClient(baseUrl);
   const session = await loginAdmin({ client, baseUrl, email, password });
-  const explicitOrderId = args["order-id"] || process.env.SEQDESK_RUNTIME_E2E_ORDER_ID;
-  const selectedOrder = explicitOrderId
-    ? {
-        id: explicitOrderId,
-        orderNumber: null,
-        status: null,
-        samples: null,
-        source: "explicit",
-      }
-    : await findOrder(client, {
-        ensureSeededDummyData,
-        dummyOrderPrefix: dummyOrderPrefixForSession(session),
-      });
-  const orderId = selectedOrder.id;
+
+  // Study-scoped pipelines (per manifest targets.supported) run against a study;
+  // everything else runs against an order.
+  const targetType = STUDY_SCOPED_PIPELINES.has(pipelineId) ? "study" : "order";
+
+  let selectedOrder = null;
+  let selectedStudy = null;
+  let orderId;
+  let studyId;
+  if (targetType === "study") {
+    const explicitStudyId = args["study-id"] || process.env.SEQDESK_RUNTIME_E2E_STUDY_ID;
+    selectedStudy = explicitStudyId
+      ? { id: explicitStudyId, title: null, samplesWithReads: null, source: "explicit" }
+      : await findStudy(client, { ensureSeededDummyData });
+    studyId = selectedStudy.id;
+  } else {
+    const explicitOrderId = args["order-id"] || process.env.SEQDESK_RUNTIME_E2E_ORDER_ID;
+    selectedOrder = explicitOrderId
+      ? {
+          id: explicitOrderId,
+          orderNumber: null,
+          status: null,
+          samples: null,
+          source: "explicit",
+        }
+      : await findOrder(client, {
+          ensureSeededDummyData,
+          dummyOrderPrefix: dummyOrderPrefixForSession(session),
+        });
+    orderId = selectedOrder.id;
+  }
   const config = {
     ...defaultConfigForPipeline(pipelineId),
     ...parseJsonObject(args["config-json"] || process.env.SEQDESK_RUNTIME_E2E_CONFIG_JSON, "config JSON"),
@@ -892,6 +1034,7 @@ async function main() {
       baseUrl,
       pipelineId,
       orderId,
+      studyId,
       config,
       executionMode: "local",
       timeoutSeconds,
@@ -903,7 +1046,7 @@ async function main() {
       run: localResult.run,
       pipelineId,
     });
-    const checksumWriteback = await assertChecksumWriteback({
+    const writeback = await assertPipelineWriteback({
       client,
       baseUrl,
       runId: localResult.runId,
@@ -917,7 +1060,7 @@ async function main() {
       status: localResult.run.status,
       runFolder: localResult.run.runFolder,
       files,
-      checksumWriteback,
+      writeback,
       debugEndpoint: debugEndpoint(baseUrl, localResult.runId),
     });
   }
@@ -928,6 +1071,7 @@ async function main() {
       baseUrl,
       pipelineId,
       orderId,
+      studyId,
       config,
       executionMode: "slurm",
       slurm,
@@ -941,7 +1085,7 @@ async function main() {
       jobId,
       pipelineId,
     });
-    const checksumWriteback = await assertChecksumWriteback({
+    const writeback = await assertPipelineWriteback({
       client,
       baseUrl,
       runId: slurmResult.runId,
@@ -955,7 +1099,7 @@ async function main() {
       status: slurmResult.run.status,
       runFolder: slurmResult.run.runFolder,
       files,
-      checksumWriteback,
+      writeback,
       slurmLogs: slurmLogPaths(slurmResult.run.runFolder, jobId),
       debugEndpoint: debugEndpoint(baseUrl, slurmResult.runId),
     });
@@ -967,6 +1111,7 @@ async function main() {
       baseUrl,
       pipelineId,
       orderId,
+      studyId,
       config,
       executionMode: "default",
       timeoutSeconds,
@@ -1023,7 +1168,9 @@ async function main() {
     success: true,
     baseUrl,
     pipelineId,
+    targetType,
     order: selectedOrder,
+    study: selectedStudy,
     configuredPolicy: policy.executionPolicy || null,
     config,
     slurmOverride: slurm || null,

@@ -377,6 +377,20 @@ jobs:
             --pipeline-id "$RUNTIME_PIPELINE_ID" \
             2>&1 | tee "$RUNTIME_E2E_LOG"
 
+      - name: Run study-demo-report E2E (local + SLURM, study target)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # study-demo-report is study-scoped and hermetic (awk only, no per-process
+          # conda env), so it exercises the study-target path in both local and SLURM.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --pipeline-id study-demo-report \
+            2>&1 | tee "$RUNNER_TEMP/study-demo-report-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
       - name: Run SLURM-only pipeline smoke through the app
         env:
           SEQDESK_SLURM_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
