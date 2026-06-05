@@ -10,7 +10,7 @@ What the **Pipeline SLURM E2E** (`.github/workflows/pipeline-slurm-e2e.yml`, sel
 | Pipeline              | Local | SLURM | Target | DB writeback asserted                                                        | Failure path | External DB / dataset                        | Status                               |
 | --------------------- | ----- | ----- | ------ | ---------------------------------------------------------------------------- | ------------ | -------------------------------------------- | ------------------------------------ |
 | **fastq-checksum**    | ✅     | ✅     | order  | `Read.checksum1/2` (merge) **+ md5 round-trip**                              | ✅            | —                                            | **covered**                          |
-| **simulate-reads**    | ⬜     | ✅     | order  | new active `Read` (replace) + checksum/readCount                             | —            | —                                            | SLURM covered (smoke); **local gap** |
+| **simulate-reads**    | ✅     | ✅     | order  | new active `Read` (replace) + checksum/readCount                             | —            | —                                            | **covered** (runtime local+SLURM; also SLURM smoke) |
 | **study-demo-report** | ✅     | ✅     | study  | `PipelineArtifact` rows (`html_report`, `markdown_report`, `sample_summary`) | —            | —                                            | **covered**                          |
 | fastqc                | —     | —     | order  | `Read.fastqcReport/readCount/avgQuality` + artifacts                         | —            | — (needs `fastqc` conda tool at runtime)     | planned                              |
 | reads-qc              | —     | —     | study  | `Read.readCount/avgQuality` + artifacts                                      | —            | — (needs `seqkit`/`python` conda at runtime) | planned                              |
@@ -24,7 +24,7 @@ Legend: ✅ asserted · ⬜ known gap (fillable now, no blocker) · — not cove
 
 **Known gaps to fill (no external blocker):**
 
-- **simulate-reads local** — only the SLURM-only smoke runs it (SLURM). Filling it means adding a `replace` kind to `WRITEBACK_SPEC` and a runtime step `--pipeline-id simulate-reads` (runs local + SLURM).
+- **fastqc / reads-qc** — first pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (slow, ~60–90s, and on the SLURM compute node — network not yet confirmed there). A first attempt also surfaced a **completed→running status flip** on the slow fastqc run (`pollUntilDone` saw `completed`, the writeback's re-sync then saw `running`) — needs the writeback gate to tolerate a transient non-terminal read, and the flip itself investigated (possible app bug). Backed out pending that work; add the risky pipeline steps **after** the proven ones (or `if: always()`) so a failure doesn't skip established coverage.
 
 ### What every covered run asserts
 
