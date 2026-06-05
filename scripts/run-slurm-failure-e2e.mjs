@@ -324,8 +324,18 @@ function makeFastqMissing({ dataBasePath, reportedReadPaths }) {
     restore() {
       for (const entry of moved) {
         try {
-          if (fs.existsSync(entry.stashed) && !fs.existsSync(entry.absolute)) {
+          // Restore UNCONDITIONALLY: rename atomically overwrites the destination on
+          // POSIX. The previous `!existsSync(absolute)` guard could skip the restore
+          // when the absolute path appeared to exist — e.g. a stale NFS positive right
+          // after the rename-away — leaving the real read stranded as a `.bak` and
+          // breaking any later pipeline that runs on the same order. We moved it aside,
+          // so we own putting it back.
+          if (fs.existsSync(entry.stashed)) {
             fs.renameSync(entry.stashed, entry.absolute);
+          } else if (!fs.existsSync(entry.absolute)) {
+            console.warn(
+              `WARN: cannot restore FASTQ ${entry.absolute} — neither it nor its stash exists`
+            );
           }
         } catch (error) {
           console.warn(
