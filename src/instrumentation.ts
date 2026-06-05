@@ -9,6 +9,15 @@
  * stopped and finished SLURM jobs stayed stuck showing "running". Auto-starting
  * it here makes the safety net always-on.
  *
+ * The autostarted monitor is also stopped when this server process receives a
+ * termination signal. The worker is spawned detached (so an admin-started one
+ * survives a Next.js reload), but for the autostarted one we want it tied to the
+ * app lifecycle: otherwise it lingers after the app stops, holding the release's
+ * node_modules/.prisma engine open. On an NFS install that breaks teardown of
+ * the old release dir (the open file becomes an undeletable `.nfs*` silly-rename
+ * file, so `rm -rf` fails with "Directory not empty"), and after an update the
+ * stale monitor keeps running old code from a release dir that should be removed.
+ *
  * Set SEQDESK_DISABLE_WORKER_AUTOSTART=1 to opt out (e.g. when running the
  * monitor as an external/PM2 process or on a non-pipeline deployment).
  */
@@ -30,6 +39,28 @@ export async function register() {
     console.log(
       `[instrumentation] pipeline-monitor autostart: ${result.action}${detail ? ` (${detail})` : ""}`,
     );
+
+    // Tie the monitor WE started to this server's lifecycle: stop it on a clean
+    // shutdown so it does not outlive the app and pin the release dir.
+    if (result.action === "started" && typeof result.pid === "number") {
+      const monitorPid = result.pid;
+      const stopOnSignal = (signal: NodeJS.Signals) => {
+        try {
+          process.kill(monitorPid, "SIGTERM");
+        } catch {
+          // Already gone — nothing to stop.
+        }
+        // Re-raise so default termination still happens (the listener is `once`,
+        // so the second delivery hits Node's default handler and exits).
+        try {
+          process.kill(process.pid, signal);
+        } catch {
+          // Best-effort.
+        }
+      };
+      process.once("SIGTERM", stopOnSignal);
+      process.once("SIGINT", stopOnSignal);
+    }
   } catch (error) {
     // Best-effort: never let a worker-start failure break server boot. An admin
     // can still start the worker by hand from the worker panel.

@@ -378,7 +378,16 @@ jobs:
           if command -v psql >/dev/null 2>&1; then
             PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_plain_missing}" >/dev/null 2>&1 || true
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX"
+          # Stop any worker the installed app auto-started (e.g. pipeline-monitor).
+          # It is spawned detached, so it keeps the release node_modules/.prisma
+          # engine open after the app stops; on the runner's NFS home that leaves
+          # an undeletable .nfs* silly-rename file and the rm below fails with
+          # "Directory not empty". Scope the kill to this job's install dir.
+          if [ -n "${INSTALL_DIR:-}" ]; then
+            pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
+            sleep 2
+          fi
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" || true
 
   install-with-profile:
     name: Install with hosted profile on AlmaLinux
@@ -725,4 +734,13 @@ jobs:
           if command -v psql >/dev/null 2>&1; then
             PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_profile_missing}" >/dev/null 2>&1 || true
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}"
+          # Stop any worker the installed app auto-started (e.g. pipeline-monitor).
+          # It is spawned detached, so it keeps the release node_modules/.prisma
+          # engine open after the app stops; on the runner's NFS home that leaves
+          # an undeletable .nfs* silly-rename file and the rm below fails with
+          # "Directory not empty". Scope the kill to this job's install dir.
+          if [ -n "${INSTALL_DIR:-}" ]; then
+            pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
+            sleep 2
+          fi
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}" || true

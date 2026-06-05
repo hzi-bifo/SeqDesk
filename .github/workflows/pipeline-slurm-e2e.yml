@@ -300,6 +300,35 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:slurm 2>&1 | tee "$SLURM_E2E_LOG"
 
+      - name: SLURM shared-filesystem canary (diagnostic)
+        if: always()
+        run: |
+          set +e
+          if ! command -v sbatch >/dev/null 2>&1; then echo "sbatch unavailable; skip canary"; exit 0; fi
+          CANARY="$SEQDESK_RUN_DIR/_canary"
+          CONDA_ROOT="${SEQDESK_CONDA_PATH:-/home/brokerat/miniconda3}"
+          rm -rf "$CANARY"; mkdir -p "$CANARY/logs"
+          echo "head node wrote this at $(date)" > "$CANARY/head-marker.txt"
+          # Submit a direct sbatch (NOT through the app) to isolate whether the
+          # compute node can see/write this run dir (under the runner's _work) and
+          # the conda env. The failing pipeline run dies before writing any log,
+          # which points at the run dir / logs subdir not being usable on the node.
+          JID=$(sbatch --parsable -p cpu -c 1 --mem=200M -t 5:00 \
+            -D "$CANARY" \
+            --output="$CANARY/canary-%j.out" --error="$CANARY/canary-%j.err" \
+            --wrap "echo node=\$(hostname) pwd=\$(pwd); echo '--- ls run dir (compute view) ---'; ls -la '$CANARY' 2>&1; echo '--- head marker visible on node? ---'; cat '$CANARY/head-marker.txt' 2>&1; echo '--- write into logs/ subdir? ---'; (echo ok > '$CANARY/logs/compute-wrote.txt' && echo WROTE-logs-ok) 2>&1; echo '--- conda envs visible on node? ---'; ls '$CONDA_ROOT/envs' 2>&1 | head; echo '--- target env $PIPELINE_CONDA_ENV present? ---'; ls -d '$CONDA_ROOT/envs/$PIPELINE_CONDA_ENV' 2>&1")
+          echo "canary job id: $JID"
+          for _ in $(seq 1 90); do
+            st=$(sacct -j "${JID%%;*}" --noheader -o State -P 2>/dev/null | head -1)
+            case "$st" in *COMPLETED*|*FAILED*|*CANCEL*|*TIMEOUT*|*OUT_OF*) echo "canary final state: $st"; break;; esac
+            sleep 2
+          done
+          echo "===== canary STDOUT ====="; cat "$CANARY"/canary-*.out 2>&1
+          echo "===== canary STDERR ====="; cat "$CANARY"/canary-*.err 2>&1
+          echo "===== did the compute node's logs/ write land back on the head node? ====="; ls -la "$CANARY/logs" 2>&1
+          echo "===== sacct (canary) ====="; sacct -j "${JID%%;*}" -o JobID,State,ExitCode,NodeList,WorkDir%140 2>&1
+          true
+
       - name: Stop SeqDesk app
         if: always()
         run: |
