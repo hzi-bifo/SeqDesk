@@ -59,4 +59,4 @@ The suite exists to find app issues, not just to be green. So far it surfaced an
 2. Add a `WRITEBACK_SPEC` entry (`checksum` / `artifacts` / extend for read-field writebacks).
 3. If its read-field writebacks aren't exposed by the run-GET select (`pipeline-run-ops-service.ts`), extend that select.
 4. Add a workflow step: `npm run pipeline:e2e:runtime -- --ensure-dummy-data --pipeline-id <id>` (runs local + SLURM).
-5. If the pipeline needs an external DB, stage it on `/net/broker` and point the install profile / env at it; only then flip its row to covered.
+5. If the pipeline needs an external DB, stage it on the shared cluster filesystem and point the install profile / env at it; only then flip its row to covered.
