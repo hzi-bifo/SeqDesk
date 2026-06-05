@@ -866,9 +866,13 @@ describe("generic-executor", () => {
     expect(slurmResult.success).toBe(true);
     const slurmScript = await fs.readFile(path.join(slurmResult.runFolder!, "run.sh"), "utf8");
     expect(slurmScript).toContain(
-      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG";`
     );
+    expect(slurmScript).toContain("exit $EXIT_CODE' EXIT");
     expect(slurmScript).not.toContain("EXIT_CODE=$?\necho");
+    // SLURM's own logs go to node-local /tmp (root-squash safe) and are copied back.
+    expect(slurmScript).toContain('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
+    expect(slurmScript).toContain('mkdir -p "');
   });
 
   it("does not emit --input/--outdir twice when config also resolves them", async () => {

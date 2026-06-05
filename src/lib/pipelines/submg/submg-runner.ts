@@ -662,8 +662,10 @@ function buildSubmgScript(params: {
   lines.push(`#SBATCH --mem='${slurmMemory}'`);
   lines.push(`#SBATCH -t ${slurmTimeLimit}:0:0`);
   lines.push(`#SBATCH -D ${runFolder}`);
-  lines.push('#SBATCH --output="logs/slurm-%j.out"');
-  lines.push('#SBATCH --error="logs/slurm-%j.err"');
+  // slurmd writes these as the daemon user (often root), which fails on a
+  // root-squashed NFS run dir; use node-local /tmp and copy back in the trap.
+  lines.push('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
+  lines.push('#SBATCH --error="/tmp/seqdesk-slurm-%j.err"');
   if (slurmOptions) {
     lines.push(`#SBATCH ${slurmOptions}`);
   }
@@ -671,12 +673,15 @@ function buildSubmgScript(params: {
   lines.push("set -euo pipefail");
   lines.push("");
   lines.push(`RUN_FOLDER=${shellEscape(runFolder)}`);
+  // Create logs on the compute node itself (a just-created NFS subdir may not be
+  // visible yet, and slurmd cannot create it under root-squash).
+  lines.push('mkdir -p "$RUN_FOLDER/logs"');
   lines.push('STDOUT_LOG="$RUN_FOLDER/logs/pipeline.out"');
   lines.push('STDERR_LOG="$RUN_FOLDER/logs/pipeline.err"');
   lines.push('echo "Starting submg submission at $(date)" > "$STDOUT_LOG"');
   lines.push('echo "" > "$STDERR_LOG"');
   lines.push(
-    "trap 'EXIT_CODE=$?; echo \"Pipeline completed with exit code: ${EXIT_CODE} at $(date)\" >> \"$STDOUT_LOG\"; exit ${EXIT_CODE}' EXIT"
+    "trap 'EXIT_CODE=$?; echo \"Pipeline completed with exit code: ${EXIT_CODE} at $(date)\" >> \"$STDOUT_LOG\"; cp -f \"/tmp/seqdesk-slurm-$SLURM_JOB_ID.out\" \"$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.out\" 2>/dev/null || true; cp -f \"/tmp/seqdesk-slurm-$SLURM_JOB_ID.err\" \"$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.err\" 2>/dev/null || true; exit ${EXIT_CODE}' EXIT"
   );
   lines.push("");
 

@@ -684,11 +684,19 @@ function generateSlurmScript(
 #SBATCH --mem='${slurmMemory}'
 #SBATCH -t ${slurmTimeLimit}:0:0
 #SBATCH -D "${runFolder}"
-#SBATCH --output="logs/slurm-%j.out"
-#SBATCH --error="logs/slurm-%j.err"
+#SBATCH --output="/tmp/seqdesk-slurm-%j.out"
+#SBATCH --error="/tmp/seqdesk-slurm-%j.err"
 ${slurmOptions ? `#SBATCH ${slurmOptions}` : ''}
 
 set -euo pipefail
+
+# SLURM opens its own --output/--error as the slurm daemon user (often root),
+# which silently fails on a root-squashed NFS run dir, so they point at
+# node-local /tmp and are copied back below. Create the logs dir on the compute
+# node itself too: a just-created NFS subdir may not be visible to the node yet,
+# and slurmd cannot create it under root-squash. The pipeline logs below are
+# written by this script as the job user, which DOES work on NFS.
+mkdir -p "${runFolder}/logs"
 
 # Log file paths (read by pipeline monitor)
 STDOUT_LOG="${runFolder}/logs/pipeline.out"
@@ -696,8 +704,8 @@ STDERR_LOG="${runFolder}/logs/pipeline.err"
 
 # Always record the real exit code for the pipeline monitor, even when a
 # command fails under "set -e" (which would otherwise abort before the marker
-# below is reached).
-trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT
+# below is reached). Also copy SLURM's node-local logs into the run dir.
+trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.out" "${runFolder}/logs/slurm-$SLURM_JOB_ID.out" 2>/dev/null || true; cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err" "${runFolder}/logs/slurm-$SLURM_JOB_ID.err" 2>/dev/null || true; exit $EXIT_CODE' EXIT
 
 echo "Starting ${pipelineLabel} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"

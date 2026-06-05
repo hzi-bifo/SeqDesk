@@ -501,9 +501,12 @@ describe('prepareMagRun', () => {
     const script = scriptWrite![1] as string;
     expect(script).toContain('#SBATCH');
     expect(script).toContain(
-      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG";`
     );
+    expect(script).toContain("exit $EXIT_CODE' EXIT");
     expect(script).not.toContain('EXIT_CODE=$?\necho');
+    // SLURM's own logs go to node-local /tmp (root-squash safe).
+    expect(script).toContain('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
   });
 
   it('retries run-number allocation when a concurrent run claims the number first', async () => {
