@@ -507,12 +507,25 @@ async function assertRunFiles({ mode, run, jobId, pipelineId }) {
   const hasSbatchDirectives = runScript.includes("#SBATCH");
   const hasSlurmExecutor = Boolean(nextflowConfig?.includes("executor = 'slurm'"));
 
+  // Single-job mode: the run is wrapped in one SLURM job (sbatch), but the processes
+  // run with Nextflow's local executor inside it — so the config must NOT set
+  // executor='slurm'. The SLURM proof is then the #SBATCH directives + the sacct job id.
+  const slurmInlineExecutor =
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === "1" ||
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === "true";
+
   if (mode === "local") {
     if (hasSbatchDirectives) fail("Local run.sh unexpectedly contains SBATCH directives", `${runFolder}/run.sh`);
     if (hasSlurmExecutor) fail("Local nextflow.config unexpectedly sets process.executor = 'slurm'", `${runFolder}/nextflow.config`);
   } else if (mode === "slurm") {
     if (!hasSbatchDirectives) fail("SLURM run.sh does not contain SBATCH directives", `${runFolder}/run.sh`);
-    if (!hasSlurmExecutor) fail("SLURM nextflow.config does not set process.executor = 'slurm'", `${runFolder}/nextflow.config`);
+    if (slurmInlineExecutor) {
+      if (hasSlurmExecutor) {
+        fail("SLURM inline-executor run should NOT set process.executor = 'slurm'", `${runFolder}/nextflow.config`);
+      }
+    } else if (!hasSlurmExecutor) {
+      fail("SLURM nextflow.config does not set process.executor = 'slurm'", `${runFolder}/nextflow.config`);
+    }
     const existingLogs = slurmLogPaths(runFolder, jobId).filter((logPath) => fs.existsSync(logPath));
     if (existingLogs.length === 0) {
       fail("SLURM log files were not found", JSON.stringify({

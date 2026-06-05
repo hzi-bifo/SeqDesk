@@ -62,6 +62,11 @@ jobs:
       # and the admin conda's envs/ dir is read-only to the CI user, so the env lives at
       # a runner-writable prefix and is activated by full path.
       SLURM_SHARED_CONDA_ENV: ${{ vars.SLURM_SHARED_CONDA_ENV }}
+      # This runner's SLURM account caps concurrent submissions per user (QOS
+      # MaxSubmitJobsPerUser=1), so run each pipeline as a SINGLE SLURM job with
+      # Nextflow's local executor inside instead of one job per process. Job-level so
+      # both the app (boot) and the E2E assertions see it.
+      SEQDESK_SLURM_INLINE_EXECUTOR: "1"
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
       DB_PORT: 5432
@@ -318,10 +323,7 @@ jobs:
           # Prefer the stable shared-cluster env path; fall back to the per-run name.
           export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-$PIPELINE_CONDA_ENV}"
           export SEQDESK_SLURM_ENABLED=true
-          # This cluster caps concurrent SLURM submissions per user (QOS
-          # MaxSubmitJobsPerUser=1), so run the pipeline as a single SLURM job with
-          # Nextflow's local executor inside instead of one job per process.
-          export SEQDESK_SLURM_INLINE_EXECUTOR=1
+          # SEQDESK_SLURM_INLINE_EXECUTOR is set at job level (inherited here).
           # SLURM compute nodes can't see the app's _work tree, so the pipeline
           # packages (Nextflow workflow scripts) must live on the shared FS. Stage
           # them next to the shared run dir and point the app there.
