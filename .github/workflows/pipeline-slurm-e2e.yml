@@ -57,6 +57,11 @@ jobs:
       # paths (fine for the local-mode portion, but SLURM submissions need the shared FS).
       SLURM_SHARED_CONDA_BASE: ${{ vars.SLURM_SHARED_CONDA_BASE }}
       SLURM_SHARED_RUN_ROOT: ${{ vars.SLURM_SHARED_RUN_ROOT }}
+      # Full prefix PATH of the pipeline conda env on the shared FS. Names don't resolve
+      # across nodes here (conda maps a name to ~/.conda/envs, which is per-node home),
+      # and the admin conda's envs/ dir is read-only to the CI user, so the env lives at
+      # a runner-writable prefix and is activated by full path.
+      SLURM_SHARED_CONDA_ENV: ${{ vars.SLURM_SHARED_CONDA_ENV }}
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
       DB_PORT: 5432
@@ -134,20 +139,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
-            # SLURM cluster: the compute nodes cannot see the runner's conda, so the
-            # env must live in the shared, compute-visible conda. Use a stable name and
-            # create only if missing — per-run envs on shared NFS are slow and needless.
-            # Create with an explicit -p prefix so the env physically lands in the shared
-            # conda's envs dir: a bare -n can resolve to ~/.conda/envs on the runner's
-            # home, which the compute nodes can't see. Named activation still resolves it
-            # because that prefix is the shared conda's first envs dir.
+            # SLURM cluster: the compute nodes cannot see the runner's conda, so the env
+            # must live on the shared filesystem. It is referenced by FULL PREFIX PATH,
+            # not a name: a conda name maps to ~/.conda/envs, which is per-node home here
+            # (each node mounts /home from a different NFS server), so names never resolve
+            # across nodes. The env also can't go under the admin conda's envs/ dir (read
+            # only to the CI user), so it lives at a runner-writable prefix on the shared
+            # FS and is activated by path. Created once and reused across runs.
             CONDA_BIN="$SLURM_SHARED_CONDA_BASE/bin/conda"
-            PIPELINE_CONDA_ENV="seqdesk-pipelines"
-            ENV_PREFIX="$SLURM_SHARED_CONDA_BASE/envs/$PIPELINE_CONDA_ENV"
-            echo "PIPELINE_CONDA_ENV=$PIPELINE_CONDA_ENV" >> "$GITHUB_ENV"
+            ENV_PREFIX="${SLURM_SHARED_CONDA_ENV:-$SLURM_SHARED_RUN_ROOT/conda-envs/seqdesk-pipelines}"
+            echo "PIPELINE_CONDA_ENV=$ENV_PREFIX" >> "$GITHUB_ENV"
             if "$CONDA_BIN" run -p "$ENV_PREFIX" nextflow -version >/dev/null 2>&1; then
               echo "Reusing existing shared conda env at $ENV_PREFIX"
             else
+              mkdir -p "$(dirname "$ENV_PREFIX")"
               "$CONDA_BIN" create -y -p "$ENV_PREFIX" \
                 --override-channels -c conda-forge -c bioconda \
                 python=3.11 openjdk=17 nodejs coreutils nextflow nf-core
@@ -170,15 +175,17 @@ jobs:
           set -euo pipefail
           # On a SLURM cluster the app must point at the shared conda the compute nodes
           # see, not the runner-local one. Falls back to the runner conda when unset.
-          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
-            CONDA_BASE="$SLURM_SHARED_CONDA_BASE"
-          else
-            CONDA_BASE="$(conda info --base)"
-          fi
-          echo "SEQDESK_CONDA_PATH=$CONDA_BASE" >> "$GITHUB_ENV"
           # Put the pipeline env tools (nextflow/java) on PATH so the app server can
           # locate them while still leaving the system SLURM binaries reachable.
-          echo "$CONDA_BASE/envs/$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            CONDA_BASE="$SLURM_SHARED_CONDA_BASE"
+            # PIPELINE_CONDA_ENV is a full prefix path in this mode, so its bin is <prefix>/bin.
+            echo "$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
+          else
+            CONDA_BASE="$(conda info --base)"
+            echo "$CONDA_BASE/envs/$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
+          fi
+          echo "SEQDESK_CONDA_PATH=$CONDA_BASE" >> "$GITHUB_ENV"
 
       - name: Setup PostgreSQL toolchain
         run: |
@@ -349,7 +356,6 @@ jobs:
         run: |
           set +e
           if ! command -v sbatch >/dev/null 2>&1; then echo "sbatch unavailable; skip canary"; exit 0; fi
-          CONDA_ROOT="${SEQDESK_CONDA_PATH:-/home/brokerat/miniconda3}"
           WORK_DIR="$SEQDESK_RUN_DIR/_canary"   # under the runner _work tree (suspect: local disk)
           HOME_DIR="$HOME/seqdesk-ci-canary"    # under the shared home, OUTSIDE _work
           rm -rf "$WORK_DIR" "$HOME_DIR"; mkdir -p "$WORK_DIR" "$HOME_DIR"
@@ -360,7 +366,7 @@ jobs:
           # The probe reports df/mount for both trees and tries read/write on each.
           JID=$(sbatch --parsable -p cpu -c 1 --mem=200M -t 5:00 -D "$HOME_DIR" \
             --output="$HOME_DIR/canary-%j.out" --error="$HOME_DIR/canary-%j.err" \
-            --wrap "set +e; echo node=\$(hostname); echo '--- df WORK ---'; df -hP '$WORK_DIR' 2>&1; echo '--- df HOME ---'; df -hP '$HOME_DIR' 2>&1; echo '--- mounts ---'; mount 2>/dev/null | grep -E ' nfs|on /home|_work' | head; echo '--- read _work marker? ---'; cat '$WORK_DIR/head-marker.txt' 2>&1; echo '--- write _work? ---'; (echo x > '$WORK_DIR/node-write' && echo WORK-WRITE-OK || echo WORK-WRITE-FAIL) 2>&1; echo '--- write HOME? ---'; (echo x > '$HOME_DIR/node-write' && echo HOME-WRITE-OK || echo HOME-WRITE-FAIL) 2>&1; echo '--- conda env present? ---'; ls -d '$CONDA_ROOT/envs/$PIPELINE_CONDA_ENV' 2>&1")
+            --wrap "set +e; echo node=\$(hostname); echo '--- df WORK ---'; df -hP '$WORK_DIR' 2>&1; echo '--- df HOME ---'; df -hP '$HOME_DIR' 2>&1; echo '--- mounts ---'; mount 2>/dev/null | grep -E ' nfs|on /home|_work' | head; echo '--- read _work marker? ---'; cat '$WORK_DIR/head-marker.txt' 2>&1; echo '--- write _work? ---'; (echo x > '$WORK_DIR/node-write' && echo WORK-WRITE-OK || echo WORK-WRITE-FAIL) 2>&1; echo '--- write HOME? ---'; (echo x > '$HOME_DIR/node-write' && echo HOME-WRITE-OK || echo HOME-WRITE-FAIL) 2>&1; echo '--- pipeline conda env nextflow? ---'; '$PIPELINE_CONDA_ENV/bin/nextflow' -version 2>&1 | head -3")
           echo "canary job id: $JID"
           for _ in $(seq 1 90); do
             st=$(sacct -j "${JID%%;*}" --noheader -o State -P 2>/dev/null | head -1)
