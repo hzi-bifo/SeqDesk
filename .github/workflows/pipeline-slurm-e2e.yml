@@ -49,6 +49,14 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: 1
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-slurm
+      # Compute nodes do NOT share /home or the runner _work tree with the runner
+      # (each node mounts /home from a different NFS server); only a dedicated shared
+      # filesystem is visible cluster-wide. These point the SLURM run dir + pipeline
+      # conda env at that shared FS. Set as Actions variables on the private CI mirror;
+      # empty on the public repo, in which case the job falls back to runner-local
+      # paths (fine for the local-mode portion, but SLURM submissions need the shared FS).
+      SLURM_SHARED_CONDA_BASE: ${{ vars.SLURM_SHARED_CONDA_BASE }}
+      SLURM_SHARED_RUN_ROOT: ${{ vars.SLURM_SHARED_RUN_ROOT }}
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
       DB_PORT: 5432
@@ -91,7 +99,15 @@ jobs:
           echo "SLURM_E2E_LOG=$RUNNER_TEMP/slurm-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "SEQDESK_DATA_DIR=$RUNNER_TEMP/seqdesk-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "SEQDESK_RUN_DIR=$RUNNER_TEMP/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          # The run dir is the one path the SLURM compute node must also see (it writes
+          # logs/outputs there), so place it on the shared FS when configured. Data/DB
+          # dirs stay runner-local — only the app on the runner host reads them.
+          if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
+            mkdir -p "$SLURM_SHARED_RUN_ROOT"
+            echo "SEQDESK_RUN_DIR=$SLURM_SHARED_RUN_ROOT/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          else
+            echo "SEQDESK_RUN_DIR=$RUNNER_TEMP/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          fi
           echo "SEQDESK_DB_DIR=$RUNNER_TEMP/seqdesk-pipeline-dbs-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
@@ -116,21 +132,49 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          conda create -y -n "$PIPELINE_CONDA_ENV" \
-            --override-channels \
-            -c conda-forge \
-            -c bioconda \
-            python=3.11 \
-            openjdk=17 \
-            nodejs \
-            coreutils \
-            nextflow \
-            nf-core
+          set -euo pipefail
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            # SLURM cluster: the compute nodes cannot see the runner's conda, so the
+            # env must live in the shared, compute-visible conda. Use a stable name and
+            # create only if missing — per-run envs on shared NFS are slow and needless.
+            # Create with an explicit -p prefix so the env physically lands in the shared
+            # conda's envs dir: a bare -n can resolve to ~/.conda/envs on the runner's
+            # home, which the compute nodes can't see. Named activation still resolves it
+            # because that prefix is the shared conda's first envs dir.
+            CONDA_BIN="$SLURM_SHARED_CONDA_BASE/bin/conda"
+            PIPELINE_CONDA_ENV="seqdesk-pipelines"
+            ENV_PREFIX="$SLURM_SHARED_CONDA_BASE/envs/$PIPELINE_CONDA_ENV"
+            echo "PIPELINE_CONDA_ENV=$PIPELINE_CONDA_ENV" >> "$GITHUB_ENV"
+            if "$CONDA_BIN" run -p "$ENV_PREFIX" nextflow -version >/dev/null 2>&1; then
+              echo "Reusing existing shared conda env at $ENV_PREFIX"
+            else
+              "$CONDA_BIN" create -y -p "$ENV_PREFIX" \
+                --override-channels -c conda-forge -c bioconda \
+                python=3.11 openjdk=17 nodejs coreutils nextflow nf-core
+            fi
+          else
+            conda create -y -n "$PIPELINE_CONDA_ENV" \
+              --override-channels \
+              -c conda-forge \
+              -c bioconda \
+              python=3.11 \
+              openjdk=17 \
+              nodejs \
+              coreutils \
+              nextflow \
+              nf-core
+          fi
 
       - name: Resolve Conda base and toolchain on PATH
         run: |
           set -euo pipefail
-          CONDA_BASE="$(conda info --base)"
+          # On a SLURM cluster the app must point at the shared conda the compute nodes
+          # see, not the runner-local one. Falls back to the runner conda when unset.
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            CONDA_BASE="$SLURM_SHARED_CONDA_BASE"
+          else
+            CONDA_BASE="$(conda info --base)"
+          fi
           echo "SEQDESK_CONDA_PATH=$CONDA_BASE" >> "$GITHUB_ENV"
           # Put the pipeline env tools (nextflow/java) on PATH so the app server can
           # locate them while still leaving the system SLURM binaries reachable.
@@ -421,4 +465,8 @@ jobs:
           # Remove temp dirs BEFORE the conda env: this shell runs with the env
           # active on PATH, so deleting it first leaves `rm` unresolvable (exit 127).
           rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" "${SEQDESK_DB_DIR:-}"
-          conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          # Only remove a throwaway per-run env. With the shared cluster conda
+          # (SLURM_SHARED_CONDA_BASE set) the env is persistent and reused across runs.
+          if [ -z "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            conda env remove -n "$PIPELINE_CONDA_ENV" || true
+          fi
