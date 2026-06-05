@@ -37,13 +37,6 @@ const WRITEBACK_SPEC = {
     kind: "artifacts",
     requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
   },
-  // Artifacts-only for now (the run GET select does not expose fastqc's read-field
-  // writebacks: fastqcReport/readCount/avgQuality). summary is run-scoped; sample_qc_*
-  // are per-sample report/data artifacts.
-  fastqc: {
-    kind: "artifacts",
-    requiredOutputIds: ["summary", "sample_qc_reports"],
-  },
 };
 
 function fail(message, details) {
