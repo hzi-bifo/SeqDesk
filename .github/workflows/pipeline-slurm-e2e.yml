@@ -158,10 +158,11 @@ jobs:
             PIPELINE_PKGS="python=3.11 openjdk=17 nodejs coreutils nextflow nf-core"
             # Pipelines run their process scripts inside this env on the compute node, so
             # it needs the full launcher toolchain (node + java + coreutils), not just
-            # nextflow. Reuse only when the toolchain is complete; otherwise top up an
-            # existing env in place, or create a new one.
-            if "$CONDA_BIN" run -p "$ENV_PREFIX" nextflow -version >/dev/null 2>&1 \
-               && "$CONDA_BIN" run -p "$ENV_PREFIX" node --version >/dev/null 2>&1; then
+            # nextflow. Check the binaries INSIDE the env prefix directly — `conda run`
+            # would also find tools on the runner's ambient PATH (e.g. the runner's own
+            # node), giving a false "present" and skipping the top-up the compute node
+            # needs. Reuse only when complete; else top up in place, or create new.
+            if [ -x "$ENV_PREFIX/bin/nextflow" ] && [ -x "$ENV_PREFIX/bin/node" ]; then
               echo "Reusing existing shared conda env at $ENV_PREFIX (toolchain present)"
             elif [ -d "$ENV_PREFIX" ]; then
               echo "Topping up existing shared conda env at $ENV_PREFIX"
