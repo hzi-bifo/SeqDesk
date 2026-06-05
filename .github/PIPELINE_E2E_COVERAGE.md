@@ -24,7 +24,11 @@ Legend: ✅ asserted · ⬜ known gap (fillable now, no blocker) · — not cove
 
 **Known gaps to fill (no external blocker):**
 
-- **fastqc / reads-qc** — first pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (slow, ~60–90s, and on the SLURM compute node — network not yet confirmed there). A first attempt also surfaced a **completed→running status flip** on the slow fastqc run (`pollUntilDone` saw `completed`, the writeback's re-sync then saw `running`) — needs the writeback gate to tolerate a transient non-terminal read, and the flip itself investigated (possible app bug). Backed out pending that work; add the risky pipeline steps **after** the proven ones (or `if: always()`) so a failure doesn't skip established coverage.
+- **fastqc / reads-qc** — first pipelines whose processes declare a `bioconda::` conda directive, so Nextflow builds a **per-process conda env at runtime** (~60–90s). The env build itself works (runner has bioconda network). Two real blockers found and fixed/deferred:
+  - **Fixed (app bug #5):** the slow run exposed a **completed→running resurrection** — `syncPipelineRunForOperator`'s with-trace branch had no terminal guard, so a re-sync could un-complete a finished run. Fixed in `pipeline-run-ops-service.ts` (`runWasTerminal` guard) + regression test.
+  - **Open (test isolation):** fastqc runs **last** on the *shared* dummy order, but by then simulate-reads (replace mode) has repointed that order's reads at `simulated/…`, and the **failure-path test moved those FASTQs aside without fully restoring them** — so fastqc fails with "FASTQ file not found". Fix needs real isolation: give the destructive failure-path test (and/or fastqc) its **own order**, or make the sabotage restore bulletproof, so one pipeline's mutations don't bleed into the next.
+  - Also: per-process conda env files in the run dir break the **artifact upload** step (symlinks/size) — exclude the `work/conda/` dir from the upload before re-enabling.
+  - Reminder: place risky pipeline steps **after** the proven ones (already done) so a failure can't skip established coverage.
 
 ### What every covered run asserts
 
