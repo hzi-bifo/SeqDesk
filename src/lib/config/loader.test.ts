@@ -21,6 +21,8 @@ const ENV_KEYS = [
   "SEQDESK_SESSION_TIMEOUT",
   "SEQDESK_ENA_TEST_MODE",
   "SEQDESK_IN_APP_NOTIFICATIONS_ENABLED",
+  "SEQDESK_CONDA_PATH",
+  "SEQDESK_CONDA_ENV",
 ] as const;
 
 let cwdBefore = "";
@@ -120,6 +122,22 @@ describe("config loader", () => {
     expect(resolved.config.ena?.testMode).toBe(false);
     expect(resolved.sources["site.name"]).toBe("env");
     expect(resolved.sources["sequencingFiles.scanDepth"]).toBe("env");
+  });
+
+  it("applies SEQDESK_CONDA_ENV and SEQDESK_CONDA_PATH from the environment", () => {
+    // Regression: conda.environment must exist in the default config, otherwise
+    // trackSources never tags its source and getConfiguredValue drops the env value,
+    // silently falling back to the hardcoded 'seqdesk-pipelines' default.
+    process.env.SEQDESK_CONDA_PATH = "/net/shared/conda";
+    process.env.SEQDESK_CONDA_ENV = "/net/shared/conda/envs/pipelines";
+
+    const resolved = loadConfig(true);
+
+    expect(resolved.config.pipelines?.execution?.conda?.environment).toBe(
+      "/net/shared/conda/envs/pipelines"
+    );
+    expect(resolved.sources["pipelines.execution.conda.environment"]).toBe("env");
+    expect(resolved.sources["pipelines.execution.conda.path"]).toBe("env");
   });
 
   it("getConfigValue returns value/source and respects fallback", () => {

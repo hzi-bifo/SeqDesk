@@ -34,6 +34,12 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
       conda: {
         enabled: false,
         path: '/opt/conda',
+        // Must be present in the default config: trackSources() only assigns a
+        // source to paths that exist here, and getConfiguredValue() drops any value
+        // whose source is not file/env. Without this key, SEQDESK_CONDA_ENV (and a
+        // config-file conda.environment) are silently ignored and the executor falls
+        // back to its hardcoded 'seqdesk-pipelines' default.
+        environment: 'seqdesk-pipelines',
       },
       slurm: {
         enabled: false,
