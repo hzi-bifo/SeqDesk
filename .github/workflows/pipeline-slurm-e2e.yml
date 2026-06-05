@@ -305,28 +305,31 @@ jobs:
         run: |
           set +e
           if ! command -v sbatch >/dev/null 2>&1; then echo "sbatch unavailable; skip canary"; exit 0; fi
-          CANARY="$SEQDESK_RUN_DIR/_canary"
           CONDA_ROOT="${SEQDESK_CONDA_PATH:-/home/brokerat/miniconda3}"
-          rm -rf "$CANARY"; mkdir -p "$CANARY/logs"
-          echo "head node wrote this at $(date)" > "$CANARY/head-marker.txt"
-          # Submit a direct sbatch (NOT through the app) to isolate whether the
-          # compute node can see/write this run dir (under the runner's _work) and
-          # the conda env. The failing pipeline run dies before writing any log,
-          # which points at the run dir / logs subdir not being usable on the node.
-          JID=$(sbatch --parsable -p cpu -c 1 --mem=200M -t 5:00 \
-            -D "$CANARY" \
-            --output="$CANARY/canary-%j.out" --error="$CANARY/canary-%j.err" \
-            --wrap "echo node=\$(hostname) pwd=\$(pwd); echo '--- ls run dir (compute view) ---'; ls -la '$CANARY' 2>&1; echo '--- head marker visible on node? ---'; cat '$CANARY/head-marker.txt' 2>&1; echo '--- write into logs/ subdir? ---'; (echo ok > '$CANARY/logs/compute-wrote.txt' && echo WROTE-logs-ok) 2>&1; echo '--- conda envs visible on node? ---'; ls '$CONDA_ROOT/envs' 2>&1 | head; echo '--- target env $PIPELINE_CONDA_ENV present? ---'; ls -d '$CONDA_ROOT/envs/$PIPELINE_CONDA_ENV' 2>&1")
+          WORK_DIR="$SEQDESK_RUN_DIR/_canary"   # under the runner _work tree (suspect: local disk)
+          HOME_DIR="$HOME/seqdesk-ci-canary"    # under the shared home, OUTSIDE _work
+          rm -rf "$WORK_DIR" "$HOME_DIR"; mkdir -p "$WORK_DIR" "$HOME_DIR"
+          echo "head wrote work $(date)" > "$WORK_DIR/head-marker.txt"
+          echo "head wrote home $(date)" > "$HOME_DIR/head-marker.txt"
+          # Run slurmd's --output under $HOME (likely shared+writable) so the probe
+          # results survive even when the _work run dir is not usable on the node.
+          # The probe reports df/mount for both trees and tries read/write on each.
+          JID=$(sbatch --parsable -p cpu -c 1 --mem=200M -t 5:00 -D "$HOME_DIR" \
+            --output="$HOME_DIR/canary-%j.out" --error="$HOME_DIR/canary-%j.err" \
+            --wrap "set +e; echo node=\$(hostname); echo '--- df WORK ---'; df -hP '$WORK_DIR' 2>&1; echo '--- df HOME ---'; df -hP '$HOME_DIR' 2>&1; echo '--- mounts ---'; mount 2>/dev/null | grep -E ' nfs|on /home|_work' | head; echo '--- read _work marker? ---'; cat '$WORK_DIR/head-marker.txt' 2>&1; echo '--- write _work? ---'; (echo x > '$WORK_DIR/node-write' && echo WORK-WRITE-OK || echo WORK-WRITE-FAIL) 2>&1; echo '--- write HOME? ---'; (echo x > '$HOME_DIR/node-write' && echo HOME-WRITE-OK || echo HOME-WRITE-FAIL) 2>&1; echo '--- conda env present? ---'; ls -d '$CONDA_ROOT/envs/$PIPELINE_CONDA_ENV' 2>&1")
           echo "canary job id: $JID"
           for _ in $(seq 1 90); do
             st=$(sacct -j "${JID%%;*}" --noheader -o State -P 2>/dev/null | head -1)
             case "$st" in *COMPLETED*|*FAILED*|*CANCEL*|*TIMEOUT*|*OUT_OF*) echo "canary final state: $st"; break;; esac
             sleep 2
           done
-          echo "===== canary STDOUT ====="; cat "$CANARY"/canary-*.out 2>&1
-          echo "===== canary STDERR ====="; cat "$CANARY"/canary-*.err 2>&1
-          echo "===== did the compute node's logs/ write land back on the head node? ====="; ls -la "$CANARY/logs" 2>&1
-          echo "===== sacct (canary) ====="; sacct -j "${JID%%;*}" -o JobID,State,ExitCode,NodeList,WorkDir%140 2>&1
+          echo "===== canary STDOUT (written by the node to \$HOME) ====="; cat "$HOME_DIR"/canary-*.out 2>&1
+          echo "===== canary STDERR ====="; cat "$HOME_DIR"/canary-*.err 2>&1
+          echo "===== node-write probes that landed back on the head node ====="
+          echo "  _work/node-write: $(cat "$WORK_DIR/node-write" 2>&1)"
+          echo "  HOME/node-write:  $(cat "$HOME_DIR/node-write" 2>&1)"
+          echo "===== sacct (canary) ====="; sacct -j "${JID%%;*}" -o JobID,State,ExitCode,NodeList 2>&1
+          rm -rf "$HOME_DIR"
           true
 
       - name: Stop SeqDesk app
