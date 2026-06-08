@@ -212,6 +212,35 @@ try {
   }
 
   if (expectedProfileId === "ci-runner") {
+    // MetaxPath preflight (first metaxpath check): when the admin has enabled metaxpath
+    // on the ci-runner profile (it carries a DB path), the private package must be
+    // installed AND its DB params file must exist on disk before any metaxpath run can
+    // succeed. ci-runner's pipeline set is admin-configurable, so gate on metaxpath
+    // actually being enabled — disabling it must not red the canary.
+    if (enabledPipelines.includes("metaxpath")) {
+      const metaxpathManifest = path.join(appDir, "pipelines", "metaxpath", "manifest.json");
+      if (!fs.existsSync(metaxpathManifest)) {
+        fail(`MetaxPath is enabled but the private package is not installed at ${metaxpathManifest}`);
+      }
+      const metaxpathConfig = pipelineConfigs.find(
+        (pipeline) => pipeline.pipelineId === "metaxpath"
+      );
+      const parsedMetaxpathConfig = parseJsonObject(
+        metaxpathConfig?.config,
+        "PipelineConfig.metaxpath.config"
+      );
+      const paramsFile = parsedMetaxpathConfig.paramsFile;
+      if (typeof paramsFile !== "string" || paramsFile.trim().length === 0) {
+        fail("MetaxPath is enabled but its paramsFile (DB) is not configured");
+      }
+      if (!fs.existsSync(paramsFile)) {
+        fail(`MetaxPath DB params file does not exist on disk: ${paramsFile}`);
+      }
+      console.log(`MetaxPath preflight OK: package installed + DB params file present (${paramsFile})`);
+    } else {
+      console.log("MetaxPath not enabled on ci-runner; skipping MetaxPath preflight.");
+    }
+
     const seedData = parseJsonObject(
       extra.installProfileSeedData,
       "extraSettings.installProfileSeedData"
