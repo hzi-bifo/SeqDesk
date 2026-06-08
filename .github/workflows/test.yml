@@ -33,10 +33,14 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
+        continue-on-error: true
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage/lcov.info
-          fail_ci_if_error: true
+          # Coverage upload is reporting, not correctness — a Codecov-side outage
+          # (e.g. the CLI's GPG signature verification failing) must not fail the
+          # test suite. continue-on-error above is the belt; this is the braces.
+          fail_ci_if_error: false
           slug: hzi-bifo/SeqDesk
           token: ${{ env.CODECOV_TOKEN }}
 
