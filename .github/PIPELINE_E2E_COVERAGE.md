@@ -36,19 +36,23 @@ Legend: ✅ asserted · — not covered yet.
 
 The SLURM E2E uses synthetic/dummy data to prove the pipeline *mechanics*. The Alma install E2E now also seeds a **real 5-sample ONT MinION dataset** (the Gemma study `gemma-nanopore-metaxpath`, order `DEV-GEMMA-ONT-001`) with on-disk FASTQs — so it's the natural home to run the read-consuming pipelines on **real input** and assert their outputs (login → `POST /api/pipelines/runs` on the Gemma study/order → poll → assert), complementing (not duplicating) the SLURM E2E.
 
-| Pipeline | Real Gemma input makes sense? | Dependency | Status |
-| ----------------- | ----------------------------- | --------------------------------------- | ------------------------------- |
-| fastq-checksum    | ✅ checksums of the real reads | —                                       | ready to wire                   |
-| fastqc            | ✅ QC on real ONT reads        | `fastqc` conda                          | ready to wire                   |
-| reads-qc          | ✅ read QC/metrics             | `seqkit`/`python` conda                 | ready to wire                   |
-| read-cleaning     | ✅ kraken2 contaminant removal | kraken2 DB (**staged ✅**)               | ready to wire                   |
-| study-demo-report | ✅ study report on the study   | —                                       | ready to wire                   |
-| metaxpath         | ✅ taxonomy/path (the point)   | MetaxPath pkg **0.1.1+** + DB           | blocked (version)               |
-| mag               | ✅ assembly/binning            | **GTDB** staged                         | blocked (DB)                    |
-| simulate-reads    | ❌ it *generates* reads        | —                                       | n/a                             |
-| submg             | ❌ ENA submission, not analysis| ENA creds                               | n/a                             |
+Wired as post-install steps inside the Alma E2E's app-startup verify step (the app is live there), driven by `run-pipeline-runtime-e2e.mjs --order-number DEV-GEMMA-ONT-001` / `--study-alias gemma-nanopore-metaxpath --skip-slurm --skip-if-disabled` (a pipeline not enabled on the profile is a clean skip, not a failure).
 
-Plan: wire the **ready set** first (fastq-checksum, fastqc, reads-qc, read-cleaning, study-demo-report) as post-install steps in the Alma E2E, **local** execution to start (SLURM as a follow-up); add metaxpath + mag once the version / GTDB gates clear.
+| Pipeline | Real Gemma input makes sense? | Status |
+| ----------------- | ----------------------------- | ------------------------------------------------------------- |
+| fastq-checksum    | ✅ checksums of the real reads | ✅ **green** — md5 round-trip verified against the real ONT read on disk |
+| fastqc            | ✅ QC on real ONT reads        | ✅ **green** — runs through the installed app (per-process conda builds on the networked runner) |
+| study-demo-report | ✅ study report on the study   | ⏭️ skips (not enabled on the ci-runner profile — enable it to cover) |
+| reads-qc          | ✅ read QC/metrics             | ⛔ deferred — the local study run reached `completed` then a re-sync flipped it back to `running` (a local-run completed→running flip; needs its own fix, distinct from the queue-side guard) |
+| read-cleaning     | ❌ needs **raw/unknown** reads | n/a — the Gemma reads are already **cleaned** (`No active raw or unknown reads found`) |
+| metaxpath         | ✅ taxonomy/path (the point)   | blocked — MetaxPath pkg **0.1.1+** + DB |
+| mag               | ✅ assembly/binning            | blocked — **GTDB** staged |
+| simulate-reads    | ❌ it *generates* reads        | n/a |
+| submg             | ❌ ENA submission, not analysis| n/a |
+
+Infra notes that got the install green: the kraken2 DB is staged with a real `path`; the Gemma bundle is staged locally and the profile points at it via a `file://` URL (the bundle host isn't resolvable from the runner); MetaxPath is optional (`SEQDESK_METAXPATH_OPTIONAL`) so its 0.1.0-vs-0.1.1 mismatch warns instead of aborting.
+
+Follow-ups: investigate the reads-qc local completed→running flip; enable study-demo-report on the profile to cover it; resolve the MetaxPath version + stage GTDB for metaxpath/mag.
 
 ### What every covered run asserts
 
