@@ -1440,10 +1440,16 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     statusDeterminedByQueue = true;
   }
 
+  // A terminal run is protected from queue re-activation ONLY when the trace agrees
+  // the work is actually finished. If the scheduler still reports the job active AND
+  // the trace shows work outstanding (partial known steps), the "terminal" status was
+  // premature, so demote it back to running. The bug-#5 guard still holds for the
+  // genuine case (a complete trace + a momentarily-lingering wrapper job must stay
+  // completed, not flip back to running and lose its completedAt).
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
     queueIsActive &&
-    !runWasTerminal;
+    (!runWasTerminal || !traceCompletedKnownWork);
   if (forceRunningFromQueue) {
     nextStatus = 'running';
     statusDeterminedByQueue = true;
