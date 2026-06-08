@@ -707,6 +707,35 @@ jobs:
               --email "admin@example.com" \
               --password "admin" \
               --output "$PIPELINE_SMOKE_JSON"
+
+            # Real-data pipeline runs: drive the read-consuming pipelines through the
+            # installed app on the REAL 5-sample Gemma ONT dataset (order DEV-GEMMA-ONT-001
+            # / study gemma-nanopore-metaxpath) in LOCAL mode. Complements the SLURM E2E's
+            # synthetic data. Each run is independent so one failure still reports the rest.
+            gemma_fail=0
+            run_gemma() {
+              local pid="$1"; shift
+              echo "===== Gemma real-data run: ${pid} ====="
+              if node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
+                --base-url "http://127.0.0.1:${PORT}" \
+                --email "admin@example.com" \
+                --password "admin" \
+                --pipeline-id "${pid}" "$@" \
+                --skip-slurm \
+                --timeout 900; then
+                echo "Gemma real-data run OK: ${pid}"
+              else
+                echo "Gemma real-data run FAILED: ${pid}"
+                gemma_fail=1
+              fi
+            }
+            run_gemma fastq-checksum --order-number DEV-GEMMA-ONT-001
+            run_gemma study-demo-report --study-alias gemma-nanopore-metaxpath
+            run_gemma fastqc --order-number DEV-GEMMA-ONT-001
+            if [ "$gemma_fail" -ne 0 ]; then
+              echo "One or more Gemma real-data pipeline runs failed."
+              exit 1
+            fi
           fi
 
       - name: Upload install-profile e2e artifacts

@@ -1416,24 +1416,48 @@ async function main() {
   let studyId;
   if (targetType === "study") {
     const explicitStudyId = args["study-id"] || process.env.SEQDESK_RUNTIME_E2E_STUDY_ID;
-    selectedStudy = explicitStudyId
-      ? { id: explicitStudyId, title: null, samplesWithReads: null, source: "explicit" }
-      : await findStudy(client, { ensureSeededDummyData });
+    const studyAlias = args["study-alias"] || process.env.SEQDESK_RUNTIME_E2E_STUDY_ALIAS;
+    if (explicitStudyId) {
+      selectedStudy = { id: explicitStudyId, title: null, samplesWithReads: null, source: "explicit" };
+    } else if (studyAlias) {
+      // Pin a specific study by alias (e.g. the real Gemma study on an installed app),
+      // since the heuristic would otherwise prefer the CI dummy study.
+      const studies = await fetchStudies(client);
+      const match = studies.find((study) => String(study?.alias || "") === studyAlias);
+      if (!match?.id) {
+        fail(
+          `No study with alias '${studyAlias}' was found`,
+          JSON.stringify({ aliases: studies.map((s) => s?.alias).filter(Boolean) }, null, 2),
+        );
+      }
+      selectedStudy = { ...match, source: "alias" };
+    } else {
+      selectedStudy = await findStudy(client, { ensureSeededDummyData });
+    }
     studyId = selectedStudy.id;
   } else {
     const explicitOrderId = args["order-id"] || process.env.SEQDESK_RUNTIME_E2E_ORDER_ID;
-    selectedOrder = explicitOrderId
-      ? {
-          id: explicitOrderId,
-          orderNumber: null,
-          status: null,
-          samples: null,
-          source: "explicit",
-        }
-      : await findOrder(client, {
-          ensureSeededDummyData,
-          dummyOrderPrefix: dummyOrderPrefixForSession(session),
-        });
+    const orderNumber = args["order-number"] || process.env.SEQDESK_RUNTIME_E2E_ORDER_NUMBER;
+    if (explicitOrderId) {
+      selectedOrder = { id: explicitOrderId, orderNumber: null, status: null, samples: null, source: "explicit" };
+    } else if (orderNumber) {
+      // Pin a specific order by number (e.g. DEV-GEMMA-ONT-001 on an installed app),
+      // since the heuristic scores CI dummy orders above a plain submitted order.
+      const orders = await fetchOrders(client);
+      const match = orders.find((order) => String(order?.orderNumber || "") === orderNumber);
+      if (!match?.id) {
+        fail(
+          `No order with orderNumber '${orderNumber}' was found`,
+          JSON.stringify({ orderNumbers: orders.map((o) => o?.orderNumber).filter(Boolean) }, null, 2),
+        );
+      }
+      selectedOrder = { ...match, source: "orderNumber" };
+    } else {
+      selectedOrder = await findOrder(client, {
+        ensureSeededDummyData,
+        dummyOrderPrefix: dummyOrderPrefixForSession(session),
+      });
+    }
     orderId = selectedOrder.id;
   }
   const config = {
