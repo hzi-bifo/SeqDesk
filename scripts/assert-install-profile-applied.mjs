@@ -218,25 +218,46 @@ try {
     // succeed. ci-runner's pipeline set is admin-configurable, so gate on metaxpath
     // actually being enabled — disabling it must not red the canary.
     if (enabledPipelines.includes("metaxpath")) {
+      // When SEQDESK_METAXPATH_OPTIONAL is set (the install treats a metaxpath package
+      // failure as a warning), the preflight matches: it still reports a missing
+      // package / DB, but as a warning instead of failing the canary — so the rest of
+      // the verify (e.g. the Gemma example-dataset check) still runs.
+      const metaxpathOptional = ["1", "true"].includes(
+        String(process.env.SEQDESK_METAXPATH_OPTIONAL || "").toLowerCase()
+      );
+      const flagMetaxpath = (message) => {
+        if (metaxpathOptional) {
+          console.warn(`WARN: ${message} (SEQDESK_METAXPATH_OPTIONAL set; not failing the canary).`);
+          return false;
+        }
+        fail(message);
+        return false;
+      };
       const metaxpathManifest = path.join(appDir, "pipelines", "metaxpath", "manifest.json");
+      let metaxpathOk = true;
       if (!fs.existsSync(metaxpathManifest)) {
-        fail(`MetaxPath is enabled but the private package is not installed at ${metaxpathManifest}`);
+        metaxpathOk = flagMetaxpath(
+          `MetaxPath is enabled but the private package is not installed at ${metaxpathManifest}`
+        );
       }
-      const metaxpathConfig = pipelineConfigs.find(
-        (pipeline) => pipeline.pipelineId === "metaxpath"
-      );
-      const parsedMetaxpathConfig = parseJsonObject(
-        metaxpathConfig?.config,
-        "PipelineConfig.metaxpath.config"
-      );
-      const paramsFile = parsedMetaxpathConfig.paramsFile;
-      if (typeof paramsFile !== "string" || paramsFile.trim().length === 0) {
-        fail("MetaxPath is enabled but its paramsFile (DB) is not configured");
+      if (metaxpathOk) {
+        const metaxpathConfig = pipelineConfigs.find(
+          (pipeline) => pipeline.pipelineId === "metaxpath"
+        );
+        const parsedMetaxpathConfig = parseJsonObject(
+          metaxpathConfig?.config,
+          "PipelineConfig.metaxpath.config"
+        );
+        const paramsFile = parsedMetaxpathConfig.paramsFile;
+        if (typeof paramsFile !== "string" || paramsFile.trim().length === 0) {
+          metaxpathOk = flagMetaxpath("MetaxPath is enabled but its paramsFile (DB) is not configured");
+        } else if (!fs.existsSync(paramsFile)) {
+          metaxpathOk = flagMetaxpath(`MetaxPath DB params file does not exist on disk: ${paramsFile}`);
+        }
+        if (metaxpathOk) {
+          console.log(`MetaxPath preflight OK: package installed + DB params file present (${paramsFile})`);
+        }
       }
-      if (!fs.existsSync(paramsFile)) {
-        fail(`MetaxPath DB params file does not exist on disk: ${paramsFile}`);
-      }
-      console.log(`MetaxPath preflight OK: package installed + DB params file present (${paramsFile})`);
     } else {
       console.log("MetaxPath not enabled on ci-runner; skipping MetaxPath preflight.");
     }

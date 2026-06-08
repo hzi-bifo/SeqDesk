@@ -407,6 +407,11 @@ jobs:
       PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-runner' }}
       PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
       SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
+      # MetaxPath is an optional private add-on on this canary; a package failure (e.g.
+      # the current 0.1.0 vs required 0.1.1 mismatch) should warn, not abort the install
+      # — so the rest of the profile (pipelines + the Gemma example dataset) still applies
+      # and gets verified. Remove this once a compatible MetaxPath artifact is published.
+      SEQDESK_METAXPATH_OPTIONAL: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

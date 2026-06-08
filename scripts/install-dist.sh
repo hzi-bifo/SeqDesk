@@ -2820,7 +2820,15 @@ install_private_metaxpath_if_configured() {
     fi
 
     if ! run_with_spinner "Private MetaxPath pipeline package" ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
-        exit 1
+        # MetaxPath is an optional private add-on pipeline. By default a failure is
+        # fatal (real installs that configured it want to know). When
+        # SEQDESK_METAXPATH_OPTIONAL is set (e.g. the CI canary), warn and continue so
+        # the rest of the profile — other pipelines, example datasets — still installs.
+        if [ "${SEQDESK_METAXPATH_OPTIONAL:-}" = "1" ] || [ "${SEQDESK_METAXPATH_OPTIONAL:-}" = "true" ]; then
+            print_warning "Private MetaxPath package install failed; continuing (SEQDESK_METAXPATH_OPTIONAL set). MetaxPath will be unavailable until a compatible package is installed; the rest of the profile (pipelines, example datasets) still applies."
+        else
+            exit 1
+        fi
     fi
 }
 
