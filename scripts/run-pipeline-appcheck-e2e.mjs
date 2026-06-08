@@ -495,7 +495,7 @@ async function checkAccess({ baseUrl }) {
   return {
     check: "access",
     success: true,
-    pipelineId,
+    pipelineId: permissionsRun.pipelineId || null,
     runId,
     notificationEventType: notification.eventType,
     notificationSeverity: notification.severity || null,
