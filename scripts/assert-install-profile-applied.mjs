@@ -286,6 +286,53 @@ try {
         fail(`Expected CI runner smoke FASTQ to exist for ${sample.sampleId}: ${fastqPath}`);
       }
     }
+
+    // Gemma Nanopore MetaxPath example dataset (optional, admin-enabled on ci-runner):
+    // when its fixture is present in the applied seed data, the installer should have
+    // downloaded the repacked bundle into the sequencing data path and seeded the
+    // DEV-GEMMA-ONT-001 order with its 5 ONT MinION samples + cleaned FASTQ read links.
+    // Verify the order, the sample count, and that each sample's FASTQ exists on disk —
+    // gated on the dataset actually being enabled (it is optional).
+    const GEMMA_FIXTURE_ID = "gemma-nanopore-metaxpath-5sample";
+    const GEMMA_ORDER_NUMBER = "DEV-GEMMA-ONT-001";
+    const GEMMA_EXPECTED_SAMPLES = 5;
+    const seedFixtures = Array.isArray(seedData.fixtures) ? seedData.fixtures : [];
+    const gemmaEnabled = seedFixtures.some(
+      (fixture) =>
+        fixture && typeof fixture === "object" && fixture.id === GEMMA_FIXTURE_ID
+    );
+    if (gemmaEnabled) {
+      const gemmaOrder = await prisma.order.findUnique({
+        where: { orderNumber: GEMMA_ORDER_NUMBER },
+        include: { samples: { include: { reads: true } } },
+      });
+      if (!gemmaOrder) {
+        fail(`Gemma dataset is enabled but its seed order ${GEMMA_ORDER_NUMBER} is missing`);
+      }
+      if (gemmaOrder.samples.length !== GEMMA_EXPECTED_SAMPLES) {
+        fail(
+          `Expected Gemma order ${GEMMA_ORDER_NUMBER} to have ${GEMMA_EXPECTED_SAMPLES} samples, got ${gemmaOrder.samples.length}`
+        );
+      }
+      if (!settings.dataBasePath) {
+        fail("Expected site dataBasePath for Gemma dataset FASTQ files");
+      }
+      for (const sample of gemmaOrder.samples) {
+        const read = sample.reads[0];
+        if (!read?.file1) {
+          fail(`Expected Gemma sample ${sample.sampleId} to have an R1 FASTQ link`);
+        }
+        const fastqPath = path.join(settings.dataBasePath, read.file1);
+        if (!fs.existsSync(fastqPath)) {
+          fail(`Expected Gemma FASTQ to exist for ${sample.sampleId}: ${fastqPath}`);
+        }
+      }
+      console.log(
+        `Gemma dataset OK: order ${GEMMA_ORDER_NUMBER} with ${gemmaOrder.samples.length} samples + FASTQ files present`
+      );
+    } else {
+      console.log("Gemma example dataset not enabled on ci-runner; skipping its check.");
+    }
   }
 
   process.stdout.write(
