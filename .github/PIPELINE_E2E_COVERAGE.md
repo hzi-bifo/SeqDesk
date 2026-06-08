@@ -28,7 +28,7 @@ Legend: ✅ asserted · — not covered yet.
 
 - **reads-qc** — study target; per-process `seqkit`/`python` conda. Unblocked by the shared cacheDir; just needs wiring (a study-target `--pipeline-id reads-qc` step + a read-field/artifact spec).
 - **Known flake — fastqc run-scoped `summary` artifact.** The `summary/fastqc-summary.tsv` file is always produced, but its `PipelineArtifact` row ingests inconsistently, so the assertion requires the reliable per-sample artifacts instead. Likely a real intermittent output-resolution bug worth pinning.
-- **High-value tests to add (requested):** no-data/empty-order validation; output *correctness* (assert artifact content, not just presence); run visibility/permissions (non-admin can't see/cancel another's run); notifications on complete/fail; and a **stuck/timeout** failure-mode test (guards the original 99%-stuck regression). Note: the failure-path test is pipeline-agnostic (it tests the app's failed-run reconciliation), so it is NOT duplicated per pipeline — different failure *modes* are higher value than the same mode on every pipeline.
+- **High-value app-behaviour tests (added).** Implemented and green: no-data/empty-order validation, run visibility/permissions, notifications, and stuck-run reconciliation live in `scripts/run-pipeline-appcheck-e2e.mjs` (`--check nodata|access|stuck`, wired as separate SLURM-E2E steps after the proven pipeline steps). Output *correctness* (assert artifact content, not just presence) is folded into the runtime E2E's `assertArtifactContent` for the artifact pipelines. Note: the failure-path test is pipeline-agnostic (it tests the app's failed-run reconciliation), so it is NOT duplicated per pipeline — different failure *modes* (stuck vs failed) are higher value than the same mode on every pipeline.
 
 ### What every covered run asserts
 
@@ -54,6 +54,11 @@ Legend: ✅ asserted · — not covered yet.
 | **Artifact + log retrieval**                 | produced files/logs downloadable via the app's `file`/`logs` endpoints (real bytes)            | ✅ covered                  |
 | **statusSource**                             | which path finalized the run — on this cluster it is `queue` (the `/sync` API), not weblog      | ✅ covered                  |
 | **Step-level progress**                      | run exposes Nextflow trace steps; every step terminal once completed                            | ✅ covered                  |
+| **No-data / empty-order validation**         | starting a run on a read-less order is rejected with a clean 4xx, never a 500/crash             | ✅ covered                  |
+| **Run visibility / permissions**             | a non-admin researcher cannot read (403) or cancel (403) another's run; anonymous is 401        | ✅ covered                  |
+| **Notifications**                            | a completed run fires a `pipeline.completed` in-app notification (recipient = owner + admins)   | ✅ covered                  |
+| **Stuck-run reconciliation**                 | a SLURM job scancelled out-of-band is reconciled to terminal via `/sync`, not left wedged       | ✅ covered                  |
+| **Output correctness**                       | downloaded artifacts contain real content markers (report `<h1>`, TSV headers), not just rows   | ✅ covered (study-demo, fastqc) |
 
 
 ## Execution / topology notes (CI-specific)

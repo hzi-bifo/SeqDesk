@@ -48,6 +48,21 @@ const WRITEBACK_SPEC = {
   },
 };
 
+// Output CORRECTNESS (not just "an artifact row exists"): for artifact pipelines,
+// download a required output through the app's file endpoint and assert its content
+// is the real thing — a marker string the pipeline itself writes. Markers are loose
+// and stable (a heading the report always emits, a TSV header column), grounded in
+// each pipeline's workflow/main.nf. Keyed by pipelineId -> outputId -> markers.
+const ARTIFACT_CONTENT_MARKERS = {
+  "study-demo-report": {
+    html_report: { markers: ["<h1"], label: "demo report HTML" },
+    sample_summary: { markers: ["sample_id"], label: "sample-summary TSV header" },
+  },
+  fastqc: {
+    sample_qc_reports: { markers: ["fastqc"], label: "FastQC HTML report" },
+  },
+};
+
 function fail(message, details) {
   const parts = [message];
   if (details) parts.push(details);
@@ -715,6 +730,8 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     writeback = assertReplaceReads({ run, runId, baseUrl });
   } else if (spec.kind === "artifacts") {
     writeback = assertArtifactWriteback({ run, runId, baseUrl, spec });
+    const content = await assertArtifactContent({ client, run, runId, pipelineId });
+    writeback = { ...writeback, content };
   } else {
     fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
@@ -838,6 +855,47 @@ function assertArtifactWriteback({ run, runId, baseUrl, spec }) {
     outputIds: Array.from(seenOutputIds),
     debugEndpoint: debugEndpoint(baseUrl, runId),
   };
+}
+
+// Output correctness: download a required artifact through the app's file endpoint and
+// assert its bytes contain a marker the pipeline actually writes (proves the file is a
+// real report/summary, not just a row pointing at an empty/placeholder file).
+async function assertArtifactContent({ client, run, runId, pipelineId }) {
+  const markerMap = ARTIFACT_CONTENT_MARKERS[pipelineId];
+  if (!markerMap) return { skipped: true };
+
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const checked = [];
+  for (const [outputId, contentSpec] of Object.entries(markerMap)) {
+    const artifact = artifacts.find((a) => a?.outputId === outputId && a?.path);
+    if (!artifact) {
+      fail(
+        `Output content: ${pipelineId} run ${runId} has no artifact with a path for outputId '${outputId}'`,
+        JSON.stringify({ runId, present: artifacts.map((a) => a?.outputId) }, null, 2),
+      );
+    }
+    const fileResponse = await client.request(
+      `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(artifact.path)}&download=1`,
+    );
+    if (!fileResponse.ok) {
+      const body = await fileResponse.text();
+      fail(
+        `Output content: file endpoint failed (${fileResponse.status}) for ${artifact.path}`,
+        summarizeBody(body),
+      );
+    }
+    const bytes = Buffer.from(await fileResponse.arrayBuffer());
+    const haystack = bytes.toString("utf8").toLowerCase();
+    const missing = contentSpec.markers.filter((marker) => !haystack.includes(marker.toLowerCase()));
+    if (bytes.length === 0 || missing.length > 0) {
+      fail(
+        `Output content: ${contentSpec.label} (${outputId}) for run ${runId} is empty or missing marker(s): ${missing.join(", ")}`,
+        JSON.stringify({ runId, path: artifact.path, bytes: bytes.length, head: haystack.slice(0, 200) }, null, 2),
+      );
+    }
+    checked.push({ outputId, path: artifact.path, bytes: bytes.length, markers: contentSpec.markers });
+  }
+  return { checked };
 }
 
 // fastq-checksum (MERGE): checksum1 = md5(file1) written in place onto each target
