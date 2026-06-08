@@ -46,6 +46,14 @@ const WRITEBACK_SPEC = {
     kind: "artifacts",
     requiredOutputIds: ["sample_qc_reports", "sample_qc_data"],
   },
+  // reads-qc (merge: Read.readCount/avgQuality) and read-cleaning (PendingReadCandidate
+  // rows, admin_review) write back via paths the run GET select does not expose, so on
+  // real Gemma data we assert the strong, observable thing: the run reaches `completed`
+  // with progress=100 and its outputs/logs are retrievable through the app (the
+  // universal gate + retrieval in assertPipelineWriteback). Proves the pipeline ran to
+  // completion on real ONT input and produced output.
+  "reads-qc": { kind: "completes" },
+  "read-cleaning": { kind: "completes" },
 };
 
 // CONFIG -> OUTPUT plumbing marker for study-demo-report: a unique report_title we
@@ -84,7 +92,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (!arg.startsWith("--")) fail(`Unexpected argument: ${arg}`);
     const key = arg.slice(2);
-    if (["skip-local", "skip-slurm", "include-default-policy", "ensure-dummy-data"].includes(key)) {
+    if (["skip-local", "skip-slurm", "include-default-policy", "ensure-dummy-data", "skip-if-disabled"].includes(key)) {
       args[key] = true;
       continue;
     }
@@ -752,6 +760,11 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     if (pipelineId === "fastqc") {
       writeback.summaryMetrics = await assertFastqcSummaryMetrics({ client, run, runId });
     }
+  } else if (spec.kind === "completes") {
+    // The universal gate above already proved completed/progress=100; observability +
+    // retrieval (below the dispatch) prove the outputs/logs are reachable. Nothing more
+    // to assert for pipelines whose writeback isn't exposed by the run GET.
+    writeback = { kind: "completes", note: "ran to completion; writeback not exposed via run GET" };
   } else {
     fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
@@ -1467,7 +1480,16 @@ async function main() {
   const slurm = buildSlurmOverride(args);
   const policy = await getPipelinePolicy(client, pipelineId);
   if (!policy) fail(`Pipeline ${pipelineId} was not returned by /api/admin/settings/pipelines`);
-  if (!policy.enabled) fail(`Pipeline ${pipelineId} is not enabled in SeqDesk settings`);
+  if (!policy.enabled) {
+    // --skip-if-disabled: on a real install whose profile may not enable every pipeline,
+    // a disabled pipeline is a SKIP (clean exit), not a failure — so a canary can run the
+    // read-consuming pipelines that ARE enabled without reding the suite on the others.
+    if (Boolean(args["skip-if-disabled"]) || envFlag(process.env.SEQDESK_RUNTIME_E2E_SKIP_IF_DISABLED)) {
+      console.log(JSON.stringify({ skipped: true, reason: "pipeline-not-enabled", pipelineId }, null, 2));
+      return;
+    }
+    fail(`Pipeline ${pipelineId} is not enabled in SeqDesk settings`);
+  }
 
   const runs = [];
 

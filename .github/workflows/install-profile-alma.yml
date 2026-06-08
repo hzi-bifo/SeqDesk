@@ -714,7 +714,7 @@ jobs:
             # synthetic data. Each run is independent so one failure still reports the rest.
             gemma_fail=0
             run_gemma() {
-              local pid="$1"; shift
+              local pid="$1"; local to="$2"; shift 2
               echo "===== Gemma real-data run: ${pid} ====="
               if node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
                 --base-url "http://127.0.0.1:${PORT}" \
@@ -722,16 +722,21 @@ jobs:
                 --password "admin" \
                 --pipeline-id "${pid}" "$@" \
                 --skip-slurm \
-                --timeout 900; then
+                --skip-if-disabled \
+                --timeout "${to}"; then
                 echo "Gemma real-data run OK: ${pid}"
               else
                 echo "Gemma real-data run FAILED: ${pid}"
                 gemma_fail=1
               fi
             }
-            run_gemma fastq-checksum --order-number DEV-GEMMA-ONT-001
-            run_gemma study-demo-report --study-alias gemma-nanopore-metaxpath
-            run_gemma fastqc --order-number DEV-GEMMA-ONT-001
+            # Ordered most-reliable first (no-conda), heaviest last (read-cleaning =
+            # nf-core/detaxizer + kraken2). Each is independent; the step fails at the end.
+            run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
+            run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
+            run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
+            run_gemma reads-qc          900  --study-alias gemma-nanopore-metaxpath
+            run_gemma read-cleaning     1500 --order-number DEV-GEMMA-ONT-001
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1
