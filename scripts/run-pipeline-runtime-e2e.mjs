@@ -48,6 +48,13 @@ const WRITEBACK_SPEC = {
   },
 };
 
+// CONFIG -> OUTPUT plumbing marker for study-demo-report: a unique report_title we
+// pass as user config; it must reappear verbatim in the rendered HTML + Markdown,
+// proving user config flows app -> nextflow.config -> SLURM job -> output (nothing
+// else asserts this today). Lowercase + hyphenated so it survives shell-quoting and
+// the case-insensitive content match below.
+const STUDY_DEMO_REPORT_TITLE = "e2e-config-plumb-report-4q7x";
+
 // Output CORRECTNESS (not just "an artifact row exists"): for artifact pipelines,
 // download a required output through the app's file endpoint and assert its content
 // is the real thing — a marker string the pipeline itself writes. Markers are loose
@@ -55,7 +62,9 @@ const WRITEBACK_SPEC = {
 // each pipeline's workflow/main.nf. Keyed by pipelineId -> outputId -> markers.
 const ARTIFACT_CONTENT_MARKERS = {
   "study-demo-report": {
-    html_report: { markers: ["<h1"], label: "demo report HTML" },
+    // <h1> proves a real report; the custom title proves config plumbed through.
+    html_report: { markers: ["<h1", STUDY_DEMO_REPORT_TITLE], label: "demo report HTML (custom title plumbed through)" },
+    markdown_report: { markers: [STUDY_DEMO_REPORT_TITLE], label: "demo report Markdown (custom title)" },
     sample_summary: { markers: ["sample_id"], label: "sample-summary TSV header" },
   },
   fastqc: {
@@ -441,6 +450,11 @@ function defaultConfigForPipeline(pipelineId) {
       replaceExisting: true,
     };
   }
+  if (pipelineId === "study-demo-report") {
+    // Non-default report_title so the run exercises config->output plumbing; the
+    // value is asserted back in the rendered artifacts (ARTIFACT_CONTENT_MARKERS).
+    return { report_title: STUDY_DEMO_REPORT_TITLE };
+  }
   return {};
 }
 
@@ -728,10 +742,16 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     writeback = await assertChecksumReads({ run, runId, client, baseUrl });
   } else if (spec.kind === "replace") {
     writeback = assertReplaceReads({ run, runId, baseUrl });
+    if (pipelineId === "simulate-reads") {
+      writeback = { ...writeback, configOutput: await assertSimulateConfigOutput({ client, run, runId }) };
+    }
   } else if (spec.kind === "artifacts") {
     writeback = assertArtifactWriteback({ run, runId, baseUrl, spec });
     const content = await assertArtifactContent({ client, run, runId, pipelineId });
     writeback = { ...writeback, content };
+    if (pipelineId === "fastqc") {
+      writeback.summaryMetrics = await assertFastqcSummaryMetrics({ client, run, runId });
+    }
   } else {
     fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
@@ -857,6 +877,45 @@ function assertArtifactWriteback({ run, runId, baseUrl, spec }) {
   };
 }
 
+// Download a run file through the app's file endpoint and return its text + byte count.
+// Used by the output-content + config->output assertions.
+async function fetchRunFileText({ client, runId, filePath, context }) {
+  const fileResponse = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(filePath)}&download=1`,
+  );
+  if (!fileResponse.ok) {
+    const body = await fileResponse.text();
+    fail(
+      `${context}: file endpoint failed (${fileResponse.status}) for ${filePath}`,
+      summarizeBody(body),
+    );
+  }
+  const bytes = Buffer.from(await fileResponse.arrayBuffer());
+  return { text: bytes.toString("utf8"), bytes: bytes.length };
+}
+
+// Non-failing variant: returns null when the file can't be served (used for run-scoped
+// summary TSVs, whose PipelineArtifact row can ingest flakily — a miss should warn+skip,
+// not red the suite; the metric assertions still hard-fail when the file IS present).
+async function tryFetchRunFileText({ client, runId, filePath }) {
+  const fileResponse = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(filePath)}&download=1`,
+  );
+  if (!fileResponse.ok) return null;
+  const bytes = Buffer.from(await fileResponse.arrayBuffer());
+  return { text: bytes.toString("utf8"), bytes: bytes.length };
+}
+
+// Parse a TSV string into { header: string[], rows: string[][] } (tab-split, LF/CRLF).
+function parseTsv(text) {
+  const lines = String(text).split(/\r?\n/).filter((line) => line.length > 0);
+  if (lines.length === 0) return { header: [], rows: [] };
+  return {
+    header: lines[0].split("\t"),
+    rows: lines.slice(1).map((line) => line.split("\t")),
+  };
+}
+
 // Output correctness: download a required artifact through the app's file endpoint and
 // assert its bytes contain a marker the pipeline actually writes (proves the file is a
 // real report/summary, not just a row pointing at an empty/placeholder file).
@@ -874,28 +933,133 @@ async function assertArtifactContent({ client, run, runId, pipelineId }) {
         JSON.stringify({ runId, present: artifacts.map((a) => a?.outputId) }, null, 2),
       );
     }
-    const fileResponse = await client.request(
-      `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(artifact.path)}&download=1`,
-    );
-    if (!fileResponse.ok) {
-      const body = await fileResponse.text();
-      fail(
-        `Output content: file endpoint failed (${fileResponse.status}) for ${artifact.path}`,
-        summarizeBody(body),
-      );
-    }
-    const bytes = Buffer.from(await fileResponse.arrayBuffer());
-    const haystack = bytes.toString("utf8").toLowerCase();
+    const { text, bytes } = await fetchRunFileText({
+      client,
+      runId,
+      filePath: artifact.path,
+      context: `Output content (${outputId})`,
+    });
+    const haystack = text.toLowerCase();
     const missing = contentSpec.markers.filter((marker) => !haystack.includes(marker.toLowerCase()));
-    if (bytes.length === 0 || missing.length > 0) {
+    if (bytes === 0 || missing.length > 0) {
       fail(
         `Output content: ${contentSpec.label} (${outputId}) for run ${runId} is empty or missing marker(s): ${missing.join(", ")}`,
-        JSON.stringify({ runId, path: artifact.path, bytes: bytes.length, head: haystack.slice(0, 200) }, null, 2),
+        JSON.stringify({ runId, path: artifact.path, bytes, head: haystack.slice(0, 200) }, null, 2),
       );
     }
-    checked.push({ outputId, path: artifact.path, bytes: bytes.length, markers: contentSpec.markers });
+    checked.push({ outputId, path: artifact.path, bytes, markers: contentSpec.markers });
   }
   return { checked };
+}
+
+// CONFIG -> OUTPUT (simulate-reads): the run was started with a non-default readCount;
+// the produced summary/simulation-summary.tsv must report that exact per-sample
+// read_count1, proving user config flowed through to the SLURM job and shaped output.
+async function assertSimulateConfigOutput({ client, run, runId }) {
+  const expectedReadCount = Number(defaultConfigForPipeline("simulate-reads").readCount);
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const summary = artifacts.find((a) => a?.outputId === "summary" && a?.path);
+  if (!summary) {
+    console.warn(`WARN: simulate-reads run ${runId} has no summary artifact; skipping config->output check`);
+    return { skipped: true, reason: "no summary artifact" };
+  }
+  const fetched = await tryFetchRunFileText({ client, runId, filePath: summary.path });
+  if (!fetched) {
+    console.warn(`WARN: simulate-reads summary not servable (${summary.path}); skipping config->output check`);
+    return { skipped: true, reason: "summary not servable" };
+  }
+  const { header, rows } = parseTsv(fetched.text);
+  const idx = header.indexOf("read_count1");
+  if (idx < 0) {
+    fail(
+      `Config->output: simulate-reads summary TSV has no read_count1 column`,
+      JSON.stringify({ runId, path: summary.path, header }, null, 2),
+    );
+  }
+  const counts = rows.map((cols) => Number(cols[idx]));
+  const mismatches = counts.filter((count) => count !== expectedReadCount);
+  if (counts.length === 0 || mismatches.length > 0) {
+    fail(
+      `Config->output: simulate-reads produced read_count1 != configured ${expectedReadCount}`,
+      JSON.stringify({ runId, path: summary.path, expectedReadCount, counts }, null, 2),
+    );
+  }
+  return { expectedReadCount, sampleRows: counts.length, path: summary.path };
+}
+
+// fastqc summary-TSV metric correctness: fetch summary/fastqc-summary.tsv (the file is
+// reliably produced even when its PipelineArtifact row ingests flakily, so locate it by
+// path — the summary artifact if present, else derived as a sibling of the per-sample
+// reports) and assert the computed QC metrics are real (read counts > 0, mean quality in
+// a plausible Phred range), not blank/placeholder.
+async function assertFastqcSummaryMetrics({ client, run, runId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  let summaryPath = artifacts.find((a) => a?.outputId === "summary" && a?.path)?.path;
+  if (!summaryPath) {
+    const report = artifacts.find(
+      (a) => a?.outputId === "sample_qc_reports" && typeof a?.path === "string" && a.path.includes("/fastqc_reports/"),
+    );
+    if (report) {
+      summaryPath = report.path.replace(/\/fastqc_reports\/[^/]*$/, "/summary/fastqc-summary.tsv");
+    }
+  }
+  if (!summaryPath) {
+    console.warn(`WARN: could not locate fastqc-summary.tsv for run ${runId}; skipping metric check`);
+    return { skipped: true, reason: "no summary path" };
+  }
+
+  const fetched = await tryFetchRunFileText({ client, runId, filePath: summaryPath });
+  if (!fetched) {
+    console.warn(`WARN: fastqc summary not servable (${summaryPath}); skipping metric check`);
+    return { skipped: true, reason: "summary not servable" };
+  }
+  const { header, rows } = parseTsv(fetched.text);
+  const col = (name) => header.indexOf(name);
+  const r1Count = col("r1_read_count");
+  const r1Qual = col("r1_avg_quality");
+  const r2Count = col("r2_read_count");
+  const r2Qual = col("r2_avg_quality");
+  if (r1Count < 0 || r1Qual < 0) {
+    fail(
+      `fastqc summary metrics: TSV missing r1_read_count/r1_avg_quality columns`,
+      JSON.stringify({ runId, path: summaryPath, header }, null, 2),
+    );
+  }
+  if (rows.length === 0) {
+    fail(`fastqc summary metrics: no data rows in ${summaryPath}`, JSON.stringify({ runId }, null, 2));
+  }
+  const plausibleQuality = (value) => Number.isFinite(value) && value > 0 && value <= 45;
+  let checkedRows = 0;
+  for (const cols of rows) {
+    const sampleId = cols[0];
+    const c1 = Number(cols[r1Count]);
+    const q1 = Number(cols[r1Qual]);
+    if (!Number.isInteger(c1) || c1 <= 0) {
+      fail(
+        `fastqc summary metrics: r1_read_count is not a positive integer for sample ${sampleId}`,
+        JSON.stringify({ runId, path: summaryPath, value: cols[r1Count] }, null, 2),
+      );
+    }
+    if (!plausibleQuality(q1)) {
+      fail(
+        `fastqc summary metrics: r1_avg_quality out of Phred range for sample ${sampleId}`,
+        JSON.stringify({ runId, path: summaryPath, value: cols[r1Qual] }, null, 2),
+      );
+    }
+    // Paired-end: r2 columns, when present and non-blank, must also be plausible.
+    if (r2Count >= 0 && cols[r2Count] != null && String(cols[r2Count]).trim() !== "") {
+      const c2 = Number(cols[r2Count]);
+      const q2 = Number(cols[r2Qual]);
+      if (Number.isFinite(c2) && c2 > 0 && !plausibleQuality(q2)) {
+        fail(
+          `fastqc summary metrics: r2_avg_quality out of Phred range for sample ${sampleId}`,
+          JSON.stringify({ runId, path: summaryPath, value: cols[r2Qual] }, null, 2),
+        );
+      }
+    }
+    checkedRows += 1;
+  }
+  return { path: summaryPath, checkedRows };
 }
 
 // fastq-checksum (MERGE): checksum1 = md5(file1) written in place onto each target
@@ -1021,12 +1185,45 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
     if (md5Verified > 0) console.warn(`WARN: ${warning}`);
   }
 
+  // (C) PAIRED-READ CORRECTNESS: for reads with a second file, independently recompute
+  // md5(file2) and require it to equal the stored checksum2 (today only file1 was
+  // verified on disk). Best-effort: single-end orders have no file2, so absence is a
+  // warn, not a failure; a mismatch on a real paired read is a hard fail.
+  const readsWithFile2 = reads.filter((read) => read.file2 != null && read.checksum2 != null);
+  let md5Verified2 = 0;
+  for (const read of readsWithFile2) {
+    const onDisk = resolveOnDisk(read.file2);
+    if (!onDisk) continue;
+    let computed;
+    try {
+      computed = await md5OfFile(onDisk);
+    } catch {
+      continue;
+    }
+    if (computed !== read.checksum2) {
+      fail(
+        `Checksum writeback: stored checksum2 does not match recomputed md5(file2) for read ${read.id} (sample ${read.sampleId})`,
+        JSON.stringify({ runId, file2: read.file2, onDisk, stored: read.checksum2, computed }, null, 2),
+      );
+    }
+    md5Verified2 += 1;
+    break;
+  }
+  if (readsWithFile2.length > 0 && md5Verified2 === 0) {
+    console.warn(
+      `WARN: checksum2 md5 equality could not be verified on disk for run ${runId} ` +
+        `(${readsWithFile2.length} paired read(s) present but file2 unreadable here)`,
+    );
+  }
+
   return {
     runId,
     targetType: run?.targetType,
     readsChecked: readsWithFile1.length,
     populatedChecksum1,
     md5Verified,
+    pairedReadsChecked: readsWithFile2.length,
+    md5Verified2,
     md5Warnings,
     debugEndpoint: debugEndpoint(baseUrl, runId),
   };
