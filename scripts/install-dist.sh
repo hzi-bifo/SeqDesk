@@ -2820,6 +2820,16 @@ install_private_metaxpath_if_configured() {
     fi
 
     if ! run_with_spinner "Private MetaxPath pipeline package" ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
+        # run_with_spinner routes the install script's output to $SEQDESK_LOG and only
+        # prints the log *path*, so the real cause (auth/token, version floor, sha256
+        # mismatch, download error) is otherwise invisible — especially in CI where the
+        # log file is never surfaced. Echo its tail here so the failure is diagnosable.
+        # Token-safe: neither script runs `set -x`, and the token is only ever a curl -H
+        # header (curl -fsSL never echoes headers), so it never appears in the log.
+        if [ "${SEQDESK_LOG_ENABLED:-}" = "true" ] && [ -n "${SEQDESK_LOG:-}" ] && [ -f "${SEQDESK_LOG}" ]; then
+            print_warning "MetaxPath install log (tail) — diagnosing the failure:"
+            tail -n 40 "$SEQDESK_LOG" 2>/dev/null | sed 's/^/    metaxpath| /' || true
+        fi
         # MetaxPath is an optional private add-on pipeline. By default a failure is
         # fatal (real installs that configured it want to know). When
         # SEQDESK_METAXPATH_OPTIONAL is set (e.g. the CI canary), warn and continue so
