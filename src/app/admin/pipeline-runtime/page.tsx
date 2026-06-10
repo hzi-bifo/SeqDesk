@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
@@ -305,11 +307,11 @@ export default function PipelineRuntimePage() {
       }
 
       setSaved(true);
-      notifyPanel.success("Pipeline runtime settings saved");
+      toast.success("Pipeline runtime settings saved");
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error("Failed to save execution settings:", error);
-      notifyPanel.error(error instanceof Error ? error.message : "Failed to save settings");
+      toast.error(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -323,13 +325,7 @@ export default function PipelineRuntimePage() {
   };
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

@@ -136,7 +136,7 @@ export function Navbar({ user }: NavbarProps) {
           )}
 
           {/* Mobile menu button */}
-          <Button variant="ghost" size="icon" className="md:hidden">
+          <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu">
             <Menu className="h-5 w-5" />
           </Button>
         </div>

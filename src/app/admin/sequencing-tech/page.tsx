@@ -32,7 +32,8 @@ import {
   AlertCircle,
   ExternalLink,
 } from "lucide-react";
-import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import {
   FlowCell,
   SequencerDevice,
@@ -209,9 +210,9 @@ export default function SequencingTechPage() {
       if (!res.ok) throw new Error("Failed to save");
       const data = await res.json();
       setConfig(data.config);
-      notifyPanel.success("Configuration saved");
+      toast.success("Configuration saved");
     } catch {
-      notifyPanel.error("Failed to save configuration");
+      toast.error("Failed to save configuration");
     } finally {
       setSaving(false);
     }
@@ -233,9 +234,9 @@ export default function SequencingTechPage() {
       if (!res.ok) throw new Error("Failed to reset");
       const data = await res.json();
       setConfig(data.config);
-      notifyPanel.success("Reset to defaults");
+      toast.success("Reset to defaults");
     } catch {
-      notifyPanel.error("Failed to reset");
+      toast.error("Failed to reset");
     } finally {
       setResetting(false);
     }
@@ -391,7 +392,7 @@ export default function SequencingTechPage() {
     });
     setEditDialog(false);
     setEditingTech(null);
-    notifyPanel.success("Technology updated. Remember to save changes.");
+    toast.success("Technology updated. Remember to save changes.");
   };
 
   const openDeleteDialog = (target: DeleteTarget) => {
@@ -407,35 +408,35 @@ export default function SequencingTechPage() {
           ...config,
           technologies: technologies.filter((t) => t.id !== deleteTarget.item.id),
         });
-        notifyPanel.success("Technology removed. Remember to save changes.");
+        toast.success("Technology removed. Remember to save changes.");
         break;
       case "device":
         setConfig({
           ...config,
           devices: devices.filter((d) => d.id !== deleteTarget.item.id),
         });
-        notifyPanel.success("Device removed. Remember to save changes.");
+        toast.success("Device removed. Remember to save changes.");
         break;
       case "flowCell":
         setConfig({
           ...config,
           flowCells: flowCells.filter((fc) => fc.id !== deleteTarget.item.id),
         });
-        notifyPanel.success("Flow cell removed. Remember to save changes.");
+        toast.success("Flow cell removed. Remember to save changes.");
         break;
       case "kit":
         setConfig({
           ...config,
           kits: kits.filter((kit) => kit.id !== deleteTarget.item.id),
         });
-        notifyPanel.success("Kit removed. Remember to save changes.");
+        toast.success("Kit removed. Remember to save changes.");
         break;
       case "software":
         setConfig({
           ...config,
           software: software.filter((tool) => tool.id !== deleteTarget.item.id),
         });
-        notifyPanel.success("Software removed. Remember to save changes.");
+        toast.success("Software removed. Remember to save changes.");
         break;
       default:
         break;
@@ -468,7 +469,7 @@ export default function SequencingTechPage() {
     });
     setEditDialog(false);
     setEditingTech(null);
-    notifyPanel.success("Technology added. Remember to save changes.");
+    toast.success("Technology added. Remember to save changes.");
   };
 
   const openDeviceDialog = (device: SequencerDevice) => {
@@ -517,7 +518,7 @@ export default function SequencingTechPage() {
     });
     setDeviceDialogOpen(false);
     setEditingDevice(null);
-    notifyPanel.success("Device saved. Remember to save changes.");
+    toast.success("Device saved. Remember to save changes.");
   };
 
   const toggleDeviceCompatibility = (
@@ -569,7 +570,7 @@ export default function SequencingTechPage() {
     });
     setFlowCellDialogOpen(false);
     setEditingFlowCell(null);
-    notifyPanel.success("Flow cell saved. Remember to save changes.");
+    toast.success("Flow cell saved. Remember to save changes.");
   };
 
   const openKitDialog = (kit: SequencingKit) => {
@@ -611,7 +612,7 @@ export default function SequencingTechPage() {
     });
     setKitDialogOpen(false);
     setEditingKit(null);
-    notifyPanel.success("Kit saved. Remember to save changes.");
+    toast.success("Kit saved. Remember to save changes.");
   };
 
   const openSoftwareDialog = (tool: SequencingSoftware) => {
@@ -648,7 +649,7 @@ export default function SequencingTechPage() {
     });
     setSoftwareDialogOpen(false);
     setEditingSoftware(null);
-    notifyPanel.success("Software saved. Remember to save changes.");
+    toast.success("Software saved. Remember to save changes.");
   };
 
   const getFlowCellUsage = (id: string) =>
@@ -668,13 +669,7 @@ export default function SequencingTechPage() {
   };
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (
@@ -854,6 +849,7 @@ export default function SequencingTechPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => openEditDialog(tech)}
+                          aria-label="Edit technology"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -864,6 +860,7 @@ export default function SequencingTechPage() {
                           onClick={() =>
                             openDeleteDialog({ type: "technology", item: tech })
                           }
+                          aria-label="Delete technology"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -1144,6 +1141,7 @@ export default function SequencingTechPage() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => openDeviceDialog(device)}
+                                    aria-label="Edit device"
                                   >
                                     <Pencil className="h-4 w-4" />
                                   </Button>
@@ -1154,6 +1152,7 @@ export default function SequencingTechPage() {
                                     onClick={() =>
                                       openDeleteDialog({ type: "device", item: device })
                                     }
+                                    aria-label="Delete device"
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
@@ -1319,6 +1318,7 @@ export default function SequencingTechPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => openFlowCellDialog(cell)}
+                                  aria-label="Edit flow cell"
                                 >
                                   <Pencil className="h-4 w-4" />
                                 </Button>
@@ -1329,6 +1329,7 @@ export default function SequencingTechPage() {
                                   onClick={() =>
                                     openDeleteDialog({ type: "flowCell", item: cell })
                                   }
+                                  aria-label="Delete flow cell"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -1396,6 +1397,7 @@ export default function SequencingTechPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => openKitDialog(kit)}
+                                  aria-label="Edit kit"
                                 >
                                   <Pencil className="h-4 w-4" />
                                 </Button>
@@ -1406,6 +1408,7 @@ export default function SequencingTechPage() {
                                   onClick={() =>
                                     openDeleteDialog({ type: "kit", item: kit })
                                   }
+                                  aria-label="Delete kit"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -1459,6 +1462,7 @@ export default function SequencingTechPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => openSoftwareDialog(tool)}
+                                  aria-label="Edit software"
                                 >
                                   <Pencil className="h-4 w-4" />
                                 </Button>
@@ -1469,6 +1473,7 @@ export default function SequencingTechPage() {
                                   onClick={() =>
                                     openDeleteDialog({ type: "software", item: tool })
                                   }
+                                  aria-label="Delete software"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>

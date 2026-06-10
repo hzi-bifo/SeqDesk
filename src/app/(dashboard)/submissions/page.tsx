@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   Send,
@@ -259,6 +260,7 @@ function StepItem({ step }: { step: StepDetails }) {
 }
 
 export default function SubmissionsPage() {
+  const confirm = useConfirm();
   const { data: session, status: sessionStatus } = useSession();
   const router = useRouter();
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -307,7 +309,15 @@ export default function SubmissionsPage() {
   };
 
   const handleDelete = async (submissionId: string) => {
-    if (!confirm("Are you sure you want to delete this submission? For test submissions, this will also clear the accession numbers from the study.")) {
+    if (
+      !(await confirm({
+        title: "Delete this submission?",
+        description:
+          "For test submissions, this will also clear the accession numbers from the study.",
+        confirmLabel: "Delete",
+        variant: "destructive",
+      }))
+    ) {
       return;
     }
 

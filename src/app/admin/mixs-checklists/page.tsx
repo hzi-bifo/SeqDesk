@@ -25,7 +25,8 @@ import {
   Check,
   ExternalLink,
 } from "lucide-react";
-import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 
 type MixsChecklistField = {
   name: string;
@@ -155,9 +156,9 @@ export default function MixsChecklistsPage() {
       if (!res.ok) throw new Error("Failed to save");
       const data = await res.json();
       setConfig(data.config);
-      notifyPanel.success("Configuration saved");
+      toast.success("Configuration saved");
     } catch {
-      notifyPanel.error("Failed to save configuration");
+      toast.error("Failed to save configuration");
     } finally {
       setSaving(false);
     }
@@ -181,9 +182,9 @@ export default function MixsChecklistsPage() {
       setConfig(data.config);
       setDiff(null);
       setUpdateNotice(null);
-      notifyPanel.success(data.message || "Reset to baseline");
+      toast.success(data.message || "Reset to baseline");
     } catch {
-      notifyPanel.error("Failed to reset");
+      toast.error("Failed to reset");
     } finally {
       setResetting(false);
     }
@@ -240,7 +241,7 @@ export default function MixsChecklistsPage() {
       if (!res.ok) throw new Error("Failed to apply");
       const data = await res.json();
       if (data.error || !data.applied) {
-        notifyPanel.error(data.message || "Failed to apply update");
+        toast.error(data.message || "Failed to apply update");
         return;
       }
       if (data.config) {
@@ -248,22 +249,16 @@ export default function MixsChecklistsPage() {
       }
       setDiff(null);
       setUpdateNotice(null);
-      notifyPanel.success(data.message || "Update applied");
+      toast.success(data.message || "Update applied");
     } catch {
-      notifyPanel.error("Failed to apply update");
+      toast.error("Failed to apply update");
     } finally {
       setApplying(false);
     }
   };
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

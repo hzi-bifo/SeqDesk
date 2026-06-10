@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useRef, type ComponentType } from "re
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -142,6 +145,7 @@ type ImportedOrderConfig = {
 };
 
 export default function FormBuilderPage() {
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   // Module states
   const { enabled: aiModuleEnabled } = useModule("ai-validation");
@@ -367,8 +371,10 @@ export default function FormBuilderPage() {
       });
       setInstructionsSaved(true);
       setTimeout(() => setInstructionsSaved(false), 3000);
+      toast.success("Post-submission instructions saved");
     } catch (error) {
       console.error("Failed to save instructions:", error);
+      toast.error("Failed to save instructions");
     } finally {
       setInstructionsSaving(false);
     }
@@ -378,10 +384,14 @@ export default function FormBuilderPage() {
     setPostSubmissionInstructions(DEFAULT_POST_SUBMISSION_INSTRUCTIONS);
   };
 
-  const handleResetToDefaults = () => {
-    const confirmed = window.confirm(
-      "Reset the order form fields to SeqDesk defaults? Export the current configuration first if you want a backup."
-    );
+  const handleResetToDefaults = async () => {
+    const confirmed = await confirm({
+      title: "Reset the order form fields to SeqDesk defaults?",
+      description:
+        "Export the current configuration first if you want a backup.",
+      confirmLabel: "Reset to defaults",
+      variant: "destructive",
+    });
     if (!confirmed) return;
 
     const normalized = normalizeOrderFormSchema({
@@ -530,7 +540,7 @@ export default function FormBuilderPage() {
   };
 
   // Save field
-  const handleSaveField = () => {
+  const handleSaveField = async () => {
     if (!fieldLabel.trim()) {
       setError("Field label is required");
       return;
@@ -551,9 +561,11 @@ export default function FormBuilderPage() {
       const mappedColumn = mapPerSampleFieldToColumn(name);
       const isRenaming = editingField && editingField.name !== name;
       if (mappedColumn && (!editingField || isRenaming)) {
-        const confirmed = window.confirm(
-          `This field name maps to a core sample column (${mappedColumn}). Continue?`
-        );
+        const confirmed = await confirm({
+          title: "Map field to a core sample column?",
+          description: `This field name maps to a core sample column (${mappedColumn}). Continue?`,
+          confirmLabel: "Continue",
+        });
         if (!confirmed) {
           return;
         }
@@ -810,6 +822,7 @@ export default function FormBuilderPage() {
           const message = data.error || "Failed to save configuration";
           setError(message);
           setAutoSaveStatus("error");
+          if (manual) toast.error(message);
           return false;
         }
 
@@ -820,12 +833,14 @@ export default function FormBuilderPage() {
         if (manual) {
           setJustSaved(true);
           setTimeout(() => setJustSaved(false), 2000);
+          toast.success("Order form configuration saved");
         }
 
         return true;
       } catch {
         setError("Failed to save configuration");
         setAutoSaveStatus("error");
+        if (manual) toast.error("Failed to save configuration");
         return false;
       } finally {
         saveInFlightRef.current = false;
@@ -1064,7 +1079,9 @@ export default function FormBuilderPage() {
 
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          setError(data.error || "Failed to import order settings");
+          const message = data.error || "Failed to import order settings";
+          setError(message);
+          toast.error(message);
           return;
         }
       }
@@ -1085,8 +1102,10 @@ export default function FormBuilderPage() {
       setImportDialogOpen(false);
       setPendingImport(null);
       setAutoSaveStatus("dirty");
+      toast.success("Order form configuration imported");
     } catch {
       setError("Failed to import order settings");
+      toast.error("Failed to import order settings");
     } finally {
       setImportSaving(false);
     }
@@ -1124,11 +1143,7 @@ export default function FormBuilderPage() {
   };
 
   if (loading) {
-    return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (
@@ -2956,6 +2971,7 @@ export default function FormBuilderPage() {
                             size="icon"
                             className="h-6 w-6"
                             onClick={() => handleRemoveOption(i)}
+                            aria-label="Remove option"
                           >
                             <X className="h-3 w-3" />
                           </Button>

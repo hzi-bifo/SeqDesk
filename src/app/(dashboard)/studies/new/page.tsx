@@ -58,6 +58,8 @@ import type { FundingFieldValue } from "@/lib/field-types/funding";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { InlineFieldError } from "@/components/ui/inline-field-error";
 import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inline-field-help";
+import { PageNotice } from "@/components/ui/page-notice";
+import { toast } from "@/components/ui/toast";
 import { notifyPanel } from "@/lib/notifications/client";
 
 // Note: TanStack Table meta types are extended globally in orders/new/page.tsx
@@ -1804,9 +1806,12 @@ export default function NewStudyPage() {
       }
 
       // Redirect to study detail page
+      toast.success("Study created");
       router.push(`/studies/${study.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create study");
+      const message = err instanceof Error ? err.message : "Failed to create study";
+      toast.error(message);
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -2869,8 +2874,10 @@ export default function NewStudyPage() {
         </div>
 
         {error && (
-          <div className="mb-6 shrink-0 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
-            {error}
+          <div className="mb-6 shrink-0">
+            <PageNotice variant="error" title="Check this step">
+              {error}
+            </PageNotice>
           </div>
         )}
 

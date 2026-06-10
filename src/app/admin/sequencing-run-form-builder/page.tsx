@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -163,9 +164,9 @@ export default function SequencingRunFormBuilderPage() {
       }
       setFields((payload?.fields ?? []) as FormFieldDefinition[]);
       setGroups((payload?.groups ?? []) as FormFieldGroup[]);
-      notifyPanel.success("Saved run-assignment fields");
+      toast.success("Saved run-assignment fields");
     } catch (error) {
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to save run-assignment fields"
       );
     } finally {

@@ -7,6 +7,8 @@ import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageNotice } from "@/components/ui/page-notice";
+import { toast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   Card,
   CardContent,
@@ -854,6 +856,7 @@ export function StudyPipelinesSection({
   const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
   const [startingPipelineId, setStartingPipelineId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const confirm = useConfirm();
 
   // --- Validation state ---
   const [prerequisites, setPrerequisites] = useState<PrerequisiteResult | null>(null);
@@ -1247,9 +1250,22 @@ export function StudyPipelinesSection({
         throw new Error(getApiErrorMessage(startPayload, "Failed to start pipeline run"));
       }
 
+      const warnings = Array.isArray(startPayload?.warnings)
+        ? (startPayload.warnings as string[])
+        : [];
+      if (warnings.length > 0) {
+        toast.warning(`Pipeline started — ${warnings.length} sample(s) skipped`, {
+          description: warnings[0],
+        });
+      } else {
+        toast.success("Pipeline run started");
+      }
+
       await mutateRuns();
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "Failed to start pipeline");
+      const message = runError instanceof Error ? runError.message : "Failed to start pipeline";
+      setError(message);
+      toast.error(message);
     } finally {
       setStartingPipelineId(null);
     }
@@ -1257,10 +1273,13 @@ export function StudyPipelinesSection({
 
   const handleStopRun = async (runId: string) => {
     if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Stop this run? The SLURM/local job will be cancelled and the run marked as cancelled."
-      )
+      !(await confirm({
+        title: "Stop this run?",
+        description:
+          "The SLURM/local job will be cancelled and the run marked as cancelled.",
+        confirmLabel: "Stop run",
+        variant: "destructive",
+      }))
     ) {
       return;
     }
@@ -1270,16 +1289,25 @@ export function StudyPipelinesSection({
       const res = await fetch(`/api/pipelines/runs/${runId}`, {
         method: "DELETE",
       });
+      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        setError(
-          getApiErrorMessage(payload as { error?: unknown }, "Failed to stop run")
-        );
+        const message = getApiErrorMessage(payload as { error?: unknown }, "Failed to stop run");
+        setError(message);
+        toast.error(message);
         return;
+      }
+      if ((payload as { alreadyFinalized?: boolean }).alreadyFinalized) {
+        toast.info(
+          `Run already finished (${(payload as { status?: string }).status ?? "done"})`
+        );
+      } else {
+        toast.success("Run cancelled");
       }
       await mutateRuns();
     } catch (stopError) {
-      setError(stopError instanceof Error ? stopError.message : "Failed to stop run");
+      const message = stopError instanceof Error ? stopError.message : "Failed to stop run";
+      setError(message);
+      toast.error(message);
     } finally {
       setStoppingRunId(null);
     }

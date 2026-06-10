@@ -6,6 +6,8 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -335,6 +337,8 @@ export default function AnalysisRunDetailPage({
   const { id } = use(params);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const confirm = useConfirm();
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [checkingQueue, setCheckingQueue] = useState(false);
   const [copyingDebugBundle, setCopyingDebugBundle] = useState(false);
@@ -702,17 +706,38 @@ export default function AnalysisRunDetailPage({
       : currentStepLabel || "-";
 
   const handleCancel = async () => {
-    if (!confirm("Are you sure you want to cancel this run?")) return;
+    if (
+      !(await confirm({
+        title: "Cancel this run?",
+        description: "The running job will be cancelled and the run marked as cancelled.",
+        confirmLabel: "Cancel run",
+        variant: "destructive",
+      }))
+    ) {
+      return;
+    }
 
+    setCancelling(true);
     try {
       const res = await fetch(`/api/pipelines/runs/${id}`, {
         method: "DELETE",
       });
-      if (res.ok) {
-        mutate();
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(payload?.error || "Failed to cancel run");
+        return;
       }
+      if (payload?.alreadyFinalized) {
+        toast.info(`Run already finished (${payload.status ?? "done"})`);
+      } else {
+        toast.success("Run cancelled");
+      }
+      mutate();
     } catch (err) {
       console.error("Failed to cancel run:", err);
+      toast.error("Failed to cancel run");
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -1183,7 +1208,7 @@ export default function AnalysisRunDetailPage({
               Refresh
             </Button>
             {["pending", "queued", "running"].includes(effectiveRunStatus) && (
-              <Button variant="destructive" size="sm" onClick={handleCancel}>
+              <Button variant="destructive" size="sm" onClick={handleCancel} disabled={cancelling}>
                 <StopCircle className="h-3.5 w-3.5 mr-1.5" />
                 Cancel
               </Button>

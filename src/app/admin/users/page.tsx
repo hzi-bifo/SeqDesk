@@ -6,13 +6,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
+import { PageLoader } from "@/components/ui/page-loader";
 import {
   ChevronRight,
   Search,
   ArrowUpDown,
   ChevronDown,
   X,
-  Loader2,
   Users,
 } from "lucide-react";
 
@@ -189,11 +189,7 @@ export default function UsersPage() {
   const hasActiveFilters = searchQuery || departmentFilter || positionFilter;
 
   if (loading || status === "loading") {
-    return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

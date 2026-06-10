@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -170,6 +173,7 @@ function getDefaultStudyFields(): FormFieldDefinition[] {
 }
 
 export default function StudyFormBuilderPage() {
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
@@ -534,6 +538,7 @@ export default function StudyFormBuilderPage() {
           const message = data.error || "Failed to save configuration";
           setError(message);
           setAutoSaveStatus("error");
+          if (manual) toast.error(message);
           return false;
         }
 
@@ -544,12 +549,14 @@ export default function StudyFormBuilderPage() {
         if (manual) {
           setJustSaved(true);
           setTimeout(() => setJustSaved(false), 2000);
+          toast.success("Study form configuration saved");
         }
 
         return true;
       } catch {
         setError("Failed to save configuration");
         setAutoSaveStatus("error");
+        if (manual) toast.error("Failed to save configuration");
         return false;
       } finally {
         saveInFlightRef.current = false;
@@ -585,10 +592,14 @@ export default function StudyFormBuilderPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleResetToDefaults = () => {
-    const confirmed = window.confirm(
-      "Reset the study form fields to SeqDesk defaults? Export the current configuration first if you want a backup."
-    );
+  const handleResetToDefaults = async () => {
+    const confirmed = await confirm({
+      title: "Reset the study form fields to SeqDesk defaults?",
+      description:
+        "Export the current configuration first if you want a backup.",
+      confirmLabel: "Reset to defaults",
+      variant: "destructive",
+    });
     if (!confirmed) return;
 
     const normalized = normalizeStudyFormSchema({
@@ -787,11 +798,7 @@ export default function StudyFormBuilderPage() {
   })();
 
   if (loading) {
-    return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (
@@ -1028,7 +1035,7 @@ export default function StudyFormBuilderPage() {
                   </button>
                 )}
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                  <Button variant="ghost" size="icon" onClick={() => handleEditField(field)} aria-label="Edit field">
                     <Pencil className="h-4 w-4" />
                   </Button>
                   <Button
@@ -1036,6 +1043,7 @@ export default function StudyFormBuilderPage() {
                     size="icon"
                     onClick={() => openDeleteFieldDialog(field)}
                     className="text-destructive hover:text-destructive"
+                    aria-label="Delete field"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1258,7 +1266,7 @@ export default function StudyFormBuilderPage() {
                   </button>
                 )}
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                  <Button variant="ghost" size="icon" onClick={() => handleEditField(field)} aria-label="Edit field">
                     <Pencil className="h-4 w-4" />
                   </Button>
                   <Button
@@ -1266,6 +1274,7 @@ export default function StudyFormBuilderPage() {
                     size="icon"
                     onClick={() => openDeleteFieldDialog(field)}
                     className="text-destructive hover:text-destructive"
+                    aria-label="Delete field"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1503,7 +1512,7 @@ export default function StudyFormBuilderPage() {
                   </button>
 
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)} aria-label="Edit field">
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
@@ -1511,6 +1520,7 @@ export default function StudyFormBuilderPage() {
                       size="icon"
                       onClick={() => openDeleteFieldDialog(field)}
                       className="text-destructive hover:text-destructive"
+                      aria-label="Delete field"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -1594,7 +1604,7 @@ export default function StudyFormBuilderPage() {
                   </button>
 
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)}>
+                    <Button variant="ghost" size="icon" onClick={() => handleEditField(field)} aria-label="Edit field">
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
@@ -1602,6 +1612,7 @@ export default function StudyFormBuilderPage() {
                       size="icon"
                       onClick={() => openDeleteFieldDialog(field)}
                       className="text-destructive hover:text-destructive"
+                      aria-label="Delete field"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -1926,6 +1937,7 @@ export default function StudyFormBuilderPage() {
                         size="icon"
                         className="h-6 w-6"
                         onClick={() => handleRemoveOption(i)}
+                        aria-label="Remove option"
                       >
                         <X className="h-3 w-3" />
                       </Button>

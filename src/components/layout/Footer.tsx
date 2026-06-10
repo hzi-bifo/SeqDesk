@@ -21,6 +21,7 @@ import {
   useRef,
   type CSSProperties,
 } from "react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useHelpText } from "@/lib/useHelpText";
 import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
 import {
@@ -466,6 +467,7 @@ function formatUnreadCount(count: number): string {
 }
 
 export function Footer() {
+  const confirm = useConfirm();
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [activityJobs, setActivityJobs] = useState<AdminActivityJob[]>([]);
   const [workers, setWorkers] = useState<WorkerCard[]>([]);
@@ -667,13 +669,24 @@ export function Footer() {
     if (busyWorkerAction) return;
     if (
       action === "stop" &&
-      !window.confirm(`Stop ${worker.label}? The worker can be started again from this footer or the full background workers page.`)
+      !(await confirm({
+        title: `Stop ${worker.label}?`,
+        description:
+          "The worker can be started again from this footer or the full background workers page.",
+        confirmLabel: "Stop worker",
+        variant: "destructive",
+      }))
     ) {
       return;
     }
     if (
       action === "clear" &&
-      !window.confirm(`Clear zombie status for ${worker.label}? This only clears the stale process row.`)
+      !(await confirm({
+        title: `Clear zombie status for ${worker.label}?`,
+        description: "This only clears the stale process row.",
+        confirmLabel: "Clear status",
+        variant: "destructive",
+      }))
     ) {
       return;
     }

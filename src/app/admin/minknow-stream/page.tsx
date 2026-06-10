@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpBox } from "@/components/ui/help-box";
@@ -145,10 +147,10 @@ export default function MinknowStreamSettingsPage() {
       const res = await fetch("/api/admin/workers/stream-monitor/start", { method: "POST" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      notifyPanel.success("Stream monitor started");
+      toast.success("Stream monitor started");
       await refreshWorker();
     } catch (error) {
-      notifyPanel.error(`Start failed: ${(error as Error).message}`);
+      toast.error(`Start failed: ${(error as Error).message}`);
     } finally {
       setStartingWorker(false);
     }
@@ -192,10 +194,10 @@ export default function MinknowStreamSettingsPage() {
         }
       }
 
-      notifyPanel.success("Simulator preset applied — mock FASTQ files will appear in a few seconds");
+      toast.success("Simulator preset applied — mock FASTQ files will appear in a few seconds");
       await refreshWorker();
     } catch (error) {
-      notifyPanel.error(`Preset failed: ${(error as Error).message}`);
+      toast.error(`Preset failed: ${(error as Error).message}`);
     } finally {
       setApplyingSimulator(false);
     }
@@ -228,10 +230,10 @@ export default function MinknowStreamSettingsPage() {
         body: JSON.stringify({ config }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      notifyPanel.success("MinKNOW stream settings saved");
+      toast.success("MinKNOW stream settings saved");
     } catch (error) {
       console.error("Save failed:", error);
-      notifyPanel.error("Failed to save settings");
+      toast.error("Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -258,7 +260,7 @@ export default function MinknowStreamSettingsPage() {
       const data = (await res.json()) as TestResult;
       setTestResult(data);
       if (data.overallOk) {
-        notifyPanel.success("Connection test passed");
+        toast.success("Connection test passed");
       } else {
         const failed = (["outputDir", "grpcPort", "tlsCert"] as const)
           .filter((k) => !data.checks[k].ok)
@@ -266,7 +268,7 @@ export default function MinknowStreamSettingsPage() {
             k === "outputDir" ? "output dir" : k === "grpcPort" ? "gRPC port" : "TLS cert",
           )
           .join(", ");
-        notifyPanel.error(`Connection test failed: ${failed}`);
+        toast.error(`Connection test failed: ${failed}`);
       }
       // Scroll the result panel into view so the user sees the breakdown.
       requestAnimationFrame(() => {
@@ -276,21 +278,14 @@ export default function MinknowStreamSettingsPage() {
       });
     } catch (error) {
       console.error("Test failed:", error);
-      notifyPanel.error(`Connection test failed: ${(error as Error).message}`);
+      toast.error(`Connection test failed: ${(error as Error).message}`);
     } finally {
       setTesting(false);
     }
   };
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Loading…</span>
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   const checkLabels: Record<"outputDir" | "grpcPort" | "tlsCert", { label: string; hint: string }> = {
