@@ -730,14 +730,37 @@ jobs:
                 gemma_fail=1
               fi
             }
-            # Read-consuming pipelines that apply to the Gemma reads and run reliably.
-            # study-demo-report skips cleanly if not enabled on the profile.
+            # Warn-only variant: a failure is surfaced but does NOT fail the suite. Used
+            # for pipelines still being brought up on the runner (e.g. the private
+            # metaxpath add-on), so we get the signal without reding the install E2E.
+            run_gemma_warn() {
+              local pid="$1"; local to="$2"; shift 2
+              echo "===== Gemma real-data run (warn-only): ${pid} ====="
+              if node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
+                --base-url "http://127.0.0.1:${PORT}" \
+                --email "admin@example.com" \
+                --password "admin" \
+                --pipeline-id "${pid}" "$@" \
+                --skip-slurm \
+                --skip-if-disabled \
+                --timeout "${to}"; then
+                echo "Gemma real-data run OK: ${pid}"
+              else
+                echo "WARN (warn-only): Gemma real-data run did not pass: ${pid} — not failing the suite"
+              fi
+            }
+            # Read-consuming pipelines that apply to the Gemma reads and run reliably
+            # (hard-asserted). study-demo-report skips cleanly if not enabled on the profile.
             # NOT run here: read-cleaning needs raw/unknown reads (Gemma reads are already
             # CLEANED), and reads-qc surfaced a local-run completed->running flip that needs
             # its own investigation — both tracked as follow-ups in PIPELINE_E2E_COVERAGE.md.
             run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
+            # metaxpath (private add-on, order target): warn-only until the package install
+            # + DB params file + conda env are proven green on the runner. A clean skip if
+            # the profile doesn't enable it; a failure warns rather than reding the suite.
+            run_gemma_warn metaxpath    1800 --order-number DEV-GEMMA-ONT-001
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1

@@ -56,6 +56,11 @@ const WRITEBACK_SPEC = {
   // completion on real ONT input and produced output.
   "reads-qc": { kind: "completes" },
   "read-cleaning": { kind: "completes" },
+  // metaxpath is a private add-on (installed via the ci-runner profile, not in this
+  // repo's pipelines/); its taxonomy/path writeback isn't exposed by the run GET, so we
+  // assert the universal `completes` gate. Driven warn-only on the real Gemma order in
+  // the Alma install E2E until the private package install is proven green on the runner.
+  metaxpath: { kind: "completes" },
 };
 
 // CONFIG -> OUTPUT plumbing marker for study-demo-report: a unique report_title we
