@@ -767,7 +767,7 @@ export default function SequencingTechPage() {
                       syncUrl: e.target.value,
                     })
                   }
-                  placeholder="https://www.seqdesk.com/api/registry/sequencing-tech"
+                  placeholder="https://seqdesk.org/api/registry/sequencing-tech"
                 />
                 <p className="text-xs text-muted-foreground">
                   Used for &quot;Check for Updates&quot; and registry reset. Save changes to persist it.

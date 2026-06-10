@@ -37,7 +37,7 @@ export SEQDESK_DIRECT_URL="$SEQDESK_DATABASE_URL"
 ## 2. Install Without Hosted Profile
 
 ```bash
-curl -fsSL https://www.seqdesk.com/install.sh | \
+curl -fsSL https://seqdesk.org/install.sh | \
   bash -s -- -y \
     --dir /opt/seqdesk \
     --port 8000 \
@@ -64,7 +64,7 @@ real facility secrets.
 ```bash
 export SEQDESK_CI_PROFILE_CODE="paste-profile-access-code-here"
 
-curl -fsSL https://www.seqdesk.com/install.sh | \
+curl -fsSL https://seqdesk.org/install.sh | \
   bash -s -- -y \
     --profile ci-runner \
     --profile-code "$SEQDESK_CI_PROFILE_CODE" \
@@ -170,7 +170,7 @@ Manual fallback using the installed app script:
 
 ```bash
 curl -fsSL -H "Authorization: Bearer $DEV_SETUP_CODE" \
-  https://www.seqdesk.com/api/install-profiles/dev/resolve \
+  https://seqdesk.org/api/install-profiles/dev/resolve \
   -o /tmp/seqdesk-dev-profile.json
 
 cd /net/broker/devphil/seqdesk

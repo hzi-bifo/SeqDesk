@@ -8,12 +8,12 @@ describe("store source helpers", () => {
   it("parses and de-duplicates configured registry URLs", () => {
     const sources = getPipelineRegistrySources({
       SEQDESK_PIPELINE_REGISTRY_URLS:
-        "https://seqdesk.com/api/registry, https://example.org/api/registry, https://seqdesk.com/api/registry",
+        "https://seqdesk.org/api/registry, https://example.org/api/registry, https://seqdesk.org/api/registry",
     } as NodeJS.ProcessEnv);
 
     expect(sources).toHaveLength(2);
     expect(sources[0]).toMatchObject({
-      registryUrl: "https://seqdesk.com/api/registry",
+      registryUrl: "https://seqdesk.org/api/registry",
       label: "SeqDesk Registry",
     });
     expect(sources[1]).toMatchObject({
@@ -39,9 +39,9 @@ describe("store source helpers", () => {
         },
       },
       {
-        id: "registry:https://seqdesk.com/api/registry",
-        registryUrl: "https://seqdesk.com/api/registry",
-        browseUrl: "https://seqdesk.com/pipelines",
+        id: "registry:https://seqdesk.org/api/registry",
+        registryUrl: "https://seqdesk.org/api/registry",
+        browseUrl: "https://seqdesk.org/pipelines",
         label: "SeqDesk Registry",
       }
     );
@@ -65,23 +65,23 @@ describe("store source helpers", () => {
         versions: [
           {
             version: "3.0.0",
-            downloadUrl: "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download",
+            downloadUrl: "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download",
           },
         ],
       },
       {
-        id: "registry:https://seqdesk.com/api/registry",
-        registryUrl: "https://seqdesk.com/api/registry",
-        browseUrl: "https://seqdesk.com/pipelines",
+        id: "registry:https://seqdesk.org/api/registry",
+        registryUrl: "https://seqdesk.org/api/registry",
+        browseUrl: "https://seqdesk.org/pipelines",
         label: "SeqDesk Registry",
       }
     );
 
     expect(normalized.downloadUrl).toBe(
-      "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download"
+      "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download"
     );
     expect(normalized.source.downloadUrl).toBe(
-      "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download"
+      "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download"
     );
   });
 
@@ -96,9 +96,9 @@ describe("store source helpers", () => {
         },
       },
       {
-        id: "registry:https://seqdesk.com/api/registry",
-        registryUrl: "https://seqdesk.com/api/registry",
-        browseUrl: "https://seqdesk.com/pipelines",
+        id: "registry:https://seqdesk.org/api/registry",
+        registryUrl: "https://seqdesk.org/api/registry",
+        browseUrl: "https://seqdesk.org/pipelines",
         label: "SeqDesk Registry",
       }
     );

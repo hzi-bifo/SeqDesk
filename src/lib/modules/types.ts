@@ -61,7 +61,7 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     description: "Adds MIxS (Minimum Information about any Sequence) metadata collection. Users select an environment checklist (Soil, Water, Host-associated, etc.) per study, and corresponding standardized fields are collected at study and sample level.",
     category: "order-form",
     featureLocation: "Configuration > Study Forms",
-    contactEmail: "hello@seqdesk.com",
+    contactEmail: "hello@seqdesk.org",
   },
   {
     id: "funding-info",
@@ -100,7 +100,7 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     description: "Enables AI-powered validation for form fields. When users fill in fields, AI checks if the input looks correct and provides helpful feedback. Configure per-field in Order Configuration.",
     category: "validation",
     featureLocation: "Configuration > Order Forms > Field Settings",
-    contactEmail: "hello@seqdesk.com",
+    contactEmail: "hello@seqdesk.org",
   },
   // Access Control
   {

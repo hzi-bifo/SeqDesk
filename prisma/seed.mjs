@@ -24,7 +24,7 @@ function isRecord(value) {
 
 // Load bundled sequencing technology defaults from data/. Used at seed time so
 // the order form has technologies to choose from without hitting the remote
-// registry at seqdesk.com (which is unreachable from CI / air-gapped installs).
+// registry at seqdesk.org (which is unreachable from CI / air-gapped installs).
 function loadBundledSequencingTechConfig() {
   const repoRoot = process.cwd();
   const defaultsPath = path.join(
@@ -630,7 +630,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
 
   // Load bundled sequencing technology defaults so the order form can render
   // without an external network fetch. This mirrors what /api/sequencing-tech
-  // would otherwise pull from the seqdesk.com registry, but lets fresh installs
+  // would otherwise pull from the seqdesk.org registry, but lets fresh installs
   // and offline CI environments work out of the box.
   const sequencingTechConfig = loadBundledSequencingTechConfig();
 

@@ -37,7 +37,7 @@ beforeEach(() => {
     config: {
       telemetry: {
         enabled: false,
-        endpoint: "https://www.seqdesk.com/api/telemetry/heartbeat",
+        endpoint: "https://seqdesk.org/api/telemetry/heartbeat",
         intervalHours: 24,
       },
     },

@@ -231,7 +231,7 @@ export interface RuntimeConfig {
 }
 
 export interface InstallProfileConfig {
-  /** Hosted install profile id from seqdesk.com/admin */
+  /** Hosted install profile id from seqdesk.org/admin */
   id?: string;
   /** Human-readable hosted profile name */
   name?: string;

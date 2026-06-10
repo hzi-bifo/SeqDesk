@@ -9,8 +9,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { version } = require("../package.json");
 
-const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.com/install.sh";
-const DEFAULT_PROFILE_REGISTRY_URL = "https://www.seqdesk.com/api/install-profiles";
+const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.org/install.sh";
+const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
 const args = process.argv.slice(2);
 
 if (process.platform === "win32") {
@@ -42,7 +42,7 @@ Options:
   --profile <id>               Hosted install profile id, for example dev.
   --profile-code, --key <code> Hosted profile access code.
   --profile-config <file>      Already-resolved install profile JSON.
-  --profile-registry-url <url> Hosted profile registry URL. Defaults to https://www.seqdesk.com/api/install-profiles.
+  --profile-registry-url <url> Hosted profile registry URL. Defaults to https://seqdesk.org/api/install-profiles.
   --json                       Print machine-readable JSON from the installed asset script.
   --help, -h                   Show this help.
 `;

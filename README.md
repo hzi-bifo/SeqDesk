@@ -46,7 +46,7 @@ _The SLURM and AlmaLinux rows run on a private self-hosted mirror (a real SLURM 
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
 runs self-hosted on your own infrastructure.
 
-> 📖 **Full documentation: [seqdesk.com/docs](https://www.seqdesk.com/docs)** — installation,
+> 📖 **Full documentation: [seqdesk.org/docs](https://seqdesk.org/docs)** — installation,
 > configuration, orders & studies, sequencing files, pipelines, ENA submission, administration, and
 > updates. This README covers installing and developing **the repository itself**.
 
@@ -67,9 +67,9 @@ Access should be limited to authorized users on the protected network. Convenien
 defaults, including open self-registration and bootstrap accounts, assume this trusted-network
 context; deploying SeqDesk on a publicly reachable host is not a supported or secure configuration.
 
-The public demo at [demo.seqdesk.com](https://demo.seqdesk.com) is the intentional exception. It is
-a sandbox for exploring the UI. Open `https://demo.seqdesk.com/demo` for the researcher view or
-`https://demo.seqdesk.com/demo/admin` for the facility-admin view; each visitor gets their own
+The public demo at [demo.seqdesk.org](https://demo.seqdesk.org) is the intentional exception. It is
+a sandbox for exploring the UI. Open `https://demo.seqdesk.org/demo` for the researcher view or
+`https://demo.seqdesk.org/demo/admin` for the facility-admin view; each visitor gets their own
 disposable, isolated demo workspace (tracked by a browser cookie and cleaned up automatically after a
 few hours of inactivity). You
 can optionally append `?workspace=<key>` to open or resume a specific named workspace — handy for
@@ -102,14 +102,14 @@ seqdesk -y --config ./infrastructure-setup.json
 Fallback when npm is unavailable:
 
 ```bash
-curl -fsSL https://seqdesk.com/install.sh | bash
+curl -fsSL https://seqdesk.org/install.sh | bash
 ```
 
 Full installation, configuration, and unattended options are documented at
-**[seqdesk.com/docs/installation](https://www.seqdesk.com/docs/installation)**.
+**[seqdesk.org/docs/installation](https://seqdesk.org/docs/installation)**.
 
 > The npm package is the supported public entry point; it downloads and runs the public installer
-> served from `seqdesk.com/install.sh`. Editing `scripts/install-dist.sh` in this repository does
+> served from `seqdesk.org/install.sh`. Editing `scripts/install-dist.sh` in this repository does
 > **not** change the live installer until the matching `public/install.sh` in the SeqDesk.com
 > repository has been updated and deployed.
 
@@ -120,7 +120,7 @@ Every path boots the same app — pick by your scenario. The methods below are e
 | Method | Command | Best for | Verified in CI |
 | --- | --- | --- | --- |
 | npm launcher (recommended) | `npm i -g seqdesk` then `seqdesk` | Almost everyone — supported install + upgrade path | Ubuntu · AlmaLinux · macOS |
-| One-line installer | `curl -fsSL https://seqdesk.com/install.sh \| bash` | Fallback when npm is unavailable | Ubuntu |
+| One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash` | Fallback when npm is unavailable | Ubuntu |
 | macOS (Homebrew) | `npm i -g seqdesk && seqdesk` | Local Mac workstation / dev installs | macOS |
 | Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; update in place with `--reconfigure` | Ubuntu |
 | From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu · AlmaLinux |
@@ -130,7 +130,7 @@ The npm-launcher and source installs are also exercised under PM2, and the npm/A
 ## FAQ
 
 A few common installation and setup questions. See the full
-**[FAQ](https://www.seqdesk.com/docs/faq)** for more.
+**[FAQ](https://seqdesk.org/docs/faq)** for more.
 
 **What do I need to run SeqDesk?** Node.js 18+ (20 LTS recommended), a PostgreSQL
 database, and Linux or macOS. Pipelines are optional and add Conda/Nextflow (plus
@@ -155,7 +155,7 @@ advisory lock a transaction pooler can't hold. SeqDesk also derives the unpooled
 URL automatically as a safety net.
 
 **Can I expose SeqDesk to the public internet?** No — it assumes a trusted,
-closed network (VPN or intranet). The public demo at `demo.seqdesk.com` is the
+closed network (VPN or intranet). The public demo at `demo.seqdesk.org` is the
 only intentional exception.
 
 **How do I check an install is healthy, or update and roll back?** `seqdesk
@@ -224,8 +224,8 @@ e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
 ## Documentation
 
-- User & operator guide: [seqdesk.com/docs](https://www.seqdesk.com/docs)
-- Releases and update info: [seqdesk.com](https://www.seqdesk.com)
+- User & operator guide: [seqdesk.org/docs](https://seqdesk.org/docs)
+- Releases and update info: [seqdesk.org](https://seqdesk.org)
 
 ## License
 

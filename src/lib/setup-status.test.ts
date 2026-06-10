@@ -108,7 +108,7 @@ describe("buildSetupStatusResponse", () => {
     expect(response.phase).toBe("database-unreachable");
     expect(response.install.mode).toBe("managed");
     expect(response.nextAction?.label).toBe("Check managed database");
-    expect(response.nextAction?.description).toContain("seqdesk.com/admin");
+    expect(response.nextAction?.description).toContain("seqdesk.org/admin");
   });
 
   it("prioritizes DIRECT_URL guidance for Neon pooler URLs", () => {

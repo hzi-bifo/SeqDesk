@@ -1,7 +1,7 @@
 /**
  * SeqDesk Auto-Update System
  *
- * Checks seqdesk.com for updates and can self-update.
+ * Checks seqdesk.org for updates and can self-update.
  *
  * Usage:
  *   import { checkForUpdates, installUpdate } from '@/lib/updater';

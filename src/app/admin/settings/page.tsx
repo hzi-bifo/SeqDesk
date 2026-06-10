@@ -2545,12 +2545,12 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   See{" "}
                   <a
-                    href="https://www.seqdesk.com/docs"
+                    href="https://seqdesk.org/docs"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
                   >
-                    seqdesk.com/docs
+                    seqdesk.org/docs
                   </a>{" "}
                   for all configuration options.
                 </p>

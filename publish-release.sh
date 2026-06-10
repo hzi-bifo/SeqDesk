@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${ADMIN_SECRET:?Set ADMIN_SECRET env var first}"
 
-curl -s -X POST "https://www.seqdesk.com/api/releases/publish" \
+curl -s -X POST "https://seqdesk.org/api/releases/publish" \
   -H "Authorization: Bearer ${ADMIN_SECRET}" \
   -H "Content-Type: application/json" \
   -d '{

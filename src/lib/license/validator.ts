@@ -2,9 +2,9 @@
  * License Validator
  *
  * Validates license keys (signed JWTs) using a public key.
- * The private key is kept on the license server (seqdesk.com).
+ * The private key is kept on the license server (seqdesk.org).
  *
- * License keys are generated at: https://seqdesk.com/admin/licenses
+ * License keys are generated at: https://seqdesk.org/admin/licenses
  * Customers enter the key in: Admin > Platform Settings > License
  */
 

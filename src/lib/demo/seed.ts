@@ -78,7 +78,7 @@ export function getDemoSiteSettingsUpdate(existingExtraSettings: string | null) 
 
   return {
     siteName: "SeqDesk Demo",
-    contactEmail: "demo@seqdesk.com",
+    contactEmail: "demo@seqdesk.org",
     helpText:
       "This is a disposable researcher demo. Changes stay private to this browser session and can be reset at any time.",
     modulesConfig: JSON.stringify({

@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 function getDemoFrameAncestors() {
   const productionAncestors = [
     "'self'",
-    "https://www.seqdesk.com",
-    "https://seqdesk.com",
+    "https://seqdesk.org",
+    "https://seqdesk.org",
   ];
 
   if (process.env.NODE_ENV === "production") {

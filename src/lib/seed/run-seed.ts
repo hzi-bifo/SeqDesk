@@ -240,7 +240,7 @@ export async function runDummySeed(
   }
 
   // Record the persisted intent in installation config so it shows in dumps and so
-  // future tooling (seqdesk.com install profiles, etc.) can read it. Best-effort —
+  // future tooling (seqdesk.org install profiles, etc.) can read it. Best-effort —
   // an error here doesn't unwind the seed itself.
   await setDummyDataEnabledFlag(true).catch((error) => {
     console.warn(

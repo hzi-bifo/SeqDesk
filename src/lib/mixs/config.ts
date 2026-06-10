@@ -14,7 +14,7 @@ import {
 // sequencing-tech registry already repurposes as a full endpoint URL).
 const DEFAULT_REMOTE_MIXS_SYNC_URL =
   process.env.SEQDESK_MIXS_SYNC_URL ||
-  "https://www.seqdesk.com/api/registry/mixs";
+  "https://seqdesk.org/api/registry/mixs";
 
 const MIXS_DIR = path.join(process.cwd(), "data", "field-templates", "mixs-full");
 const INDEX_PATH = path.join(MIXS_DIR, "_index.json");

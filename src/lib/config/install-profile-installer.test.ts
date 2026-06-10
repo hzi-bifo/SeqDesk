@@ -209,7 +209,7 @@ describe("install profile installer wiring", () => {
     expect(profileWorkflow).toContain("schedule:");
     expect(profileWorkflow).toContain("workflow_dispatch:");
     expect(profileWorkflow).toContain('PROFILE_ID: ${{ github.event.inputs.profile_id || \'ci-runner\' }}');
-    expect(profileWorkflow).toContain("PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}");
+    expect(profileWorkflow).toContain("PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://seqdesk.org/api/install-profiles' }}");
     expect(profileWorkflow).toContain("group: bifo_dmz");
     expect(profileWorkflow).toContain("labels: [self-hosted, Linux, X64, db-local, twincore, alma]");
     expect(profileWorkflow).toContain("build-install-artifacts:");
