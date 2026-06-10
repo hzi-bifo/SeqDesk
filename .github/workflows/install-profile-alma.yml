@@ -757,10 +757,11 @@ jobs:
             run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
-            # metaxpath (private add-on, order target): warn-only until the package install
-            # + DB params file + conda env are proven green on the runner. A clean skip if
-            # the profile doesn't enable it; a failure warns rather than reding the suite.
-            run_gemma_warn metaxpath    1800 --order-number DEV-GEMMA-ONT-001
+            # metaxpath (private add-on, STUDY target — the app rejects order targets):
+            # warn-only until the package install + DB params file + conda env are proven
+            # green on the runner. A clean skip if the profile doesn't enable it; a failure
+            # warns rather than reding the suite.
+            run_gemma_warn metaxpath    1800 --study-alias gemma-nanopore-metaxpath
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1
