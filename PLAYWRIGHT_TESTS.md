@@ -56,4 +56,5 @@ genuine gaps we intend to close:
   submit gate (`ena-submission-ui.spec.ts`) rather than here.
 
 Pipeline *execution* on real infrastructure (a SLURM cluster, AlmaLinux) is covered by separate
-self-hosted CI, described in the README.
+self-hosted CI — see [`.github/PIPELINE_E2E_COVERAGE.md`](.github/PIPELINE_E2E_COVERAGE.md) for that
+coverage map (and the README CI table for the badges).
