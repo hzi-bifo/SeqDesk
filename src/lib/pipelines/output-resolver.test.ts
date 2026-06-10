@@ -751,9 +751,12 @@ describe("output-resolver", () => {
   });
 
   it("preserves protected raw reads when replacing reads (only deletes non-protected)", async () => {
-    // Regression guard: a mode:'replace' writeback must NOT deactivate or delete
-    // the sample's raw/unknown (protected) source reads — only the existing
-    // cleaned reads it supersedes. Previously every active read was deactivated.
+    // Regression guard: a mode:'replace' writeback must never DELETE the sample's
+    // raw/unknown (protected) source reads — only the existing cleaned reads it
+    // supersedes are removed. The raw read is preserved as a row, but it is
+    // deactivated and linked via supersededByReadId so the new read can become
+    // the sample's single active read (the Read_one_active_per_sample partial
+    // unique index allows only one active read per sample).
     const sourceDir = path.join(tempDir, "run-output", "reads");
     const storageDir = path.join(tempDir, "storage");
     await fs.mkdir(sourceDir, { recursive: true });
@@ -829,8 +832,16 @@ describe("output-resolver", () => {
     expect(mocks.db.read.deleteMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: expect.arrayContaining(["read-raw"]) } } })
     );
-    // No blanket deactivation of every read on the sample.
-    expect(mocks.db.read.updateMany).not.toHaveBeenCalled();
+    // The active-read slot is freed before the replacement is inserted, and the
+    // preserved raw read is linked to the new read for provenance.
+    expect(mocks.db.read.updateMany).toHaveBeenCalledWith({
+      where: { sampleId: "sample-1", isActive: true },
+      data: { isActive: false },
+    });
+    expect(mocks.db.read.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["read-raw"] } },
+      data: { supersededByReadId: "read-new" },
+    });
     // The protected raw file is left on disk; only the old cleaned file is removed.
     await expect(fs.readFile(rawFile1, "utf8")).resolves.toBe("protected-raw");
     await expect(fs.access(oldCleanedFile1)).rejects.toBeDefined();

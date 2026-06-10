@@ -659,16 +659,17 @@ export async function promotePendingWritebacks(args: {
         },
       });
 
-      // Supersede only active reads of the SAME data class as the promoted
-      // candidate. Protected raw/unknown reads must stay active — promoting a
-      // cleaned candidate replaces the existing cleaned reads, not the order's
-      // raw source data (see the review copy: "Existing raw or unknown reads
-      // will be preserved").
+      // The promoted read becomes the sample's single active read. A sample may
+      // have at most one active read (the Read_one_active_per_sample partial
+      // unique index), so EVERY currently-active read must be deactivated here —
+      // including a protected raw/unknown read. "Preserved" means the raw row is
+      // kept (never deleted) and linked via supersededByReadId for provenance,
+      // not that it stays active; activating the cleaned read while the raw read
+      // were still active would violate the unique index (P2002).
       await tx.read.updateMany({
         where: {
           sampleId: sample.id,
           isActive: true,
-          dataClass: candidate.targetDataClass,
         },
         data: {
           isActive: false,

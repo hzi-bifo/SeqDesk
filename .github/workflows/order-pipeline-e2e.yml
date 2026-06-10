@@ -50,16 +50,33 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          conda create -y -n "$PIPELINE_CONDA_ENV" \
-            --override-channels \
-            -c conda-forge \
-            -c bioconda \
-            python=3.11 \
-            openjdk=17 \
-            nodejs \
-            coreutils \
-            nextflow \
-            nf-core
+          set -euo pipefail
+          # Retry: conda package downloads occasionally die mid-stream with a
+          # ConnectionResetError, which has no bearing on the pipeline under test.
+          # Remove any partial env between attempts so the recreate is clean.
+          attempts=3
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            if conda create -y -n "$PIPELINE_CONDA_ENV" \
+              --override-channels \
+              -c conda-forge \
+              -c bioconda \
+              python=3.11 \
+              openjdk=17 \
+              nodejs \
+              coreutils \
+              nextflow \
+              nf-core; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
+            conda env remove -y -n "$PIPELINE_CONDA_ENV" || true
+            sleep $((i * 15))
+          done
+          echo "conda create failed after $attempts attempts"
+          exit 1
 
       - name: Run order pipeline end-to-end
         run: bash scripts/run-order-pipeline-e2e.sh --keep-temp
@@ -120,16 +137,33 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          conda create -y -n "$PIPELINE_CONDA_ENV" \
-            --override-channels \
-            -c conda-forge \
-            -c bioconda \
-            python=3.11 \
-            openjdk=17 \
-            nodejs \
-            coreutils \
-            nextflow \
-            nf-core
+          set -euo pipefail
+          # Retry: conda package downloads occasionally die mid-stream with a
+          # ConnectionResetError, which has no bearing on the pipeline under test.
+          # Remove any partial env between attempts so the recreate is clean.
+          attempts=3
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            if conda create -y -n "$PIPELINE_CONDA_ENV" \
+              --override-channels \
+              -c conda-forge \
+              -c bioconda \
+              python=3.11 \
+              openjdk=17 \
+              nodejs \
+              coreutils \
+              nextflow \
+              nf-core; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
+            conda env remove -y -n "$PIPELINE_CONDA_ENV" || true
+            sleep $((i * 15))
+          done
+          echo "conda create failed after $attempts attempts"
+          exit 1
 
       - name: Run order pipeline end-to-end
         run: bash scripts/run-order-pipeline-e2e.sh --keep-temp

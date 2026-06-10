@@ -209,17 +209,40 @@ async function replaceSampleReads(
       dataClass: true,
     },
   });
-  // Protected raw/unknown reads are preserved (kept active and untouched); only
-  // non-protected reads (e.g. previously written cleaned reads) are replaced.
+  // A sample may have at most one active read (the Read_one_active_per_sample
+  // partial unique index, WHERE isActive = true). Protected raw/unknown reads
+  // are preserved as provenance — kept as rows and superseded, never deleted;
+  // only non-protected reads (e.g. previously written cleaned reads) are removed
+  // outright.
+  const protectedReads = existingReads.filter((read) =>
+    isProtectedReadDataClass(read.dataClass)
+  );
   const deletableReads = existingReads.filter(
     (read) => !isProtectedReadDataClass(read.dataClass)
   );
 
-  // Create the new active read and remove the replaced rows in one transaction
-  // so a crash can never leave the sample with no active read. The new read's
-  // files are already copied to storage by the caller, so the row points at
-  // on-disk data the moment it is created.
+  // Replace the sample's reads in one transaction so a crash can never leave it
+  // with no active read. The new read's files are already copied to storage by
+  // the caller, so the row points at on-disk data the moment it is created.
+  //
+  // Ordering matters: the partial unique index is enforced per-statement (it is
+  // not deferred), so the active-read slot must be FREED before the replacement
+  // is inserted — creating the new active read while a prior active read still
+  // exists throws P2002. So we deactivate every currently-active read first,
+  // then create the replacement, then mark the preserved protected reads as
+  // superseded by it.
   const newRead = await db.$transaction(async (tx) => {
+    await tx.read.updateMany({
+      where: { sampleId, isActive: true },
+      data: { isActive: false },
+    });
+
+    if (deletableReads.length > 0) {
+      await tx.read.deleteMany({
+        where: { id: { in: deletableReads.map((read) => read.id) } },
+      });
+    }
+
     const created = await tx.read.create({
       data: {
         sampleId,
@@ -242,9 +265,10 @@ async function replaceSampleReads(
       },
     });
 
-    if (deletableReads.length > 0) {
-      await tx.read.deleteMany({
-        where: { id: { in: deletableReads.map((read) => read.id) } },
+    if (protectedReads.length > 0) {
+      await tx.read.updateMany({
+        where: { id: { in: protectedReads.map((read) => read.id) } },
+        data: { supersededByReadId: created.id },
       });
     }
 

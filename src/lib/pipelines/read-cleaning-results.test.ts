@@ -223,12 +223,14 @@ describe("read-cleaning-results", () => {
         classificationNote: "Promoted cleaned reads from RUN-001",
       }),
     });
+    // Every active read is deactivated and superseded so the promoted cleaned
+    // read can become the sample's single active read (Read_one_active_per_sample
+    // allows only one). A protected raw read is preserved as a row + linked via
+    // supersededByReadId, not kept active.
     expect(mocks.txRead.updateMany).toHaveBeenCalledWith({
       where: {
         sampleId: "sample-1",
         isActive: true,
-        // Only same-data-class reads are superseded so raw/unknown reads are kept.
-        dataClass: "cleaned",
       },
       data: {
         isActive: false,
