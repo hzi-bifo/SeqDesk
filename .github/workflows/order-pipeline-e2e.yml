@@ -50,14 +50,17 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          set -euo pipefail
+          # Do NOT enable `set -u`/`pipefail` here: conda's shell functions
+          # reference unbound variables and misbehave under nounset (the env is
+          # created but the function returns non-zero). The job shell already
+          # runs with errexit (bash -el); the `if` below absorbs a failed
+          # attempt without aborting, so we can retry.
+          #
           # Retry: conda package downloads occasionally die mid-stream with a
-          # ConnectionResetError, which has no bearing on the pipeline under test.
+          # ConnectionResetError that has no bearing on the pipeline under test.
           # Remove any partial env between attempts so the recreate is clean.
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::conda create attempt $i/$attempts"
-            if conda create -y -n "$PIPELINE_CONDA_ENV" \
+          create_pipeline_env() {
+            conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
               -c conda-forge \
               -c bioconda \
@@ -66,13 +69,18 @@ jobs:
               nodejs \
               coreutils \
               nextflow \
-              nf-core; then
+              nf-core
+          }
+          attempts=3
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            if create_pipeline_env; then
               echo "::endgroup::"
               exit 0
             fi
             echo "::endgroup::"
             echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
-            conda env remove -y -n "$PIPELINE_CONDA_ENV" || true
+            conda env remove -y -n "$PIPELINE_CONDA_ENV" >/dev/null 2>&1 || true
             sleep $((i * 15))
           done
           echo "conda create failed after $attempts attempts"
@@ -137,14 +145,17 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          set -euo pipefail
+          # Do NOT enable `set -u`/`pipefail` here: conda's shell functions
+          # reference unbound variables and misbehave under nounset (the env is
+          # created but the function returns non-zero). The job shell already
+          # runs with errexit (bash -el); the `if` below absorbs a failed
+          # attempt without aborting, so we can retry.
+          #
           # Retry: conda package downloads occasionally die mid-stream with a
-          # ConnectionResetError, which has no bearing on the pipeline under test.
+          # ConnectionResetError that has no bearing on the pipeline under test.
           # Remove any partial env between attempts so the recreate is clean.
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::conda create attempt $i/$attempts"
-            if conda create -y -n "$PIPELINE_CONDA_ENV" \
+          create_pipeline_env() {
+            conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
               -c conda-forge \
               -c bioconda \
@@ -153,13 +164,18 @@ jobs:
               nodejs \
               coreutils \
               nextflow \
-              nf-core; then
+              nf-core
+          }
+          attempts=3
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            if create_pipeline_env; then
               echo "::endgroup::"
               exit 0
             fi
             echo "::endgroup::"
             echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
-            conda env remove -y -n "$PIPELINE_CONDA_ENV" || true
+            conda env remove -y -n "$PIPELINE_CONDA_ENV" >/dev/null 2>&1 || true
             sleep $((i * 15))
           done
           echo "conda create failed after $attempts attempts"
