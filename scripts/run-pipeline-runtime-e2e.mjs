@@ -37,11 +37,13 @@ const WRITEBACK_SPEC = {
     kind: "artifacts",
     requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
   },
-  // Artifacts-only for now (the run GET select does not expose fastqc's read-field
-  // writebacks: fastqcReport/readCount/avgQuality). Require the per-sample artifacts,
-  // which ingest reliably; the run-scoped `summary` artifact ingests inconsistently
-  // (the file is always produced, but the PipelineArtifact row sometimes isn't), so it
-  // is not required here — tracked as a known fastqc output-resolution flake.
+  // Artifacts + read-field writeback. The run GET select now exposes readCount1/2 +
+  // avgQuality1/2 (pipeline-run-ops-service.ts), so on top of the per-sample QC artifacts
+  // we assert fastqc's in-place Read merge actually landed in the DB
+  // (assertFastqcReadFieldWriteback) — not just that the artifact rows exist. The
+  // per-sample artifacts ingest reliably; the run-scoped `summary` artifact ingests
+  // inconsistently (the file is always produced, but the PipelineArtifact row sometimes
+  // isn't), so it is not required here — tracked as a known fastqc output-resolution flake.
   fastqc: {
     kind: "artifacts",
     requiredOutputIds: ["sample_qc_reports", "sample_qc_data"],
@@ -759,6 +761,7 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     writeback = { ...writeback, content };
     if (pipelineId === "fastqc") {
       writeback.summaryMetrics = await assertFastqcSummaryMetrics({ client, run, runId });
+      writeback.readFields = assertFastqcReadFieldWriteback({ run, runId });
     }
   } else if (spec.kind === "completes") {
     // The universal gate above already proved completed/progress=100; observability +
@@ -998,6 +1001,92 @@ async function assertSimulateConfigOutput({ client, run, runId }) {
     );
   }
   return { expectedReadCount, sampleRows: counts.length, path: summary.path };
+}
+
+// fastqc read-field DB writeback: fastqc runs in MERGE mode — its per-sample QC step
+// writes readCount1/2 + avgQuality1/2 IN PLACE onto each target sample's active Read
+// (alongside the QC artifacts). The run GET select now exposes those fields, so assert
+// the writeback landed in the DB, not just that the artifact rows exist. This is the
+// complement to assertFastqcSummaryMetrics (which checks the TSV file content): here we
+// prove the metrics were ingested back onto the Read rows. Plausibility bounds catch a
+// writeback that ran but produced garbage (e.g. a read count leaking into the quality
+// field). Single-end reads (file1 only, e.g. Gemma ONT) correctly skip the *2 fields.
+function assertFastqcReadFieldWriteback({ run, runId }) {
+  const targetSamples =
+    run?.targetType === "order"
+      ? run?.order?.samples
+      : run?.targetType === "study"
+        ? run?.study?.samples
+        : run?.order?.samples || run?.study?.samples;
+  const samples = Array.isArray(targetSamples) ? targetSamples : [];
+
+  const reads = [];
+  for (const sample of samples) {
+    for (const read of sample?.reads ?? []) {
+      reads.push({ sampleId: sample?.sampleId, ...read });
+    }
+  }
+
+  const readsWithFile1 = reads.filter((read) => read.file1 != null);
+  if (readsWithFile1.length === 0) {
+    fail(
+      `fastqc read-field writeback: run ${runId} exposed no active reads with a file1`,
+      JSON.stringify(
+        { runId, targetType: run?.targetType, sampleCount: samples.length, readCount: reads.length },
+        null,
+        2,
+      ),
+    );
+  }
+
+  // Mean Phred over an entire read set sits well under this; the bound exists to catch a
+  // mis-scaled value or a read count landing in the quality field (those run into the
+  // thousands), not to police real quality scores.
+  const QUAL_PLAUSIBLE_MAX = 100;
+  const assertCountAndQuality = (read, countField, qualField, count, qual) => {
+    if (!(Number(count) > 0)) {
+      fail(
+        `fastqc read-field writeback: read ${read.id} (sample ${read.sampleId}) has non-positive ${countField}=${count}`,
+        JSON.stringify({ runId, [countField]: count ?? null }, null, 2),
+      );
+    }
+    if (!(Number(qual) > 0 && Number(qual) <= QUAL_PLAUSIBLE_MAX)) {
+      fail(
+        `fastqc read-field writeback: read ${read.id} (sample ${read.sampleId}) has implausible ${qualField}=${qual} (expected 0 < q <= ${QUAL_PLAUSIBLE_MAX})`,
+        JSON.stringify({ runId, [qualField]: qual ?? null }, null, 2),
+      );
+    }
+  };
+
+  let populated = 0;
+  const warnings = [];
+  for (const read of readsWithFile1) {
+    if (read.readCount1 == null || read.avgQuality1 == null) {
+      warnings.push(`read ${read.id} (sample ${read.sampleId}) missing readCount1/avgQuality1 writeback`);
+      continue;
+    }
+    assertCountAndQuality(read, "readCount1", "avgQuality1", read.readCount1, read.avgQuality1);
+    if (read.file2 != null) {
+      if (read.readCount2 == null || read.avgQuality2 == null) {
+        warnings.push(`read ${read.id} (sample ${read.sampleId}) has file2 but missing readCount2/avgQuality2 writeback`);
+      } else {
+        assertCountAndQuality(read, "readCount2", "avgQuality2", read.readCount2, read.avgQuality2);
+      }
+    }
+    populated += 1;
+  }
+
+  // Hard-fail only on a wholesale miss (the writeback never ingested) or garbage values
+  // above; tolerate partial population (warn) so a single odd read doesn't red the suite.
+  if (populated < 1) {
+    fail(
+      `fastqc read-field writeback: run ${runId} populated readCount1/avgQuality1 on zero of ${readsWithFile1.length} reads (writeback not ingested)`,
+      JSON.stringify({ runId, readsWithFile1: readsWithFile1.length, warnings }, null, 2),
+    );
+  }
+  for (const warning of warnings) console.warn(`WARN: fastqc read-field writeback — ${warning}`);
+
+  return { readsAsserted: populated, readsWithFile1: readsWithFile1.length, warnings: warnings.length };
 }
 
 // fastqc summary-TSV metric correctness: fetch summary/fastqc-summary.tsv (the file is
@@ -1287,8 +1376,9 @@ function assertReplaceReads({ run, runId, baseUrl }) {
       ),
     );
   }
-  // readCount1 is a strong signal but isn't exposed by the run GET select today; only
-  // enforce when present.
+  // readCount1 is now exposed by the run GET select (pipeline-run-ops-service.ts), so the
+  // attributed read must carry a positive readCount1. The `in` guard keeps this passing
+  // against an older app build that predates the select change (key absent -> skipped).
   if (attributionMode !== "checksum1-fallback") {
     for (const read of attributed) {
       if ("readCount1" in read && !(Number(read.readCount1) > 0)) {
