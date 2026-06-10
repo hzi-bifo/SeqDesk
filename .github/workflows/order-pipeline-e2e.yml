@@ -50,16 +50,22 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          # Do NOT enable `set -u`/`pipefail` here: conda's shell functions
-          # reference unbound variables and misbehave under nounset (the env is
-          # created but the function returns non-zero). The job shell already
-          # runs with errexit (bash -el); the `if` below absorbs a failed
-          # attempt without aborting, so we can retry.
-          #
           # Retry: conda package downloads occasionally die mid-stream with a
-          # ConnectionResetError that has no bearing on the pipeline under test.
-          # Remove any partial env between attempts so the recreate is clean.
-          create_pipeline_env() {
+          # ConnectionResetError that has no bearing on the pipeline under test;
+          # remove any partial env between attempts so the recreate is clean.
+          #
+          # Intentionally NO `set -u`/`pipefail` and NO explicit `exit`: conda's
+          # init wires the login shell (bash -el) such that an explicit `exit 0`
+          # surfaces as exit 1, and `set -u` trips over conda's unbound vars. The
+          # job shell already runs with errexit; the `if` absorbs a failed
+          # attempt, and the final test command is what sets the step's status —
+          # exactly how the original single `conda create` step behaved.
+          attempts=3
+          conda_env_ready=
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            # Ignore conda's own exit code (it is unreliable here); judge success
+            # by whether the named environment actually exists afterwards.
             conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
               -c conda-forge \
@@ -69,22 +75,20 @@ jobs:
               nodejs \
               coreutils \
               nextflow \
-              nf-core
-          }
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::conda create attempt $i/$attempts"
-            if create_pipeline_env; then
-              echo "::endgroup::"
-              exit 0
-            fi
+              nf-core || true
             echo "::endgroup::"
+            if conda env list | awk '{print $1}' | grep -qx "$PIPELINE_CONDA_ENV"; then
+              conda_env_ready=yes
+              break
+            fi
             echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
             conda env remove -y -n "$PIPELINE_CONDA_ENV" >/dev/null 2>&1 || true
             sleep $((i * 15))
           done
-          echo "conda create failed after $attempts attempts"
-          exit 1
+          if [ -z "$conda_env_ready" ]; then
+            echo "conda create failed after $attempts attempts"
+          fi
+          test -n "$conda_env_ready"
 
       - name: Run order pipeline end-to-end
         run: bash scripts/run-order-pipeline-e2e.sh --keep-temp
@@ -145,16 +149,22 @@ jobs:
 
       - name: Create pipeline Conda environment
         run: |
-          # Do NOT enable `set -u`/`pipefail` here: conda's shell functions
-          # reference unbound variables and misbehave under nounset (the env is
-          # created but the function returns non-zero). The job shell already
-          # runs with errexit (bash -el); the `if` below absorbs a failed
-          # attempt without aborting, so we can retry.
-          #
           # Retry: conda package downloads occasionally die mid-stream with a
-          # ConnectionResetError that has no bearing on the pipeline under test.
-          # Remove any partial env between attempts so the recreate is clean.
-          create_pipeline_env() {
+          # ConnectionResetError that has no bearing on the pipeline under test;
+          # remove any partial env between attempts so the recreate is clean.
+          #
+          # Intentionally NO `set -u`/`pipefail` and NO explicit `exit`: conda's
+          # init wires the login shell (bash -el) such that an explicit `exit 0`
+          # surfaces as exit 1, and `set -u` trips over conda's unbound vars. The
+          # job shell already runs with errexit; the `if` absorbs a failed
+          # attempt, and the final test command is what sets the step's status —
+          # exactly how the original single `conda create` step behaved.
+          attempts=3
+          conda_env_ready=
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::conda create attempt $i/$attempts"
+            # Ignore conda's own exit code (it is unreliable here); judge success
+            # by whether the named environment actually exists afterwards.
             conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
               -c conda-forge \
@@ -164,22 +174,20 @@ jobs:
               nodejs \
               coreutils \
               nextflow \
-              nf-core
-          }
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::conda create attempt $i/$attempts"
-            if create_pipeline_env; then
-              echo "::endgroup::"
-              exit 0
-            fi
+              nf-core || true
             echo "::endgroup::"
+            if conda env list | awk '{print $1}' | grep -qx "$PIPELINE_CONDA_ENV"; then
+              conda_env_ready=yes
+              break
+            fi
             echo "conda create failed on attempt $i/$attempts; cleaning up and retrying"
             conda env remove -y -n "$PIPELINE_CONDA_ENV" >/dev/null 2>&1 || true
             sleep $((i * 15))
           done
-          echo "conda create failed after $attempts attempts"
-          exit 1
+          if [ -z "$conda_env_ready" ]; then
+            echo "conda create failed after $attempts attempts"
+          fi
+          test -n "$conda_env_ready"
 
       - name: Run order pipeline end-to-end
         run: bash scripts/run-order-pipeline-e2e.sh --keep-temp
