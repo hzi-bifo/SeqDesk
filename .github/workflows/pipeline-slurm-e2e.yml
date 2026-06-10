@@ -456,24 +456,29 @@ jobs:
       # read-cleaning — order target; needs a kraken2 DB (paramMap `kraken2Db`) + raw/unknown
       # reads. The SUBMITTED dummy order carries raw reads (scored highest by
       # selectRuntimeOrder), so the default selection is read-cleaning-eligible. The kraken2
-      # DB path comes from the SLURM_SHARED_KRAKEN2_DB Actions variable (stage the DB on the
-      # shared FS as for the Alma E2E, then set the var); if it's unset the step cleanly
-      # SKIPS. Local-only for now — kraken2 loads the whole DB into RAM, which the tiny SLURM
-      # smoke resource caps won't satisfy. WARN-ONLY until proven green.
+      # DB path defaults to the kraken2 DB configured on the ci-runner profile (a shared-FS
+      # path reachable from this runner), overridable by the SLURM_SHARED_KRAKEN2_DB Actions
+      # variable; the step cleanly SKIPS if that path isn't present on the runner. Local-only
+      # for now — kraken2 loads the whole DB into RAM, which the tiny SLURM smoke resource
+      # caps won't satisfy. WARN-ONLY until proven green.
       - name: Run read-cleaning E2E (local, order target, warn-only)
         continue-on-error: true
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
           SEQDESK_RUNTIME_E2E_PASSWORD: admin
-          SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB }}
+          # Defaults to the read-cleaning kraken2 DB configured on the ci-runner profile
+          # (a shared-FS path that is also reachable from this runner); override with the
+          # SLURM_SHARED_KRAKEN2_DB Actions variable if it lives elsewhere.
+          SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
         run: |
           set -euo pipefail
-          if [ -z "${SLURM_SHARED_KRAKEN2_DB:-}" ]; then
-            echo "SLURM_SHARED_KRAKEN2_DB is not set — skipping read-cleaning."
-            echo "Stage the kraken2 DB on the shared FS and set the SLURM_SHARED_KRAKEN2_DB Actions variable to enable this step."
+          if [ ! -e "${SLURM_SHARED_KRAKEN2_DB:-}" ]; then
+            echo "kraken2 DB not present on this runner at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — skipping read-cleaning."
+            echo "Set the SLURM_SHARED_KRAKEN2_DB Actions variable (or stage the DB at the default path) to enable this step."
             exit 0
           fi
+          echo "Using kraken2 DB: ${SLURM_SHARED_KRAKEN2_DB}"
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
             --pipeline-id read-cleaning \
