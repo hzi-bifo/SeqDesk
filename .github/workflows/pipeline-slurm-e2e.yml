@@ -603,6 +603,83 @@ jobs:
             wait "$APP_PID" >/dev/null 2>&1 || true
           fi
 
+      # PROOF: a REAL INSTALL can run a SLURM pipeline and write results back to the DB —
+      # "install SeqDesk, then run a SLURM job through that installed instance". Reuses this
+      # job's shared FS + prebuilt conda env + SLURM_SHARED_* + inline executor, installing
+      # via the npm launcher + a mock release server (the Alma E2E pattern). Runs after the
+      # source-boot app is stopped (one app per DB). WARN-ONLY while it's brought up; the
+      # first target is fastq-checksum, to expand to every pipeline (see PIPELINE_E2E_COVERAGE.md).
+      - name: Install SeqDesk + run a SLURM pipeline on the installed app (warn-only)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          WORK="$RUNNER_TEMP/install-slurm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          APP_DIR="$WORK/app"; MOCK_ROOT="$WORK/mock"; NPM_PREFIX="$WORK/npm-prefix"
+          INSTALLED_PORT=$((PORT + 1)); MOCK_PORT=$((PORT + 2))
+          INSTALLED_DATA="$SEQDESK_DATA_DIR-installed"; INSTALLED_RUNS="$SEQDESK_RUN_DIR-installed"
+          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX"
+
+          echo "=== build release tarball + npm launcher ==="
+          bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
+          cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$MOCK_ROOT/downloads/"
+          cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_ROOT/install.sh"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_ROOT/downloads/seqdesk-${VERSION}.tar.gz" | cut -d' ' -f1)"
+          echo "{\"latest\":{\"version\":\"$VERSION\",\"channel\":\"stable\",\"releaseDate\":\"$(date -u +%F)\",\"downloadUrl\":\"http://127.0.0.1:$MOCK_PORT/downloads/seqdesk-${VERSION}.tar.gz\",\"checksum\":\"$CHECKSUM\",\"minNodeVersion\":\"18.0.0\"},\"updateAvailable\":false}" > "$MOCK_ROOT/api/version"
+          ( cd "$GITHUB_WORKSPACE/npm/seqdesk" && npm run sync-version >/dev/null 2>&1 && npm pack --pack-destination "$WORK" >/dev/null )
+          NPM_TGZ="$(find "$WORK" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n1)"
+          npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$WORK/npm-cache" >/dev/null
+
+          echo "=== start mock release server ==="
+          ( cd "$MOCK_ROOT" && exec python3 -m http.server "$MOCK_PORT" --bind 127.0.0.1 >"$WORK/mock.log" 2>&1 ) &
+          MOCK_PID=$!
+          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$MOCK_PORT/api/version" >/dev/null 2>&1 && break; sleep 1; done
+
+          echo "=== install with SLURM execution configured ==="
+          PATH="$NPM_PREFIX/bin:$PATH" \
+          SEQDESK_API="http://127.0.0.1:$MOCK_PORT/api" \
+          SEQDESK_INSTALL_URL="http://127.0.0.1:$MOCK_PORT/install.sh" \
+          SEQDESK_LOG="$WORK/install.log" \
+          SEQDESK_EXEC_USE_SLURM=true \
+          SEQDESK_EXEC_CONDA_PATH="$SEQDESK_CONDA_PATH" \
+          SEQDESK_EXEC_CONDA_ENV="$SEQDESK_CONDA_ENV" \
+          SEQDESK_EXEC_SLURM_CORES=1 \
+          SEQDESK_EXEC_SLURM_MEMORY=1G \
+          SEQDESK_EXEC_SLURM_TIME_LIMIT=10 \
+            seqdesk -y --no-pm2 --with-pipelines \
+              --dir "$APP_DIR" --port "$INSTALLED_PORT" \
+              --data-path "$INSTALLED_DATA" --run-dir "$INSTALLED_RUNS" \
+              --nextauth-url "http://127.0.0.1:$INSTALLED_PORT" \
+              --database-url "$DATABASE_URL" --database-direct-url "$DIRECT_URL"
+          kill "$MOCK_PID" >/dev/null 2>&1 || true
+          test -x "$APP_DIR/start.sh"
+
+          echo "=== boot the INSTALLED app with the SLURM runtime env ==="
+          ( cd "$APP_DIR"
+            export SEQDESK_SLURM_INLINE_EXECUTOR=1 SEQDESK_SLURM_ENABLED=true SEQDESK_CONDA_ENABLED=true
+            export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH" SEQDESK_CONDA_ENV="$SEQDESK_CONDA_ENV"
+            export SEQDESK_PIPELINE_RUN_DIR="$INSTALLED_RUNS" SEQDESK_DATA_PATH="$INSTALLED_DATA"
+            [ -n "${SEQDESK_PIPELINES_DIR:-}" ] && export SEQDESK_PIPELINES_DIR
+            [ -n "${SEQDESK_CONDA_CACHE_DIR:-}" ] && export SEQDESK_CONDA_CACHE_DIR
+            exec ./start.sh "$INSTALLED_PORT" ) >"$WORK/server.log" 2>&1 &
+          INSTALLED_APP_PID=$!
+          for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >/dev/null 2>&1 && break; sleep 2; done
+
+          echo "=== run fastq-checksum in SLURM mode through the INSTALLED app ==="
+          rc=0
+          SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
+          SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
+          SEQDESK_RUNTIME_E2E_PASSWORD=admin \
+          SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
+          SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
+          SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=10 \
+            npm run pipeline:e2e:runtime -- \
+              --ensure-dummy-data --pipeline-id fastq-checksum --skip-local \
+              2>&1 | tee "$WORK/install-slurm-fastq-checksum.log" || rc=$?
+          kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
+          echo "install-SLURM fastq-checksum exit: $rc"
+          exit "$rc"
+
       - name: Collect SLURM + pipeline diagnostics
         if: always()
         run: |
