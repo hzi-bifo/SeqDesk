@@ -436,12 +436,12 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/simulate-reads-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
       # reads-qc — study target; per-process seqkit/python conda built via the shared
-      # cacheDir (the mechanism fastqc proved). WARN-ONLY: the real-data Gemma run surfaced
-      # a local-run `completed`->`running` re-sync flip that is still open; running it here
-      # (local + SLURM, synthetic data) flushes out whether that flip bites without reding
-      # the suite. Promote to a hard step once it's green.
-      - name: Run reads-qc E2E (local + SLURM, study target, warn-only)
-        continue-on-error: true
+      # cacheDir (the mechanism fastqc proved). HARD-ASSERTED (local + SLURM, `completes`
+      # gate): the local `completed`->`running` re-sync flip that originally deferred it was
+      # fixed (forceRunningFromQueue no longer demotes a genuinely-finished run — see
+      # pipeline-run-ops-service.ts + its regression test), and reads-qc now reaches
+      # `completed` and stays there in both modes.
+      - name: Run reads-qc E2E (local + SLURM, study target)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
