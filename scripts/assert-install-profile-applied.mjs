@@ -129,8 +129,18 @@ try {
     if (telemetry.enabled !== true) {
       fail(`Expected telemetry.enabled to be true, got '${telemetry.enabled}'`);
     }
-    if (telemetry.endpoint !== "https://seqdesk.org/api/telemetry/heartbeat") {
-      fail(`Expected telemetry endpoint to point at SeqDesk.com, got '${telemetry.endpoint}'`);
+    // Accept either domain during the seqdesk.com -> seqdesk.org migration: the
+    // in-repo expectation moved to seqdesk.org, but a hosted profile may still
+    // serve the www.seqdesk.com endpoint until it is updated.
+    const allowedTelemetryEndpoints = [
+      "https://seqdesk.org/api/telemetry/heartbeat",
+      "https://www.seqdesk.com/api/telemetry/heartbeat",
+      "https://seqdesk.com/api/telemetry/heartbeat",
+    ];
+    if (!allowedTelemetryEndpoints.includes(telemetry.endpoint)) {
+      fail(
+        `Expected telemetry endpoint to point at seqdesk.org or seqdesk.com, got '${telemetry.endpoint}'`
+      );
     }
     if (telemetry.intervalHours !== 1) {
       fail(`Expected telemetry.intervalHours to be 1, got '${telemetry.intervalHours}'`);
