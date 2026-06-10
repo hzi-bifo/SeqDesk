@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useRef, useState } from "react";
 import Link from "next/link";
-import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,7 @@ export default function InfrastructureOverviewPage() {
     setImportText(JSON.stringify(EXAMPLE_INFRA_CONFIG, null, 2));
     setValidationResult(null);
     setImportResult(null);
-    notifyPanel.success("Example setup loaded");
+    toast.success("Example setup loaded");
   };
 
   const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -81,9 +81,9 @@ export default function InfrastructureOverviewPage() {
       setLoadedFileName(file.name);
       setValidationResult(null);
       setImportResult(null);
-      notifyPanel.success(`Loaded ${file.name}`);
+      toast.success(`Loaded ${file.name}`);
     } catch {
-      notifyPanel.error("Selected file is not valid JSON");
+      toast.error("Selected file is not valid JSON");
     } finally {
       event.target.value = "";
     }
@@ -91,7 +91,7 @@ export default function InfrastructureOverviewPage() {
 
   const handleImport = async () => {
     if (!importText.trim()) {
-      notifyPanel.error("Paste JSON or upload a JSON file first");
+      toast.error("Paste JSON or upload a JSON file first");
       return;
     }
 
@@ -99,7 +99,7 @@ export default function InfrastructureOverviewPage() {
     try {
       parsed = JSON.parse(importText);
     } catch {
-      notifyPanel.error("Invalid JSON format");
+      toast.error("Invalid JSON format");
       return;
     }
 
@@ -120,11 +120,11 @@ export default function InfrastructureOverviewPage() {
 
       setImportResult(data);
       setStatusRefreshKey((prev) => prev + 1);
-      notifyPanel.success(data.message || "Infrastructure settings imported");
+      toast.success(data.message || "Infrastructure settings imported");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to import setup";
-      notifyPanel.error(message);
+      toast.error(message);
       setImportResult({
         success: false,
         error: message,
@@ -136,7 +136,7 @@ export default function InfrastructureOverviewPage() {
 
   const handleValidate = async () => {
     if (!importText.trim()) {
-      notifyPanel.error("Paste JSON or upload a JSON file first");
+      toast.error("Paste JSON or upload a JSON file first");
       return;
     }
 
@@ -144,7 +144,7 @@ export default function InfrastructureOverviewPage() {
     try {
       parsed = JSON.parse(importText);
     } catch {
-      notifyPanel.error("Invalid JSON format");
+      toast.error("Invalid JSON format");
       setValidationResult({
         success: false,
         error: "Invalid JSON format",
@@ -168,11 +168,11 @@ export default function InfrastructureOverviewPage() {
       }
 
       setValidationResult(data);
-      notifyPanel.success(data.message || "Configuration is valid");
+      toast.success(data.message || "Configuration is valid");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to validate setup";
-      notifyPanel.error(message);
+      toast.error(message);
       setValidationResult({
         success: false,
         error: message,

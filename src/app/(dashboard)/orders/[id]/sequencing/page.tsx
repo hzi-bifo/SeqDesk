@@ -12,6 +12,7 @@ import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverVi
 import { SequencingStreamView } from "@/components/orders/SequencingStreamView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { HelpBox } from "@/components/ui/help-box";
 import {
   Card,
@@ -104,17 +105,30 @@ function shouldConfirmProtectedReadUse(sample?: SequencingSampleRow | null): boo
   return Boolean(sample?.read?.isProtectedRaw);
 }
 
-function confirmProtectedReadUse(action: string, sample?: SequencingSampleRow | null): boolean {
+type ConfirmFn = ReturnType<typeof useConfirm>;
+
+async function confirmProtectedReadUse(
+  confirm: ConfirmFn,
+  action: string,
+  actionLabel: string,
+  sample?: SequencingSampleRow | null
+): Promise<boolean> {
   if (!shouldConfirmProtectedReadUse(sample)) return true;
-  return window.confirm(
-    `${sample?.sampleId ?? "This sample"} uses ${sample?.read?.dataClassLabel ?? "protected"} reads. Raw reads may still contain human contamination. Continue to ${action}?`
-  );
+  return confirm({
+    title: "Use protected raw reads?",
+    description: `${sample?.sampleId ?? "This sample"} uses ${sample?.read?.dataClassLabel ?? "protected"} reads. Raw reads may still contain human contamination. Continue to ${action}?`,
+    confirmLabel: actionLabel,
+    variant: "destructive",
+  });
 }
 
-function confirmCleanClassification(): boolean {
-  return window.confirm(
-    "Only mark reads as cleaned after human contamination removal has completed. Continue?"
-  );
+async function confirmCleanClassification(confirm: ConfirmFn): Promise<boolean> {
+  return confirm({
+    title: "Mark reads as cleaned?",
+    description:
+      "Only mark reads as cleaned after human contamination removal has completed. Continue?",
+    confirmLabel: "Mark as cleaned",
+  });
 }
 import type {
   OrderSequencingSummaryResponse,
@@ -352,6 +366,7 @@ export default function OrderSequencingPage({
   params: Promise<{ id: string }>;
 }) {
   const resolvedParams = use(params);
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const activePipelineId = searchParams.get("pipeline");
   const activeView = searchParams.get("view");
@@ -537,7 +552,7 @@ export default function OrderSequencingPage({
 
   const handleInspectFile = useCallback(async (filePath: string) => {
     const sample = getSampleForReadPath(filePath);
-    if (!confirmProtectedReadUse("inspect this file", sample)) {
+    if (!(await confirmProtectedReadUse(confirm, "inspect this file", "Inspect", sample))) {
       return;
     }
     setInspectFilePath(filePath);
@@ -577,7 +592,7 @@ export default function OrderSequencingPage({
     } finally {
       setInspectLoading(false);
     }
-  }, [getSampleForReadPath, orderId]);
+  }, [confirm, getSampleForReadPath, orderId]);
 
   const refreshOrderPipelines = useCallback(async () => {
     if (!isFacilityAdmin) {
@@ -954,7 +969,7 @@ export default function OrderSequencingPage({
     dataClass: ReadDataClass
   ) => {
     if (!sample.read) return;
-    if (dataClass === "cleaned" && !confirmCleanClassification()) {
+    if (dataClass === "cleaned" && !(await confirmCleanClassification(confirm))) {
       return;
     }
 
@@ -3741,9 +3756,21 @@ export default function OrderSequencingPage({
                   download
                   onClick={(event) => {
                     const sample = getSampleForReadPath(inspectFilePath);
-                    if (!confirmProtectedReadUse("download this file", sample)) {
-                      event.preventDefault();
+                    if (!shouldConfirmProtectedReadUse(sample)) {
+                      return;
                     }
+                    event.preventDefault();
+                    const href = event.currentTarget.href;
+                    void confirmProtectedReadUse(
+                      confirm,
+                      "download this file",
+                      "Download",
+                      sample
+                    ).then((confirmed) => {
+                      if (confirmed) {
+                        window.location.href = href;
+                      }
+                    });
                   }}
                 >
                   <Download className="mr-1.5 h-3.5 w-3.5" />

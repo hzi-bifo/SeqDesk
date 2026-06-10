@@ -626,6 +626,80 @@ describe("generic-executor", () => {
     expect(config).toContain("clusterOptions = '--gres=gpu:1'");
   });
 
+  it("shell-quotes admin-supplied conda settings so they cannot break out of the script", async () => {
+    // Regression guard for command injection via execution settings: condaEnv and
+    // condaPath are free-form admin/config values interpolated into run.sh, so a
+    // value containing shell metacharacters must be single-quoted, not emitted as
+    // a bare double-quoted assignment that could run an injected command.
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "2.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-inject",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        condaEnv: 'evil"; touch hacked; #',
+        condaPath: "/opt/c$(whoami)",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    // Single-quoted (neutralized), never the broken-out bare form.
+    expect(script).toContain(`CONDA_ENV='evil"; touch hacked; #'`);
+    expect(script).toContain("CONDA_BASE='/opt/c$(whoami)'");
+    expect(script).not.toContain('CONDA_ENV="evil"');
+    expect(script).not.toContain('touch hacked; #"');
+  });
+
+  it("refuses to launch when the run directory contains shell-unsafe characters", async () => {
+    // Regression guard: pipelineRunDir can also come from a config file/env (not
+    // just the validated settings route), so the run folder is checked at launch.
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "2.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const unsafeRunDir = path.join(tempDir, "ev$(touch pwn)il");
+    const result = await prepareGenericRun({
+      runId: "run-unsafe",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(unsafeRunDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => /unsafe characters/i.test(e))).toBe(true);
+  });
+
   it("runs the pipeline as a single SLURM job (local executor inside) when SEQDESK_SLURM_INLINE_EXECUTOR is set", async () => {
     const adapter = createAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
@@ -899,8 +973,9 @@ describe("generic-executor", () => {
 
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
-    expect(script).toContain('CONDA_BASE="/opt/miniconda3"');
-    expect(script).toContain('CONDA_ENV="my-env"');
+    // These values are now passed through shellQuote; safe values render bare.
+    expect(script).toContain("CONDA_BASE=/opt/miniconda3");
+    expect(script).toContain("CONDA_ENV=my-env");
     expect(script).toContain("source \"$CONDA_SH\"");
     expect(script).toContain("conda activate");
   });

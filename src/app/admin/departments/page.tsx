@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import {
   Building2,
   Pencil,
@@ -240,14 +242,18 @@ export default function DepartmentsPage() {
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to save department");
+        const message = data.error || "Failed to save department";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       await fetchDepartments();
+      toast.success(editingId ? "Department updated" : "Department created");
       resetForm();
     } catch {
       setError("Failed to save department");
+      toast.error("Failed to save department");
     } finally {
       setSaving(false);
     }
@@ -261,8 +267,10 @@ export default function DepartmentsPage() {
         body: JSON.stringify({ isActive: !dept.isActive }),
       });
       await fetchDepartments();
+      toast.success(`Department ${dept.isActive ? "deactivated" : "activated"}`);
     } catch {
       setError("Failed to update department");
+      toast.error("Failed to update department");
     }
   };
 
@@ -282,15 +290,19 @@ export default function DepartmentsPage() {
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to delete department");
+        const message = data.error || "Failed to delete department";
+        setError(message);
+        toast.error(message);
         return;
       }
 
       await fetchDepartments();
+      toast.success("Department deleted");
       setDeleteDialogOpen(false);
       setDepartmentToDelete(null);
     } catch {
       setError("Failed to delete department");
+      toast.error("Failed to delete department");
     } finally {
       setDeleting(false);
     }
@@ -402,7 +414,9 @@ export default function DepartmentsPage() {
     setImporting(false);
 
     if (successCount > 0) {
-      setImportSuccess(`Successfully imported ${successCount} department${successCount > 1 ? "s" : ""}`);
+      const message = `Successfully imported ${successCount} department${successCount > 1 ? "s" : ""}`;
+      setImportSuccess(message);
+      toast.success(message);
       await fetchDepartments();
 
       setExtractedDepts((prev) =>
@@ -411,18 +425,16 @@ export default function DepartmentsPage() {
     }
 
     if (errorCount > 0) {
-      setImportError(`Failed to import ${errorCount} department${errorCount > 1 ? "s" : ""}`);
+      const message = `Failed to import ${errorCount} department${errorCount > 1 ? "s" : ""}`;
+      setImportError(message);
+      toast.error(message);
     }
   };
 
   const selectedCount = extractedDepts.filter((d) => d.selected && !d.isDuplicate).length;
 
   if (loading) {
-    return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

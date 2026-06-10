@@ -15,6 +15,21 @@ function normalizeString(value: unknown, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+// These values are interpolated into the generated run.sh (conda activation,
+// run-directory paths). Reject characters that could break out of a quoted
+// shell context or run a command substitution before they are ever persisted.
+const SHELL_UNSAFE_SETTING = /[\x00-\x1f\x7f"`$\\]/;
+
+class UnsafeSettingError extends Error {}
+
+function assertSafeSetting(value: string, label: string): void {
+  if (SHELL_UNSAFE_SETTING.test(value)) {
+    throw new UnsafeSettingError(
+      `${label} may not contain control characters or any of: " \` $ \\`
+    );
+  }
+}
+
 // GET - Get execution settings
 export async function GET() {
   try {
@@ -59,6 +74,20 @@ export async function POST(request: NextRequest) {
       body.pipelineDatabaseDir,
       DEFAULT_EXECUTION_SETTINGS.pipelineDatabaseDir
     );
+    const condaPath = normalizeString(body.condaPath, DEFAULT_EXECUTION_SETTINGS.condaPath);
+    const condaEnv = normalizeString(body.condaEnv, DEFAULT_EXECUTION_SETTINGS.condaEnv);
+
+    try {
+      assertSafeSetting(condaPath, 'Conda path');
+      assertSafeSetting(condaEnv, 'Conda environment');
+      assertSafeSetting(pipelineRunDir, 'Pipeline run directory');
+      assertSafeSetting(pipelineDatabaseDir, 'Pipeline database directory');
+    } catch (error) {
+      if (error instanceof UnsafeSettingError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
+    }
 
     // Validate and merge with defaults
     const newSettings: ExecutionSettings = {
@@ -70,8 +99,8 @@ export async function POST(request: NextRequest) {
       slurmOptions: normalizeString(body.slurmOptions, DEFAULT_EXECUTION_SETTINGS.slurmOptions),
       pipelineOverrides: normalizePipelineExecutionOverrides(body.pipelineOverrides),
       runtimeMode: 'conda',
-      condaPath: normalizeString(body.condaPath, DEFAULT_EXECUTION_SETTINGS.condaPath),
-      condaEnv: normalizeString(body.condaEnv, DEFAULT_EXECUTION_SETTINGS.condaEnv),
+      condaPath,
+      condaEnv,
       nextflowProfile: normalizeString(
         body.nextflowProfile,
         DEFAULT_EXECUTION_SETTINGS.nextflowProfile

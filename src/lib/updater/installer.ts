@@ -24,6 +24,7 @@ import {
   patchUpdateState,
   readUpdateState,
   releaseUpdateLock,
+  touchUpdateLock,
   writeUpdateState,
 } from './status';
 import { requirePostgresDatabaseUrl } from '@/lib/database-url';
@@ -165,6 +166,7 @@ export async function installUpdate(
   onProgress?: ProgressCallback
 ): Promise<void> {
   const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
+    void touchUpdateLock();
     onProgress?.({ status, progress, message, error });
   };
   let layout: InstallLayout | null = null;
@@ -250,12 +252,25 @@ export async function installUpdate(
       phase: 'migrating',
       activeRelease: targetReleasePath,
     });
+    // Take a best-effort logical backup before migrating. `migrate deploy` is
+    // forward-only, so reverting the code symlink on failure does NOT undo a
+    // schema change or restore dropped rows; this dump is the only restore point.
+    const databaseBackup = await backupDatabaseBeforeMigration(
+      layout.rootDir,
+      installedDatabase.databaseUrl
+    );
     const before = await snapshotDataCounts();
     await runMigrations(layout.currentLinkPath);
     const after = await snapshotDataCounts();
     const loss = describeDataLoss(before, after);
     if (loss) {
-      throw new Error(`Aborting update: data loss detected after migrations (${loss}). Previous release will remain active when available.`);
+      throw new Error(
+        `Aborting update: data loss detected after migrations (${loss}).` +
+          ' The code symlink is reverted to the previous release, but the database was already migrated and is NOT rolled back automatically — ' +
+          (databaseBackup
+            ? `restore the pre-migration backup at ${databaseBackup} (pg_restore) before retrying.`
+            : 'restore from your own backup before retrying (a pre-migration backup could not be created).')
+      );
     }
 
     // Step 8: Cleanup
@@ -309,7 +324,13 @@ function validateReleaseForInstall(release: ReleaseInfo): void {
   }
 
   const downloadUrl = parseDownloadUrl(release.downloadUrl);
-  if (downloadUrl.protocol !== 'https:' && downloadUrl.protocol !== 'http:') {
+  // Require https so the download cannot be MITM'd. http is permitted only when
+  // an operator explicitly opts in (e.g. an internal mirror over a trusted link).
+  const allowInsecure = process.env.SEQDESK_ALLOW_INSECURE_UPDATE === 'true';
+  if (
+    downloadUrl.protocol !== 'https:' &&
+    !(allowInsecure && downloadUrl.protocol === 'http:')
+  ) {
     throw new Error(`Unsupported download URL protocol: ${downloadUrl.protocol}`);
   }
 
@@ -326,7 +347,7 @@ function parseDownloadUrl(downloadUrl: string): URL {
 
 function validateChecksumFormat(checksum: string): void {
   if (!checksum || checksum === 'sha256:placeholder') {
-    return;
+    throw new Error('Release is missing a checksum; refusing to install an unverified download');
   }
 
   const parts = checksum.split(':');
@@ -353,8 +374,14 @@ async function downloadRelease(release: ReleaseInfo, tempDir: string): Promise<s
   // Create temp directory
   await fs.mkdir(tempDir, { recursive: true });
 
-  // Download using curl (more reliable than fetch for large files)
-  await runUpdateCommand(`curl -fsSL "${parseDownloadUrl(release.downloadUrl).href}" -o "${tarballPath}"`);
+  // Download using curl (more reliable than fetch for large files).
+  // The URL is passed via an environment variable rather than interpolated into
+  // the command string: bash does not re-evaluate the contents of an expanded
+  // variable, so a download URL containing $(...), backticks, or other shell
+  // metacharacters cannot inject commands here.
+  await runUpdateCommand(`curl -fsSL "$SEQDESK_DOWNLOAD_URL" -o "${tarballPath}"`, {
+    env: { ...process.env, SEQDESK_DOWNLOAD_URL: parseDownloadUrl(release.downloadUrl).href },
+  });
 
   return tarballPath;
 }
@@ -363,11 +390,6 @@ async function downloadRelease(release: ReleaseInfo, tempDir: string): Promise<s
  * Verify the checksum of the downloaded file
  */
 async function verifyChecksum(filePath: string, expectedChecksum: string): Promise<void> {
-  if (!expectedChecksum || expectedChecksum === 'sha256:placeholder') {
-    // Skip verification if no checksum provided
-    return;
-  }
-
   validateChecksumFormat(expectedChecksum);
   const [, hash] = expectedChecksum.split(':');
   const actualHash = await hashFile(filePath, 'sha256');
@@ -602,11 +624,49 @@ async function runMigrations(baseDir: string): Promise<void> {
   await runUpdateCommand('node scripts/run-prisma.mjs migrate deploy', { cwd: baseDir });
 }
 
+/**
+ * Take a best-effort logical backup of the database before migrations run.
+ *
+ * `prisma migrate deploy` is forward-only: a failed or destructive migration
+ * cannot be undone by reverting the code symlink, so this dump is the restore
+ * point if migrations drop data. It is best-effort — if pg_dump is unavailable
+ * the update still proceeds (returning null), and the caller surfaces that in
+ * its abort message. The connection string is passed via the environment so the
+ * password never appears in argv/the command string.
+ */
+async function backupDatabaseBeforeMigration(
+  rootDir: string,
+  databaseUrl: string | null
+): Promise<string | null> {
+  if (!databaseUrl) {
+    return null;
+  }
+  try {
+    const backupDir = path.join(rootDir, 'backups');
+    await fs.mkdir(backupDir, { recursive: true });
+    const backupPath = path.join(
+      backupDir,
+      `pre-update-${new Date().toISOString().replace(/[:.]/g, '-')}.dump`
+    );
+    await runUpdateCommand(`pg_dump -Fc -f "${backupPath}" "$SEQDESK_DB_URL"`, {
+      env: { ...process.env, SEQDESK_DB_URL: databaseUrl },
+    });
+    return backupPath;
+  } catch (error) {
+    console.warn(
+      'Pre-migration database backup failed; continuing without a restore point:',
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
 export async function repairInstalledUpdate(
   targetVersion?: string,
   onProgress?: ProgressCallback
 ): Promise<void> {
   const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
+    void touchUpdateLock();
     onProgress?.({ status, progress, message, error });
   };
 
@@ -623,12 +683,21 @@ export async function repairInstalledUpdate(
     await generatePrismaClient(runtimeDir);
 
     report('extracting', 70, 'Running database migrations...');
+    const databaseBackup = await backupDatabaseBeforeMigration(
+      layout.rootDir,
+      installedDatabase.databaseUrl
+    );
     const before = await snapshotDataCounts();
     await runMigrations(runtimeDir);
     const after = await snapshotDataCounts();
     const loss = describeDataLoss(before, after);
     if (loss) {
-      throw new Error(`Aborting repair: data loss detected after migrations (${loss}).`);
+      throw new Error(
+        `Aborting repair: data loss detected after migrations (${loss}).` +
+          (databaseBackup
+            ? ` Restore the pre-migration backup at ${databaseBackup} (pg_restore) before retrying.`
+            : ' Restore from your own backup before retrying (a pre-migration backup could not be created).')
+      );
     }
 
     const suffix = targetVersion ? ` to ${targetVersion}` : '';
@@ -648,6 +717,7 @@ export async function rollbackInstalledUpdate(
   onProgress?: ProgressCallback
 ): Promise<{ fromRelease: string; toRelease: string }> {
   const report = (status: UpdateProgress['status'], progress: number, message: string, error?: string) => {
+    void touchUpdateLock();
     onProgress?.({ status, progress, message, error });
   };
 

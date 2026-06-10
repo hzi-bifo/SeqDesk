@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { toast } from "@/components/ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -721,6 +722,7 @@ export default function PipelineSettingsPage() {
         const message = data?.details || data?.error || "Private package installation failed";
         setPrivateInstallError(message);
         setInstallError(message);
+        toast.error(message);
         return;
       }
 
@@ -729,10 +731,12 @@ export default function PipelineSettingsPage() {
       setPrivateAccessKey("");
       setPrivateSha256("");
       await Promise.all([mutate(), mutateStore()]);
+      toast.success(privateInstallMode === "update" ? "Pipeline updated" : "Pipeline installed");
     } catch (err) {
       const message = "Private package installation failed. Check logs for details.";
       setPrivateInstallError(message);
       setInstallError(message);
+      toast.error(message);
       console.error("Private install error:", err);
     } finally {
       setInstallingPipeline(null);
@@ -794,6 +798,7 @@ export default function PipelineSettingsPage() {
         const message = data?.details || data?.error || "Failed to install pipeline from GitHub.";
         setGithubInstallError(message);
         setInstallError(message);
+        toast.error(message);
         return;
       }
 
@@ -801,10 +806,12 @@ export default function PipelineSettingsPage() {
       setGithubToken("");
       setGithubInstallError(null);
       await Promise.all([mutate(), mutateStore()]);
+      toast.success(githubInstallMode === "update" ? "Pipeline updated" : "Pipeline installed");
     } catch (err) {
       const message = "Failed to install pipeline from GitHub. Check server logs for details.";
       setGithubInstallError(message);
       setInstallError(message);
+      toast.error(message);
       console.error("GitHub install error:", err);
     } finally {
       setGithubSubmitting(false);
@@ -889,12 +896,17 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setInstallError(data.error || "Installation failed");
+        const message = data.error || "Installation failed";
+        setInstallError(message);
+        toast.error(message);
         return;
       }
       await Promise.all([mutate(), mutateStore()]);
+      toast.success("Pipeline installed");
     } catch (err) {
-      setInstallError("Installation failed. Check console for details.");
+      const message = "Installation failed. Check console for details.";
+      setInstallError(message);
+      toast.error(message);
       console.error("Install error:", err);
     } finally {
       setInstallingPipeline(null);
@@ -918,12 +930,17 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setInstallError(data.error || "Update failed");
+        const message = data.error || "Update failed";
+        setInstallError(message);
+        toast.error(message);
         return;
       }
       await Promise.all([mutate(), mutateStore()]);
+      toast.success("Pipeline updated");
     } catch (err) {
-      setInstallError("Update failed. Check console for details.");
+      const message = "Update failed. Check console for details.";
+      setInstallError(message);
+      toast.error(message);
       console.error("Update error:", err);
     } finally {
       setInstallingPipeline(null);
@@ -943,12 +960,17 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setDownloadError(data.error || "Download failed");
+        const message = data.error || "Download failed";
+        setDownloadError(message);
+        toast.error(message);
         return;
       }
       mutate();
+      toast.success(action === "update" ? "Pipeline code updated" : "Pipeline code downloaded");
     } catch (err) {
-      setDownloadError("Download failed. Check console for details.");
+      const message = "Download failed. Check console for details.";
+      setDownloadError(message);
+      toast.error(message);
       console.error("Download error:", err);
     } finally {
       setDownloadingPipeline(null);
@@ -982,12 +1004,17 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setDatabaseError(data.error || "Database download failed");
+        const message = data.error || "Database download failed";
+        setDatabaseError(message);
+        toast.error(message);
         return;
       }
       mutate();
+      toast.success("Database download started");
     } catch (err) {
-      setDatabaseError("Database download failed. Check console for details.");
+      const message = "Database download failed. Check console for details.";
+      setDatabaseError(message);
+      toast.error(message);
       console.error("Database download error:", err);
     } finally {
       setDownloadingDatabase(null);
@@ -1024,14 +1051,19 @@ export default function PipelineSettingsPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setDbDownloadDialogError(data.error || "Failed to link existing file");
+        const message = data.error || "Failed to link existing file";
+        setDbDownloadDialogError(message);
+        toast.error(message);
         return;
       }
       setDbDownloadDialogOpen(false);
       mutate();
+      toast.success("Existing database linked");
     } catch (err) {
       console.error("Link existing DB error:", err);
-      setDbDownloadDialogError("Failed to link existing file. Check console for details.");
+      const message = "Failed to link existing file. Check console for details.";
+      setDbDownloadDialogError(message);
+      toast.error(message);
     } finally {
       setLinkingDatabase(false);
     }
@@ -1052,12 +1084,17 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setDatabaseError(data.error || "Cancel failed");
+        const message = data.error || "Cancel failed";
+        setDatabaseError(message);
+        toast.error(message);
         return;
       }
       mutate();
+      toast.success("Database download cancelled");
     } catch (err) {
-      setDatabaseError("Cancel failed. Check console for details.");
+      const message = "Cancel failed. Check console for details.";
+      setDatabaseError(message);
+      toast.error(message);
       console.error("Database cancel error:", err);
     } finally {
       setCancellingDatabase(null);
@@ -1271,10 +1308,12 @@ export default function PipelineSettingsPage() {
       }
       mutate();
       setConfigDialogOpen(false);
+      toast.success("Pipeline configuration saved");
     } catch (err) {
-      setConfigError(
-        err instanceof Error ? err.message : "Failed to save pipeline configuration"
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to save pipeline configuration";
+      setConfigError(message);
+      toast.error(message);
     }
     setSaving(false);
   };
@@ -1304,10 +1343,12 @@ export default function PipelineSettingsPage() {
         );
       }
       mutate();
+      toast.success(`Pipeline ${pipeline.enabled ? "disabled" : "enabled"}`);
     } catch (err) {
-      setToggleError(
-        err instanceof Error ? err.message : "Failed to update pipeline state"
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to update pipeline state";
+      setToggleError(message);
+      toast.error(message);
     } finally {
       setTogglingPipeline(null);
     }
@@ -1334,9 +1375,12 @@ export default function PipelineSettingsPage() {
       if (!res.ok) {
         throw new Error("Failed to save setting");
       }
+      toast.success(`Researcher assembly download ${enabled ? "enabled" : "disabled"}`);
     } catch {
       setAllowUserAssemblyDownload(previousValue);
-      setAssemblyDownloadSettingError("Failed to update researcher assembly download setting.");
+      const message = "Failed to update researcher assembly download setting.";
+      setAssemblyDownloadSettingError(message);
+      toast.error(message);
     } finally {
       setSavingAssemblyDownloadSetting(false);
     }

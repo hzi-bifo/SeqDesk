@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     pipelineRunStep: {
       upsert: vi.fn(),
@@ -194,6 +195,9 @@ describe('cancelPipelineRunForOperator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    // Cancel now writes via a guarded updateMany (terminal-state race fix);
+    // default to "one row updated" so the run is treated as freshly cancelled.
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('returns 404 when the run does not exist', async () => {
@@ -233,9 +237,9 @@ describe('cancelPipelineRunForOperator', () => {
     expect(killSpy).toHaveBeenCalledWith(-4242, 'SIGTERM');
     expect(result.status).toBe(200);
     expect(result.body.status).toBe('cancelled');
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'run-1' },
+        where: { id: 'run-1', status: { in: ['pending', 'queued', 'running'] } },
         data: expect.objectContaining({ status: 'cancelled', statusSource: 'manual' }),
       })
     );
@@ -297,8 +301,12 @@ describe('cancelPipelineRunForOperator', () => {
     const result = await cancelPipelineRunForOperator('run-1');
 
     expect(result.body.status).toBe('failed');
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'run-1',
+          status: { in: ['pending', 'queued', 'running'] },
+        }),
         data: expect.objectContaining({ status: 'failed' }),
       })
     );
@@ -367,6 +375,22 @@ describe('cancelPipelineRunForOperator', () => {
     const result = await cancelPipelineRunForOperator('run-1');
 
     expect(result.body.status).toBe('cancelled');
+  });
+
+  it('does not clobber a run that finished between the status read and the write', async () => {
+    // The run was running when read, so cancel proceeds; but by the time the
+    // guarded updateMany runs the monitor has finalized it as completed, so no
+    // row matches the non-terminal filter (count: 0). Cancel must report the
+    // real terminal status rather than overwriting it with cancelled/failed.
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce({ id: 'run-1', status: 'running', queueJobId: null })
+      .mockResolvedValueOnce({ status: 'completed' });
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await cancelPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('completed');
+    expect(result.body.alreadyFinalized).toBe(true);
   });
 });
 
@@ -563,6 +587,32 @@ describe('syncPipelineRunForOperator (no trace file)', () => {
     mocks.execFile.mockImplementation((file, _args, callback) => {
       if (file === 'ps') {
         callback(new Error('no such process'));
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+    });
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).toBe('completed');
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'completed', progress: 100 });
+  });
+
+  it('treats a local run with an exit marker as finished even if its PID is still alive (recycled PID)', async () => {
+    // Regression F: a finished local run's PID can be recycled by an unrelated
+    // live process. `ps` then reports it alive, which previously pinned the run as
+    // RUNNING forever. The exit marker must win over PID liveness.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...baseRun,
+      status: 'running',
+      queueJobId: 'local-1234',
+    });
+    mocks.inferPipelineExitCode.mockResolvedValue(0);
+    // ps reports the pid as ALIVE (recycled), yet the run already wrote exit 0.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'ps') {
+        callback(null, { stdout: '1234\n', stderr: '' });
       } else {
         callback(null, { stdout: '', stderr: '' });
       }

@@ -429,13 +429,26 @@ function firstNonEmptyLine(value: string): string {
     .filter(Boolean)[0] || '';
 }
 
-async function readQueueSnapshot(jobId: string | null | undefined): Promise<QueueSnapshot> {
+async function readQueueSnapshot(
+  jobId: string | null | undefined,
+  runFolder?: string | null
+): Promise<QueueSnapshot> {
   const normalizedJobId = (jobId || '').trim();
   if (!normalizedJobId) {
     return { state: null, reason: null, source: null };
   }
 
   if (normalizedJobId.startsWith('local-')) {
+    // The exit marker wins over PID liveness: once the pipeline has written a
+    // terminal exit code the run is finished, even if `ps` still reports the PID.
+    // The OS can recycle a finished pipeline's PID to an unrelated live process,
+    // which would otherwise be read as RUNNING and pin a completed run.
+    if (runFolder) {
+      const exitCode = await inferPipelineExitCode(runFolder);
+      if (exitCode !== null) {
+        return { state: 'EXITED', reason: null, source: 'local' };
+      }
+    }
     const pid = Number(normalizedJobId.replace('local-', ''));
     if (!Number.isInteger(pid) || pid <= 0) {
       return { state: null, reason: null, source: 'local' };
@@ -1093,7 +1106,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   if (!tracePath) {
     const now = new Date();
     const updateData: Record<string, unknown> = {};
-    const queueSnapshot = await readQueueSnapshot(run.queueJobId);
+    const queueSnapshot = await readQueueSnapshot(run.queueJobId, run.runFolder);
     const queueState = queueSnapshot.state;
     const queueReason = queueSnapshot.reason;
     const queueSource = queueSnapshot.source;
@@ -1363,7 +1376,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
         : isMeaningfulActiveStepLabel(run.currentStep)
           ? run.currentStep
           : 'Processing...';
-  const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId);
+  const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId, run.runFolder);
   const queueIsActive = isActiveQueueState(traceQueueSnapshot.state);
   const workflowCompletionObserved =
     queueIsActive && traceResult.overallProgress === 100
@@ -1644,8 +1657,13 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
 
   const newStatus = forceStop ? 'failed' : 'cancelled';
 
-  await db.pipelineRun.update({
-    where: { id: runId },
+  // Guard the write to non-terminal states: the run may have completed (monitor,
+  // weblog, or finalizeLocalRun) between the status read above and now. An
+  // unconditional update would clobber a genuine `completed` outcome — and its
+  // ingested outputs — with `cancelled`/`failed`. If nothing was updated, the run
+  // already reached a terminal state, so report that instead.
+  const { count } = await db.pipelineRun.updateMany({
+    where: { id: runId, status: { in: ['pending', 'queued', 'running'] } },
     data: {
       status: newStatus,
       completedAt: new Date(),
@@ -1653,6 +1671,14 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
       lastEventAt: new Date(),
     },
   });
+
+  if (count === 0) {
+    const current = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { status: true },
+    });
+    return jsonResponse({ success: true, status: current?.status ?? newStatus, alreadyFinalized: true });
+  }
 
   return jsonResponse({ success: true, status: newStatus });
 }

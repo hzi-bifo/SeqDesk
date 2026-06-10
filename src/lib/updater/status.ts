@@ -168,3 +168,18 @@ export async function acquireUpdateLock(): Promise<boolean> {
 export async function releaseUpdateLock(): Promise<void> {
   await fs.rm(await updateFilePath(LOCK_FILE_NAME), { force: true });
 }
+
+/**
+ * Refresh the lock's mtime so a long-running update (a large download or
+ * `npm ci` that legitimately exceeds the lock TTL) is not mistaken for a stale
+ * lock and overwritten by a concurrent update. Best-effort: a missing lock
+ * (already released) is ignored.
+ */
+export async function touchUpdateLock(): Promise<void> {
+  try {
+    const now = new Date();
+    await fs.utimes(await updateFilePath(LOCK_FILE_NAME), now, now);
+  } catch {
+    // Lock file may not exist yet or was already released; nothing to refresh.
+  }
+}

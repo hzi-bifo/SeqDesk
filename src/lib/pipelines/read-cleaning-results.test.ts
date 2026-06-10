@@ -227,6 +227,8 @@ describe("read-cleaning-results", () => {
       where: {
         sampleId: "sample-1",
         isActive: true,
+        // Only same-data-class reads are superseded so raw/unknown reads are kept.
+        dataClass: "cleaned",
       },
       data: {
         isActive: false,

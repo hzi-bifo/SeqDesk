@@ -42,6 +42,7 @@
     "test:all": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=all vitest run",
     "test:workbench": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run src/lib/workbench src/app/api/workbench src/components/workbench",
     "test:workbench:live": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=live SEQDESK_WORKBENCH_LIVE=1 vitest run src/lib/workbench src/app/api/workbench src/components/workbench",
+    "test:installer": "bash scripts/ci/test-interactive-wizard.sh",
     "test:dashboard": "node --no-warnings scripts/test-dashboard.ts --tier fast",
     "test:dashboard:watch": "node --no-warnings scripts/test-dashboard.ts --tier fast --watch",
     "test:dashboard:live": "node --no-warnings scripts/test-dashboard.ts --tier live",

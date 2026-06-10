@@ -14,6 +14,7 @@
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
 #   SEQDESK_SKIP_DEPS=1            - Deprecated (ignored in distribution installer)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
+#   SEQDESK_INTERACTIVE=1          - Guided setup wizard (database choice + accounts)
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PIPELINE_DATABASE_DIR=/data/pipeline-dbs - Optional pipeline DB directory override
@@ -86,6 +87,8 @@ SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
+SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
+INTERACTIVE_RESULT=""
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
@@ -1156,6 +1159,169 @@ prompt_yes_no() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# Interactive setup wizard (opt-in via --interactive)
+#
+# Gathers the database connection and the initial accounts up front, with input
+# validation and a live reachability check, then hands the values to the normal
+# install flow. It NEVER runs under -y / --config / --profile, so automated and
+# unattended installs are unaffected. Helpers return their result in the global
+# INTERACTIVE_RESULT so their on-screen prompts are not captured as the value.
+# ---------------------------------------------------------------------------
+
+is_valid_email() {
+    local re='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+    [[ "${1:-}" =~ $re ]]
+}
+
+# Read a secret without echoing it. Prompt goes to the terminal; the value is
+# printed to stdout for capture via $(...).
+read_secret() {
+    local prompt="$1" value=""
+    if [ -e /dev/tty ]; then
+        read -r -s -p "$prompt" value < /dev/tty || true
+        printf '\n' > /dev/tty
+    else
+        read -r -s -p "$prompt" value || true
+        printf '\n' >&2
+    fi
+    printf '%s' "$value"
+}
+
+interactive_prompt_email() {
+    local label="$1" default_value="$2" reply
+    while true; do
+        reply=$(read_input "$label [$default_value]: ")
+        reply=${reply:-$default_value}
+        if is_valid_email "$reply"; then
+            INTERACTIVE_RESULT="$reply"
+            return 0
+        fi
+        print_error "  '$reply' is not a valid email address. Try again."
+    done
+}
+
+interactive_prompt_password() {
+    local label="$1" pw pw2
+    while true; do
+        pw=$(read_secret "$label (leave blank to generate a strong one): ")
+        if [ -z "$pw" ]; then
+            pw="$(generate_postgres_password)"
+            print_info "Generated a strong password (shown once — save it now):"
+            print_kv "password" "$pw"
+            INTERACTIVE_RESULT="$pw"
+            return 0
+        fi
+        if [ "${#pw}" -lt 8 ]; then
+            print_error "  Password must be at least 8 characters. Try again."
+            continue
+        fi
+        pw2=$(read_secret "  Confirm password: ")
+        if [ "$pw" != "$pw2" ]; then
+            print_error "  Passwords did not match. Try again."
+            continue
+        fi
+        INTERACTIVE_RESULT="$pw"
+        return 0
+    done
+}
+
+# Best-effort "looks ok" check for a managed DATABASE_URL: confirm the host:port
+# is reachable. Returns 0 if reachable. The full credential check still runs
+# after the runtime is installed (probe_postgres_database).
+interactive_test_database() {
+    local url="$1" host_port host port
+    host_port="$(postgres_url_host_port "$url" 2>/dev/null || true)"
+    if [ -z "$host_port" ]; then
+        print_warning "  Could not parse host/port from that URL; skipping the reachability check."
+        return 1
+    fi
+    IFS=$'\t' read -r host port <<< "$host_port"
+    print_info "  Testing connectivity to ${host}:${port} ..."
+    if db_tcp_reachable "$host" "$port"; then
+        print_success "  Looks OK — ${host}:${port} is reachable (credentials are verified after install)."
+        return 0
+    fi
+    print_warning "  Could not reach ${host}:${port}. Check the host/port, firewall, and that PostgreSQL is running."
+    return 1
+}
+
+run_interactive_wizard() {
+    is_truthy "$SEQDESK_INTERACTIVE" || return 0
+    if is_truthy "$SEQDESK_YES"; then
+        return 0
+    fi
+    if [ -n "${SEQDESK_CONFIG:-}" ] || [ -n "${SEQDESK_PROFILE:-}" ]; then
+        print_info "Config/profile supplied; skipping the interactive wizard."
+        return 0
+    fi
+
+    print_header "Guided setup"
+
+    # 1) Database
+    print_info "Database — where should SeqDesk store its data?"
+    echo "    1) Local PostgreSQL  — the installer creates the role/database (needs sudo)"
+    echo "    2) Existing/managed  — paste a PostgreSQL connection string"
+    local db_choice
+    db_choice=$(read_input "  Choose [1]: ")
+    db_choice=${db_choice:-1}
+    if [ "$db_choice" = "2" ]; then
+        local url direct
+        while true; do
+            url=$(read_input "  DATABASE_URL (postgresql://user:password@host:5432/dbname): ")
+            if [ -z "$url" ]; then
+                print_error "  A connection string is required for this option."
+                continue
+            fi
+            if ! is_postgres_url "$url"; then
+                print_error "  That does not look like a postgresql:// connection string."
+                continue
+            fi
+            SEQDESK_DATABASE_URL="$url"
+            if interactive_test_database "$url"; then
+                break
+            fi
+            local anyway
+            anyway=$(read_input "  Use this URL anyway? (y/N): ")
+            case "$anyway" in y|Y|yes|YES) break ;; *) continue ;; esac
+        done
+        direct=$(read_input "  DIRECT_URL for migrations (optional, blank = same as DATABASE_URL): ")
+        if [ -n "$direct" ]; then
+            if is_postgres_url "$direct"; then
+                SEQDESK_DATABASE_DIRECT_URL="$direct"
+            else
+                print_warning "  Ignoring DIRECT_URL — not a postgresql:// connection string."
+            fi
+        fi
+    else
+        print_info "  Using local PostgreSQL — the installer will create the role/database and generate a password."
+    fi
+
+    # 2) Accounts
+    print_info "Accounts — the initial users to create"
+    interactive_prompt_email "  Admin email" "admin@example.com"
+    SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$INTERACTIVE_RESULT"
+    interactive_prompt_password "  Admin password"
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
+
+    local make_researcher
+    make_researcher=$(read_input "  Also create a researcher (non-admin) account? (Y/n): ")
+    make_researcher=${make_researcher:-Y}
+    case "$make_researcher" in
+        n|N|no|NO)
+            print_info "  Skipping the researcher account."
+            ;;
+        *)
+            interactive_prompt_email "  Researcher email" "user@example.com"
+            SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="$INTERACTIVE_RESULT"
+            interactive_prompt_password "  Researcher password"
+            SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
+            ;;
+    esac
+
+    print_success "Guided setup captured. Continuing the installation..."
+}
+
 print_usage() {
     cat <<'EOF'
 Usage:
@@ -1165,6 +1331,9 @@ Usage:
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
+  --interactive                Guided setup wizard: choose the database and
+                               create the admin/researcher accounts, with a
+                               live database reachability check
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
   --profile <id>               Hosted install profile id (for example: twincore)
   --profile-code <code>        Access code for --profile
@@ -1219,6 +1388,9 @@ parse_args() {
         case "$1" in
             -y|--yes)
                 SEQDESK_YES="1"
+                ;;
+            --interactive)
+                SEQDESK_INTERACTIVE="1"
                 ;;
             --config)
                 if [ $# -lt 2 ]; then
@@ -2528,6 +2700,12 @@ print_config_summary() {
     if [ -n "${SEQDESK_DATABASE_DIRECT_URL:-}" ] && [ "$SEQDESK_DATABASE_DIRECT_URL" != "$SEQDESK_DATABASE_URL" ]; then
         print_kv "DIRECT_URL" "$(redact_database_url "$SEQDESK_DATABASE_DIRECT_URL")"
     fi
+    if [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
+        print_kv "Admin account" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
+    fi
+    if [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
+        print_kv "Researcher account" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
+    fi
     print_kv "seqdesk.config.json" "$config_status"
 }
 
@@ -3361,6 +3539,13 @@ on_error() {
     exit $exit_code
 }
 
+# Test hook: when sourced with SEQDESK_INSTALL_LIB_ONLY=1, load the function
+# and variable definitions above but do NOT run the installer. Lets the wizard
+# and other helpers be unit-tested in isolation (scripts/ci/test-interactive-wizard.sh).
+if [ -n "${SEQDESK_INSTALL_LIB_ONLY:-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 parse_args "$@"
 
 trap on_error ERR
@@ -3390,6 +3575,25 @@ if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
 fi
 print_kv "Started" "$INSTALL_STARTED_AT"
 print_kv "Log" "$SEQDESK_LOG"
+
+# Orientation for first-time interactive installs: state plainly what will happen
+# and the one prerequisite people miss (a PostgreSQL database) before any work
+# starts. Skipped for -y / reconfigure / prepare-postgres (automation or advanced
+# flows that don't need the primer).
+if ! is_truthy "$SEQDESK_YES" && ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
+    print_header "Before you start"
+    echo "  SeqDesk is a metadata & analysis platform for sequencing facilities."
+    echo "  This installs it to ${SEQDESK_DIR:-./seqdesk} and shows a summary before changing anything."
+    echo ""
+    echo "  You'll need:"
+    echo "    - Node.js ${MIN_NODE_VERSION:-18}+ and npm   (checked next)"
+    echo "    - A PostgreSQL database:"
+    echo "        local    the installer can create one for you if you can use sudo"
+    echo "        managed  re-run with  --database-url \"postgresql://...\"  (or set DATABASE_URL)"
+    echo "    - A writable install directory"
+    echo ""
+    echo "  Prerequisites: https://www.seqdesk.com/docs/installation/prerequisites"
+fi
 
 # System detection
 print_step "Detect system"
@@ -3563,6 +3767,11 @@ if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
         print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
     fi
 fi
+
+# Guided setup wizard (opt-in via --interactive). Runs after dependency checks
+# so Node is available for the database reachability test, and before the
+# remaining prompts/config summary so its values flow through unchanged.
+run_interactive_wizard
 
 # Pipeline support
 print_step "Configure pipeline support"

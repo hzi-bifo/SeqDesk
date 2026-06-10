@@ -161,6 +161,26 @@ async function safeDeleteReadFile(
   }
 }
 
+// A discovered read's source path must live inside the run folder before we copy
+// it into a sample's storage. Without this, a discovery script (or a tampered
+// discovery manifest in the output dir) could point sourceFile1/2 at an absolute
+// path outside the run (e.g. another order's data or a system file) and have it
+// copied in as the sample's reads. Mirrors assertSourceInsideRun in
+// pending-writebacks.ts, which guards the staged-promote path.
+function assertSourceInsideRun(runFolder: string | null, sourcePath: string): void {
+  if (!runFolder) {
+    throw new Error("run folder is not available");
+  }
+  const resolvedRunFolder = path.resolve(runFolder);
+  const resolvedSource = path.resolve(sourcePath);
+  if (
+    resolvedSource !== resolvedRunFolder &&
+    !resolvedSource.startsWith(`${resolvedRunFolder}${path.sep}`)
+  ) {
+    throw new Error(`source file is outside the run folder: ${sourcePath}`);
+  }
+}
+
 async function replaceSampleReads(
   sampleId: string,
   dataBasePath: string,
@@ -189,56 +209,60 @@ async function replaceSampleReads(
       dataClass: true,
     },
   });
-  const protectedReads = existingReads.filter((read) =>
-    isProtectedReadDataClass(read.dataClass)
-  );
-  const deletableReads = existingReads.filter((read) =>
-    !isProtectedReadDataClass(read.dataClass)
+  // Protected raw/unknown reads are preserved (kept active and untouched); only
+  // non-protected reads (e.g. previously written cleaned reads) are replaced.
+  const deletableReads = existingReads.filter(
+    (read) => !isProtectedReadDataClass(read.dataClass)
   );
 
+  // Create the new active read and remove the replaced rows in one transaction
+  // so a crash can never leave the sample with no active read. The new read's
+  // files are already copied to storage by the caller, so the row points at
+  // on-disk data the moment it is created.
+  const newRead = await db.$transaction(async (tx) => {
+    const created = await tx.read.create({
+      data: {
+        sampleId,
+        file1: readData.file1,
+        file2: readData.file2,
+        checksum1: readData.checksum1 ?? null,
+        checksum2: readData.checksum2 ?? null,
+        readCount1: readData.readCount1 ?? null,
+        readCount2: readData.readCount2 ?? null,
+        avgQuality1: readData.avgQuality1 ?? null,
+        avgQuality2: readData.avgQuality2 ?? null,
+        fastqcReport1: readData.fastqcReport1 ?? null,
+        fastqcReport2: readData.fastqcReport2 ?? null,
+        pipelineRunId: readData.pipelineRunId ?? null,
+        pipelineSources: readData.pipelineSources ?? null,
+        dataClass: normalizeReadDataClass(readData.dataClass),
+        dataClassSource: 'pipeline',
+        isActive: true,
+        classifiedAt: new Date(),
+      },
+    });
+
+    if (deletableReads.length > 0) {
+      await tx.read.deleteMany({
+        where: { id: { in: deletableReads.map((read) => read.id) } },
+      });
+    }
+
+    return created;
+  });
+
+  // Delete the replaced files only after the new read row is committed, and
+  // never delete a path the new read itself now points at (an in-place rewrite).
+  const newReadFiles = new Set(
+    [newRead.file1, newRead.file2].filter((value): value is string => Boolean(value))
+  );
   for (const read of deletableReads) {
-    await safeDeleteReadFile(dataBasePath, read.file1);
-    await safeDeleteReadFile(dataBasePath, read.file2);
-  }
-
-  await db.read.updateMany({
-    where: { sampleId },
-    data: { isActive: false },
-  });
-
-  if (deletableReads.length > 0) {
-    await db.read.deleteMany({
-      where: { id: { in: deletableReads.map((read) => read.id) } },
-    });
-  }
-
-  const newRead = await db.read.create({
-    data: {
-      sampleId,
-      file1: readData.file1,
-      file2: readData.file2,
-      checksum1: readData.checksum1 ?? null,
-      checksum2: readData.checksum2 ?? null,
-      readCount1: readData.readCount1 ?? null,
-      readCount2: readData.readCount2 ?? null,
-      avgQuality1: readData.avgQuality1 ?? null,
-      avgQuality2: readData.avgQuality2 ?? null,
-      fastqcReport1: readData.fastqcReport1 ?? null,
-      fastqcReport2: readData.fastqcReport2 ?? null,
-      pipelineRunId: readData.pipelineRunId ?? null,
-      pipelineSources: readData.pipelineSources ?? null,
-      dataClass: normalizeReadDataClass(readData.dataClass),
-      dataClassSource: 'pipeline',
-      isActive: true,
-      classifiedAt: new Date(),
-    },
-  });
-
-  if (protectedReads.length > 0) {
-    await db.read.updateMany({
-      where: { id: { in: protectedReads.map((read) => read.id) } },
-      data: { supersededByReadId: newRead.id },
-    });
+    if (read.file1 && !newReadFiles.has(read.file1)) {
+      await safeDeleteReadFile(dataBasePath, read.file1);
+    }
+    if (read.file2 && !newReadFiles.has(read.file2)) {
+      await safeDeleteReadFile(dataBasePath, read.file2);
+    }
   }
 }
 
@@ -518,6 +542,26 @@ async function updateSampleRead(
     // the run folder as an artifact but doesn't become active.
     if (!replaceExisting && sampleAlreadyHasReads) {
       return { success: true, skipped: true };
+    }
+
+    // Confirm the source files come from this run's folder before copying them
+    // into the sample's permanent storage.
+    const runRecord = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { runFolder: true },
+    });
+    try {
+      assertSourceInsideRun(runRecord?.runFolder ?? null, sourceFile1!);
+      if (file2 && sourceFile2) {
+        assertSourceInsideRun(runRecord?.runFolder ?? null, sourceFile2);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Sample read output ${file.name}: ${
+          error instanceof Error ? error.message : "source outside run folder"
+        }`,
+      };
     }
 
     try {

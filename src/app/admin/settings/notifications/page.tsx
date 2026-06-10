@@ -9,6 +9,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { HelpBox } from "@/components/ui/help-box";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 
 type EmailNotificationSettings = {
   enabled: boolean;
@@ -119,8 +121,11 @@ export default function AdminNotificationSettingsPage() {
       setSettings(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      toast.success("Notification settings saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save notification settings");
+      const message = err instanceof Error ? err.message : "Failed to save notification settings";
+      setError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -138,8 +143,11 @@ export default function AdminNotificationSettingsPage() {
       if (!response.ok) throw new Error(payload.error || "Failed to send test notification");
       setTestSent(true);
       setTimeout(() => setTestSent(false), 3000);
+      toast.success("Test notification sent");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send test notification");
+      const message = err instanceof Error ? err.message : "Failed to send test notification";
+      setError(message);
+      toast.error(message);
     } finally {
       setTesting(false);
     }
@@ -220,14 +228,7 @@ export default function AdminNotificationSettingsPage() {
   }
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Loading...</span>
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

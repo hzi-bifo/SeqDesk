@@ -6,6 +6,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  interactive-wizard-test:
+    # Fast unit test of the installer's --interactive guided wizard. Sources the
+    # installer in library-only mode and drives the wizard with scripted input
+    # (no real install/DB), so it runs in seconds and gates every push.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run interactive wizard test
+        run: bash scripts/ci/test-interactive-wizard.sh
+
   build-public-release-artifact:
     runs-on: ubuntu-latest
     timeout-minutes: 45

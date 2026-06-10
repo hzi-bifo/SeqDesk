@@ -42,6 +42,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 
 interface Admin {
   id: string;
@@ -193,13 +195,13 @@ export default function AdminAccountsPage() {
   const handleCreateInvite = async () => {
     const trimmedEmail = inviteEmail.trim().toLowerCase();
     if (trimmedEmail && !EMAIL_PATTERN.test(trimmedEmail)) {
-      notifyPanel.error("Please enter a valid email address");
+      toast.error("Please enter a valid email address");
       return;
     }
 
     const expiresInDays = Number.parseInt(inviteExpires, 10);
     if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 30) {
-      notifyPanel.error("Please select a valid expiration period");
+      toast.error("Please select a valid expiration period");
       return;
     }
 
@@ -231,9 +233,9 @@ export default function AdminAccountsPage() {
       setCreateDialogOpen(false);
       setInviteEmail("");
       setInviteExpires("7");
-      notifyPanel.success("Invite created successfully");
+      toast.success("Invite created successfully");
     } catch (error) {
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to create invite"
       );
     } finally {
@@ -261,9 +263,9 @@ export default function AdminAccountsPage() {
       setInvites((prev) => prev.filter((invite) => invite.id !== inviteToDelete.id));
       setDeleteDialogOpen(false);
       setInviteToDelete(null);
-      notifyPanel.success("Invite revoked");
+      toast.success("Invite revoked");
     } catch (error) {
-      notifyPanel.error(error instanceof Error ? error.message : "Failed to revoke invite");
+      toast.error(error instanceof Error ? error.message : "Failed to revoke invite");
     } finally {
       setDeleting(false);
     }
@@ -273,12 +275,12 @@ export default function AdminAccountsPage() {
     const link = `${window.location.origin}/register/admin?code=${code}`;
     try {
       await navigator.clipboard.writeText(link);
-      notifyPanel.success("Invite link copied");
+      toast.success("Invite link copied");
     } catch {
       if (fallbackCopyText(link)) {
-        notifyPanel.success("Invite link copied");
+        toast.success("Invite link copied");
       } else {
-        notifyPanel.error("Failed to copy invite link");
+        toast.error("Failed to copy invite link");
       }
     }
   };
@@ -286,12 +288,12 @@ export default function AdminAccountsPage() {
   const copyInviteCode = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
-      notifyPanel.success("Invite code copied");
+      toast.success("Invite code copied");
     } catch {
       if (fallbackCopyText(code)) {
-        notifyPanel.success("Invite code copied");
+        toast.success("Invite code copied");
       } else {
-        notifyPanel.error("Failed to copy invite code");
+        toast.error("Failed to copy invite code");
       }
     }
   };
@@ -310,10 +312,11 @@ export default function AdminAccountsPage() {
       if (!res.ok) {
         throw new Error("Failed to save setting");
       }
+      toast.success(`Department sharing ${enabled ? "enabled" : "disabled"}`);
     } catch (error) {
       console.error("Failed to save setting:", error);
       setDepartmentSharing(!enabled);
-      notifyPanel.error("Failed to save setting");
+      toast.error("Failed to save setting");
     } finally {
       setSavingAccess(false);
     }
@@ -333,21 +336,18 @@ export default function AdminAccountsPage() {
       if (!res.ok) {
         throw new Error("Failed to save setting");
       }
+      toast.success(`Assembly download ${enabled ? "enabled" : "disabled"}`);
     } catch (error) {
       console.error("Failed to save setting:", error);
       setAllowUserAssemblyDownload(!enabled);
-      notifyPanel.error("Failed to save setting");
+      toast.error("Failed to save setting");
     } finally {
       setSavingAccess(false);
     }
   };
 
   if (loading) {
-    return (
-      <PageContainer className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   if (status !== "loading" && (!session || session.user.role !== "FACILITY_ADMIN")) {
@@ -601,6 +601,7 @@ export default function AdminAccountsPage() {
                           setInviteToDelete(invite);
                           setDeleteDialogOpen(true);
                         }}
+                        aria-label="Revoke invite"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>

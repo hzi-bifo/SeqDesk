@@ -61,6 +61,8 @@ import {
   isStudyChecklistTypeId,
   normalizeStudyChecklistType,
 } from "@/lib/studies/checklist-types";
+import { PageNotice } from "@/components/ui/page-notice";
+import { toast } from "@/components/ui/toast";
 import { notifyPanel } from "@/lib/notifications/client";
 
 // Per-sample field definition
@@ -1626,9 +1628,12 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         }
       }
 
+      toast.success("Study updated");
       router.push(`/studies/${activeStudyId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update study");
+      const message = err instanceof Error ? err.message : "Failed to update study";
+      toast.error(message);
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -2471,8 +2476,10 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         </div>
 
         {error && (
-          <div className="mb-6 shrink-0 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
-            {error}
+          <div className="mb-6 shrink-0">
+            <PageNotice variant="error" title="Check this step">
+              {error}
+            </PageNotice>
           </div>
         )}
 

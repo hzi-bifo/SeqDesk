@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "@/components/ui/toast";
 import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square, Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
@@ -249,10 +250,20 @@ export default function AnalysisDashboardPage() {
       const res = await fetch(`/api/pipelines/runs/${stopTarget.id}`, {
         method: "DELETE",
       });
-      if (res.ok) {
-        setStopTarget(null);
-        mutate();
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(payload?.error || "Failed to stop run");
+        return;
       }
+      if (payload?.alreadyFinalized) {
+        toast.info(`Run already finished (${payload.status ?? "done"})`);
+      } else {
+        toast.success("Run cancelled");
+      }
+      setStopTarget(null);
+      mutate();
+    } catch {
+      toast.error("Failed to stop run");
     } finally {
       setStopping(false);
     }

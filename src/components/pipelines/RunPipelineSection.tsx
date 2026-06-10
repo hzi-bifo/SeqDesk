@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/toast";
 import {
   Collapsible,
   CollapsibleContent,
@@ -130,6 +131,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
     runNumber?: string;
     error?: string;
     details?: string[];
+    warnings?: string[];
   } | null>(null);
   const [prerequisites, setPrerequisites] = useState<PrerequisiteResult | null>(null);
   const [loadingPrereqs, setLoadingPrereqs] = useState(false);
@@ -417,16 +419,26 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
         return;
       }
 
+      const warnings = Array.isArray((startData as { warnings?: unknown }).warnings)
+        ? ((startData as { warnings?: string[] }).warnings as string[])
+        : [];
       setRunResult({
         success: true,
         runId,
         runNumber: String((startData as { runNumber?: number }).runNumber || (createData as { run?: { runNumber?: number } }).run?.runNumber || ''),
+        warnings,
       });
+      if (warnings.length > 0) {
+        toast.warning(`Pipeline started — ${warnings.length} sample(s) skipped`, {
+          description: warnings[0],
+        });
+      } else {
+        toast.success("Pipeline run started");
+      }
     } catch (err) {
-      setRunResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to start pipeline",
-      });
+      const message = err instanceof Error ? err.message : "Failed to start pipeline";
+      setRunResult({ success: false, error: message });
+      toast.error(message);
     } finally {
       setRunning(false);
     }
@@ -439,7 +451,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
       case "fail":
         return <XCircle className="h-4 w-4 text-red-600" />;
       case "warning":
-        return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
+        return <AlertTriangle className="h-4 w-4 text-amber-600" />;
       default:
         return <AlertCircle className="h-4 w-4 text-gray-400" />;
     }
@@ -480,7 +492,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                     </p>
                   ))}
                   {warnings.map((issue, i) => (
-                    <p key={i} className="text-sm text-yellow-600 flex items-center gap-1">
+                    <p key={i} className="text-sm text-amber-600 flex items-center gap-1">
                       <AlertTriangle className="h-4 w-4" />
                       {issue.message}
                     </p>
@@ -497,8 +509,8 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
             Checking system...
           </div>
         ) : systemReady && !systemReady.ready ? (
-          <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200">
-            <p className="text-sm text-yellow-800 flex items-center gap-2">
+          <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <p className="text-sm text-amber-800 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4" />
               {systemReady.summary}
             </p>
@@ -588,6 +600,18 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                         Your pipeline is now queued and will start processing shortly.
                         You can monitor progress in the Analysis section.
                       </p>
+                      {runResult.warnings && runResult.warnings.length > 0 && (
+                        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left">
+                          <p className="text-sm font-medium text-amber-700">
+                            {runResult.warnings.length} sample(s) were skipped
+                          </p>
+                          <ul className="mt-1 list-disc pl-4 text-xs text-amber-700/90">
+                            {runResult.warnings.map((warning, i) => (
+                              <li key={i}>{warning}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div className="mt-4 flex flex-col gap-2">
                         <Link
                           href={
@@ -689,7 +713,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                               check.status === "fail"
                                 ? "bg-red-50"
                                 : check.status === "warning"
-                                ? "bg-yellow-50"
+                                ? "bg-amber-500/10"
                                 : ""
                             }`}
                           >
@@ -739,7 +763,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                         ) : metadataValidation.issues.some(i => i.severity === "error") ? (
                           <XCircle className="h-4 w-4 text-red-600" />
                         ) : (
-                          <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                          <AlertTriangle className="h-4 w-4 text-amber-600" />
                         )}
                         <span className="text-sm font-medium">Study Metadata</span>
                         {metadataValidation.metadata.platform && (
@@ -754,7 +778,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                             <div
                               key={i}
                               className={`text-sm flex items-center gap-2 ${
-                                issue.severity === "error" ? "text-red-600" : "text-yellow-600"
+                                issue.severity === "error" ? "text-red-600" : "text-amber-600"
                               }`}
                             >
                               {issue.severity === "error" ? (

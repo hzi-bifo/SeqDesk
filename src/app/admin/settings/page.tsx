@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { notifyPanel, refreshPanelNotifications } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
 import {
   AlertTriangle,
   ArrowRight,
@@ -245,6 +247,7 @@ function getGemmaFixtureBadge(state: GemmaFixtureDisplayState) {
 }
 
 export default function SettingsPage() {
+  const confirm = useConfirm();
   const [detectedVersions, setDetectedVersions] = useState<ToolVersions>({});
   const [detectingVersions, setDetectingVersions] = useState(false);
   const [versionsLoaded, setVersionsLoaded] = useState(false);
@@ -684,11 +687,11 @@ export default function SettingsPage() {
           throw new Error(payload?.error || "Failed to save workspace settings");
         }
 
-        notifyPanel.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
+        toast.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
       } catch (error) {
         console.error("Failed to save workspace settings:", error);
         setOrderNotesEnabled(previousValue);
-        notifyPanel.error(
+        toast.error(
           error instanceof Error ? error.message : "Failed to save workspace settings"
         );
       } finally {
@@ -734,11 +737,11 @@ export default function SettingsPage() {
         const data = (await res.json()) as TelemetrySettingsResponse;
         setTelemetrySettings(data);
         setTelemetryError(null);
-        notifyPanel.success(`Telemetry ${enabled ? "enabled" : "disabled"}`);
+        toast.success(`Telemetry ${enabled ? "enabled" : "disabled"}`);
       } catch (error) {
         console.error("Failed to save telemetry settings:", error);
         setTelemetrySettings(previousValue);
-        notifyPanel.error(
+        toast.error(
           error instanceof Error ? error.message : "Failed to save telemetry settings"
         );
       } finally {
@@ -774,11 +777,11 @@ export default function SettingsPage() {
       const data = (await res.json()) as TelemetrySettingsResponse;
       setTelemetrySettings(data);
       setTelemetryError(null);
-      notifyPanel.success("Telemetry kept disabled");
+      toast.success("Telemetry kept disabled");
     } catch (error) {
       console.error("Failed to save telemetry settings:", error);
       setTelemetrySettings(previousValue);
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to save telemetry settings"
       );
     } finally {
@@ -798,11 +801,11 @@ export default function SettingsPage() {
       if (!res.ok || payload?.success === false) {
         throw new Error(payload?.error || payload?.reason || "Failed to send telemetry");
       }
-      notifyPanel.success("Telemetry heartbeat sent");
+      toast.success("Telemetry heartbeat sent");
       await fetchTelemetrySettings();
     } catch (error) {
       console.error("Failed to send telemetry:", error);
-      notifyPanel.error(error instanceof Error ? error.message : "Failed to send telemetry");
+      toast.error(error instanceof Error ? error.message : "Failed to send telemetry");
       await fetchTelemetrySettings();
     } finally {
       setTestingTelemetry(false);
@@ -889,12 +892,12 @@ export default function SettingsPage() {
             platform.fromConfiguredDevice ? "" : " (default)"
           }`
         : "";
-      notifyPanel.success(
+      toast.success(
         `Seeded ${payload?.ordersCreated ?? 0} orders, ${payload?.samplesCreated ?? 0} samples, ${payload?.readsCreated ?? 0} reads (${payload?.filesCreated ?? 0} FASTQ files)${platformLabel}`
       );
       await fetchSeedStatus();
     } catch (error) {
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to seed dummy data"
       );
     } finally {
@@ -921,15 +924,15 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to seed Gemma dataset");
       }
       if (payload?.started) {
-        notifyPanel.success("Gemma MetaxPath dataset load started");
+        toast.success("Gemma MetaxPath dataset load started");
       } else {
-        notifyPanel.success(
+        toast.success(
           `Gemma MetaxPath dataset loaded: ${payload?.samplesCount ?? 0} samples, ${payload?.readsCount ?? 0} read sets`
         );
       }
       await fetchGemmaSeedStatus();
     } catch (error) {
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to seed Gemma dataset"
       );
     } finally {
@@ -947,7 +950,7 @@ export default function SettingsPage() {
       if (!res.ok) {
         throw new Error(payload?.error || "Failed to wipe seeded data");
       }
-      notifyPanel.success(
+      toast.success(
         `Removed ${payload?.ordersDeleted ?? 0} seeded order${
           payload?.ordersDeleted === 1 ? "" : "s"
         } and the seeded study + files`
@@ -955,7 +958,7 @@ export default function SettingsPage() {
       setWipeDialogOpen(false);
       await fetchSeedStatus();
     } catch (error) {
-      notifyPanel.error(
+      toast.error(
         error instanceof Error ? error.message : "Failed to wipe seeded data"
       );
     } finally {
@@ -989,7 +992,7 @@ export default function SettingsPage() {
       setProfileReloadResult(payload);
       setProfileAccessCode("");
       setProfileReloadDialogOpen(false);
-      notifyPanel.success(
+      toast.success(
         `Hosted profile ${payload?.profile?.id || currentInstallProfile.id} applied`
       );
       await Promise.all([
@@ -1005,7 +1008,7 @@ export default function SettingsPage() {
         error instanceof Error ? error.message : "Failed to reload hosted profile";
       console.error("Failed to reload hosted profile:", error);
       setProfileReloadResult({ success: false, error: message });
-      notifyPanel.error(message);
+      toast.error(message);
     } finally {
       setReloadingHostedProfile(false);
     }
@@ -1159,15 +1162,15 @@ export default function SettingsPage() {
       }
       await navigator.clipboard.writeText(text);
       setDiagnosticsText(null);
-      notifyPanel.success("Diagnostics copied");
+      toast.success("Diagnostics copied");
     } catch {
       if (fallbackCopyText(text)) {
         setDiagnosticsText(null);
-        notifyPanel.success("Diagnostics copied");
+        toast.success("Diagnostics copied");
         return;
       }
       setDiagnosticsText(text);
-      notifyPanel.info("Clipboard blocked. Diagnostics are shown below.");
+      toast.info("Clipboard blocked. Diagnostics are shown below.");
     }
   }, [
     accessError,
@@ -1268,21 +1271,38 @@ export default function SettingsPage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      repair
-        ? `Retry the failed update repair for v${targetVersion}?\n\n` +
-          `This will reinstall runtime dependencies, regenerate Prisma, run migrations, and restart the server.`
-        : (
-          `Update to v${updateInfo!.latest!.version}?\n\n` +
-          `This will:\n` +
-          `1. Download the new version\n` +
-          `2. Run PostgreSQL migrations\n` +
-          `3. Install the update\n` +
-          `4. Restart the server\n\n` +
-          `Ensure you have a recent database backup before continuing.\n\n` +
-          `The app will be unavailable for a few seconds during restart.`
-        )
-    );
+    const confirmed = repair
+      ? await confirm({
+          title: `Retry the failed update repair for v${targetVersion}?`,
+          description:
+            "This will reinstall runtime dependencies, regenerate Prisma, run migrations, and restart the server.",
+          confirmLabel: "Retry repair",
+          variant: "destructive",
+        })
+      : await confirm({
+          title: `Update to v${updateInfo!.latest!.version}?`,
+          description: (
+            <>
+              This will:
+              <br />
+              1. Download the new version
+              <br />
+              2. Run PostgreSQL migrations
+              <br />
+              3. Install the update
+              <br />
+              4. Restart the server
+              <br />
+              <br />
+              Ensure you have a recent database backup before continuing.
+              <br />
+              <br />
+              The app will be unavailable for a few seconds during restart.
+            </>
+          ),
+          confirmLabel: "Update",
+          variant: "destructive",
+        });
     if (!confirmed) return;
 
     setUpdateStatus({
@@ -1317,7 +1337,7 @@ export default function SettingsPage() {
     } catch (error) {
       console.error("Update failed:", error);
       const message = error instanceof Error ? error.message : "Update failed";
-      notifyPanel.error(message);
+      toast.error(message);
       setUpdateStatus({
         status: "error",
         progress: 0,
@@ -1340,12 +1360,12 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Failed to clear update status");
       }
       setUpdateStatus(null);
-      notifyPanel.success("Failed update status cleared");
+      toast.success("Failed update status cleared");
       await Promise.all([fetchUpdateStatus(), checkForUpdates(true)]);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to clear update status";
-      notifyPanel.error(message);
+      toast.error(message);
     }
   };
 
@@ -1361,11 +1381,13 @@ export default function SettingsPage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Roll back to the previous SeqDesk release?\n\n` +
-      `This switches the active release pointer back and restarts SeqDesk. ` +
-      `Database migrations are not rolled back.`
-    );
+    const confirmed = await confirm({
+      title: "Roll back to the previous SeqDesk release?",
+      description:
+        "This switches the active release pointer back and restarts SeqDesk. Database migrations are not rolled back.",
+      confirmLabel: "Roll back",
+      variant: "destructive",
+    });
     if (!confirmed) return;
 
     setUpdateStatus({
@@ -1392,7 +1414,7 @@ export default function SettingsPage() {
     } catch (error) {
       console.error("Rollback failed:", error);
       const message = error instanceof Error ? error.message : "Rollback failed";
-      notifyPanel.error(message);
+      toast.error(message);
       setUpdateStatus({
         status: "error",
         progress: 0,

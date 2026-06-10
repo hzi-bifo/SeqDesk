@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { randomUUID } from "crypto";
 
 export interface StoreFileEntry {
   path: string;
@@ -132,15 +133,44 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-export async function installPackageDirectory(
+// Serializes installs/updates per package directory within this process so two
+// concurrent admin requests cannot interleave the rename dance in
+// performPackageInstall (which would leave the package missing or half-replaced).
+const installChains = new Map<string, Promise<unknown>>();
+
+export function installPackageDirectory(
+  pipelinesDir: string,
+  pipelineId: string,
+  writer: (tempDir: string) => Promise<void>
+): Promise<"install" | "update"> {
+  const key = path.resolve(pipelinesDir, pipelineId);
+  const run = (installChains.get(key) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => performPackageInstall(pipelinesDir, pipelineId, writer));
+  installChains.set(key, run);
+  // Drop the chain entry once it settles so the map does not grow unbounded.
+  run
+    .finally(() => {
+      if (installChains.get(key) === run) {
+        installChains.delete(key);
+      }
+    })
+    .catch(() => {});
+  return run;
+}
+
+async function performPackageInstall(
   pipelinesDir: string,
   pipelineId: string,
   writer: (tempDir: string) => Promise<void>
 ): Promise<"install" | "update"> {
   const pipelineDir = path.join(pipelinesDir, pipelineId);
   const exists = await pathExists(pipelineDir);
-  const tempDir = path.join(pipelinesDir, `${pipelineId}.__tmp-${Date.now()}`);
-  const backupDir = path.join(pipelinesDir, `${pipelineId}.__backup-${Date.now()}`);
+  // Use a unique suffix so two installs that start in the same millisecond do not
+  // collide on the same temp/backup paths.
+  const unique = randomUUID();
+  const tempDir = path.join(pipelinesDir, `${pipelineId}.__tmp-${unique}`);
+  const backupDir = path.join(pipelinesDir, `${pipelineId}.__backup-${unique}`);
 
   await fs.mkdir(pipelinesDir, { recursive: true });
   await fs.mkdir(tempDir, { recursive: true });

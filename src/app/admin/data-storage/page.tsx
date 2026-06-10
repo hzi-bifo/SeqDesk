@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { notifyPanel } from "@/lib/notifications/client";
+import { toast } from "@/components/ui/toast";
+import { PageLoader } from "@/components/ui/page-loader";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Label } from "@/components/ui/label";
@@ -87,7 +89,7 @@ export default function DataStoragePage() {
 
   const handleTestPath = async () => {
     if (!dataBasePath.trim()) {
-      notifyPanel.error("Please enter a directory path first");
+      toast.error("Please enter a directory path first");
       return;
     }
 
@@ -146,11 +148,11 @@ export default function DataStoragePage() {
 
       setSaved(true);
       setPathTestResult(null);
-      notifyPanel.success("Data storage settings saved");
+      toast.success("Data storage settings saved");
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error("Failed to save sequencing files settings:", error);
-      notifyPanel.error(error instanceof Error ? error.message : "Failed to save settings");
+      toast.error(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -164,13 +166,7 @@ export default function DataStoragePage() {
   };
 
   if (loading) {
-    return (
-      <PageContainer>
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      </PageContainer>
-    );
+    return <PageLoader />;
   }
 
   return (

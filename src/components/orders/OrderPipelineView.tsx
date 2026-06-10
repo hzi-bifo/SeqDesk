@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageNotice } from "@/components/ui/page-notice";
+import { toast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,6 +27,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -647,10 +657,16 @@ function PendingWritebackReviewPanel({
       }
       setConfirmOpen(false);
       setReviewChecked(false);
+      const promotedCount = selectedSampleIds.size;
+      toast.success(
+        `Set active reads for ${promotedCount} sample${promotedCount === 1 ? "" : "s"}`
+      );
       await response.mutate();
       onPromoted?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to promote pending outputs");
+      const message = err instanceof Error ? err.message : "Failed to promote pending outputs";
+      onError?.(message);
+      toast.error(message);
     } finally {
       setPromoting(false);
     }
@@ -823,65 +839,73 @@ function PendingWritebackReviewPanel({
         </>
       )}
 
-      {confirmOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
-            <h4 className="text-base font-semibold">
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmOpen(false);
+            setReviewChecked(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
               {review?.confirmTitle ?? "Set as active reads"}
-            </h4>
-            <p className="mt-2 text-sm text-muted-foreground">
+            </DialogTitle>
+            <DialogDescription>
               {review?.confirmDescription ??
                 "This will change which read files SeqDesk uses for delivery and downstream pipelines. Existing raw or unknown reads will be preserved. Existing active cleaned reads will be superseded, not deleted."}{" "}
               This applies to {selectedCount} sample{selectedCount === 1 ? "" : "s"}.
-            </p>
-            <div className="mt-3 max-h-28 overflow-auto rounded-md bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
-              {selectedCandidates.map((candidate) => candidate.sampleCode).join(", ")}
-            </div>
-            <label className="mt-4 flex items-start gap-2 text-sm">
-              <Checkbox
-                aria-label={
-                  review?.reviewedLabel ??
-                  "I reviewed the reports and want to use these read candidates."
-                }
-                checked={reviewChecked}
-                disabled={promoting}
-                onCheckedChange={(checked) => setReviewChecked(Boolean(checked))}
-              />
-              <span>
-                {review?.reviewedLabel ??
-                  "I reviewed the reports and want to use these read candidates."}
-              </span>
-            </label>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={promoting}
-                onClick={() => {
-                  setConfirmOpen(false);
-                  setReviewChecked(false);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={promoting || !reviewChecked}
-                onClick={() => void promoteSelected()}
-              >
-                {promoting ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Set active
-              </Button>
-            </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-28 overflow-auto rounded-md bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
+            {selectedCandidates.map((candidate) => candidate.sampleCode).join(", ")}
           </div>
-        </div>
-      ) : null}
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              aria-label={
+                review?.reviewedLabel ??
+                "I reviewed the reports and want to use these read candidates."
+              }
+              checked={reviewChecked}
+              disabled={promoting}
+              onCheckedChange={(checked) => setReviewChecked(Boolean(checked))}
+            />
+            <span>
+              {review?.reviewedLabel ??
+                "I reviewed the reports and want to use these read candidates."}
+            </span>
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={promoting}
+              onClick={() => {
+                setConfirmOpen(false);
+                setReviewChecked(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={promoting || !reviewChecked}
+              onClick={() => void promoteSelected()}
+            >
+              {promoting ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Set active
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -911,6 +935,7 @@ export function OrderPipelineView({
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
   const [error, setError] = useState("");
+  const confirm = useConfirm();
   const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
   const [loadingMetadata, setLoadingMetadata] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1215,9 +1240,12 @@ export function OrderPipelineView({
         (sample) => sampleIds.includes(sample.id) && sample.read?.isProtectedRaw
       );
       if (protectedSamples.length > 0 && pipeline.pipelineId !== READ_CLEANING_PIPELINE_ID) {
-        const confirmed = window.confirm(
-          `${protectedSamples.length} selected sample${protectedSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination. Continue running ${pipeline.name}?`
-        );
+        const confirmed = await confirm({
+          title: "Run on raw reads?",
+          description: `${protectedSamples.length} selected sample${protectedSamples.length === 1 ? "" : "s"} use raw or unknown reads. Raw reads may still contain human contamination. Continue running ${pipeline.name}?`,
+          confirmLabel: "Run anyway",
+          variant: "destructive",
+        });
         if (!confirmed) return;
       }
       setError("");
@@ -1255,12 +1283,26 @@ export function OrderPipelineView({
           );
         }
 
+        const warnings = Array.isArray(startPayload?.warnings)
+          ? (startPayload.warnings as string[])
+          : [];
+        if (warnings.length > 0) {
+          toast.warning(`Pipeline started — ${warnings.length} sample(s) skipped`, {
+            description: warnings[0],
+          });
+        } else {
+          toast.success("Pipeline run started");
+        }
+
         await runsResponse.mutate();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to start pipeline");
+        const message = err instanceof Error ? err.message : "Failed to start pipeline";
+        setError(message);
+        toast.error(message);
       }
     },
     [
+      confirm,
       executionMode,
       executionTargetBlockMessage,
       isFacilityAdmin,
@@ -1301,10 +1343,13 @@ export function OrderPipelineView({
   const handleStopRun = useCallback(
     async (runId: string) => {
       if (
-        typeof window !== "undefined" &&
-        !window.confirm(
-          "Stop this run? The SLURM/local job will be cancelled and the run marked as cancelled."
-        )
+        !(await confirm({
+          title: "Stop this run?",
+          description:
+            "The SLURM/local job will be cancelled and the run marked as cancelled.",
+          confirmLabel: "Stop run",
+          variant: "destructive",
+        }))
       ) {
         return;
       }
@@ -1314,18 +1359,25 @@ export function OrderPipelineView({
         const res = await fetch(`/api/pipelines/runs/${runId}`, {
           method: "DELETE",
         });
+        const payload = await res.json().catch(() => null);
         if (!res.ok) {
-          const payload = await res.json().catch(() => null);
           throw new Error(getApiErrorMessage(payload, "Failed to stop run"));
+        }
+        if (payload?.alreadyFinalized) {
+          toast.info(`Run already finished (${payload.status ?? "done"})`);
+        } else {
+          toast.success("Run cancelled");
         }
         await runsResponse.mutate();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to stop run");
+        const message = err instanceof Error ? err.message : "Failed to stop run";
+        setError(message);
+        toast.error(message);
       } finally {
         setStoppingRunId(null);
       }
     },
-    [runsResponse]
+    [confirm, runsResponse]
   );
 
   const handleBulkDelete = useCallback(async () => {
@@ -2752,18 +2804,25 @@ export function OrderPipelineView({
       </div>
 
       {/* Delete confirmation dialog */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
-            <h3 className="text-base font-semibold">Delete Pipeline Run</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Are you sure you want to delete run{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
-                {deleteTarget.runNumber}
-              </code>
-              ? This action cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !deletingRun) setDeleteTarget(null);
+        }}
+      >
+        {deleteTarget && (
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete Pipeline Run</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete run{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                  {deleteTarget.runNumber}
+                </code>
+                ? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
               <Button
                 variant="outline"
                 size="sm"
@@ -2785,10 +2844,10 @@ export function OrderPipelineView({
                 )}
                 Delete
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
       {/* Bulk delete confirmation dialog */}
       {/* Run details modal */}
       {detailRun && (() => {
@@ -2798,15 +2857,25 @@ export function OrderPipelineView({
         } catch { /* ignore */ }
 
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
-            <div className={cn("w-full rounded-xl border bg-card p-6 shadow-lg", getPendingWritebackCount(detailRun) > 0 ? "max-w-4xl" : "max-w-2xl")}>
-              <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold">
-                <span>Run Details</span>
-                <code className="min-w-0 max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
-                  {detailRun.runNumber}
-                </code>
-              </h3>
-              <div className="mt-4 space-y-3 text-sm">
+          <Dialog
+            open={Boolean(detailRun)}
+            onOpenChange={(open) => {
+              if (!open) setDetailRun(null);
+            }}
+          >
+            <DialogContent
+              showCloseButton={false}
+              className="!w-[90vw] !max-w-[1200px] max-h-[90vh] overflow-y-auto"
+            >
+              <DialogHeader>
+                <DialogTitle className="flex flex-wrap items-center gap-2">
+                  <span>Run Details</span>
+                  <code className="min-w-0 max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs font-mono font-normal">
+                    {detailRun.runNumber}
+                  </code>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Status:</span>
                   {getStatusBadge(detailRun.status)}
@@ -2923,7 +2992,7 @@ export function OrderPipelineView({
                   onError={setError}
                 />
               </div>
-              <div className="mt-4 flex justify-end">
+              <DialogFooter>
                 <Button
                   variant="outline"
                   size="sm"
@@ -2931,30 +3000,35 @@ export function OrderPipelineView({
                 >
                   Close
                 </Button>
-              </div>
-            </div>
-          </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         );
       })()}
       {/* Change source modal */}
-      {changeSourceSample && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
-            <h3 className="text-base font-semibold">
-              Change Source
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Select which pipeline run provides results for{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
-                {changeSourceSample.sampleId}
-              </code>
-            </p>
+      <Dialog
+        open={Boolean(changeSourceSample)}
+        onOpenChange={(open) => {
+          if (!open && !changingSource) setChangeSourceSample(null);
+        }}
+      >
+        {changeSourceSample && (
+          <DialogContent showCloseButton={false} className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Change Source</DialogTitle>
+              <DialogDescription>
+                Select which pipeline run provides results for{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                  {changeSourceSample.sampleId}
+                </code>
+              </DialogDescription>
+            </DialogHeader>
             {completedRunsForSample.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No completed runs available for this sample.
               </p>
             ) : (
-              <div className="mt-4 max-h-64 space-y-1 overflow-y-auto">
+              <div className="max-h-64 space-y-1 overflow-y-auto">
                 {completedRunsForSample.map((run) => {
                   const isCurrent = run.id === changeSourceSample.currentRunId;
                   return (
@@ -2995,7 +3069,7 @@ export function OrderPipelineView({
                 })}
               </div>
             )}
-            <div className="mt-4 flex justify-end">
+            <DialogFooter>
               <Button
                 variant="outline"
                 size="sm"
@@ -3011,45 +3085,50 @@ export function OrderPipelineView({
                   "Close"
                 )}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showBulkDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
-            <h3 className="text-base font-semibold">Delete Pipeline Runs</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
+      <Dialog
+        open={showBulkDeleteConfirm}
+        onOpenChange={(open) => {
+          if (!open && !bulkDeleting) setShowBulkDeleteConfirm(false);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Pipeline Runs</DialogTitle>
+            <DialogDescription>
               Are you sure you want to delete{" "}
               <strong>{selectedRunIds.size}</strong> run{selectedRunIds.size !== 1 ? "s" : ""}?
               This action cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowBulkDeleteConfirm(false)}
-                disabled={bulkDeleting}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={bulkDeleting}
-                onClick={() => void handleBulkDelete()}
-              >
-                {bulkDeleting ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? "s" : ""}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowBulkDeleteConfirm(false)}
+              disabled={bulkDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={bulkDeleting}
+              onClick={() => void handleBulkDelete()}
+            >
+              {bulkDeleting ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* HTML Report Preview Modal */}
       {previewFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
