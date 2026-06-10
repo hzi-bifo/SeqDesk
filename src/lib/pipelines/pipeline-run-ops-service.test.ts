@@ -876,6 +876,49 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     expect(result.body.synced).toBe(true);
   });
 
+  it('keeps an already-completed run completed when the trace is finished and only the wrapper job lingers', async () => {
+    // Regression: forceRunningFromQueue must NOT demote a run that was ALREADY completed
+    // when the trace shows the work is finished (overallProgress 100, no running task) and
+    // only the SEQDESK_SLURM_INLINE_EXECUTOR wrapper job is momentarily still active. The
+    // defined-step accounting (getStepsForPipeline) not name-matching the trace task list
+    // must not, on its own, un-complete a finished run. Surfaced by metaxpath + reads-qc,
+    // whose trace task names don't all map to package step defs (traceCompletedKnownWork
+    // is false even at 100%).
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...traceRun,
+      status: 'completed',
+      completedAt: new Date('2026-03-03T11:00:00Z'),
+    });
+    // Defined steps the trace task names don't match => completedKnownSteps < totalSteps
+    // => traceCompletedKnownWork is false even though the workflow is at 100%.
+    mocks.getStepsForPipeline.mockReturnValue([
+      { id: 'STEP_A', name: 'Step A' },
+      { id: 'STEP_B', name: 'Step B' },
+    ]);
+    // Scheduler still reports the wrapper job RUNNING (queueIsActive = true).
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      if (file === 'squeue') {
+        callback(null, { stdout: 'RUNNING|\n', stderr: '' });
+      } else {
+        callback(new Error('no sacct'));
+      }
+    });
+    // Trace: every task COMPLETED, overall 100, nothing running.
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'CLASSIFY', status: 'COMPLETED', complete: new Date('2026-03-03T11:00:00Z') }],
+        overallProgress: 100,
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0]?.[0];
+    // Must stay completed: status not flipped to running, completedAt preserved.
+    expect(update?.data?.status).not.toBe('running');
+    expect(update?.data?.completedAt ?? undefined).not.toBeNull();
+  });
+
   it('holds a completed mag trace run running when materialized outputs are empty', async () => {
     // Start from "queued" so the demotion to running is recorded in updateData.
     mocks.db.pipelineRun.findUnique.mockResolvedValue({

@@ -1461,16 +1461,23 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     statusDeterminedByQueue = true;
   }
 
-  // A terminal run is protected from queue re-activation ONLY when the trace agrees
-  // the work is actually finished. If the scheduler still reports the job active AND
-  // the trace shows work outstanding (partial known steps), the "terminal" status was
-  // premature, so demote it back to running. The bug-#5 guard still holds for the
-  // genuine case (a complete trace + a momentarily-lingering wrapper job must stay
-  // completed, not flip back to running and lose its completedAt).
+  // A terminal run is demoted back to running ONLY when the trace shows work GENUINELY
+  // outstanding — a running/submitted task or sub-100% progress. If the scheduler still
+  // reports the job active AND the trace shows real outstanding work, the "terminal"
+  // status was premature, so demote it (the 4a0ef08 case). But the defined-step
+  // accounting (getStepsForPipeline) NOT name-matching the trace must NOT, on its own,
+  // un-complete a finished run: a complete trace (progress 100, nothing running) + a
+  // momentarily-lingering inline-executor wrapper job must stay completed and keep its
+  // completedAt (bug #5's guarantee). `!traceCompletedKnownWork` alone broke that for
+  // completes-style / private pipelines (metaxpath, reads-qc) whose trace task names
+  // differ from their step defs, so a lingering wrapper un-completed a genuinely finished
+  // run. Non-terminal runs keep the original behaviour: an active scheduler outranks a
+  // complete trace.
+  const traceShowsOutstandingWork = hasRunning || traceResult.overallProgress < 100;
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
     queueIsActive &&
-    (!runWasTerminal || !traceCompletedKnownWork);
+    (!runWasTerminal || traceShowsOutstandingWork);
   if (forceRunningFromQueue) {
     nextStatus = 'running';
     statusDeterminedByQueue = true;
