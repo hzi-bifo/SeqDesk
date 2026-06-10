@@ -12,7 +12,7 @@ import {
 
 const DEFAULT_REMOTE_TECH_SYNC_URL =
   process.env.SEQDESK_API_URL ||
-  "https://www.seqdesk.com/api/registry/sequencing-tech";
+  "https://seqdesk.org/api/registry/sequencing-tech";
 const DEFAULTS_PATH = path.join(
   process.cwd(),
   "data",

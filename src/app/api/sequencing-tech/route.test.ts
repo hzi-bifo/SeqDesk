@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/sequencing-tech/config", () => ({
   getDefaultTechSyncUrl: mocks.getDefaultTechSyncUrl.mockReturnValue(
-    "https://seqdesk.com/api/registry/sequencing-tech"
+    "https://seqdesk.org/api/registry/sequencing-tech"
   ),
   parseTechConfig: mocks.parseTechConfig,
   withResolvedTechAssetUrls: mocks.withResolvedTechAssetUrls,
@@ -38,7 +38,7 @@ const baseConfig = {
   software: [],
   barcodeSchemes: [],
   barcodeSets: [],
-  syncUrl: "https://seqdesk.com/api/registry/sequencing-tech",
+  syncUrl: "https://seqdesk.org/api/registry/sequencing-tech",
 };
 
 describe("GET /api/sequencing-tech", () => {
@@ -126,7 +126,7 @@ describe("GET /api/sequencing-tech", () => {
 
     const body = await res.json();
     expect(fetch).toHaveBeenCalledWith(
-      "https://seqdesk.com/api/registry/sequencing-tech",
+      "https://seqdesk.org/api/registry/sequencing-tech",
       expect.objectContaining({
         headers: { Accept: "application/json" },
         next: { revalidate: 0 },

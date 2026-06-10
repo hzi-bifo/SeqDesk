@@ -55,7 +55,7 @@ describe("install-dist release parser", () => {
   it("parses direct release payloads", () => {
     const result = runInstallerParser({
       version: "1.2.3",
-      downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+      downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
       checksum: "sha256:deadbeef",
       size: 1048576,
     });
@@ -65,7 +65,7 @@ describe("install-dist release parser", () => {
       parseInstallerFields(result.stdout)
     ).toEqual({
       version: "1.2.3",
-      downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+      downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
       checksum: "sha256:deadbeef",
       size: "1048576",
       endMarker: "__SEQDESK_VERSION_INFO_END__",

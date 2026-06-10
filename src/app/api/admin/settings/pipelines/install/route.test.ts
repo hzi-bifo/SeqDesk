@@ -101,9 +101,9 @@ describe("POST /api/admin/settings/pipelines/install", () => {
           version: "3.0.0",
           source: {
             kind: "registry",
-            sourceId: "registry:https://seqdesk.com/api/registry",
+            sourceId: "registry:https://seqdesk.org/api/registry",
             label: "SeqDesk Registry",
-            downloadUrl: "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download",
+            downloadUrl: "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download",
           },
         }),
       })
@@ -144,9 +144,9 @@ describe("POST /api/admin/settings/pipelines/install", () => {
           pipelineId: "private-pipe",
           source: {
             kind: "privateRegistry",
-            sourceId: "registry:https://seqdesk.com/api/registry",
+            sourceId: "registry:https://seqdesk.org/api/registry",
             label: "SeqDesk Registry",
-            packageUrlDefault: "https://seqdesk.com/api/private/private-pipe",
+            packageUrlDefault: "https://seqdesk.org/api/private/private-pipe",
           },
           credentials: {
             accessKey: "secret-token",
@@ -157,7 +157,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.fetch).toHaveBeenCalledWith(
-      "https://seqdesk.com/api/private/private-pipe",
+      "https://seqdesk.org/api/private/private-pipe",
       expect.objectContaining({
         headers: expect.any(Headers),
       })
@@ -186,7 +186,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
           pipelineId: "private-pipe",
           source: {
             kind: "privateRegistry",
-            packageUrlDefault: "https://seqdesk.com/api/private/private-pipe",
+            packageUrlDefault: "https://seqdesk.org/api/private/private-pipe",
           },
           credentials: {
             accessKey: "secret-token",

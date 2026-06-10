@@ -1,10 +1,10 @@
 #!/bin/bash
 #
 # SeqDesk Installation Script (Distribution)
-# https://seqdesk.com
+# https://seqdesk.org
 #
-# Usage: curl -fsSL https://www.seqdesk.com/install.sh | bash
-# CLI usage: curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]
+# Usage: curl -fsSL https://seqdesk.org/install.sh | bash
+# CLI usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -35,7 +35,7 @@
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
 #   SEQDESK_PROFILE=twincore       - Hosted install profile id
 #   SEQDESK_PROFILE_CODE=...       - Access code for hosted install profile
-#   SEQDESK_PROFILE_REGISTRY_URL=https://www.seqdesk.com/api/install-profiles
+#   SEQDESK_PROFILE_REGISTRY_URL=https://seqdesk.org/api/install-profiles
 #   SEQDESK_ADDITIONAL_SETTINGS_FILE=/etc/seqdesk/install-overrides.json - Optional local JSON overrides
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_OVERWRITE_EXISTING=1   - With -y, back up an existing install dir and replace it
@@ -82,7 +82,7 @@ fi
 # Config
 SEQDESK_DIR="${SEQDESK_DIR:-}"
 SEQDESK_VERSION="${SEQDESK_VERSION:-}"
-SEQDESK_API="${SEQDESK_API:-https://www.seqdesk.com/api}"
+SEQDESK_API="${SEQDESK_API:-https://seqdesk.org/api}"
 SEQDESK_WITH_PIPELINES="${SEQDESK_WITH_PIPELINES:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
@@ -124,7 +124,7 @@ SEQDESK_RUN_DOCTOR="${SEQDESK_RUN_DOCTOR:-}"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 SEQDESK_PROFILE="${SEQDESK_PROFILE:-${SEQDESK_SETTING:-}}"
 SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
-SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://www.seqdesk.com/api/install-profiles}"
+SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://seqdesk.org/api/install-profiles}"
 SEQDESK_PROFILE_CONFIG_FILE=""
 SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
 SEQDESK_ADDITIONAL_SETTINGS=()
@@ -1327,7 +1327,7 @@ print_usage() {
 Usage:
   npx -y seqdesk@latest [options]
   seqdesk [options]
-  curl -fsSL https://www.seqdesk.com/install.sh | bash -s -- [options]  # advanced fallback
+  curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]  # advanced fallback
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
@@ -3592,7 +3592,7 @@ if ! is_truthy "$SEQDESK_YES" && ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_trut
     echo "        managed  re-run with  --database-url \"postgresql://...\"  (or set DATABASE_URL)"
     echo "    - A writable install directory"
     echo ""
-    echo "  Prerequisites: https://www.seqdesk.com/docs/installation/prerequisites"
+    echo "  Prerequisites: https://seqdesk.org/docs/installation/prerequisites"
 fi
 
 # System detection

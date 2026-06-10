@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # SeqDesk Installation Script
-# Usage: curl -fsSL https://seqdesk.com/install.sh | bash
-# CLI usage: curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
+# Usage: curl -fsSL https://seqdesk.org/install.sh | bash
+# CLI usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]
 #
 # Options (environment variables):
 #   SEQDESK_REPO=https://github.com/... - Source repository override (advanced/CI)
@@ -216,7 +216,7 @@ prompt_yes_no() {
 print_usage() {
     cat <<'EOF'
 Usage:
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- [options]
+  curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
@@ -242,8 +242,8 @@ Options:
   -h, --help                   Show this help
 
 Examples:
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y
-  curl -fsSL https://seqdesk.com/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
+  curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y
+  curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y --config https://example.org/infrastructure-setup.json
 EOF
 }
 
@@ -1752,7 +1752,7 @@ echo " |____/ \\___|\\__, |____/ \\___||___/_|\\_\\"
 echo "                |_|                      "
 echo -e "${NC}"
 echo "  Sequencing Facility Management System"
-echo "  https://seqdesk.com"
+echo "  https://seqdesk.org"
 echo ""
 
 # Check if running as root
@@ -2285,8 +2285,8 @@ echo ""
 echo "Next steps:"
 echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
 echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
-echo "  3. See https://www.seqdesk.com/docs for production deployment"
+echo "  3. See https://seqdesk.org/docs for production deployment"
 echo ""
-echo -e "Documentation: ${BLUE}https://www.seqdesk.com/docs${NC}"
-echo -e "Website:       ${BLUE}https://seqdesk.com${NC}"
+echo -e "Documentation: ${BLUE}https://seqdesk.org/docs${NC}"
+echo -e "Website:       ${BLUE}https://seqdesk.org${NC}"
 echo ""

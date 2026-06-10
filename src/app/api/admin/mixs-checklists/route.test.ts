@@ -44,7 +44,7 @@ const originalFetch = globalThis.fetch;
 
 import { GET, PUT, POST } from "./route";
 
-const DEFAULT_SYNC_URL = "https://www.seqdesk.com/api/registry/mixs";
+const DEFAULT_SYNC_URL = "https://seqdesk.org/api/registry/mixs";
 
 const adminSession = {
   user: { id: "admin-1", role: "FACILITY_ADMIN" },

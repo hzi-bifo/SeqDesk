@@ -57,7 +57,7 @@ const defaultConfig = {
   barcodeSchemes: [],
   barcodeSets: [],
   version: 1,
-  syncUrl: "https://seqdesk.com/api/sequencing-technologies",
+  syncUrl: "https://seqdesk.org/api/sequencing-technologies",
 };
 
 describe("GET /api/admin/sequencing-tech", () => {
@@ -65,7 +65,7 @@ describe("GET /api/admin/sequencing-tech", () => {
     vi.clearAllMocks();
     globalThis.fetch = mocks.fetch;
     mocks.getDefaultTechSyncUrl.mockReturnValue(
-      "https://seqdesk.com/api/sequencing-technologies"
+      "https://seqdesk.org/api/sequencing-technologies"
     );
     mocks.loadDefaultTechConfig.mockReturnValue(defaultConfig);
     mocks.withResolvedTechAssetUrls.mockImplementation((config) => config);
@@ -149,7 +149,7 @@ describe("PUT /api/admin/sequencing-tech", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getDefaultTechSyncUrl.mockReturnValue(
-      "https://seqdesk.com/api/sequencing-technologies"
+      "https://seqdesk.org/api/sequencing-technologies"
     );
     mocks.withResolvedTechAssetUrls.mockImplementation((config) => config);
   });
@@ -258,7 +258,7 @@ describe("POST /api/admin/sequencing-tech", () => {
     vi.clearAllMocks();
     globalThis.fetch = mocks.fetch;
     mocks.getDefaultTechSyncUrl.mockReturnValue(
-      "https://seqdesk.com/api/sequencing-technologies"
+      "https://seqdesk.org/api/sequencing-technologies"
     );
     mocks.loadDefaultTechConfig.mockReturnValue(defaultConfig);
     mocks.parseTechConfig.mockReturnValue(defaultConfig);

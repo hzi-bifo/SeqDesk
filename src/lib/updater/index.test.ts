@@ -121,7 +121,7 @@ describe("checkForUpdates", () => {
     version: "2.0.0",
     channel: "stable",
     releaseDate: "2025-01-01",
-    downloadUrl: "https://seqdesk.com/download/2.0.0",
+    downloadUrl: "https://seqdesk.org/download/2.0.0",
     checksum: "abc123",
     releaseNotes: "Big update",
     minNodeVersion: "18.0.0",

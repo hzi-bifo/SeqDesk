@@ -7,13 +7,13 @@ describe("version response parser", () => {
     expect(
       parseReleaseInfoResponse({
         version: " 1.2.3 ",
-        downloadUrl: " https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz ",
+        downloadUrl: " https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz ",
       })
     ).toEqual({
       version: "1.2.3",
       channel: "stable",
       releaseDate: "",
-      downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+      downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
       checksum: "",
       releaseNotes: "",
       minNodeVersion: "",
@@ -28,7 +28,7 @@ describe("version response parser", () => {
         version: "1.2.3",
         channel: "stable",
         releaseDate: "2026-03-05",
-        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         checksum: "sha256:deadbeef",
         releaseNotes: "Stability fixes",
         minNodeVersion: "18.0.0",
@@ -39,7 +39,7 @@ describe("version response parser", () => {
       version: "1.2.3",
       channel: "stable",
       releaseDate: "2026-03-05",
-      downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+      downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
       checksum: "sha256:deadbeef",
       releaseNotes: "Stability fixes",
       minNodeVersion: "18.0.0",
@@ -59,7 +59,7 @@ describe("version response parser", () => {
     expect(() =>
       parseReleaseInfoResponse({
         version: "1.2.3",
-        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         size: -1,
       })
     ).toThrow(/size/);
@@ -69,7 +69,7 @@ describe("version response parser", () => {
     expect(() =>
       parseReleaseInfoResponse({
         version: "1.2.3",
-        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         databaseRequirement: "sqlite",
       })
     ).toThrow(/databaseRequirement/);
@@ -83,7 +83,7 @@ describe("version response parser", () => {
     expect(() =>
       parseReleaseInfoResponse({
         version: "1.2.3",
-        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         checksum: 123,
       })
     ).toThrow(/checksum/);
@@ -95,7 +95,7 @@ describe("version response parser", () => {
         updateAvailable: true,
         latest: {
           version: "1.2.3",
-          downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+          downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
           releaseNotes: "New release",
         },
       })
@@ -105,7 +105,7 @@ describe("version response parser", () => {
         version: "1.2.3",
         channel: "stable",
         releaseDate: "",
-        downloadUrl: "https://downloads.seqdesk.com/seqdesk-1.2.3.tar.gz",
+        downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         checksum: "",
         releaseNotes: "New release",
         minNodeVersion: "",

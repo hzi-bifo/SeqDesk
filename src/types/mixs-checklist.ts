@@ -1,6 +1,6 @@
 // Types for the MIxS (Minimum Information about any (x) Sequence) checklist
 // registry. Checklist definitions originate from ENA/GSC and are curated and
-// versioned upstream (seqdesk.com /api/registry/mixs). A SeqDesk instance can
+// versioned upstream (seqdesk.org /api/registry/mixs). A SeqDesk instance can
 // pull updates via the admin "MIxS Checklists" page; the synced config is
 // stored in SiteSettings.extraSettings and falls back to the JSON files
 // committed under data/field-templates/mixs-full.

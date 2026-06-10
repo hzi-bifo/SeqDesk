@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Upload a SeqDesk release to Vercel Blob storage and publish to seqdesk.com
+ * Upload a SeqDesk release to Vercel Blob storage and publish to seqdesk.org
  *
  * Usage:
  *   node scripts/upload-release.js <version> [options]
@@ -132,7 +132,7 @@ async function uploadToBlob(filePath, blobPath, token) {
 }
 
 async function publishRelease(release, adminSecret) {
-    const response = await fetch("https://www.seqdesk.com/api/releases/publish", {
+    const response = await fetch("https://seqdesk.org/api/releases/publish", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${adminSecret}`,
@@ -230,7 +230,7 @@ async function main() {
     );
     console.log(`  Uploaded to: ${downloadUrl}`);
 
-    console.log("Publishing to seqdesk.com...");
+    console.log("Publishing to seqdesk.org...");
     await publishRelease(
       {
         version: options.version,

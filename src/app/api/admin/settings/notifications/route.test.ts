@@ -39,7 +39,7 @@ const adminSettings = {
   email: {
     enabled: false,
     provider: "seqdesk-relay" as const,
-    relayUrl: "https://www.seqdesk.com/api/notifications/relay",
+    relayUrl: "https://seqdesk.org/api/notifications/relay",
     hasRelayToken: false,
     events: {
       order: { submitted: true, statusChanged: true, samplesSent: true },

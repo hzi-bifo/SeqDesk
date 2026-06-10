@@ -1,7 +1,7 @@
 # Contributing to SeqDesk
 
 This guide covers developing and testing the SeqDesk repository. End-user and operator
-documentation lives at [seqdesk.com/docs](https://www.seqdesk.com/docs).
+documentation lives at [seqdesk.org/docs](https://seqdesk.org/docs).
 
 ## Prerequisites
 

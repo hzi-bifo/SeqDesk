@@ -129,7 +129,7 @@ try {
     if (telemetry.enabled !== true) {
       fail(`Expected telemetry.enabled to be true, got '${telemetry.enabled}'`);
     }
-    if (telemetry.endpoint !== "https://www.seqdesk.com/api/telemetry/heartbeat") {
+    if (telemetry.endpoint !== "https://seqdesk.org/api/telemetry/heartbeat") {
       fail(`Expected telemetry endpoint to point at SeqDesk.com, got '${telemetry.endpoint}'`);
     }
     if (telemetry.intervalHours !== 1) {

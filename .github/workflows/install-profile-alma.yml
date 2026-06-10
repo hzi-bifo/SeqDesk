@@ -14,7 +14,7 @@ on:
       profile_registry_url:
         description: "Hosted profile registry URL"
         required: true
-        default: "https://www.seqdesk.com/api/install-profiles"
+        default: "https://seqdesk.org/api/install-profiles"
 
 permissions:
   contents: read
@@ -405,7 +405,7 @@ jobs:
       FALLBACK_DB_PORT: 55434
       NEXT_TELEMETRY_DISABLED: 1
       PROFILE_ID: ${{ github.event.inputs.profile_id || 'ci-runner' }}
-      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
+      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://seqdesk.org/api/install-profiles' }}
       SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
       # MetaxPath is an optional private add-on on this canary; a package failure (e.g.
       # an asset/version mismatch or a failing package install) should warn, not abort the install
@@ -757,10 +757,11 @@ jobs:
             run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
-            # metaxpath (private add-on, order target): warn-only until the package install
-            # + DB params file + conda env are proven green on the runner. A clean skip if
-            # the profile doesn't enable it; a failure warns rather than reding the suite.
-            run_gemma_warn metaxpath    1800 --order-number DEV-GEMMA-ONT-001
+            # metaxpath (private add-on, STUDY target — the app rejects order targets):
+            # warn-only until the package install + DB params file + conda env are proven
+            # green on the runner. A clean skip if the profile doesn't enable it; a failure
+            # warns rather than reding the suite.
+            run_gemma_warn metaxpath    1800 --study-alias gemma-nanopore-metaxpath
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1

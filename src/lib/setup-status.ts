@@ -399,7 +399,7 @@ function buildNextAction(
         label: install.mode === "managed" ? "Check managed database" : "Check Neon project",
         description:
           install.mode === "managed"
-            ? "Verify the booked Neon database in seqdesk.com/admin, then restart SeqDesk after provisioning finishes."
+            ? "Verify the booked Neon database in seqdesk.org/admin, then restart SeqDesk after provisioning finishes."
             : "Verify the Neon project is active, the credentials are current, and the network can reach Neon.",
       };
     }

@@ -61,14 +61,14 @@
 
   "telemetry": {
     "enabled": false,
-    "endpoint": "https://www.seqdesk.com/api/telemetry/heartbeat",
+    "endpoint": "https://seqdesk.org/api/telemetry/heartbeat",
     "intervalHours": 24
   },
 
   "notifications": {
     "enabled": false,
     "provider": "seqdesk-relay",
-    "relayUrl": "https://www.seqdesk.com/api/notifications/relay",
+    "relayUrl": "https://seqdesk.org/api/notifications/relay",
     "relayToken": "",
     "events": {
       "order": {
@@ -95,6 +95,6 @@
     "anthropicApiKey": "",
     "adminSecret": "",
     "blobReadWriteToken": "",
-    "updateServer": "https://seqdesk.com"
+    "updateServer": "https://seqdesk.org"
   }
 }

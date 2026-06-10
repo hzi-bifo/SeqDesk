@@ -142,12 +142,19 @@ function buildBrowseUrl(registryUrl: string): string {
   return registryUrl;
 }
 
+const OFFICIAL_REGISTRY_HOSTS = new Set([
+  "seqdesk.org",
+  "www.seqdesk.org",
+  // seqdesk.com is being retired but kept here so installs still pointing at it
+  // (or redirected from it) are recognised as the official registry.
+  "seqdesk.com",
+  "www.seqdesk.com",
+]);
+
 function buildRegistryLabel(registryUrl: string): string {
   try {
     const host = new URL(registryUrl).host;
-    return host === "seqdesk.com" || host === "www.seqdesk.com"
-      ? "SeqDesk Registry"
-      : host;
+    return OFFICIAL_REGISTRY_HOSTS.has(host) ? "SeqDesk Registry" : host;
   } catch {
     return registryUrl;
   }
@@ -170,7 +177,7 @@ export function getPipelineRegistrySources(
   env: NodeJS.ProcessEnv = process.env
 ): RegistrySourceConfig[] {
   const storeBaseUrl =
-    trimToUndefined(env.SEQDESK_PIPELINE_STORE_URL) || "https://seqdesk.com";
+    trimToUndefined(env.SEQDESK_PIPELINE_STORE_URL) || "https://seqdesk.org";
   const singleRegistryUrl =
     trimToUndefined(env.SEQDESK_PIPELINE_REGISTRY_URL) ||
     `${storeBaseUrl}/api/registry`;

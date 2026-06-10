@@ -31,7 +31,7 @@ export const DEFAULT_IN_APP_NOTIFICATION_SETTINGS: InAppNotificationSettings = {
   enabled: true,
 };
 
-export const DEFAULT_RELAY_URL = "https://www.seqdesk.com/api/notifications/relay";
+export const DEFAULT_RELAY_URL = "https://seqdesk.org/api/notifications/relay";
 
 export function parseUserNotificationPreferences(
   raw: string | null | undefined,

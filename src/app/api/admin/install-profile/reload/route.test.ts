@@ -67,7 +67,7 @@ describe("/api/admin/install-profile/reload", () => {
     });
     mocks.readInstallProfileFromConfig.mockReturnValue(null);
     mocks.defaultProfileRegistryUrl.mockReturnValue(
-      "https://www.seqdesk.com/api/install-profiles"
+      "https://seqdesk.org/api/install-profiles"
     );
     mocks.resolveProfileCodeFromEnv.mockReturnValue(undefined);
     mocks.reloadHostedInstallProfile.mockResolvedValue({
@@ -94,7 +94,7 @@ describe("/api/admin/install-profile/reload", () => {
         id: "dev",
         version: "2026.05.13",
       }),
-      profileRegistryUrl: "https://www.seqdesk.com/api/install-profiles",
+      profileRegistryUrl: "https://seqdesk.org/api/install-profiles",
       profileCodeEnvName: "DEV_SETUP_CODE",
       profileCodeEnvAvailable: true,
     });

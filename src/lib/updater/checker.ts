@@ -1,7 +1,7 @@
 /**
  * Update Checker
  *
- * Checks seqdesk.com for new versions.
+ * Checks seqdesk.org for new versions.
  */
 
 import type { UpdateCheckResult } from './types';
@@ -30,7 +30,7 @@ function readVersionFromPackageJson(): string {
 bootstrapRuntimeEnv();
 
 function getUpdateServer(): string {
-  return process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.com';
+  return process.env.SEQDESK_UPDATE_SERVER || 'https://seqdesk.org';
 }
 
 // Cache update check for 1 hour

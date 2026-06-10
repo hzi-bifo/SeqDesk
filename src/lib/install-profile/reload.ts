@@ -46,7 +46,7 @@ export type InstallProfileValidationSummary = {
   appliedSections: string[];
 };
 
-const DEFAULT_PROFILE_REGISTRY_URL = "https://www.seqdesk.com/api/install-profiles";
+const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
 const MAX_CAPTURED_OUTPUT_CHARS = 20_000;
 const RELOAD_LOCK_FILE = ".install-profile-reload.lock";
 const RELOAD_LOCK_STALE_MS = 60 * 60 * 1000;

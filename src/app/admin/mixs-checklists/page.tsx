@@ -465,7 +465,7 @@ export default function MixsChecklistsPage() {
                     syncUrl: e.target.value,
                   })
                 }
-                placeholder="https://www.seqdesk.com/api/registry/mixs"
+                placeholder="https://seqdesk.org/api/registry/mixs"
               />
               <p className="text-xs text-muted-foreground">
                 Used for &quot;Check for Updates&quot; and registry reset. Save

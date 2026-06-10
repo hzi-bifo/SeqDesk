@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Upload a SeqDesk release to Vercel Blob storage and publish to seqdesk.com
+ * Upload a SeqDesk release to Vercel Blob storage and publish to seqdesk.org
  *
  * Usage:
  *   npx tsx scripts/upload-release.ts <version> [options]
@@ -156,7 +156,7 @@ async function publishRelease(
   },
   adminSecret: string
 ): Promise<void> {
-  const response = await fetch("https://www.seqdesk.com/api/releases/publish", {
+  const response = await fetch("https://seqdesk.org/api/releases/publish", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${adminSecret}`,
@@ -257,8 +257,8 @@ async function main() {
     );
     console.log(`  Uploaded to: ${downloadUrl}`);
 
-    // Publish to seqdesk.com
-    console.log("Publishing to seqdesk.com...");
+    // Publish to seqdesk.org
+    console.log("Publishing to seqdesk.org...");
     await publishRelease(
       {
         version: options.version,

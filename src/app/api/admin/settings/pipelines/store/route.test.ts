@@ -42,7 +42,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
 
   it("aggregates multiple registries and preserves source metadata", async () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
-      "https://seqdesk.com/api/registry,https://example.org/api/registry";
+      "https://seqdesk.org/api/registry,https://example.org/api/registry";
     mocks.getServerSession.mockResolvedValue({
       user: { role: "FACILITY_ADMIN" },
     });
@@ -62,7 +62,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
                 {
                   version: "3.0.0",
                   downloadUrl:
-                    "https://seqdesk.com/api/registry/pipelines/mag/3.0.0/download",
+                    "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download",
                 },
               ],
             },

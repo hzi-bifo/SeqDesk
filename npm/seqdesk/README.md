@@ -61,11 +61,11 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 ## Notes
 
 - The npm launcher is the supported public install entry point.
-- The launcher downloads `https://seqdesk.com/install.sh` over HTTPS and
+- The launcher downloads `https://seqdesk.org/install.sh` over HTTPS and
   executes it with `bash` internally. Users normally do not need to call the
   shell installer directly.
 - Publishing this npm package does not update the public curl installer. Changes
-  to the shell installer become visible at `https://seqdesk.com/install.sh`
+  to the shell installer become visible at `https://seqdesk.org/install.sh`
   only after the SeqDesk.com `public/install.sh` file is updated and deployed.
 - By default it sets `SEQDESK_VERSION` to this package version (unless already set).
 - The installer writes a timestamped log to `/tmp/seqdesk-install-*.log` unless

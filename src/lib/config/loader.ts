@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   },
   telemetry: {
     enabled: false,
-    endpoint: 'https://www.seqdesk.com/api/telemetry/heartbeat',
+    endpoint: 'https://seqdesk.org/api/telemetry/heartbeat',
     intervalHours: 24,
   },
   notifications: {
@@ -89,7 +89,7 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
       enabled: true,
     },
     provider: 'seqdesk-relay',
-    relayUrl: 'https://www.seqdesk.com/api/notifications/relay',
+    relayUrl: 'https://seqdesk.org/api/notifications/relay',
     events: {
       order: {
         submitted: true,

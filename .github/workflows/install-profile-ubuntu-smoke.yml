@@ -9,7 +9,7 @@ on:
       profile_registry_url:
         description: "Hosted profile registry URL"
         required: true
-        default: "https://www.seqdesk.com/api/install-profiles"
+        default: "https://seqdesk.org/api/install-profiles"
 
 permissions:
   contents: read
@@ -45,7 +45,7 @@ jobs:
       DB_USER: seqdesk
       NEXT_TELEMETRY_DISABLED: 1
       PROFILE_ID: ci-runner
-      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://www.seqdesk.com/api/install-profiles' }}
+      PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://seqdesk.org/api/install-profiles' }}
       SEQDESK_CI_PROFILE_CODE: ${{ secrets.SEQDESK_CI_PROFILE_CODE }}
     steps:
       - name: Checkout code

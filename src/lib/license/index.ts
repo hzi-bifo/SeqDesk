@@ -4,7 +4,7 @@
  * Enterprise licensing for self-hosted installations.
  *
  * How it works:
- * 1. Customer purchases license at seqdesk.com
+ * 1. Customer purchases license at seqdesk.org
  * 2. Customer receives a license key (signed JWT)
  * 3. Customer enters key in Admin > Platform Settings > License
  * 4. App validates the key and unlocks features

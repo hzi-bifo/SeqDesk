@@ -7,7 +7,7 @@ Usage: scripts/release.sh [version] [--skip-build] [--skip-upload] [--offline-fo
 
 Builds and publishes a SeqDesk release:
   1) Builds and packages the release tarball
-  2) Uploads to Vercel Blob and publishes to seqdesk.com
+  2) Uploads to Vercel Blob and publishes to seqdesk.org
 
 Options:
   --skip-build     Skip `npm run build` (use existing .next/standalone)

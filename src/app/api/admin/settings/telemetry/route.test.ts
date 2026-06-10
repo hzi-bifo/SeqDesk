@@ -29,7 +29,7 @@ describe("admin telemetry settings API", () => {
     });
     mocks.getTelemetrySettings.mockResolvedValue({
       enabled: false,
-      endpoint: "https://www.seqdesk.com/api/telemetry/heartbeat",
+      endpoint: "https://seqdesk.org/api/telemetry/heartbeat",
       intervalHours: 24,
       instanceId: null,
       clientTokenConfigured: false,
@@ -42,7 +42,7 @@ describe("admin telemetry settings API", () => {
     });
     mocks.saveTelemetrySettings.mockImplementation(async (input) => ({
       enabled: input.enabled === true,
-      endpoint: "https://www.seqdesk.com/api/telemetry/heartbeat",
+      endpoint: "https://seqdesk.org/api/telemetry/heartbeat",
       intervalHours: 24,
       instanceId: "00000000-0000-4000-8000-000000000000",
       clientTokenConfigured: true,

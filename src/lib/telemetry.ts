@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { loadConfig } from "@/lib/config";
 
 const SITE_SETTINGS_ID = "singleton";
-const DEFAULT_ENDPOINT = "https://www.seqdesk.com/api/telemetry/heartbeat";
+const DEFAULT_ENDPOINT = "https://seqdesk.org/api/telemetry/heartbeat";
 const DEFAULT_INTERVAL_HOURS = 24;
 const MIN_INTERVAL_HOURS = 1;
 const MAX_INTERVAL_HOURS = 168;

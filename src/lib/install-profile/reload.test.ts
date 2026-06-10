@@ -111,7 +111,7 @@ describe("install profile reload helpers", () => {
   it("uses the default hosted profile registry unless overridden", () => {
     delete process.env.SEQDESK_PROFILE_REGISTRY_URL;
     expect(defaultProfileRegistryUrl()).toBe(
-      "https://www.seqdesk.com/api/install-profiles"
+      "https://seqdesk.org/api/install-profiles"
     );
 
     process.env.SEQDESK_PROFILE_REGISTRY_URL = "https://profiles.example.test/api";

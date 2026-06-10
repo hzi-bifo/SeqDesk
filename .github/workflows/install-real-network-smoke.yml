@@ -2,8 +2,8 @@ name: Install Real-Network Smoke
 
 # Exercises the ACTUAL published install paths end to end:
 #   - `npm i -g seqdesk@latest` from the real npm registry
-#   - `curl https://seqdesk.com/install.sh | bash`
-# Both download the real release tarball from seqdesk.com and boot the app
+#   - `curl https://seqdesk.org/install.sh | bash`
+# Both download the real release tarball from seqdesk.org and boot the app
 # against a throwaway PostgreSQL. This is the ONLY CI that catches drift between
 # this repo and the live installer (the repo's scripts/install-dist.sh is NOT
 # the published installer).
@@ -11,7 +11,7 @@ name: Install Real-Network Smoke
 # It is network-dependent, so it is intentionally:
 #   - scheduled + manual only (never on push/PR),
 #   - NOT a required check and NOT a README badge,
-# so a transient npm/seqdesk.com/network hiccup never looks like an
+# so a transient npm/seqdesk.org/network hiccup never looks like an
 # installability regression. Read the run output to judge a failure.
 
 on:
@@ -74,11 +74,11 @@ jobs:
           npm install -g "$SPEC" --prefix "$NPM_PREFIX"
           "$NPM_PREFIX/bin/seqdesk" --version
 
-      - name: Run the REAL install (downloads release from seqdesk.com)
+      - name: Run the REAL install (downloads release from seqdesk.org)
         run: |
           set -euo pipefail
           # No SEQDESK_API / SEQDESK_INSTALL_URL overrides => the launcher resolves
-          # the real https://seqdesk.com release metadata and downloads the real
+          # the real https://seqdesk.org release metadata and downloads the real
           # tarball, exactly as a user would.
           PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
             seqdesk \
@@ -127,7 +127,7 @@ jobs:
           retention-days: 14
 
   curl-install-sh:
-    name: "curl https://seqdesk.com/install.sh | bash"
+    name: "curl https://seqdesk.org/install.sh | bash"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -161,7 +161,7 @@ jobs:
           # Mirrors the documented curl|bash path; args flow through install.sh
           # to the downloaded installer exactly as the npm launcher passes them.
           SEQDESK_LOG="$INSTALL_LOG" \
-          curl -fsSL https://seqdesk.com/install.sh | bash -s -- \
+          curl -fsSL https://seqdesk.org/install.sh | bash -s -- \
             -y \
             --without-pipelines \
             --no-pm2 \
@@ -258,11 +258,11 @@ jobs:
           npm install -g "$SPEC" --prefix "$NPM_PREFIX"
           "$NPM_PREFIX/bin/seqdesk" --version
 
-      - name: Run the REAL install (downloads release from seqdesk.com)
+      - name: Run the REAL install (downloads release from seqdesk.org)
         run: |
           set -euo pipefail
           # No SEQDESK_API / SEQDESK_INSTALL_URL overrides => the launcher resolves
-          # the real https://seqdesk.com release metadata and downloads the real
+          # the real https://seqdesk.org release metadata and downloads the real
           # tarball, exactly as a macOS user would.
           PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
             seqdesk \
