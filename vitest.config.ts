@@ -17,10 +17,10 @@ const testTier = resolveTestTier(process.env.SEQDESK_TEST_TIER);
 const serialExecution = testTier === "live" || testTier === "all";
 
 const includeByTier: Record<TestTier, string[]> = {
-  fast: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts"],
+  fast: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts", "scripts/**/*.test.ts"],
   live: ["src/**/*.live.test.ts", "src/**/*.live.test.tsx"],
   // all = the entire suite including the real-DB *.live tests.
-  all: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts"],
+  all: ["src/**/*.test.ts", "src/**/*.test.tsx", "pipelines/**/*.test.ts", "scripts/**/*.test.ts"],
 };
 
 const excludeByTier: Record<TestTier, string[]> = {

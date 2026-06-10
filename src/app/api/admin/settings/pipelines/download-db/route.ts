@@ -437,6 +437,10 @@ export async function POST(req: NextRequest) {
           });
           return NextResponse.json({ error: message }, { status: 422 });
         }
+      } else {
+        console.warn(
+          `[Pipeline DB Download] No sha256 configured for ${pipelineId}/${databaseId}; accepting the existing file on size alone (integrity NOT verified). Add a "sha256" to data/pipeline-databases.json to enable verification.`
+        );
       }
       const installed = await installDatabaseIfNeeded(
         executionSettings.pipelineRunDir,
@@ -617,6 +621,13 @@ export async function POST(req: NextRequest) {
               }
               logStream.write(
                 `[${new Date().toISOString()}] Checksum OK (sha256 ${actualHash}).\n`
+              );
+            } else {
+              console.warn(
+                `[Pipeline DB Download] No sha256 configured for ${pipelineId}/${databaseId}; the download cannot be integrity-checked. Add a "sha256" to data/pipeline-databases.json to enable verification.`
+              );
+              logStream.write(
+                `[${new Date().toISOString()}] WARNING: no sha256 configured for this database; integrity NOT verified.\n`
               );
             }
             await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {

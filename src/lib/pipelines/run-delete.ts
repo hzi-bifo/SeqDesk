@@ -7,7 +7,10 @@ import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { getAdapter, registerAdapter, type DiscoveredFile } from "./adapters/types";
 import { createGenericAdapter } from "./generic-adapter";
 import { getPackage, type PackageManifest } from "./package-loader";
+import { cancelPipelineRunForOperator } from "./pipeline-run-ops-service";
 import type { PipelineTarget } from "./types";
+
+const NON_TERMINAL_RUN_STATUSES = ["pending", "queued", "running"];
 
 interface CleanupSample {
   id: string;
@@ -442,7 +445,13 @@ async function cascadeDeleteDependentRuns(
 
   const dependentRuns = await db.pipelineRun.findMany({
     where,
-    select: { id: true, pipelineId: true, runFolder: true, inputSampleIds: true },
+    select: {
+      id: true,
+      pipelineId: true,
+      runFolder: true,
+      inputSampleIds: true,
+      status: true,
+    },
   });
 
   const affectedSampleIds = new Set(options.samples.map((sample) => sample.id));
@@ -459,6 +468,17 @@ async function cascadeDeleteDependentRuns(
   });
 
   for (const depRun of dependentReadPipelines) {
+    // Cancel still-running dependents before deleting them, otherwise the live
+    // SLURM/local job keeps running against a deleted run folder (orphaned compute
+    // and weblog callbacks hitting a missing row).
+    if (NON_TERMINAL_RUN_STATUSES.includes(depRun.status)) {
+      try {
+        await cancelPipelineRunForOperator(depRun.id);
+      } catch {
+        // Best-effort: proceed with deletion even if cancellation fails.
+      }
+    }
+
     // Clean up related records
     await db.pipelineRunStep.deleteMany({ where: { pipelineRunId: depRun.id } });
     await db.pipelineArtifact.deleteMany({ where: { pipelineRunId: depRun.id } });

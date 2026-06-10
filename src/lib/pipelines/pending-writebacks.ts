@@ -659,10 +659,16 @@ export async function promotePendingWritebacks(args: {
         },
       });
 
+      // Supersede only active reads of the SAME data class as the promoted
+      // candidate. Protected raw/unknown reads must stay active — promoting a
+      // cleaned candidate replaces the existing cleaned reads, not the order's
+      // raw source data (see the review copy: "Existing raw or unknown reads
+      // will be preserved").
       await tx.read.updateMany({
         where: {
           sampleId: sample.id,
           isActive: true,
+          dataClass: candidate.targetDataClass,
         },
         data: {
           isActive: false,

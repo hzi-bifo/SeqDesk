@@ -83,7 +83,7 @@ async function checkLocalStatus(
   return resolveLocalLiveness(exitCode, isPidAlive(pid));
 }
 
-async function syncRun(run: {
+export async function syncRun(run: {
   id: string;
   pipelineId: string;
   status: RunStatus;
@@ -219,6 +219,25 @@ async function syncRun(run: {
   }
 
   if (derivedStatus) {
+    // When the monitor (the safety-net daemon) finalizes a run as completed it
+    // must ingest the pipeline's outputs BEFORE recording the terminal status.
+    // runOnce only selects non-terminal runs, so once a row is marked completed
+    // it is never revisited — if ingestion ran afterwards and failed (a transient
+    // DB/NFS error, or outputs not yet flushed) the run would be stuck completed
+    // with no artifacts/read writebacks and no retry. Ingest first; on failure
+    // hold the run in a non-terminal "finalizing" state so the next pass retries.
+    // Resolution is idempotent (re-resolving skips existing artifacts).
+    if (derivedStatus === 'completed') {
+      try {
+        await processCompletedPipelineRun(run.id, run.pipelineId);
+      } catch (error) {
+        console.error('[pipeline-monitor] Post-completion output resolution failed for run', run.id, error);
+        derivedStatus = 'running';
+        currentStep = 'Finalizing outputs...';
+        progress = 99;
+      }
+    }
+
     const update: Record<string, unknown> = { status: derivedStatus };
     if (currentStep) update.currentStep = currentStep;
     if (progress !== null) update.progress = progress;
@@ -238,20 +257,6 @@ async function syncRun(run: {
       where: { id: run.id },
       data: update,
     });
-
-    // When the monitor (the safety-net daemon) is the one that transitions a run to
-    // completed, it must also ingest the pipeline's outputs — otherwise a run finalized
-    // by the monitor instead of the /sync API would be marked completed but never have
-    // its artifacts/read writebacks persisted. run.status here is always non-terminal
-    // (runOnce only selects pending/queued/running), so this is the completion
-    // transition. Resolution is idempotent (re-resolving skips existing artifacts).
-    if (derivedStatus === 'completed') {
-      try {
-        await processCompletedPipelineRun(run.id, run.pipelineId);
-      } catch (error) {
-        console.error('[pipeline-monitor] Post-completion output resolution failed for run', run.id, error);
-      }
-    }
   }
 }
 
@@ -294,7 +299,11 @@ async function main() {
   setInterval(runOnce, interval);
 }
 
-main().catch((error) => {
-  console.error('[pipeline-monitor] fatal', error);
-  process.exit(1);
-});
+// Auto-run when executed as the monitor daemon, but not when imported by a unit
+// test (vitest sets VITEST), so syncRun can be tested in isolation.
+if (!process.env.VITEST) {
+  main().catch((error) => {
+    console.error('[pipeline-monitor] fatal', error);
+    process.exit(1);
+  });
+}

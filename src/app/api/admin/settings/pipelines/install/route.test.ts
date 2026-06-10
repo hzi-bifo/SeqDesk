@@ -76,18 +76,20 @@ describe("POST /api/admin/settings/pipelines/install", () => {
   });
 
   it("installs a registry package payload into pipelines/<id>", async () => {
+    const magPayload = {
+      files: {
+        "manifest.json": JSON.stringify({
+          package: { id: "mag" },
+        }),
+        "definition.json": "{}",
+        "registry.json": "{}",
+        "samplesheet.yaml": "samplesheet:\n",
+      },
+    };
     mocks.fetch.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        files: {
-          "manifest.json": JSON.stringify({
-            package: { id: "mag" },
-          }),
-          "definition.json": "{}",
-          "registry.json": "{}",
-          "samplesheet.yaml": "samplesheet:\n",
-        },
-      }),
+      json: async () => magPayload,
+      text: async () => JSON.stringify(magPayload),
     });
 
     const response = await POST(
@@ -114,20 +116,22 @@ describe("POST /api/admin/settings/pipelines/install", () => {
   });
 
   it("sends bearer auth for private registry installs", async () => {
+    const privatePayload = {
+      files: {
+        "manifest.json": JSON.stringify({
+          package: { id: "private-pipe" },
+        }),
+        "definition.json": "{}",
+        "registry.json": "{}",
+        "samplesheet.yaml": "samplesheet:\n",
+      },
+    };
     mocks.fetch.mockImplementation(
       async (_url: string, init?: RequestInit) =>
         ({
           ok: true,
-          json: async () => ({
-            files: {
-              "manifest.json": JSON.stringify({
-                package: { id: "private-pipe" },
-              }),
-              "definition.json": "{}",
-              "registry.json": "{}",
-              "samplesheet.yaml": "samplesheet:\n",
-            },
-          }),
+          json: async () => privatePayload,
+          text: async () => JSON.stringify(privatePayload),
           headers: init?.headers,
         }) as never
     );
@@ -160,6 +164,41 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     );
     const [, init] = mocks.fetch.mock.calls[0];
     expect((init.headers as Headers).get("authorization")).toBe("Bearer secret-token");
+  });
+
+  it("rejects a private package whose payload does not match the provided sha256", async () => {
+    const payload = {
+      files: {
+        "manifest.json": JSON.stringify({ package: { id: "private-pipe" } }),
+      },
+    };
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => payload,
+      text: async () => JSON.stringify(payload),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/settings/pipelines/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pipelineId: "private-pipe",
+          source: {
+            kind: "privateRegistry",
+            packageUrlDefault: "https://seqdesk.com/api/private/private-pipe",
+          },
+          credentials: {
+            accessKey: "secret-token",
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.details).toContain("checksum verification failed");
   });
 
   it("returns 403 when not authenticated", async () => {
@@ -275,6 +314,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
       json: async () => {
         throw new Error("Invalid JSON");
       },
+      text: async () => "{ not valid json",
     });
 
     const response = await POST(

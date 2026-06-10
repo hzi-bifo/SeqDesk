@@ -87,6 +87,7 @@ vi.mock("./status", () => ({
   patchUpdateState: mocks.patchUpdateStateMock,
   readUpdateState: mocks.readUpdateStateMock,
   releaseUpdateLock: mocks.releaseUpdateLockMock,
+  touchUpdateLock: vi.fn(),
   writeUpdateState: mocks.writeUpdateStateMock,
 }));
 
@@ -118,7 +119,10 @@ function createRelease(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
     channel: "stable",
     releaseDate: "2026-03-24",
     downloadUrl: "https://example.com/seqdesk-1.2.0.tar.gz",
-    checksum: "sha256:placeholder",
+    // The mocked downloader writes the literal bytes "archive" as the tarball,
+    // so the default checksum must match those bytes now that verification is
+    // mandatory (the previous "sha256:placeholder" skip has been removed).
+    checksum: `sha256:${crypto.createHash("sha256").update("archive").digest("hex")}`,
     releaseNotes: "Improved coverage",
     minNodeVersion: "20.0.0",
     ...overrides,
@@ -861,6 +865,30 @@ describe("installer", () => {
     ).rejects.toThrow("Checksum verification failed - download may be corrupted");
 
     expect(releaseUpdateLockMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the download URL via an env var, not interpolated into the curl command", async () => {
+    // Regression guard for command injection: a download URL containing shell
+    // metacharacters must not be interpolated into the curl command string.
+    // It is passed via $SEQDESK_DOWNLOAD_URL, which bash does not re-evaluate.
+    configureInstallerShell();
+    // No spaces in the payload so URL.href doesn't percent-encode it.
+    const maliciousUrl = "https://example.com/x.tar.gz?a=$(id)`whoami`";
+    const checksum = `sha256:${crypto.createHash("sha256").update("archive").digest("hex")}`;
+    const mod = await loadInstallerModule();
+
+    await mod.installUpdate(createRelease({ downloadUrl: maliciousUrl, checksum }));
+
+    const curlCall = execMock.mock.calls.find((call) =>
+      String(call[0]).startsWith("curl -fsSL")
+    );
+    expect(curlCall).toBeTruthy();
+    // The command references the env var, never the raw URL.
+    expect(String(curlCall![0])).toContain('"$SEQDESK_DOWNLOAD_URL"');
+    expect(String(curlCall![0])).not.toContain("$(id)");
+    // The URL is supplied through the environment instead.
+    const curlOptions = curlCall![1] as { env?: Record<string, string> };
+    expect(curlOptions.env?.SEQDESK_DOWNLOAD_URL).toContain("$(id)");
   });
 
   it("completes the install when a real sha256 checksum matches the download", async () => {

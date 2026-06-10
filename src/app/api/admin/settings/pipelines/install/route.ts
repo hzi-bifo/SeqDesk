@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import path from "path";
 import { promisify } from "util";
 import { execFile } from "child_process";
+import crypto from "crypto";
 import fs from "fs/promises";
 import os from "os";
 import { clearPackageCache } from "@/lib/pipelines/package-loader";
@@ -108,7 +109,8 @@ async function cloneGitHubRepository(
 
 async function fetchPackagePayload(
   url: string,
-  accessKey?: string
+  accessKey?: string,
+  expectedSha256?: string
 ): Promise<Record<string, unknown>> {
   const headers = new Headers();
   if (accessKey) {
@@ -122,8 +124,24 @@ async function fetchPackagePayload(
     throw new Error(`Failed to download pipeline package (${response.status})`);
   }
 
+  const raw = await response.text();
+
+  // When the admin supplied an expected checksum, verify the raw payload bytes
+  // before trusting/parsing them. Without this the sha256 was accepted but never
+  // checked, so a compromised or MITM'd registry could ship a tampered package.
+  if (expectedSha256) {
+    const expected = expectedSha256.replace(/^sha256:/i, "").trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(expected)) {
+      throw new Error("Invalid sha256 checksum format for pipeline package.");
+    }
+    const actual = crypto.createHash("sha256").update(raw, "utf8").digest("hex");
+    if (actual !== expected) {
+      throw new Error("Pipeline package checksum verification failed.");
+    }
+  }
+
   try {
-    return (await response.json()) as Record<string, unknown>;
+    return JSON.parse(raw) as Record<string, unknown>;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid JSON payload.";
     throw new Error(`Pipeline source returned an invalid package payload: ${message}`);
@@ -241,7 +259,11 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      const payload = await fetchPackagePayload(packageUrl, credentials.accessKey);
+      const payload = await fetchPackagePayload(
+        packageUrl,
+        credentials.accessKey,
+        credentials.sha256
+      );
       action = await installFromPackagePayload(pipelineId, payload);
       resolvedSource = packageUrl;
     } else {
@@ -253,7 +275,11 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      const payload = await fetchPackagePayload(downloadUrl);
+      const payload = await fetchPackagePayload(
+        downloadUrl,
+        undefined,
+        credentials.sha256
+      );
       action = await installFromPackagePayload(pipelineId, payload);
       resolvedSource = downloadUrl;
     }

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     pipelineResultSelection: {
       findUnique: vi.fn(),
@@ -532,6 +533,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       queueJobId: "local-321",
     });
     mocks.db.pipelineRun.update.mockResolvedValue(null);
+    // Cancel now writes via a guarded updateMany (terminal-state race fix).
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     processKill.mockImplementation(() => true);
   });
 
@@ -604,8 +607,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(processKill).toHaveBeenCalledWith(-321, "SIGTERM");
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
       data: expect.objectContaining({
         status: "cancelled",
         statusSource: "manual",
@@ -660,8 +663,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.spawn).toHaveBeenCalledWith("scancel", ["12345"]);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
       data: expect.objectContaining({
         status: "cancelled",
       }),
@@ -690,8 +693,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     // EINVAL causes fallback to single-process kill, which also throws EINVAL
     // Since that also throws, it force-stops
     expect(response.status).toBe(200);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
       data: expect.objectContaining({
         status: "failed",
       }),
@@ -714,8 +717,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     // No queueJobId and status is pending (not running), so normal cancel
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
       data: expect.objectContaining({
         status: "cancelled",
       }),
@@ -737,8 +740,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
       data: expect.objectContaining({
         status: "failed",
         statusSource: "manual",

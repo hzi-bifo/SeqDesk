@@ -63,6 +63,12 @@ export interface PrepareResult {
   runId: string;
   runFolder?: string;
   errors: string[];
+  /**
+   * Non-fatal issues from preparation — e.g. samples skipped during samplesheet
+   * generation. The run still launches, but these should be surfaced so the user
+   * knows the run covers fewer samples than were selected.
+   */
+  warnings?: string[];
 }
 
 interface PipelineLaunchTarget {
@@ -358,6 +364,21 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// The run folder is interpolated literally into the generated script (including
+// the #SBATCH -D directive, which is parsed by SLURM rather than the shell and so
+// cannot be shell-quoted). Characters that would break out of a double-quoted
+// context, run a command substitution, or inject extra #SBATCH lines must never
+// appear in it. pipelineRunDir is validated on save, but it can also come from a
+// config file or env var, so guard at launch as a final backstop.
+const SHELL_UNSAFE_RUN_FOLDER = /[\x00-\x1f\x7f"`$\\]/;
+function assertSafeRunFolder(runFolder: string): void {
+  if (SHELL_UNSAFE_RUN_FOLDER.test(runFolder)) {
+    throw new Error(
+      'Refusing to launch pipeline: run directory contains unsafe characters'
+    );
+  }
+}
+
 function isSafeFlagKey(key: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_-]*$/.test(key);
 }
@@ -447,13 +468,16 @@ function buildRuntimeBootstrap(settings: ExecutionSettings): string {
   const condaBase = settings.condaPath?.trim();
   const lines: string[] = [];
 
-  lines.push(`CONDA_ENV="${condaEnv}"`);
+  // condaEnv/condaBase are admin- and config-supplied free-form strings, so
+  // shell-quote them rather than interpolating into a bare double-quoted
+  // assignment (a value like x"; rm -rf ~; :" would otherwise break out).
+  lines.push(`CONDA_ENV=${shellQuote(condaEnv)}`);
   lines.push('NEXTFLOW_RUNNER=(nextflow)');
   lines.push('');
 
   if (condaBase) {
     lines.push('# Initialize and activate conda environment');
-    lines.push(`CONDA_BASE="${condaBase}"`);
+    lines.push(`CONDA_BASE=${shellQuote(condaBase)}`);
     lines.push('CONDA_SH="$CONDA_BASE/etc/profile.d/conda.sh"');
     lines.push('export PATH="$CONDA_BASE/bin:$PATH"');
     lines.push('if [ ! -f "$CONDA_SH" ]; then');
@@ -653,6 +677,7 @@ function generateSlurmScript(
   runNumber: string,
   runId: string
 ): string {
+  assertSafeRunFolder(runFolder);
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
   const dagFile = `${runFolder}/dag.dot`;
@@ -759,6 +784,7 @@ function generateLocalScript(
   runNumber: string,
   runId: string
 ): string {
+  assertSafeRunFolder(runFolder);
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
   const dagFile = `${runFolder}/dag.dot`;
@@ -832,6 +858,7 @@ export async function prepareGenericRun(
     executionSettings,
   } = options;
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   try {
     // Load package
@@ -872,13 +899,19 @@ export async function prepareGenericRun(
       config,
     });
 
-    if (samplesheet.errors.length > 0) {
+    if (samplesheet.sampleCount === 0) {
+      // No usable samples at all is a hard failure; include the per-sample
+      // reasons so the user can see why every sample was rejected.
+      errors.push('No valid samples for samplesheet');
       errors.push(...samplesheet.errors);
+      return { success: false, runId, errors };
     }
 
-    if (samplesheet.sampleCount === 0) {
-      errors.push('No valid samples for samplesheet');
-      return { success: false, runId, errors };
+    // Some samples were skipped but the run still has usable samples. These are
+    // non-fatal warnings — the run launches with fewer samples than selected, so
+    // they must be surfaced rather than silently dropped on the success path.
+    if (samplesheet.errors.length > 0) {
+      warnings.push(...samplesheet.errors);
     }
 
     // Build pipeline flags
@@ -987,10 +1020,11 @@ export async function prepareGenericRun(
       runId,
       runFolder,
       errors,
+      warnings,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     errors.push(`Failed to prepare run: ${message}`);
-    return { success: false, runId, errors };
+    return { success: false, runId, errors, warnings };
   }
 }

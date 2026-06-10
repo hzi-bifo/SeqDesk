@@ -1171,6 +1171,14 @@ export async function startPipelineRunForOperator({
     return jsonResponse({ error: 'Failed to prepare run', details: prepDetails }, 400);
   }
 
+  // Non-fatal preparation warnings (e.g. samples skipped during samplesheet
+  // generation). The run still launches; surface these to the caller and record
+  // them so the user knows the run covers fewer samples than were selected.
+  const prepWarnings =
+    'warnings' in prepResult && Array.isArray(prepResult.warnings)
+      ? prepResult.warnings
+      : [];
+
   if (prepResult.runFolder) {
     const scriptPath =
       ('scriptPath' in prepResult ? prepResult.scriptPath : undefined) ||
@@ -1227,6 +1235,25 @@ export async function startPipelineRunForOperator({
         { error: `Run has already been started (status: ${current?.status ?? 'unknown'})` },
         409
       );
+    }
+
+    // Record skipped-sample warnings as a durable run event so they remain
+    // visible in the run history (best-effort; never blocks the launch).
+    if (prepWarnings.length > 0) {
+      try {
+        await db.pipelineRunEvent.create({
+          data: {
+            pipelineRunId: runId,
+            eventType: 'preparation_warning',
+            status: 'warning',
+            source: 'launcher',
+            message: `${prepWarnings.length} sample(s) skipped during samplesheet generation`,
+            payload: JSON.stringify({ warnings: prepWarnings }).slice(0, 4000),
+          },
+        });
+      } catch {
+        // Recording the warning must not fail the launch.
+      }
     }
 
     if (effectiveExecutionSettings.useSlurm) {
@@ -1326,6 +1353,7 @@ export async function startPipelineRunForOperator({
           jobId,
           runFolder: prepResult.runFolder,
           executionMode: executionPolicy.mode,
+          warnings: prepWarnings,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'SLURM submission failed';
@@ -1400,6 +1428,7 @@ export async function startPipelineRunForOperator({
         runFolder: prepResult.runFolder,
         executionMode: executionPolicy.mode,
         message: 'Pipeline started in background. Check the Analysis dashboard for status.',
+        warnings: prepWarnings,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Local execution failed';
@@ -1423,5 +1452,6 @@ export async function startPipelineRunForOperator({
     runId: run.id,
     runFolder: prepResult.runFolder,
     executionMode: executionPolicy.mode,
+    warnings: prepWarnings,
   });
 }

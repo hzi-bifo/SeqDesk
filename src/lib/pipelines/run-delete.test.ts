@@ -35,6 +35,9 @@ const mocks = vi.hoisted(() => ({
   genericAdapter: {
     createGenericAdapter: vi.fn(),
   },
+  opsService: {
+    cancelPipelineRunForOperator: vi.fn(),
+  },
   fs: {
     rm: vi.fn(),
   },
@@ -63,6 +66,10 @@ vi.mock("./adapters/types", async () => {
 
 vi.mock("./generic-adapter", () => ({
   createGenericAdapter: mocks.genericAdapter.createGenericAdapter,
+}));
+
+vi.mock("./pipeline-run-ops-service", () => ({
+  cancelPipelineRunForOperator: mocks.opsService.cancelPipelineRunForOperator,
 }));
 
 vi.mock("fs/promises", () => ({
@@ -436,6 +443,83 @@ describe("run-delete", () => {
     expect(mocks.db.pipelineRun.delete).not.toHaveBeenCalledWith({
       where: { id: "producer-run-1" },
     });
+  });
+
+  it("cancels a still-running dependent run before cascade-deleting it", async () => {
+    // Regression E: a dependent run that is still running must be cancelled (its
+    // live SLURM/local job stopped) BEFORE its row + folder are deleted, otherwise
+    // the job keeps running against a deleted run folder.
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue({
+        files: [
+          {
+            outputId: "sample_simulated_reads",
+            sampleId: "sample-1",
+            metadata: {
+              file1: "simulated/order_order-1/S1_R1.fastq.gz",
+              file2: "simulated/order_order-1/S1_R2.fastq.gz",
+            },
+          },
+        ],
+        errors: [],
+        summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+      }),
+    };
+
+    mocks.packageLoader.getPackage.mockImplementation((id: string) => {
+      if (id === "simulate-reads") {
+        return {
+          manifest: {
+            inputs: [],
+            outputs: [{ id: "sample_simulated_reads", destination: "sample_reads" }],
+          },
+        };
+      }
+      if (id === "fastq-checksum") {
+        return {
+          manifest: {
+            inputs: [{ id: "reads", scope: "sample", source: "sample.reads", required: true }],
+            outputs: [{ id: "sample_checksums", destination: "sample_reads" }],
+          },
+        };
+      }
+      return null;
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.opsService.cancelPipelineRunForOperator.mockResolvedValue({ status: 200, body: {} });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "simulated/order_order-1/S1_R1.fastq.gz",
+      file2: "simulated/order_order-1/S1_R2.fastq.gz",
+      pipelineRunId: "run-1",
+      pipelineSources: '{"simulate-reads":"run-1"}',
+    });
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "checksum-run-1",
+          pipelineId: "fastq-checksum",
+          runFolder: "/tmp/checksum-run-1",
+          inputSampleIds: null,
+          status: "running",
+        },
+      ]);
+
+    await cleanupRunOutputData({
+      runId: "run-1",
+      pipelineId: "simulate-reads",
+      runFolder: "/tmp/run-1",
+      target: { type: "order", orderId: "order-1" },
+      samples: [{ id: "sample-1", sampleId: "S1" }],
+    });
+
+    expect(mocks.opsService.cancelPipelineRunForOperator).toHaveBeenCalledWith("checksum-run-1");
+    expect(mocks.db.pipelineRun.delete).toHaveBeenCalledWith({ where: { id: "checksum-run-1" } });
+    // Cancel must happen before the row is deleted.
+    const cancelOrder = mocks.opsService.cancelPipelineRunForOperator.mock.invocationCallOrder[0];
+    const deleteOrder = mocks.db.pipelineRun.delete.mock.invocationCallOrder[0];
+    expect(cancelOrder).toBeLessThan(deleteOrder);
   });
 
   it("falls back to bulk delete when discovery succeeds but reads don't match", async () => {
@@ -892,7 +976,13 @@ describe("run-delete", () => {
         id: { not: "run-1" },
         studyId: "study-1",
       },
-      select: { id: true, pipelineId: true, runFolder: true, inputSampleIds: true },
+      select: {
+        id: true,
+        pipelineId: true,
+        runFolder: true,
+        inputSampleIds: true,
+        status: true,
+      },
     });
     expect(mocks.db.pipelineRun.delete).toHaveBeenCalledWith({
       where: { id: "checksum-run-1" },

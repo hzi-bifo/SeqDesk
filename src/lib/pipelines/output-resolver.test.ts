@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
   getPackage: vi.fn(),
   getResolvedDataBasePath: vi.fn(),
@@ -70,6 +71,12 @@ describe("output-resolver", () => {
     mocks.db.read.deleteMany.mockResolvedValue({});
     mocks.db.read.create.mockResolvedValue({});
     mocks.db.pipelineRun.findUnique.mockResolvedValue(null);
+    // Run replace-mode writebacks in a single transaction (the implementation
+    // wraps create + deleteMany in db.$transaction); execute the callback with
+    // the same db mock so the inner tx.read.* calls are observed.
+    mocks.db.$transaction.mockImplementation(
+      async (cb: (tx: typeof mocks.db) => unknown) => cb(mocks.db)
+    );
     mocks.getResolvedDataBasePath.mockResolvedValue({
       dataBasePath: null,
       source: "none",
@@ -79,6 +86,10 @@ describe("output-resolver", () => {
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-output-resolver-"));
+    // File-writeback now validates that source files live inside the run folder.
+    // The fixtures place their generated reads under tempDir, so default the run
+    // folder to tempDir; tests that need a specific run can still override this.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ runFolder: tempDir });
   });
 
   afterEach(async () => {
@@ -737,6 +748,92 @@ describe("output-resolver", () => {
     ).resolves.toBe("new-r2");
     await expect(fs.access(oldFile1)).rejects.toBeDefined();
     await expect(fs.access(oldFile2)).rejects.toBeDefined();
+  });
+
+  it("preserves protected raw reads when replacing reads (only deletes non-protected)", async () => {
+    // Regression guard: a mode:'replace' writeback must NOT deactivate or delete
+    // the sample's raw/unknown (protected) source reads — only the existing
+    // cleaned reads it supersedes. Previously every active read was deactivated.
+    const sourceDir = path.join(tempDir, "run-output", "reads");
+    const storageDir = path.join(tempDir, "storage");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, "raw"), { recursive: true });
+    await fs.mkdir(path.join(storageDir, "cleaned"), { recursive: true });
+
+    const sourceFile1 = path.join(sourceDir, "sample-1_R1.fastq.gz");
+    await fs.writeFile(sourceFile1, "new-cleaned-r1");
+    const rawFile1 = path.join(storageDir, "raw", "sample-1_R1.fastq.gz");
+    const oldCleanedFile1 = path.join(storageDir, "cleaned", "old_R1.fastq.gz");
+    await fs.writeFile(rawFile1, "protected-raw");
+    await fs.writeFile(oldCleanedFile1, "old-cleaned");
+
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          {
+            id: "sample-reads",
+            scope: "sample",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: { pattern: "manifests/*.json" },
+            writeback: {
+              target: "Read",
+              mode: "replace",
+              fields: { generatedFile1: "file1" },
+            },
+          },
+        ],
+      },
+    });
+    mocks.getResolvedDataBasePath.mockResolvedValue({
+      dataBasePath: storageDir,
+      source: "database",
+      isImplicit: false,
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-cleaned-old",
+      file1: "cleaned/old_R1.fastq.gz",
+      pipelineSources: null,
+    });
+    // Sample has BOTH a protected raw read and an old cleaned read.
+    mocks.db.read.findMany.mockResolvedValue([
+      { id: "read-raw", file1: "raw/sample-1_R1.fastq.gz", file2: null, dataClass: "raw" },
+      { id: "read-cleaned-old", file1: "cleaned/old_R1.fastq.gz", file2: null, dataClass: "cleaned" },
+    ]);
+    mocks.db.read.create.mockResolvedValue({ id: "read-new", file1: "cleaned/sample-1_R1.fastq.gz" });
+
+    const result = await resolveOutputs("simulate-reads", "run-id", {
+      ...baseDiscovered,
+      files: [
+        {
+          type: "artifact",
+          name: "sample-1.json",
+          path: path.join(tempDir, "run-output", "manifests", "sample-1.json"),
+          sampleId: "sample-1",
+          outputId: "sample-reads",
+          metadata: {
+            generatedFile1: "cleaned/sample-1_R1.fastq.gz",
+            sourceFile1,
+            dataClass: "cleaned",
+            replaceExisting: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    // Only the non-protected (cleaned) read is deleted; the raw read survives.
+    expect(mocks.db.read.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["read-cleaned-old"] } },
+    });
+    expect(mocks.db.read.deleteMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: expect.arrayContaining(["read-raw"]) } } })
+    );
+    // No blanket deactivation of every read on the sample.
+    expect(mocks.db.read.updateMany).not.toHaveBeenCalled();
+    // The protected raw file is left on disk; only the old cleaned file is removed.
+    await expect(fs.readFile(rawFile1, "utf8")).resolves.toBe("protected-raw");
+    await expect(fs.access(oldCleanedFile1)).rejects.toBeDefined();
   });
 
   it("skips file copy and read update when replaceExisting is false and sample already has reads", async () => {
