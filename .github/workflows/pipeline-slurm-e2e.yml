@@ -453,38 +453,13 @@ jobs:
             --pipeline-id reads-qc \
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
-      # read-cleaning — order target; needs a kraken2 DB (paramMap `kraken2Db`) + raw/unknown
-      # reads. The SUBMITTED dummy order carries raw reads (scored highest by
-      # selectRuntimeOrder), so the default selection is read-cleaning-eligible. The kraken2
-      # DB path defaults to the kraken2 DB configured on the ci-runner profile (a shared-FS
-      # path reachable from this runner), overridable by the SLURM_SHARED_KRAKEN2_DB Actions
-      # variable; the step cleanly SKIPS if that path isn't present on the runner. Local-only
-      # for now — kraken2 loads the whole DB into RAM, which the tiny SLURM smoke resource
-      # caps won't satisfy. WARN-ONLY until proven green.
-      - name: Run read-cleaning E2E (local, order target, warn-only)
-        continue-on-error: true
-        env:
-          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
-          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
-          SEQDESK_RUNTIME_E2E_PASSWORD: admin
-          # Defaults to the read-cleaning kraken2 DB configured on the ci-runner profile
-          # (a shared-FS path that is also reachable from this runner); override with the
-          # SLURM_SHARED_KRAKEN2_DB Actions variable if it lives elsewhere.
-          SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
-        run: |
-          set -euo pipefail
-          if [ ! -e "${SLURM_SHARED_KRAKEN2_DB:-}" ]; then
-            echo "kraken2 DB not present on this runner at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — skipping read-cleaning."
-            echo "Set the SLURM_SHARED_KRAKEN2_DB Actions variable (or stage the DB at the default path) to enable this step."
-            exit 0
-          fi
-          echo "Using kraken2 DB: ${SLURM_SHARED_KRAKEN2_DB}"
-          npm run pipeline:e2e:runtime -- \
-            --ensure-dummy-data \
-            --pipeline-id read-cleaning \
-            --skip-slurm \
-            --config-json "{\"kraken2Db\":\"${SLURM_SHARED_KRAKEN2_DB}\"}" \
-            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+      # read-cleaning coverage moved to the "Install SeqDesk + run a SLURM pipeline on the
+      # installed app" step below. Its kraken2 DB is now MANAGED via the install profile
+      # (one key: PipelineConfig.kraken2Db), the realistic facility flow — not a per-run
+      # --config-json override, which production HIDES once the DB is server-managed
+      # (hideWhenServerConfigured). That step already proves the managed DB is applied on the
+      # installed app; the full read-cleaning RUN there is still gated on a hosted raw/spiked
+      # dataset (see PIPELINE_E2E_COVERAGE.md).
 
       - name: Run SLURM-only pipeline smoke through the app
         env:
@@ -614,6 +589,11 @@ jobs:
         # skip this; continue-on-error so this experimental cut can't red the suite.
         if: always()
         continue-on-error: true
+        env:
+          # Pinned into the install profile as read-cleaning's MANAGED kraken2 DB (same default
+          # + override as the source-boot read-cleaning step). Empty/absent → the profile omits
+          # it and the read-cleaning full run stays gated on a raw dataset.
+          SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
@@ -672,6 +652,45 @@ jobs:
           kill "$MOCK_PID" >/dev/null 2>&1 || true
           test -x "$APP_DIR/start.sh"
 
+          echo "=== apply a facility install profile (managed pipeline config) ==="
+          # Pin read-cleaning's managed kraken2 DB through the install profile, exactly as a
+          # facility ships it — NOT a per-run --config-json override (production HIDES that
+          # field once the DB is server-managed). apply-install-profile.mjs is the same script
+          # the installer runs for a hosted --profile; we feed a local resolved profile so the
+          # test is self-contained. This writes PipelineConfig.config.kraken2Db, which is the
+          # single key `nextflow ... --kraken2db` resolves from at run time.
+          fail=0
+          PROFILE_JSON="$WORK/profile.json"
+          KRAKEN2_DB="${SLURM_SHARED_KRAKEN2_DB:-}"
+          [ -e "$KRAKEN2_DB" ] || KRAKEN2_DB=""
+          KRAKEN2_DB="$KRAKEN2_DB" PROFILE_OUT="$PROFILE_JSON" node -e '
+            const fs = require("fs");
+            const db = process.env.KRAKEN2_DB || "";
+            const rc = { classificationKraken2: true, tax2filter: "Homo sapiens" };
+            if (db) rc.kraken2Db = db;
+            fs.writeFileSync(process.env.PROFILE_OUT, JSON.stringify(
+              { pipelines: { enabled: true,
+                  enable: ["fastq-checksum", "reads-qc", "read-cleaning"],
+                  configs: { "read-cleaning": rc } } }, null, 2));
+          '
+          if [ -n "$KRAKEN2_DB" ]; then
+            echo "Profile pins read-cleaning kraken2Db = $KRAKEN2_DB"
+          else
+            echo "kraken2 DB absent at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — profile omits kraken2Db (read-cleaning full run stays gated on a raw dataset)."
+          fi
+          ( cd "$APP_DIR" && node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
+            || { echo "ERROR: install-profile apply failed on the installed app."; fail=1; }
+
+          echo "=== assert the managed config landed in the DB the installed app reads ==="
+          if [ -n "$KRAKEN2_DB" ]; then
+            RC_DB_CONFIG="$(PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d "$DB_NAME" -tAc "select config from \"PipelineConfig\" where \"pipelineId\"='read-cleaning'" 2>&1 || true)"
+            echo "PipelineConfig[read-cleaning].config = $RC_DB_CONFIG"
+            case "$RC_DB_CONFIG" in
+              *"$KRAKEN2_DB"*) echo "OK: profile-managed kraken2Db persisted — --kraken2db resolves from here, no per-run override." ;;
+              *) echo "ERROR: managed kraken2Db not found in PipelineConfig after profile apply."; fail=1 ;;
+            esac
+          fi
+
           echo "=== boot the INSTALLED app with the SLURM runtime env ==="
           ( cd "$APP_DIR"
             export SEQDESK_SLURM_INLINE_EXECUTOR=1 SEQDESK_SLURM_ENABLED=true SEQDESK_CONDA_ENABLED=true
@@ -684,6 +703,8 @@ jobs:
           for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >/dev/null 2>&1 && break; sleep 2; done
 
           echo "=== run fastq-checksum in SLURM mode through the INSTALLED app ==="
+          # No --config-json: managed config (and execution) come from the profile/install,
+          # the realistic facility flow. Add read-cleaning here once a raw dataset is hosted.
           rc=0
           SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
           SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
@@ -696,7 +717,8 @@ jobs:
               2>&1 | tee "$WORK/install-slurm-fastq-checksum.log" || rc=$?
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
           echo "install-SLURM fastq-checksum exit: $rc"
-          exit "$rc"
+          [ "$rc" = 0 ] || fail=1
+          exit "$fail"
 
       - name: Collect SLURM + pipeline diagnostics
         if: always()
