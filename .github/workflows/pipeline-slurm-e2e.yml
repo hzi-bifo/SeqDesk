@@ -617,11 +617,26 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          WORK="$RUNNER_TEMP/install-slurm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          # The installer's preflight needs ~2G free at --dir, but $RUNNER_TEMP is on /home
+          # (only ~1G on this runner), so root the work area on the shared run FS that already
+          # holds the pipeline run/data dirs. The trap stashes the small logs into slurm-diag
+          # (uploaded as an artifact) and frees the heavy dirs — app node_modules/.next, the
+          # npm cache, the installed data/run trees — on every exit path (these live on the
+          # shared FS, which isn't auto-reclaimed between jobs like $RUNNER_TEMP is).
+          WORK="${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}/install-slurm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           APP_DIR="$WORK/app"; MOCK_ROOT="$WORK/mock"; NPM_PREFIX="$WORK/npm-prefix"
           INSTALLED_PORT=$((PORT + 1)); MOCK_PORT=$((PORT + 2))
           INSTALLED_DATA="$SEQDESK_DATA_DIR-installed"; INSTALLED_RUNS="$SEQDESK_RUN_DIR-installed"
-          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX"
+          DIAG_OUT="$RUNNER_TEMP/slurm-diag"
+          rm -rf "$WORK"
+          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$DIAG_OUT"
+          cleanup_install_slurm() {
+            for f in install.log server.log mock.log install-slurm-fastq-checksum.log; do
+              [ -f "$WORK/$f" ] && cp "$WORK/$f" "$DIAG_OUT/installslurm-$f" 2>/dev/null || true
+            done
+            rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
+          }
+          trap cleanup_install_slurm EXIT
 
           echo "=== build release tarball + npm launcher ==="
           bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
