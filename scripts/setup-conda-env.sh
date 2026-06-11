@@ -250,6 +250,16 @@ fi
 log "Using conda: ${CONDA_BIN}"
 log "Environment: ${ENV_NAME}"
 
+# conda addresses an environment by NAME (-n) or by PREFIX PATH (-p). A path-style
+# env — one that contains a slash, e.g. a shared /net/... env a facility points the
+# installer at — MUST use -p; -n rejects it with "Environment names cannot contain
+# path separators". Pick the selector once and reuse it for every env operation.
+if [[ "${ENV_NAME}" == */* ]]; then
+  ENV_SELECTOR=(-p "${ENV_NAME}")
+else
+  ENV_SELECTOR=(-n "${ENV_NAME}")
+fi
+
 CONDA_BASE="$("$CONDA_BIN" info --base 2>/dev/null || true)"
 if [[ -n "${CONDA_PATH}" ]]; then
   CONDA_BASE="${CONDA_PATH}"
@@ -295,11 +305,11 @@ if "$CONDA_BIN" env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
   ENV_EXISTS=1
   if [[ "$FORCE_RECREATE" -eq 1 ]]; then
     log "Removing existing env: ${ENV_NAME}"
-    run "$CONDA_BIN" env remove -n "${ENV_NAME}"
+    run "$CONDA_BIN" env remove "${ENV_SELECTOR[@]}"
     ENV_EXISTS=0
   else
     log "Env ${ENV_NAME} already exists. Updating packages."
-    run "$CONDA_BIN" install -y -n "${ENV_NAME}" \
+    run "$CONDA_BIN" install -y "${ENV_SELECTOR[@]}" \
       "${CHANNEL_ARGS[@]}" \
       "python=${PYTHON_VERSION}" \
       "openjdk=17" \
@@ -312,7 +322,7 @@ fi
 
 if [[ "$ENV_EXISTS" -eq 0 ]]; then
   log "Creating env ${ENV_NAME}..."
-  run "$CONDA_BIN" create -y -n "${ENV_NAME}" \
+  run "$CONDA_BIN" create -y "${ENV_SELECTOR[@]}" \
     "${CHANNEL_ARGS[@]}" \
     "python=${PYTHON_VERSION}" \
     "openjdk=17" \
@@ -414,9 +424,9 @@ if [[ "$RUN_TESTS" -eq 1 ]]; then
     log "Running sanity tests..."
     run "$CONDA_BIN" --version
     run "$CONDA_BIN" config --show channels
-    run "$CONDA_BIN" run -n "${ENV_NAME}" nextflow -version
-    run "$CONDA_BIN" run -n "${ENV_NAME}" nf-core --version
-    run "$CONDA_BIN" run -n "${ENV_NAME}" java -version
+    run "$CONDA_BIN" run "${ENV_SELECTOR[@]}" nextflow -version
+    run "$CONDA_BIN" run "${ENV_SELECTOR[@]}" nf-core --version
+    run "$CONDA_BIN" run "${ENV_SELECTOR[@]}" java -version
   fi
 
   if [[ "$RUN_PIPELINE_TEST" -eq 1 ]]; then
@@ -426,7 +436,7 @@ if [[ "$RUN_TESTS" -eq 1 ]]; then
       :
     fi
     if [[ "$DRY_RUN" -eq 0 ]]; then
-      run env NXF_SYNTAX_PARSER=v1 "$CONDA_BIN" run -n "${ENV_NAME}" nextflow run nf-core/mag -profile test,conda -stub --outdir "${TEST_OUTDIR}"
+      run env NXF_SYNTAX_PARSER=v1 "$CONDA_BIN" run "${ENV_SELECTOR[@]}" nextflow run nf-core/mag -profile test,conda -stub --outdir "${TEST_OUTDIR}"
     fi
   fi
 fi
