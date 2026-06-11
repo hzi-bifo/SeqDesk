@@ -622,15 +622,18 @@ jobs:
               [ -f "$WORK/$f" ] && cp "$WORK/$f" "$DIAG_OUT/installslurm-$f" 2>/dev/null || true
             done
             rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
-            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
-              -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" >/dev/null 2>&1 || true
+            psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
+              -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" >/dev/null 2>&1 || true
           }
           trap cleanup_install_slurm EXIT
 
           echo "=== create a fresh database for the installed app ==="
-          PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
-            -U "${DB_USER:-seqdesk}" -d postgres \
-            -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" -c "CREATE DATABASE \"$INSTALLED_DB_NAME\""
+          # Connect as the postgres superuser (trust auth on the ephemeral cluster), like the
+          # "Ensure PostgreSQL database" step does — the seqdesk role lacks CREATEDB. Own it by
+          # seqdesk so the install (which connects as seqdesk) can migrate + seed it.
+          psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
+            -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" \
+            -c "CREATE DATABASE \"$INSTALLED_DB_NAME\" OWNER \"$DB_USER\""
 
           echo "=== build release tarball + npm launcher ==="
           bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
