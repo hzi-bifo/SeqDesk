@@ -608,6 +608,13 @@ jobs:
           INSTALLED_PORT=$((PORT + 1)); MOCK_PORT=$((PORT + 2))
           INSTALLED_DATA="$SEQDESK_DATA_DIR-installed"; INSTALLED_RUNS="$SEQDESK_RUN_DIR-installed"
           DIAG_OUT="$RUNNER_TEMP/slurm-diag"
+          # A real install owns its database. Sharing the source-boot DB makes the installed
+          # app's --ensure-dummy-data short-circuit (the order already exists) and then resolve
+          # reads against a data dir where the FASTQs were never written. Give it a fresh DB on
+          # the same ephemeral Postgres; the install migrates + seeds it, and dummy data then
+          # lands in $INSTALLED_DATA consistently.
+          INSTALLED_DB_NAME="${DB_NAME}_installed"
+          INSTALLED_DB_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${INSTALLED_DB_NAME}?schema=public"
           rm -rf "$WORK"
           mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$DIAG_OUT"
           cleanup_install_slurm() {
@@ -615,8 +622,15 @@ jobs:
               [ -f "$WORK/$f" ] && cp "$WORK/$f" "$DIAG_OUT/installslurm-$f" 2>/dev/null || true
             done
             rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
+            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+              -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" >/dev/null 2>&1 || true
           }
           trap cleanup_install_slurm EXIT
+
+          echo "=== create a fresh database for the installed app ==="
+          PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+            -U "${DB_USER:-seqdesk}" -d postgres \
+            -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" -c "CREATE DATABASE \"$INSTALLED_DB_NAME\""
 
           echo "=== build release tarball + npm launcher ==="
           bash "$GITHUB_WORKSPACE/scripts/build-release.sh" "$VERSION" --offline-fonts --webpack
@@ -648,7 +662,7 @@ jobs:
               --dir "$APP_DIR" --port "$INSTALLED_PORT" \
               --data-path "$INSTALLED_DATA" --run-dir "$INSTALLED_RUNS" \
               --nextauth-url "http://127.0.0.1:$INSTALLED_PORT" \
-              --database-url "$DATABASE_URL" --database-direct-url "$DIRECT_URL"
+              --database-url "$INSTALLED_DB_URL" --database-direct-url "$INSTALLED_DB_URL"
           kill "$MOCK_PID" >/dev/null 2>&1 || true
           test -x "$APP_DIR/start.sh"
 
@@ -678,16 +692,17 @@ jobs:
           else
             echo "kraken2 DB absent at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — profile omits kraken2Db (read-cleaning full run stays gated on a raw dataset)."
           fi
-          # Apply from the source checkout: it ships apply-install-profile.mjs + the apply-core
-          # lib + a generated Prisma client, and writes to DATABASE_URL — the SAME DB the
-          # installed app reads — so the installed app honors the managed config. (The installer
-          # doesn't leave this dev script on the installed app's path post-install.)
-          ( cd "$GITHUB_WORKSPACE" && node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
+          # Apply from the source checkout (it ships apply-install-profile.mjs + the apply-core
+          # lib + a generated Prisma client), targeting the INSTALLED app's own database, so the
+          # installed app honors the managed config. (The installer doesn't leave this dev script
+          # on the installed app's path post-install.)
+          ( cd "$GITHUB_WORKSPACE" && DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
+              node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
             || { echo "ERROR: install-profile apply failed."; fail=1; }
 
           echo "=== assert the managed config landed in the DB the installed app reads ==="
           if [ -n "$KRAKEN2_DB" ]; then
-            RC_DB_CONFIG="$(PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d "$DB_NAME" -tAc "select config from \"PipelineConfig\" where \"pipelineId\"='read-cleaning'" 2>&1 || true)"
+            RC_DB_CONFIG="$(PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d "$INSTALLED_DB_NAME" -tAc "select config from \"PipelineConfig\" where \"pipelineId\"='read-cleaning'" 2>&1 || true)"
             echo "PipelineConfig[read-cleaning].config = $RC_DB_CONFIG"
             case "$RC_DB_CONFIG" in
               *"$KRAKEN2_DB"*) echo "OK: profile-managed kraken2Db persisted — --kraken2db resolves from here, no per-run override." ;;
@@ -697,6 +712,7 @@ jobs:
 
           echo "=== boot the INSTALLED app with the SLURM runtime env ==="
           ( cd "$APP_DIR"
+            export DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL"
             export SEQDESK_SLURM_INLINE_EXECUTOR=1 SEQDESK_SLURM_ENABLED=true SEQDESK_CONDA_ENABLED=true
             export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH" SEQDESK_CONDA_ENV="$SEQDESK_CONDA_ENV"
             export SEQDESK_PIPELINE_RUN_DIR="$INSTALLED_RUNS" SEQDESK_DATA_PATH="$INSTALLED_DATA"
