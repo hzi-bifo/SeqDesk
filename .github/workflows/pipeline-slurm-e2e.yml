@@ -618,8 +618,8 @@ jobs:
           rm -rf "$WORK"
           mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$DIAG_OUT"
           cleanup_install_slurm() {
-            for f in install.log server.log mock.log install-slurm-fastq-checksum.log; do
-              [ -f "$WORK/$f" ] && cp "$WORK/$f" "$DIAG_OUT/installslurm-$f" 2>/dev/null || true
+            for f in "$WORK"/install*.log "$WORK"/server.log "$WORK"/mock.log; do
+              [ -f "$f" ] && cp "$f" "$DIAG_OUT/installslurm-$(basename "$f")" 2>/dev/null || true
             done
             rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
             psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
@@ -725,21 +725,34 @@ jobs:
           INSTALLED_APP_PID=$!
           for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >/dev/null 2>&1 && break; sleep 2; done
 
-          echo "=== run fastq-checksum in SLURM mode through the INSTALLED app ==="
-          # No --config-json: managed config (and execution) come from the profile/install,
-          # the realistic facility flow. Add read-cleaning here once a raw dataset is hosted.
+          echo "=== run pipelines through the INSTALLED app (managed config from the install) ==="
+          # Install once, exercise many — NO --config-json; managed config + execution come from
+          # the install/profile, the realistic facility flow. Grow this list per the
+          # "Install-harness expansion roadmap" (Phase 1) in PIPELINE_E2E_COVERAGE.md.
           rc=0
-          SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
-          SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
-          SEQDESK_RUNTIME_E2E_PASSWORD=admin \
-          SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
-          SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
-          SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=10 \
-            npm run pipeline:e2e:runtime -- \
-              --ensure-dummy-data --pipeline-id fastq-checksum --skip-local \
-              2>&1 | tee "$WORK/install-slurm-fastq-checksum.log" || rc=$?
+          run_installed() {
+            local label="$1"; shift
+            echo "::group::installed-app pipeline: $label"
+            local prc=0
+            SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
+            SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
+            SEQDESK_RUNTIME_E2E_PASSWORD=admin \
+            SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
+            SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
+            SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=10 \
+              npm run pipeline:e2e:runtime -- --ensure-dummy-data "$@" \
+                2>&1 | tee "$WORK/install-$label.log" || prc=$?
+            echo "::endgroup::"
+            echo "installed-app [$label] exit: $prc"
+            [ "$prc" = 0 ] || rc=1
+          }
+          # fastq-checksum on both execution modes (md5 round-trip writeback), then a second
+          # pipeline type — simulate-reads is order-scoped + self-contained (no external DB).
+          run_installed fastq-checksum-slurm  --pipeline-id fastq-checksum  --skip-local
+          run_installed fastq-checksum-local  --pipeline-id fastq-checksum  --skip-slurm
+          run_installed simulate-reads-slurm  --pipeline-id simulate-reads  --skip-local
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
-          echo "install-SLURM fastq-checksum exit: $rc"
+          echo "installed-app pipelines overall rc: $rc"
           if [ "$rc" != 0 ]; then
             echo "--- installed-app run logs (the cleanup trap frees these; dump them now) ---"
             find "$INSTALLED_RUNS" -type f \( -name 'slurm-*.err' -o -name 'slurm-*.out' \
