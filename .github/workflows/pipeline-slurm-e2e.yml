@@ -678,8 +678,12 @@ jobs:
           else
             echo "kraken2 DB absent at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — profile omits kraken2Db (read-cleaning full run stays gated on a raw dataset)."
           fi
-          ( cd "$APP_DIR" && node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
-            || { echo "ERROR: install-profile apply failed on the installed app."; fail=1; }
+          # Apply from the source checkout: it ships apply-install-profile.mjs + the apply-core
+          # lib + a generated Prisma client, and writes to DATABASE_URL — the SAME DB the
+          # installed app reads — so the installed app honors the managed config. (The installer
+          # doesn't leave this dev script on the installed app's path post-install.)
+          ( cd "$GITHUB_WORKSPACE" && node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
+            || { echo "ERROR: install-profile apply failed."; fail=1; }
 
           echo "=== assert the managed config landed in the DB the installed app reads ==="
           if [ -n "$KRAKEN2_DB" ]; then
@@ -717,6 +721,14 @@ jobs:
               2>&1 | tee "$WORK/install-slurm-fastq-checksum.log" || rc=$?
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
           echo "install-SLURM fastq-checksum exit: $rc"
+          if [ "$rc" != 0 ]; then
+            echo "--- installed-app run logs (the cleanup trap frees these; dump them now) ---"
+            find "$INSTALLED_RUNS" -type f \( -name 'slurm-*.err' -o -name 'slurm-*.out' \
+              -o -name '.command.err' -o -name '.command.log' -o -name '.command.sh' \
+              -o -name 'pipeline.err' -o -name 'pipeline.out' -o -name '.nextflow.log' -o -name 'run.sh' \) \
+              2>/dev/null | sort | while IFS= read -r f; do
+                echo "::group::$f"; sed -n '1,200p' "$f" 2>/dev/null; echo "::endgroup::"; done || true
+          fi
           [ "$rc" = 0 ] || fail=1
           exit "$fail"
 
