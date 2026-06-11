@@ -610,6 +610,9 @@ jobs:
       # source-boot app is stopped (one app per DB). WARN-ONLY while it's brought up; the
       # first target is fastq-checksum, to expand to every pipeline (see PIPELINE_E2E_COVERAGE.md).
       - name: Install SeqDesk + run a SLURM pipeline on the installed app (warn-only)
+        # always() so an unrelated earlier flake (e.g. the failure-path timing race) can't
+        # skip this; continue-on-error so this experimental cut can't red the suite.
+        if: always()
         continue-on-error: true
         run: |
           set -euo pipefail
