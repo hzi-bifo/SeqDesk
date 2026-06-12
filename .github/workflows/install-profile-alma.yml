@@ -447,15 +447,22 @@ jobs:
           # dirs on the big shared FS (/net/runner, ~249G) instead — the Gemma runs are LOCAL so
           # the runner just needs to see it. Fall back to $RUNNER_TEMP if it isn't writable.
           # Small logs/JSON (uploaded as artifacts) stay on $RUNNER_TEMP.
-          ALMA_WORK_ROOT="${{ vars.ALMA_WORK_ROOT || '/net/runner/seqdesk-alma' }}"
-          mkdir -p "$ALMA_WORK_ROOT" 2>/dev/null || true
-          # Prune stale work dirs from earlier runs (cleanup can leave NFS .nfs* silly-renames
-          # behind), so /net/runner doesn't accumulate over time.
-          find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
-          WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
-          if ! mkdir -p "$WORK" 2>/dev/null; then
+          # Pick the first WRITABLE big shared FS for the heavy work dirs (/home is ~98% full).
+          # /net/broker is where the SLURM E2E already writes as this runner user; /net/runner
+          # is mounted for interactive logins but not necessarily for the runner — so try both,
+          # then fall back to $RUNNER_TEMP. Override with the ALMA_WORK_ROOT Actions var.
+          ALMA_WORK_ROOT=""
+          for cand in "${{ vars.ALMA_WORK_ROOT || '' }}" /net/broker/autotest/seqdesk-ci/alma-work /net/runner/seqdesk-alma; do
+            [ -z "$cand" ] && continue
+            if mkdir -p "$cand/$RUN_SUFFIX" 2>/dev/null; then ALMA_WORK_ROOT="$cand"; break; fi
+          done
+          if [ -n "$ALMA_WORK_ROOT" ]; then
+            WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
+            # prune stale dirs from earlier runs (cleanup can leave NFS .nfs* silly-renames)
+            find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+          else
             WORK="$RUNNER_TEMP/seqdesk-alma-$RUN_SUFFIX"; mkdir -p "$WORK"
-            echo "WARN: $ALMA_WORK_ROOT not writable — falling back to $WORK on \$RUNNER_TEMP"
+            echo "WARN: no shared FS writable — falling back to \$RUNNER_TEMP (/home may be full)"
           fi
           echo "Alma work dir: $WORK ($(df -h "$WORK" | awk 'NR==2{print $4" free on "$6}'))"
           echo "PORT=$PORT" >> "$GITHUB_ENV"
