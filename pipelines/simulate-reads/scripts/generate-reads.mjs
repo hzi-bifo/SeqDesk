@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import fs from "fs/promises";
+import { realpathSync } from "fs";
 import path from "path";
-import { pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { gunzipSync, gzipSync } from "zlib";
 
 const BASES = ["A", "C", "G", "T"];
@@ -730,9 +731,21 @@ async function main() {
   );
 }
 
-const entryPoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+// Run main() only when invoked directly (not when imported by the test). Compare RESOLVED
+// real paths, not raw URLs: when this script is reached through a symlink (the installed app's
+// releases/<version>/ layout) or a "/../" segment (nextflow calls it via workflow/../scripts/),
+// process.argv[1] differs from node's symlink-resolved import.meta.url, and a string compare
+// silently skips main() — exit 0 with no reads written. realpathSync normalizes both sides.
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
 
-if (entryPoint === import.meta.url) {
+if (invokedDirectly()) {
   main().catch((error) => {
     process.stderr.write(error instanceof Error ? error.stack || error.message : String(error));
     process.exit(1);
