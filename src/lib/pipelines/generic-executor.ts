@@ -247,6 +247,14 @@ function buildRunConfig(
     sections.push(processLines.join('\n'));
   }
 
+  // Overwrite the run report/timeline/trace/dag instead of ABORTING when they already exist.
+  // nextflow throws "Report file already exists -- enable the 'report.overwrite' option" when a
+  // run folder is reused (a resubmit/retry, or local+SLURM runs landing in the same folder).
+  // Each run regenerates these files, so overwriting is safe — and is nextflow's recommended fix.
+  sections.push(
+    ['report.overwrite = true', 'timeline.overwrite = true', 'trace.overwrite = true', 'dag.overwrite = true'].join('\n'),
+  );
+
   // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
   const condaBlock = [
     `profiles {`,

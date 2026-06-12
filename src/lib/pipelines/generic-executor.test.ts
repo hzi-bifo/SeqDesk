@@ -314,6 +314,10 @@ describe("generic-executor", () => {
     expect(result.success).toBe(true);
     const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
     expect(config).toContain("cacheDir = '/net/shared/conda-cache'");
+    // Re-run safety: nextflow ABORTS if report/timeline/trace/dag already exist in a reused
+    // run folder; the generated config must enable overwrite so a resubmit/retry doesn't crash.
+    expect(config).toContain("report.overwrite = true");
+    expect(config).toContain("timeline.overwrite = true");
 
     // And NOT emitted when unset.
     const result2 = await prepareGenericRun({
