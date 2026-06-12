@@ -95,7 +95,7 @@ Each phase accumulates into the same warn-only step (install once, test many); p
 | study-demo-report | ✅ running | SLURM | `PipelineArtifact` report rows | study-scoped (auto-finds the dummy study) |
 | fastqc | ✅ running | SLURM | QC artifacts | per-process conda **reused** from the shared cache |
 | reads-qc | ✅ running | SLURM | `completes` gate | per-process conda **reused** from the shared cache |
-| simulate-reads | 🔄 ongoing | local + SLURM | new active `Read` (replace) | both-modes fix in flight — the single SLURM-only run hit a nextflow `report.html` collision |
+| simulate-reads | 🔄 ongoing | local + SLURM | new active `Read` (replace) | `report.html` abort **fixed** (`report.overwrite` in `buildRunConfig`); underlying issue remains — `generate-reads.mjs` exits 0 but writes no `reads/*` on the installed app, **even in local mode** (pure in-memory synth + `writeFile`, so env-specific — needs interactive repro, not log-reading) |
 | read-cleaning | 📋 planned | — | cleaned-read writeback | needs the **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
 | metaxpath | 📋 planned | — | taxonomy results | private package; covered separately on the **Alma** install E2E |
 | mag | 📋 planned | — | assemblies / bins | needs **GTDB** staged on the shared FS |
