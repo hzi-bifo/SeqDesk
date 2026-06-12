@@ -17,7 +17,7 @@ Two self-hosted CI harnesses prove SeqDesk's pipelines actually **run and read/w
 | **reads-qc** | ✅ / ✅ | ✅ SLURM | covered — `completes` gate (the `completed→running` flip is fixed, `a7186aa`) |
 | **simulate-reads** | ✅ / ✅ | ✅ SLURM + local | covered — new active `Read` (replace); fixed a fragile entry-point guard that skipped `main()` under symlinked installs |
 | read-cleaning | ⚠️ / — | 📋 planned | managed kraken2 DB **asserted applied** on the installed app; full run needs a **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
-| metaxpath | — | ✅ Alma (warn-only) | private package; runs the ~3-min taxonomy classification on the Gemma study |
+| metaxpath | — | ✅ Alma (**hard**) | private package; runs the ~3-min taxonomy classification on the Gemma study (skips cleanly if not enabled). Promoted from warn-only once the disk flake was fixed |
 | mag | — | 📋 planned | needs **GTDB** staged on the shared FS |
 | submg | — | 📋 planned | needs **ENA test-server** credentials |
 
@@ -50,6 +50,6 @@ Grow the install-once/run-many step across the full user workflow (each phase ac
 
 ## Real bugs this suite has caught
 
-Config loader dropping `SEQDESK_CONDA_ENV`; a non-relocatable pipelines dir; `simpleGlob` ignoring literal discovery patterns; the pipeline-monitor not resolving outputs; terminal-run resurrection on trace re-sync; the `completed→running` demote (`forceRunningFromQueue`, fixed `a7186aa`); three install bugs (2G disk preflight, prefix-path conda env `-n`→`-p`, `postgres`-superuser DB create); a nextflow `report.html` abort on run-folder reuse (fixed with `report.overwrite` in the generated config); and **simulate-reads producing no reads on every installed app** — its `generate-reads.mjs` entry-point guard string-compared `process.argv[1]`'s URL to `import.meta.url`, which diverge under the symlinked `releases/<version>/` layout, so `main()` silently never ran (now a `realpathSync` compare).
+Config loader dropping `SEQDESK_CONDA_ENV`; a non-relocatable pipelines dir; `simpleGlob` ignoring literal discovery patterns; the pipeline-monitor not resolving outputs; terminal-run resurrection on trace re-sync; the `completed→running` demote (`forceRunningFromQueue`, fixed `a7186aa`); three install bugs (2G disk preflight, prefix-path conda env `-n`→`-p`, `postgres`-superuser DB create); a nextflow `report.html` abort on run-folder reuse (fixed with `report.overwrite` in the generated config); **simulate-reads producing no reads on every installed app** — its `generate-reads.mjs` entry-point guard string-compared `process.argv[1]`'s URL to `import.meta.url`, which diverge under the symlinked `releases/<version>/` layout, so `main()` silently never ran (now a `realpathSync` compare); and the **Alma E2E running out of disk** on the runner's ~98%-full `/home`, which killed the heavy metaxpath run (`No space left`) — its heavy work dirs now root on the shared `/net/broker` (~138G).
 
 **Known flake (mitigated):** when the pipeline-monitor finalizes a run (not the `/sync` path), the run-scoped summary row + per-read `readCount/avgQuality` merge sometimes don't ingest — so those checks **warn+skip** on a wholesale miss rather than red the suite.
