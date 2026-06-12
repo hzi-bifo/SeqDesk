@@ -777,6 +777,18 @@ jobs:
               -o -name 'pipeline.err' -o -name 'pipeline.out' -o -name '.nextflow.log' -o -name 'run.sh' \) \
               2>/dev/null | sort | while IFS= read -r f; do
                 echo "::group::$f"; sed -n '1,200p' "$f" 2>/dev/null; echo "::endgroup::"; done || true
+            echo "::group::simulate-reads forensics (why no reads/*)"
+            echo "--- SIMULATE work-dir tree (does reads/ exist + have fastq.gz?) ---"
+            find "$INSTALLED_RUNS" -path '*SIMULATE-READS*/work/*' -maxdepth 4 -printf '%y %10s  %p\n' 2>/dev/null | head -100
+            echo "--- .exitcode(s) ---"
+            find "$INSTALLED_RUNS" -path '*SIMULATE-READS*' -name '.exitcode' 2>/dev/null | while IFS= read -r f; do echo "$f => $(cat "$f" 2>/dev/null)"; done
+            echo "--- release generate-reads.mjs (size / line count — intact?) ---"
+            find "$APP_DIR"/releases -path '*simulate-reads/scripts/generate-reads.mjs' 2>/dev/null | while IFS= read -r f; do ls -la "$f"; wc -l "$f"; done
+            echo "--- a SIMULATE .command.run (conda activation + node path) ---"
+            find "$INSTALLED_RUNS" -path '*SIMULATE-READS*/work/*' -name '.command.run' 2>/dev/null | head -1 | while IFS= read -r f; do sed -n '1,70p' "$f"; done
+            echo "--- node version on the conda env PATH ---"
+            "$SEQDESK_CONDA_ENV/bin/node" --version 2>&1 || echo "(no node at $SEQDESK_CONDA_ENV/bin/node)"
+            echo "::endgroup::"
           fi
           [ "$rc" = 0 ] || fail=1
           exit "$fail"
