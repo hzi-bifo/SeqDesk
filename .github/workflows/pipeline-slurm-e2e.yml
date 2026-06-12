@@ -761,7 +761,10 @@ jobs:
           # steps. read-cleaning/metaxpath/mag/submg stay out (dataset / package / DB gated).
           run_installed fastq-checksum-slurm    --pipeline-id fastq-checksum    --skip-local
           run_installed fastq-checksum-local    --pipeline-id fastq-checksum    --skip-slurm
-          run_installed simulate-reads-slurm    --pipeline-id simulate-reads    --skip-local
+          # simulate-reads runs BOTH modes (no --skip), matching the source-boot step: the
+          # E2E does local then SLURM as separate runs (separate run folders), which avoids the
+          # nextflow report.html collision the single SLURM-only run hit on the installed app.
+          run_installed simulate-reads          --pipeline-id simulate-reads
           run_installed study-demo-report-slurm --pipeline-id study-demo-report --skip-local
           run_installed fastqc-slurm            --pipeline-id fastqc            --skip-local
           run_installed reads-qc-slurm          --pipeline-id reads-qc          --skip-local
