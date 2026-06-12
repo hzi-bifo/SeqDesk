@@ -687,7 +687,10 @@ jobs:
             if (db) rc.kraken2Db = db;
             fs.writeFileSync(process.env.PROFILE_OUT, JSON.stringify(
               { pipelines: { enabled: true,
-                  enable: ["fastq-checksum", "reads-qc", "read-cleaning"],
+                  // every pipeline we run on the installed app must be enabled here
+                  // (a disabled pipeline 400s with "not enabled in SeqDesk settings")
+                  enable: ["fastq-checksum", "simulate-reads", "fastqc",
+                           "study-demo-report", "reads-qc", "read-cleaning"],
                   configs: { "read-cleaning": rc } } }, null, 2));
           '
           if [ -n "$KRAKEN2_DB" ]; then
@@ -746,11 +749,17 @@ jobs:
             echo "installed-app [$label] exit: $prc"
             [ "$prc" = 0 ] || rc=1
           }
-          # fastq-checksum on both execution modes (md5 round-trip writeback), then a second
-          # pipeline type — simulate-reads is order-scoped + self-contained (no external DB).
-          run_installed fastq-checksum-slurm  --pipeline-id fastq-checksum  --skip-local
-          run_installed fastq-checksum-local  --pipeline-id fastq-checksum  --skip-slurm
-          run_installed simulate-reads-slurm  --pipeline-id simulate-reads  --skip-local
+          # Phase-1 matrix on the installed app. fastq-checksum in both modes; the rest SLURM
+          # (fastqc/reads-qc reuse the per-process conda envs the source-boot steps already
+          # warmed in the shared cacheDir earlier in this job). study-demo-report + reads-qc are
+          # study-scoped and auto-find the dummy study (no --study-alias), like the source-boot
+          # steps. read-cleaning/metaxpath/mag/submg stay out (dataset / package / DB gated).
+          run_installed fastq-checksum-slurm    --pipeline-id fastq-checksum    --skip-local
+          run_installed fastq-checksum-local    --pipeline-id fastq-checksum    --skip-slurm
+          run_installed simulate-reads-slurm    --pipeline-id simulate-reads    --skip-local
+          run_installed study-demo-report-slurm --pipeline-id study-demo-report --skip-local
+          run_installed fastqc-slurm            --pipeline-id fastqc            --skip-local
+          run_installed reads-qc-slurm          --pipeline-id reads-qc          --skip-local
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
           echo "installed-app pipelines overall rc: $rc"
           if [ "$rc" != 0 ]; then

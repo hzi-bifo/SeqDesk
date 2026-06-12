@@ -65,7 +65,7 @@ The point of these tests is confidence that *when someone installs SeqDesk, the 
 
 | Pipeline | local (install path) | SLURM (install path) |
 | --- | --- | --- |
-| fastq-checksum | ✅ md5 round-trip written onto the `Read` row (Alma) | ✅ `sbatch` reaches `completed` + md5 writeback on the *installed* app, managed `kraken2Db` from the profile (SLURM E2E, run `27355388356`) |
+| fastq-checksum | ✅ md5 round-trip written onto the `Read` row (Alma) **+ ✅ local mode on the installed app** (SLURM E2E, run `27357778670`) | ✅ `sbatch` reaches `completed` + md5 writeback on the *installed* app, managed `kraken2Db` from the profile (SLURM E2E, runs `27355388356`/`27357778670`) |
 | study-demo-report | ✅ `PipelineArtifact` rows | — |
 | fastqc | ✅ QC artifacts | — |
 | metaxpath | ✅ `completes` (private pkg + DB params from the profile) | — |
@@ -86,6 +86,8 @@ The install→SLURM step proves the *installed artifact* works end to end (insta
 5. **Data lifecycle — researcher API.** Order create → submit → add samples → upload + assign a sequencing file → create a study, via the installed app's API (the UI variants are Playwright-covered on source-boot; this is the installed-app API smoke).
 
 Each phase accumulates into the same warn-only step (install once, test many); promote the whole step to a hard gate once it's stable across a few scheduled runs.
+
+**Phase 1 progress — NOT yet all pipelines.** Only **fastq-checksum** is proven on the installed app so far: **SLURM ✅ and local ✅** (run `27357778670`), with managed `kraken2Db` from the profile and md5 writeback. The harness now runs `run_installed` per pipeline (install once, run many). **simulate-reads** surfaced that a pipeline must be **enabled in the install profile** (`pipelines.enable`) or it 400s with *"not enabled in SeqDesk settings"* — the profile now enables the Phase-1 set, validation pending. **fastqc, study-demo-report, reads-qc** are not yet wired here; **read-cleaning** needs its raw dataset; **metaxpath** is study-scoped + a private package; **mag/submg** need GTDB / ENA creds. So: **we have NOT proved all pipelines work for the user on a fresh install — only fastq-checksum.**
 
 ### What every covered run asserts
 
