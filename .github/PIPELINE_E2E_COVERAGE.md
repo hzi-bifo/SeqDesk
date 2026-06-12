@@ -1,178 +1,55 @@
 # Pipeline E2E Coverage
 
-What the **Pipeline SLURM E2E** (`.github/workflows/pipeline-slurm-e2e.yml`, self-hosted runner on the private `hzi-bifo/SeqDesk-ci` mirror) actually exercises. The workflow boots a real SeqDesk app against a local Postgres (an existing local cluster on the `db-local` runner if present, otherwise a throwaway user-space cluster), seeds dummy data, and drives pipelines through the app's HTTP API in **local** and **SLURM** execution modes, then asserts the database writeback.
+Two self-hosted CI harnesses prove SeqDesk's pipelines actually **run and read/write the DB** — not just that the code compiles:
 
-> Keep this in sync when adding a pipeline or an assertion. It's the quick answer to "is X tested, and how?"
+- **SLURM E2E** (`.github/workflows/pipeline-slurm-e2e.yml`) — boots the app from source against a local Postgres, drives pipelines through the HTTP API in **local + SLURM** modes, asserts DB writeback. It then **installs SeqDesk fresh** (own DB on the shared FS, profile applied) and re-runs the matrix on that *installed* app — the realistic facility flow.
+- **Alma install E2E** (`install-profile-alma.yml`) — real install via the npm launcher + hosted profile, runs pipelines on real ONT data (the Gemma study).
 
-## Pipeline coverage
+> Keep the table below in sync when adding a pipeline or an assertion.
 
+## Coverage
 
-| Pipeline              | Local | SLURM | Target | DB writeback asserted                                                        | Failure path | External DB / dataset                        | Status                               |
-| --------------------- | ----- | ----- | ------ | ---------------------------------------------------------------------------- | ------------ | -------------------------------------------- | ------------------------------------ |
-| **fastq-checksum**    | ✅     | ✅     | order  | `Read.checksum1/2` (merge) **+ md5 round-trip on file1 _and_ file2**         | ✅            | —                                            | **covered**                          |
-| **simulate-reads**    | ✅     | ✅     | order  | new active `Read` (replace) + checksum/readCount **+ config→output** (summary `read_count1` == configured `readCount`) | —            | —                                            | **covered** (runtime local+SLURM; also SLURM smoke) |
-| **study-demo-report** | ✅     | ✅     | study  | `PipelineArtifact` rows (`html_report`, `markdown_report`, `sample_summary`) **+ config→output** (custom `report_title` in HTML/MD) | —            | —                                            | **covered**                          |
-| fastqc                | ✅     | ✅    | order  | `PipelineArtifact` (`sample_qc_reports`, `sample_qc_data`) **+ read-field DB writeback** (`Read.readCount1/avgQuality1` plausibility, via the extended run-GET select) **+ summary-TSV metrics** (`r1_read_count`>0, avg quality in range) | —            | per-process `fastqc` conda — reused from shared cacheDir on SLURM | **covered** |
-| reads-qc              | ✅     | ✅     | study  | `completes` gate (run `completed`, outputs retrievable)                      | —            | per-process `seqkit`/`python` conda (shared cacheDir like fastqc) | **covered** (SLURM E2E, local+SLURM) — the `completed`→`running` flip that deferred it is **fixed** (`a7186aa`); reaches `completed` and stays there |
-| read-cleaning         | ⚠️     | —     | order  | `completes` gate (+ managed-DB-applied assert)                              | —            | **kraken2 DB** (`/net/broker/checkm_refdata/kraken2_db`, resolves ✅)         | kraken2 DB now **managed via the install profile** (`PipelineConfig.kraken2Db`) and **asserted applied on the installed app** (install→SLURM step) — the realistic facility flow, replacing the retired per-run `--config-json`. Full **run** still blocked on a **raw-reads target** (host the spiked raw dataset; `No active raw or unknown reads found`) |
-| mag                   | —     | —     | study  | assemblies/bins + artifacts                                                  | —            | **GTDB** (large)                             | planned (needs DB staged)            |
-| submg                 | —     | —     | study  | ENA submission result                                                        | —            | ENA upload credentials                       | planned                              |
-| metaxpath             | —     | —     | study  | taxonomy/path results                                                        | —            | **MetaXpath DB bundle** (private pkg; **no GTDB** — mag-only) | preflight wired (Alma install E2E); **runs green (warn-only)** on the Gemma study — install + the ~3-min taxonomy classification + the `completes` gate all pass now that the `completed`→`running` flip is fixed (`a7186aa`). Warn-only kept (private add-on); promotable to hard once install is consistently stable |
+| Pipeline | Source-boot (local / SLURM) | Installed app | Status / blocker |
+| --- | --- | --- | --- |
+| **fastq-checksum** | ✅ / ✅ | ✅ SLURM + local | covered — `Read.checksum1/2` md5 round-trip (R1 + R2) |
+| **study-demo-report** | ✅ / ✅ | ✅ SLURM | covered — report `PipelineArtifact` rows + config→output |
+| **fastqc** | ✅ / ✅ | ✅ SLURM | covered — QC artifacts + read-field writeback |
+| **reads-qc** | ✅ / ✅ | ✅ SLURM | covered — `completes` gate (the `completed→running` flip is fixed, `a7186aa`) |
+| simulate-reads | ✅ / ✅ | 🔄 ongoing | source-boot covered; installed-app run writes no `reads/*` — under investigation |
+| read-cleaning | ⚠️ / — | 📋 planned | managed kraken2 DB **asserted applied** on the installed app; full run needs a **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
+| metaxpath | — | ✅ Alma (warn-only) | private package; runs the ~3-min taxonomy classification on the Gemma study |
+| mag | — | 📋 planned | needs **GTDB** staged on the shared FS |
+| submg | — | 📋 planned | needs **ENA test-server** credentials |
 
+Legend: ✅ covered · ⚠️ warn-only · 🔄 fix in flight · 📋 planned (blocked) · — n/a.
 
-Legend: ✅ asserted · ⚠️ runs warn-only (non-blocking) · — not covered yet.
+## Key details
 
-**How conda-tool pipelines run on SLURM (compute nodes have no network).** Per-process `conda create` for a `bioconda::` directive hangs on the compute node (no outbound network to conda-forge/bioconda). Solved by the **`conda.cacheDir` feature** (`SEQDESK_CONDA_CACHE_DIR` → `pipelines.execution.conda.cacheDir`, emitted into the generated `nextflow.config`): the pipeline's **local** run on the networked runner builds the per-process env into a shared cacheDir, and the **SLURM** run reuses it by hash — no fetch. fastqc proves this end to end; reads-qc now reuses the same mechanism (wired warn-only). To get there, fastqc also runs **early** (before simulate-reads/the failure test churn the shared order), which surfaced + fixed app bug #5 (terminal-run resurrection) and the unconditional failure-test restore.
+- **What every run asserts:** the pipeline completes and produces outputs; DB state `status=completed` / `completedAt` / `progress=100` (re-fetched after a sync to ride out the dual-writer race); and the DB **writeback** appropriate to the pipeline (checksums / read fields / artifacts) — *ingested*, not just on disk. SLURM also asserts `#SBATCH` directives + a real `sacct` job id.
+- **Install-once, run-many:** the SLURM E2E installs a fresh release (own DB created as the `postgres` superuser, data/run dirs on `/net/broker`, SLURM + conda configured), applies an install profile via `apply-install-profile.mjs` (the managed `kraken2Db` is **asserted persisted** on the installed app), then runs the matrix on the installed app. **Warn-only** (`continue-on-error`) until stable across a few scheduled runs, then promote to a hard gate.
+- **Managed config = one key:** `PipelineConfig.config.<key>` (e.g. `kraken2Db` → `--kraken2db`), written by **either** the install profile **or** the in-app pipeline DB manager, merged as `registry default < PipelineConfig row < per-run override` (the per-run field auto-hides once a facility pins it). The E2E drives it via the profile, not the per-run `--config-json` override production hides.
+- **SLURM topology (CI):** runner + compute nodes share **only** a cluster FS (`/home` is per-node), so run dir / data / conda env / pipelines all live there; the conda env is referenced by **full prefix path**. QOS caps the user to **1 job**, so runs use the **inline executor** (`SEQDESK_SLURM_INLINE_EXECUTOR=1` — Nextflow's local executor inside one sbatch). No weblog (compute nodes can't reach the app), so output resolves via the **`/sync` API**.
+- **App-feature coverage (beyond "the pipeline ran"):** failure → DB `failed`; stop/cancel → `scancel` → `cancelled`; stuck-run reconciliation via `/sync`; no-data/empty-order rejected with a clean 400; run visibility/permissions (403/401 for non-owners); `pipeline.completed` notifications; artifact/log retrieval (real bytes); output-content correctness (report `<h1>`, TSV headers).
 
-**Open follow-ups:**
+## Roadmap — install-harness, "everything a user can do"
 
-- **reads-qc — covered.** Hard-asserted in the SLURM E2E (local + SLURM, `completes` gate) after the `completed`→`running` flip was fixed (`a7186aa`): the run reaches `completed` and stays there in both modes. Next step: upgrade `completes` → the read-field writeback (`readCount`/`avgQuality`, now exposed by the run-GET select) for a stronger assertion — see *Where to expand next*.
-- **read-cleaning** — order target. **Managed-config path proven:** the kraken2 DB is pinned through the **install profile** (`pipelines.configs."read-cleaning".kraken2Db` → `apply-install-profile.mjs` → `PipelineConfig.kraken2Db`, the *one* key `--kraken2db` resolves from), and the install→SLURM step **asserts it persisted on the installed app** — the realistic facility flow. The per-run `--config-json` source-boot step was **retired** (production HIDES that field once the DB is server-managed, so it exercised a path real deployments don't use). **Remaining blocker (full run):** a **raw-reads target** — the dummy order's *active* reads are `cleaned`, so readiness rejects it (`No active raw or unknown reads found`). Host the **spiked raw dataset** (`scripts/build-read-cleaning-fixture.mjs`) and add a read-cleaning run to the install step (no `--config-json`). SLURM mode deferred (kraken2 RAM vs the tiny SLURM smoke caps).
-- **Known flake — run-scoped `summary` artifacts ingest inconsistently.** Observed for both fastqc (`summary/fastqc-summary.tsv`) and simulate-reads (`summary/simulation-summary.tsv`): the file is always produced on disk, but its `PipelineArtifact` row sometimes isn't created (one execution mode in a run can have it, the other not). So required-artifact assertions use the reliable per-sample artifacts, and the summary-TSV content checks **warn+skip** when the row is absent rather than red the suite. **Same class, newly observed:** fastqc's per-read `readCount1`/`avgQuality1` **merge** also ingests path-dependently — the `/sync`/`queue` finalization persists it (SLURM E2E: every read), but the **trace/pipeline-monitor** finalization landed the run + per-sample artifacts **without** the merge (real Gemma/Alma run: 0 of 5), so `assertFastqcReadFieldWriteback` likewise **warn+skips** on a wholesale miss. Both point at the trace-path output resolution not running the run-scoped/merge writebacks — a real intermittent output-resolution bug worth pinning (cf. bug #4).
-- **High-value app-behaviour tests (added).** Implemented and green: no-data/empty-order validation, run visibility/permissions, notifications, and stuck-run reconciliation live in `scripts/run-pipeline-appcheck-e2e.mjs` (`--check nodata|access|stuck`, wired as separate SLURM-E2E steps after the proven pipeline steps). Output *correctness* (assert artifact content, not just presence) is folded into the runtime E2E's `assertArtifactContent` for the artifact pipelines. Note: the failure-path test asserts a pipeline-agnostic app behaviour (failed-run reconciliation), even though its deliberate-failure trigger is pinned to fastq-checksum (the only pipeline with a guaranteed missing-input non-zero exit), so it is NOT duplicated per pipeline — different failure *modes* (stuck vs failed) are higher value than the same mode on every pipeline.
-- **Per-pipeline depth (added).** Each covered pipeline now asserts one thing beyond "it ran": **config→output** plumbing for simulate-reads (summary `read_count1` == the configured non-default `readCount`) and study-demo-report (a unique `report_title` we pass appears verbatim in the rendered HTML `<h1>` + Markdown — proves user config reaches the SLURM job, untested before); **paired-read correctness** for fastq-checksum (the on-disk md5 round-trip now covers `file2`/`checksum2`, not just `file1`); and **real QC metrics** for fastqc, now on two surfaces: the artifact-content check (`fastqc-summary.tsv` `r1_read_count`/`avg_quality` plausibility) **plus the DB read-field writeback** — the run-GET select (`pipeline-run-ops-service.ts`) was extended to expose `readCount1/2`/`avgQuality1/2`, so `assertFastqcReadFieldWriteback` proves fastqc's in-place `Read` merge actually ingested (not just the artifact rows), with plausibility bounds to catch garbage and single-end reads correctly skipping the `*2` fields. It is **hard-asserted when the merge is present** (SLURM E2E `/sync`/queue path: every read) and **warn+skipped when the trace/pipeline-monitor path finalizes without it** (real Gemma/Alma run: 0 of 5 — see the known-flake note above). The two summary-TSV checks fetch via the file endpoint and **warn+skip** if the run-scoped summary file isn't servable (its `PipelineArtifact` row ingests flakily), hard-asserting only when present — coverage without flake. (The same select extension also activated simulate-reads' dormant `readCount1 > 0` check and is the prerequisite for a future reads-qc read-field spec.)
-- **MetaxPath preflight + Gemma dataset (cross-workflow, now green).** MetaxPath is a *private* package (not in this repo's `pipelines/`), so it isn't part of the SLURM E2E. Its first checks live in the **Alma install E2E** (`install-profile-alma.yml` → `scripts/assert-install-profile-applied.mjs`), gated on the relevant option being enabled on the admin-configurable `ci-runner` profile: (1) **MetaxPath preflight** — the package is **installed** (`pipelines/metaxpath/manifest.json`) and its **DB params file exists on disk** (`paramsFile`); (2) **Gemma example dataset** — when the `gemma-nanopore-metaxpath-5sample` fixture is enabled, the seeded `DEV-GEMMA-ONT-001` order exists with its **5 ONT samples** and each sample's FASTQ is present on disk. **Staging that made this pass:** the kraken2 DB is staged on the shared FS with a real `path`; the Gemma bundle is staged locally and the profile points at it via a `file://` URL (the bundle host isn't resolvable from the runner — `curl 6`); and MetaxPath is treated as an **optional add-on** (`SEQDESK_METAXPATH_OPTIONAL`) so a package-install failure *warns* instead of aborting the whole install. **MetaxPath version (resolved):** the package is published up to **v0.1.6** and the `ci-runner` profile now points at that asset (the installer floor `≥0.1.1` is correct; the profile had been pinned to the stale `0.1.0` asset). The metaxpath install **now works** on the runner, and `run_gemma_warn metaxpath --study-alias gemma-nanopore-metaxpath` (warn-only — metaxpath is **study**-scoped, not order, which the first attempt surfaced via a 400 `does not support order targets`) now **executes the taxonomy classification (~3 min)**: the package enables, the conda env builds, and the DB params resolve. The **one remaining blocker is the local `completed`→`running` flip** (`status is running, expected completed`) — the *same* bug deferring reads-qc; fix it and both go green. **GTDB is mag-only — not a metaxpath dependency.**
+Grow the install-once/run-many step across the full user workflow (each phase accumulates into the warn-only step):
 
-### Real-data pipeline runs on the Gemma study (Alma install E2E)
-
-The SLURM E2E uses synthetic/dummy data to prove the pipeline *mechanics*. The Alma install E2E now also seeds a **real 5-sample ONT MinION dataset** (the Gemma study `gemma-nanopore-metaxpath`, order `DEV-GEMMA-ONT-001`) with on-disk FASTQs — so it's the natural home to run the read-consuming pipelines on **real input** and assert their outputs (login → `POST /api/pipelines/runs` on the Gemma study/order → poll → assert), complementing (not duplicating) the SLURM E2E.
-
-Wired as post-install steps inside the Alma E2E's app-startup verify step (the app is live there), driven by `run-pipeline-runtime-e2e.mjs --order-number DEV-GEMMA-ONT-001` / `--study-alias gemma-nanopore-metaxpath --skip-slurm --skip-if-disabled` (a pipeline not enabled on the profile is a clean skip, not a failure).
-
-| Pipeline | Real Gemma input makes sense? | Status |
-| ----------------- | ----------------------------- | ------------------------------------------------------------- |
-| fastq-checksum    | ✅ checksums of the real reads | ✅ **green** — md5 round-trip verified against the real ONT read on disk |
-| fastqc            | ✅ QC on real ONT reads        | ✅ **green** — runs through the installed app (per-process conda builds on the networked runner) |
-| study-demo-report | ✅ study report on the study   | ⏭️ skips — covered in the SLURM E2E; just not yet enabled on the ci-runner profile (enable it to also cover on Gemma) |
-| reads-qc          | ✅ read QC/metrics             | **unblocked** — the `completed→running` flip that deferred it is **fixed** (`a7186aa`) and reads-qc is now hard-asserted in the SLURM E2E; re-add a `run_gemma reads-qc --study-alias gemma-nanopore-metaxpath` line to also cover it on real Gemma data |
-| read-cleaning     | ❌ needs **raw/unknown** reads | n/a — the Gemma reads are already **cleaned** (`No active raw or unknown reads found`); the kraken2 DB is staged but read-cleaning only runs on raw/unknown input (`order-pipeline-readiness.ts` → `Needs raw or unknown reads`) |
-| metaxpath         | ✅ taxonomy/path (the point)   | ✅ **runs green (warn-only)** — `run_gemma_warn metaxpath` on the `gemma-nanopore-metaxpath` **study** completes (`Gemma real-data run OK: metaxpath`): install + the ~3-min taxonomy classification + the `completes` gate all pass now that the `completed`→`running` flip is fixed (`a7186aa`). **GTDB not needed** (mag-only) |
-| mag               | ✅ assembly/binning            | blocked — **GTDB** staged |
-| simulate-reads    | ❌ it *generates* reads        | n/a |
-| submg             | ❌ ENA submission, not analysis| n/a |
-
-Legend: ✅ green (runs + asserted) · ⏭️ clean skip (not enabled on the profile — a no-op, not a failure) · ⛔ deferred (known blocker, see cell) · ❌ n/a (real Gemma input doesn't apply).
-
-Infra notes that got the install green: the kraken2 DB is staged with a real `path`; the Gemma bundle is staged locally and the profile points at it via a `file://` URL (the bundle host isn't resolvable from the runner); MetaxPath is optional (`SEQDESK_METAXPATH_OPTIONAL`) so a package-install failure warns instead of aborting. The profile now points at MetaxPath **v0.1.6** (the GitHub API asset URL `releases/assets/425394883`, not the browser `releases/download` URL — a private package needs the API endpoint + token); it had been pinned to the stale `0.1.0` asset, which the installer floor `≥0.1.1` correctly rejected.
-
-Follow-ups: **fix the `completed`→`running` demote** — now the single shared blocker for both metaxpath (runs the study taxonomy, then flips) and reads-qc (same signature); it's the trace-branch `forceRunningFromQueue` heuristic (`pipeline-run-ops-service.ts:1470`, commit `4a0ef08`) over-demoting a *genuinely*-completed run when the `SEQDESK_SLURM_INLINE_EXECUTOR` wrapper job lingers active and the trace's defined-step accounting isn't 100% — fixing it (e.g. only demote a terminal run when the trace shows actual RUNNING tasks, not merely incomplete known-steps) turns both warn-only runs green; pin the **trace-path writeback flake** (fastqc read-field merge + run-scoped summaries don't ingest when the pipeline-monitor finalizes — cf. bug #4); enable study-demo-report on the profile to cover it on Gemma; stage **GTDB for mag** (not metaxpath — metaxpath needs only its own DB bundle).
-
-### Goal: every pipeline proven on the **real-install** path (local + SLURM)
-
-The point of these tests is confidence that *when someone installs SeqDesk, the pipelines actually run and read/write the SeqDesk DB* — i.e. the app is **useful**, not just that the code compiles. Two harnesses combine: the **SLURM E2E** proves pipeline *mechanics* (local + SLURM, DB writeback) on a **source-booted** app (env-var config); the **Alma E2E** proves the **real install** (npm launcher + hosted profile) *and* runs pipelines through that installed app with DB writeback. The long-run goal is to walk **every** pipeline through the install → run → DB-writeback path, in both local and SLURM.
-
-**Install-path coverage so far** (real install → run through the installed app → DB writeback; **local** = Alma E2E, **SLURM** = SLURM E2E install step):
-
-| Pipeline | local (install path) | SLURM (install path) |
-| --- | --- | --- |
-| fastq-checksum | ✅ md5 round-trip written onto the `Read` row (Alma) **+ ✅ local mode on the installed app** (SLURM E2E, run `27357778670`) | ✅ `sbatch` reaches `completed` + md5 writeback on the *installed* app, managed `kraken2Db` from the profile (SLURM E2E, runs `27355388356`/`27357778670`) |
-| study-demo-report | ✅ `PipelineArtifact` rows | — |
-| fastqc | ✅ QC artifacts | — |
-| metaxpath | ✅ `completes` (private pkg + DB params from the profile) | — |
-| reads-qc · read-cleaning · mag · submg | — (data/DB prerequisites) | — |
-
-**SLURM-on-install — GREEN (warn-only), profile-driven.** The install runs **inside the SLURM E2E** (it already has the shared FS, the prebuilt conda env, `SLURM_SHARED_*`, and the inline executor). The step builds a release, installs it via the npm launcher + a mock release server with **data/run dirs on `/net/broker`** (compute nodes can't see the runner-local install dir), creates a **fresh database** for the installed app (a real install owns its DB — sharing the source-boot DB made `--ensure-dummy-data` 409 and never materialize reads), and configures `SEQDESK_EXEC_USE_SLURM` + conda. It then **applies a local install profile** — `apply-install-profile.mjs --profile-config`, the *same* script the installer runs for a hosted `--profile` — pinning read-cleaning's **managed kraken2 DB**, boots the *installed* app (runtime env: `SEQDESK_SLURM_INLINE_EXECUTOR=1` for the QOS=1 cap, the installed DB, the shared conda env), and runs `fastq-checksum --skip-local` through it. **Proven on run `27355388356` (2026-06-11):** the install completes, `PipelineConfig.kraken2Db` is **asserted persisted** on the installed app (a dataset-free proof of the facility flow), and the installed app submits a real `sbatch` job that reaches `status: completed` with **verified DB writeback** (3 checksums populated, md5 round-trip on R1 + R2, no warnings) — **no per-run `--config-json`**; managed config comes from the install, the realistic flow. **Three real install bugs were fixed to get here:** the preflight 2G-vs-1G disk check (work area now rooted on `SLURM_SHARED_RUN_ROOT`, not `$RUNNER_TEMP` on the ~1G `/home`); `setup-conda-env.sh` rejecting a **prefix-path** conda env (`-n` → `-p`, matching how the workflow's own conda-create step already addresses the shared env); and the fresh DB being created as the **`postgres` superuser** (the `seqdesk` role lacks `CREATEDB`). **Kept warn-only** (`continue-on-error`) for now — promote to hard once it's stable across a few scheduled runs. **Next:** see the *Install-harness expansion roadmap* below — Phase 1 walks the rest of the pipeline matrix through this same installed app.
-
-**Managed pipeline config — one key, layered writes (not two systems).** A pipeline's facility config (e.g. read-cleaning's `kraken2Db` → `--kraken2db`) resolves from a **single** runtime key, `PipelineConfig.config.<key>`, merged as `registry default < PipelineConfig row < per-run override`. Two facility *write surfaces* feed that one row — the **install profile** (provisioning, `apply-install-profile.mjs`) and the **in-app pipeline DB manager** (post-install link/change + downloading a published index with checksum) — and the per-run form field is **auto-hidden** (`hideWhenServerConfigured`) once a facility pins it. So it isn't two competing config systems; it's one key with a standard admin-default/lock/override chain. The E2E therefore drives managed config the realistic way (install profile), **not** the per-run `--config-json` override the UI hides.
-
-### Install-harness expansion roadmap — toward "everything a user can do"
-
-The install→SLURM step proves the *installed artifact* works end to end (install → managed config → run → DB writeback) for fastq-checksum. The goal is to grow it into a comprehensive proof that a **freshly-installed** SeqDesk supports the full user workflow — **install once, then exercise many behaviours against that one installed app**. Phased by capability (roughly by leverage):
-
-1. **Every pipeline, both modes (analysis).** Walk the rest of the matrix through the installed app: simulate-reads, fastqc, study-demo-report, reads-qc — then read-cleaning and metaxpath once their dataset/package land — each in local **and** SLURM, asserting its DB writeback (checksums / read fields / artifacts). Reuses `run-pipeline-runtime-e2e.mjs --pipeline-id … [--study-alias …]`; the install plumbing is done, so these are the same calls source-boot already proves. *Lowest effort — start here.*
-2. **Admin pipeline-config management — the second write surface.** Drive the in-app pipeline DB manager on the installed app: an admin links an existing kraken2 DB (`POST /api/admin/settings/pipelines/download-db/link-existing`) and/or downloads a published index, and the managed path lands in `PipelineConfig` + hides the per-order field — the post-install complement to the install-profile path (the two write surfaces we keep). API-only, no new SLURM cycle.
-3. **Operate the installation — install-unique.** Software **update + rollback**: point the mock release server at a NEWER version; the installed app detects → stages → applies it, and can roll back — a behaviour ONLY an installed app has (source-boot can't test it; currently uncovered anywhere, including Playwright). Plus settings persistence across a restart and the telemetry heartbeat.
-4. **Pipeline-ops resilience on the installed app.** Failure / cancel / stuck-run reconciliation against the *installed* app (reusing `run-pipeline-appcheck-e2e.mjs --check nodata|access|stuck`), proving the installed artifact recovers, not just source-boot.
-5. **Data lifecycle — researcher API.** Order create → submit → add samples → upload + assign a sequencing file → create a study, via the installed app's API (the UI variants are Playwright-covered on source-boot; this is the installed-app API smoke).
-
-Each phase accumulates into the same warn-only step (install once, test many); promote the whole step to a hard gate once it's stable across a few scheduled runs.
-
-**Phase 1 status — pipelines on the installed app.** Per-pipeline status of the *install once → run on the installed app* harness (each accumulates into the warn-only step). Last validated: run `27409700275`.
-
-| Pipeline | Status | Modes | DB writeback asserted | Notes |
-| --- | --- | --- | --- | --- |
-| fastq-checksum | ✅ running | SLURM + local | `Read.checksum1/2` md5 round-trip | managed `kraken2Db` from the install profile |
-| study-demo-report | ✅ running | SLURM | `PipelineArtifact` report rows | study-scoped (auto-finds the dummy study) |
-| fastqc | ✅ running | SLURM | QC artifacts | per-process conda **reused** from the shared cache |
-| reads-qc | ✅ running | SLURM | `completes` gate | per-process conda **reused** from the shared cache |
-| simulate-reads | 🔄 ongoing | local + SLURM | new active `Read` (replace) | `report.html` abort **fixed** (`report.overwrite` in `buildRunConfig`); underlying issue remains — `generate-reads.mjs` exits 0 but writes no `reads/*` on the installed app, **even in local mode** (pure in-memory synth + `writeFile`, so env-specific — needs interactive repro, not log-reading) |
-| read-cleaning | 📋 planned | — | cleaned-read writeback | needs the **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
-| metaxpath | 📋 planned | — | taxonomy results | private package; covered separately on the **Alma** install E2E |
-| mag | 📋 planned | — | assemblies / bins | needs **GTDB** staged on the shared FS |
-| submg | 📋 planned | — | ENA submission | needs **ENA test-server** credentials |
-
-Legend: ✅ running (passes on the installed app) · 🔄 ongoing (fix in flight) · 📋 planned (blocked on a dataset / package / DB). **Two profile gotchas fixed en route:** a pipeline must be listed in `pipelines.enable` or it 400s (*"not enabled in SeqDesk settings"*); fastqc/reads-qc reuse the conda envs the source-boot steps warm in the shared cache (`SEQDESK_CONDA_CACHE_DIR`) instead of creating them on the network-less compute node.
-
-### What every covered run asserts
-
-- The pipeline **runs to completion** on the compute node (SLURM) / runner (local) and produces its output files.
-- DB run state: `status='completed'`, `completedAt` set, `progress=100` (re-fetched after a sync + settle to ride out the dual-writer race).
-- DB **writeback** appropriate to the pipeline (see table) — i.e. results are *ingested into the database*, not just written to disk.
-- SLURM runs additionally: `#SBATCH` directives present, a numeric `sacct` job id, and the node-local SLURM capture logs copied back (NFS-lag tolerant).
-
-### Failure-path coverage
-
-`run-slurm-failure-e2e.mjs` deliberately fails a **fastq-checksum** SLURM run (moves the sample FASTQ aside) and asserts the DB reconciles to `status='failed'` with `completedAt` + a `Failed` marker — the status-reconciliation path that previously got stuck at 99%.
-
-## App-feature coverage (beyond "the pipeline ran")
-
-
-| Feature                                      | What it proves                                                                                 | Status                     |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| Local **and** SLURM execution                | both execution modes through the app                                                           | ✅ covered                  |
-| DB writeback (checksums / reads / artifacts) | results ingested, not just files written                                                       | ✅ covered                  |
-| md5 round-trip correctness                   | stored checksum == real md5 of the input                                                       | ✅ covered (fastq-checksum) |
-| Failure → DB `failed`                        | status reconciliation on a real process failure                                                | ✅ covered                  |
-| **Stop / cancel**                            | `DELETE` → `scancel` → DB `cancelled` (hard); `sacct` CANCELLED confirmed best-effort (sacct lag tolerated) | ✅ covered                  |
-| **Artifact + log retrieval**                 | produced files/logs downloadable via the app's `file`/`logs` endpoints (real bytes)            | ✅ covered                  |
-| **statusSource**                             | which path finalized the run — logged (diagnostic); on this cluster it is `queue` (the `/sync` API), not weblog | ✅ logged (step terminality asserted) |
-| **Step-level progress**                      | run exposes Nextflow trace steps; every step terminal once completed                            | ✅ covered                  |
-| **No-data / empty-order validation**         | starting a run on a read-less order is rejected with a clean 400 validation error, never a 500/crash             | ✅ covered                  |
-| **Run visibility / permissions**             | a non-admin researcher cannot read (403) or cancel (403) another's run; anonymous is 401        | ✅ covered                  |
-| **Notifications**                            | a completed run fires a `pipeline.completed` in-app notification (recipient = owner + admins)   | ✅ covered                  |
-| **Stuck-run reconciliation**                 | a SLURM job scancelled out-of-band is reconciled to terminal via `/sync`, not left wedged       | ✅ covered                  |
-| **Output correctness**                       | downloaded artifacts contain real content markers (report `<h1>`, TSV headers), not just rows   | ✅ covered (study-demo, fastqc) |
-
-
-## Execution / topology notes (CI-specific)
-
-- The runner and SLURM compute nodes share **only a dedicated cluster filesystem**; `/home` is per-node. The run dir, input data, conda env, and pipeline packages all live on the shared filesystem (configured via the `SLURM_SHARED_*` Actions variables on the private mirror). The conda env is referenced by **full prefix path** (names don't resolve across nodes here).
-- QOS caps the user to **1 submitted job**, so pipelines run as a **single SLURM job** with Nextflow's local executor inside (`SEQDESK_SLURM_INLINE_EXECUTOR=1`) rather than one job per process. Real multi-node parallelism (e.g. MAG at scale) needs the admin to raise the QOS limit.
-- There is **no weblog block** in the generated `nextflow.config` (compute nodes can't reach the app's loopback), so output resolution runs via the **`/sync` API** and the **pipeline-monitor**, not weblog callbacks. (Confirmed at runtime: `statusSource=queue`.)
-
-## Real bugs this E2E has caught
-
-The suite exists to find app issues, not just to be green. So far it surfaced and fixed:
-
-1. **Config loader dropped `SEQDESK_CONDA_ENV`** — a configured conda env name was silently ignored (default-config `trackSources` gap).
-2. **Pipeline packages dir was not relocatable** — Nextflow ran against a path the compute node couldn't see.
-3. **`simpleGlob` ignored literal (wildcard-free) discovery patterns** — script-less pipelines ingested **zero artifacts**.
-4. **The pipeline-monitor never resolved outputs** — runs finalized by the safety-net daemon (vs the `/sync` API) were marked completed but had **no artifacts/writebacks** persisted.
-5. **A terminal run could be resurrected on trace re-sync** — `syncPipelineRunForOperator`'s with-trace branch had no terminal guard, so a re-sync that saw a stale trace task still reading RUNNING (or a momentarily-active queue) flipped a `completed` run back to `running` and nulled its `completedAt`. Same class as the original stuck-at-99% bug.
-
-**Surfaced this round** (warn-only mitigations kept CI green while these were diagnosed):
-
-6. **A completed run was demoted to `running` by the `forceRunningFromQueue` heuristic** — **FIXED (`a7186aa`).** `syncPipelineRunForOperator` (`pipeline-run-ops-service.ts:1470`, from commit `4a0ef08`) demoted a `completed`/`failed` run when the scheduler still reported the job active (`queueIsActive`) **and** the trace didn't show all *defined* steps complete (`!traceCompletedKnownWork`). The `SEQDESK_SLURM_INLINE_EXECUTOR` **wrapper job lingers active** after the pipeline truly finishes, and `traceCompletedKnownWork` is false for `completes`-style pipelines whose `getStepsForPipeline` steps don't all name-match the trace — so a genuinely-completed run flipped back to `running` and nulled `completedAt` (`status is running, expected completed`, no poll timeout). Caught on **both** metaxpath (Alma) and reads-qc (SLURM E2E). **Fix:** demote a terminal run only when the trace shows work *genuinely* outstanding (`hasRunning || overallProgress < 100`), not on a step-name accounting mismatch — bug #5's stale-trace case and `4a0ef08`'s premature-completion case both still hold (regression test added). **Both** reads-qc (SLURM E2E) and metaxpath (Alma E2E) confirmed green post-fix — each now reaches `completed` and stays there.
-7. **Trace-path output non-resolution** — *fix pending.* When the **pipeline-monitor** finalizes a run (not the `/sync`/queue path), the run + per-sample artifacts land but the **run-scoped summary** row and the **per-read `readCount1`/`avgQuality1` merge** do not ingest (fastqc: 0 of N reads). Same class as bug #4. The summary-TSV and read-field checks **warn+skip** on a wholesale miss rather than red the suite, hard-asserting only when present.
-
-## Where to expand next
-
-Concrete, grounded next steps (roughly by leverage). For growing the **installed-app** harness specifically — covering what a user can do post-install — see the *Install-harness expansion roadmap* above; the items below deepen the existing source-boot + Alma coverage:
-
-1. **Upgrade reads-qc from `completes` to a read-field assertion.** The run-GET select now exposes `readCount1/2`/`avgQuality1/2` and the flip is fixed, so reads-qc can hard-assert its `Read.readCount/avgQuality` merge (plausibility-bounded, like fastqc) instead of just "it completed."
-2. **Fix the trace-path writeback non-resolution (bug #7).** Make the pipeline-monitor finalize path ingest the run-scoped summary + per-read merge (it already lands per-sample artifacts). Then the fastqc read-field + summary-TSV checks can be **hard** on every finalization path instead of warn+skip.
-3. **Activate read-cleaning (full run).** The managed kraken2 DB is already pinned via the install profile and **asserted applied** on the installed app (the source-boot `--config-json` step is retired). What remains is a **raw-reads target**: host the spiked raw dataset (`scripts/build-read-cleaning-fixture.mjs`) + add its fixture entry, then add a `--pipeline-id read-cleaning` run to the install→SLURM step (no `--config-json`) and assert the cleaned-read writeback (`PendingReadCandidate` / admin_review), not just `completes`.
-4. **Promote + deepen metaxpath.** Once the Alma E2E confirms green post-flip-fix, drop its warn-only and assert taxonomy output *content* (a real classification marker in the produced files), not just `completes`. Re-add a `run_gemma reads-qc` line to also cover reads-qc on real Gemma data.
-5. **Assert output correctness more broadly.** For reads-qc/metaxpath, check real metric/taxonomy markers in the produced files (as fastqc and study-demo-report already do), not just presence.
-6. **mag + submg.** mag needs **GTDB** staged (large — a minimal test subset would do) to exercise assembly/binning; submg needs an **ENA test-server** credential to drive the submission path end to end.
-7. **More failure modes.** The failure test is pipeline-agnostic (stuck/failed on fastq-checksum). Add a **mid-run failure** (partial outputs) and a **local-mode** failure to broaden reconciliation coverage beyond the SLURM case.
-8. **Concurrency / idempotency.** Two `/sync` calls racing, or a re-run on the same order, to lock down the dual-writer + one-active-read invariants under contention (the area `1170715` hardened).
+1. **Every pipeline, both modes** on the installed app — *in progress (5/6; simulate-reads pending)*.
+2. **In-app pipeline DB manager** — link/download a kraken2 DB (the post-install config write surface).
+3. **Software update + rollback** — install-*unique*; uncovered anywhere today.
+4. **Pipeline-ops resilience** (failure / cancel / stuck) on the installed app.
+5. **Researcher data lifecycle** (order → samples → file → study) via the installed app's API.
 
 ## Adding a pipeline to the matrix
 
 1. If study-scoped, add it to `STUDY_SCOPED_PIPELINES` in `scripts/run-pipeline-runtime-e2e.mjs`.
-2. Add a `WRITEBACK_SPEC` entry: `checksum` (md5 merged onto reads), `replace` (new active read attributed to the run), `artifacts` (PipelineArtifact rows by outputId), or `completes` (run reached `completed`/`progress=100` with retrievable outputs/logs, for pipelines whose writeback isn't exposed by the run-GET select) — or extend for read-field writebacks.
-3. If its read-field writebacks aren't exposed by the run-GET select (`pipeline-run-ops-service.ts`), extend that select.
-4. Add a workflow step: `npm run pipeline:e2e:runtime -- --ensure-dummy-data --pipeline-id <id>` (runs local + SLURM).
-5. If the pipeline needs an external DB, stage it on the shared cluster filesystem and point the install profile / env at it; only then flip its row to covered.
+2. Add a `WRITEBACK_SPEC` entry: `checksum` / `replace` / `artifacts` / `completes` (or extend the run-GET select for read-field writebacks).
+3. Add a workflow step (`npm run pipeline:e2e:runtime -- --ensure-dummy-data --pipeline-id <id>`) and a `run_installed` line in the install step; enable it in the install profile's `pipelines.enable`.
+4. Stage any external DB on the shared FS and point the install profile at it; flip its row to covered once green.
 
+## Real bugs this suite has caught
+
+Config loader dropping `SEQDESK_CONDA_ENV`; a non-relocatable pipelines dir; `simpleGlob` ignoring literal discovery patterns; the pipeline-monitor not resolving outputs; terminal-run resurrection on trace re-sync; the `completed→running` demote (`forceRunningFromQueue`, fixed `a7186aa`); three install bugs (2G disk preflight, prefix-path conda env `-n`→`-p`, `postgres`-superuser DB create); and a nextflow `report.html` abort on run-folder reuse (fixed with `report.overwrite` in the generated config).
+
+**Known flake (mitigated):** when the pipeline-monitor finalizes a run (not the `/sync` path), the run-scoped summary row + per-read `readCount/avgQuality` merge sometimes don't ingest — so those checks **warn+skip** on a wholesale miss rather than red the suite.
