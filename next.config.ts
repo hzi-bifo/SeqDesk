@@ -1,10 +1,16 @@
 import type { NextConfig } from "next";
 
 function getDemoFrameAncestors() {
+  // Allow the demo to be embedded from both the primary seqdesk.org landing
+  // page and the legacy seqdesk.com one (kept while .com is being retired), with
+  // and without www. The browser blocks the iframe if the parent origin is not
+  // listed, which surfaces as the "demo did not finish loading" timeout.
   const productionAncestors = [
     "'self'",
     "https://seqdesk.org",
-    "https://seqdesk.org",
+    "https://www.seqdesk.org",
+    "https://seqdesk.com",
+    "https://www.seqdesk.com",
   ];
 
   if (process.env.NODE_ENV === "production") {
