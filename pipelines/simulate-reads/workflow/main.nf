@@ -17,6 +17,14 @@ params.dataBasePath = null
 process SIMULATE_READS {
   tag "${sample_id}"
 
+  // The reads are generated in-memory in well under a second. nextflow's per-task memory
+  // monitor (nxf_tree in .command.run) can race on such sub-second tasks and abort with
+  // "line NNN: pid: unbound variable" under set -u — a transient nextflow-wrapper fault, not
+  // a generator error (other samples in the same run exit 0). Retry the transient; the
+  // generator is deterministic, so a re-run just regenerates the same reads.
+  errorStrategy 'retry'
+  maxRetries 3
+
   publishDir "${params.outdir}", mode: 'copy', pattern: "reads/*"
   publishDir "${params.outdir}", mode: 'copy', pattern: "manifests/*.json"
   publishDir "${params.outdir}", mode: 'copy', pattern: "summary/*.tsv"
