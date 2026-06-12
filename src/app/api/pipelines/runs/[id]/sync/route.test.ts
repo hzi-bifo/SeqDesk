@@ -656,7 +656,11 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     );
   });
 
-  it("does not show finalizing for partial known-step trace while SLURM is running", async () => {
+  it("keeps a completed run completed when the trace is done but the SLURM wrapper lingers", async () => {
+    // metaxpath's trace task names differ from its defined steps, so a
+    // defined-step name-accounting mismatch must NOT un-complete a run whose
+    // trace is genuinely done (progress 100, nothing running) just because the
+    // inline-executor wrapper job still lingers in the scheduler (a7186aa).
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...defaultRun,
       status: "completed",
@@ -699,10 +703,12 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
 
     expect(response.status).toBe(200);
     const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
-    expect(updateData.currentStep).toBe("Running on compute node");
+    expect(updateData.currentStep).toBe("Completed");
     expect(updateData.currentStep).not.toBe("Finalizing...");
-    expect(updateData.progress).toBe(8);
-    expect(updateData.status).toBe("running");
+    expect(updateData.progress).toBe(100);
+    // Not demoted back to running, and completedAt is preserved (not nulled).
+    expect(updateData.status).not.toBe("running");
+    expect(updateData.completedAt).not.toBeNull();
   });
 
   it("preserves a live weblog current step when trace only has completed earlier rows", async () => {
