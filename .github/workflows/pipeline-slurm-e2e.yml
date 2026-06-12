@@ -723,7 +723,12 @@ jobs:
             export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH" SEQDESK_CONDA_ENV="$SEQDESK_CONDA_ENV"
             export SEQDESK_PIPELINE_RUN_DIR="$INSTALLED_RUNS" SEQDESK_DATA_PATH="$INSTALLED_DATA"
             [ -n "${SEQDESK_PIPELINES_DIR:-}" ] && export SEQDESK_PIPELINES_DIR
-            [ -n "${SEQDESK_CONDA_CACHE_DIR:-}" ] && export SEQDESK_CONDA_CACHE_DIR
+            # The source-boot steps already warmed every per-process conda env (simulate-reads,
+            # fastqc, seqkit…) in this shared cache earlier in the job. Point the installed app
+            # at it so SLURM runs REUSE them instead of trying to create on the network-less
+            # compute node (which fails / OOMs on the solve). This was never set job-wide — only
+            # inside the source-boot step — so the installed app had no cache before.
+            export SEQDESK_CONDA_CACHE_DIR="${SEQDESK_CONDA_CACHE_DIR:-$(dirname "$SLURM_SHARED_RUN_ROOT")/conda-cache}"
             exec ./start.sh "$INSTALLED_PORT" ) >"$WORK/server.log" 2>&1 &
           INSTALLED_APP_PID=$!
           for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >/dev/null 2>&1 && break; sleep 2; done
