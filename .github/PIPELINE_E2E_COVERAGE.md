@@ -87,9 +87,21 @@ The install→SLURM step proves the *installed artifact* works end to end (insta
 
 Each phase accumulates into the same warn-only step (install once, test many); promote the whole step to a hard gate once it's stable across a few scheduled runs.
 
-**Phase 1 progress — 5 of 6 runnable pipelines (run `27409700275`).** On the installed app: **fastq-checksum ✅ (SLURM + local)**, **study-demo-report ✅**, **fastqc ✅**, **reads-qc ✅**. The last two were fixed by pointing the installed app at the **shared conda cache** (`SEQDESK_CONDA_CACHE_DIR`, which had been exported only inside the source-boot step, never job-wide) so its per-process envs **reuse** the warm cache instead of trying to create on the network-less compute node (`Failed to create Conda environment`; reads-qc OOM'd on the solve). **Two profile gotchas fixed en route:** a pipeline must be in `pipelines.enable` or it 400s (*"not enabled in SeqDesk settings"*); study-scoped pipelines auto-find the dummy study (no `--study-alias`).
+**Phase 1 status — pipelines on the installed app.** Per-pipeline status of the *install once → run on the installed app* harness (each accumulates into the warn-only step). Last validated: run `27409700275`.
 
-**The lone holdout: simulate-reads ❌.** Its `SIMULATE_READS` process (`generate-reads.mjs`) produces no `reads/*` output on the compute node — empty stdout/stderr, then the nextflow retry throws `FileAlreadyExistsException` on the run's `report.html`. A simulate-reads-specific output-resolution issue on the installed app (works on source-boot), under investigation — not the shared conda/data plumbing that the other five exercise. Still out of scope: **read-cleaning** (raw dataset), **metaxpath** (private package), **mag/submg** (GTDB / ENA creds). So: **5 of 6 runnable pipelines are proven on a fresh install — most of the analysis workflow, but NOT simulate-reads yet.**
+| Pipeline | Status | Modes | DB writeback asserted | Notes |
+| --- | --- | --- | --- | --- |
+| fastq-checksum | ✅ running | SLURM + local | `Read.checksum1/2` md5 round-trip | managed `kraken2Db` from the install profile |
+| study-demo-report | ✅ running | SLURM | `PipelineArtifact` report rows | study-scoped (auto-finds the dummy study) |
+| fastqc | ✅ running | SLURM | QC artifacts | per-process conda **reused** from the shared cache |
+| reads-qc | ✅ running | SLURM | `completes` gate | per-process conda **reused** from the shared cache |
+| simulate-reads | 🔄 ongoing | local + SLURM | new active `Read` (replace) | both-modes fix in flight — the single SLURM-only run hit a nextflow `report.html` collision |
+| read-cleaning | 📋 planned | — | cleaned-read writeback | needs the **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
+| metaxpath | 📋 planned | — | taxonomy results | private package; covered separately on the **Alma** install E2E |
+| mag | 📋 planned | — | assemblies / bins | needs **GTDB** staged on the shared FS |
+| submg | 📋 planned | — | ENA submission | needs **ENA test-server** credentials |
+
+Legend: ✅ running (passes on the installed app) · 🔄 ongoing (fix in flight) · 📋 planned (blocked on a dataset / package / DB). **Two profile gotchas fixed en route:** a pipeline must be listed in `pipelines.enable` or it 400s (*"not enabled in SeqDesk settings"*); fastqc/reads-qc reuse the conda envs the source-boot steps warm in the shared cache (`SEQDESK_CONDA_CACHE_DIR`) instead of creating them on the network-less compute node.
 
 ### What every covered run asserts
 
