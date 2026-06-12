@@ -442,10 +442,27 @@ jobs:
           PORT=$((20000 + (GITHUB_RUN_NUMBER % 1000)))
           MOCK_RELEASE_PORT=$((22000 + (GITHUB_RUN_NUMBER % 1000)))
           DB_NAME="seqdesk_profile_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          # /home is ~98% full (~7G), so the install + kraken2 DB + Gemma run outputs fill it
+          # and the heavy metaxpath run dies with "No space left on device". Root the heavy work
+          # dirs on the big shared FS (/net/runner, ~249G) instead — the Gemma runs are LOCAL so
+          # the runner just needs to see it. Fall back to $RUNNER_TEMP if it isn't writable.
+          # Small logs/JSON (uploaded as artifacts) stay on $RUNNER_TEMP.
+          ALMA_WORK_ROOT="${{ vars.ALMA_WORK_ROOT || '/net/runner/seqdesk-alma' }}"
+          mkdir -p "$ALMA_WORK_ROOT" 2>/dev/null || true
+          # Prune stale work dirs from earlier runs (cleanup can leave NFS .nfs* silly-renames
+          # behind), so /net/runner doesn't accumulate over time.
+          find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+          WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
+          if ! mkdir -p "$WORK" 2>/dev/null; then
+            WORK="$RUNNER_TEMP/seqdesk-alma-$RUN_SUFFIX"; mkdir -p "$WORK"
+            echo "WARN: $ALMA_WORK_ROOT not writable — falling back to $WORK on \$RUNNER_TEMP"
+          fi
+          echo "Alma work dir: $WORK ($(df -h "$WORK" | awk 'NR==2{print $4" free on "$6}'))"
           echo "PORT=$PORT" >> "$GITHUB_ENV"
           echo "MOCK_RELEASE_PORT=$MOCK_RELEASE_PORT" >> "$GITHUB_ENV"
           echo "DB_NAME=$DB_NAME" >> "$GITHUB_ENV"
-          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "ALMA_WORK=$WORK" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$WORK/app" >> "$GITHUB_ENV"
           echo "INSTALL_LOG=$RUNNER_TEMP/install-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "SERVER_LOG=$RUNNER_TEMP/server-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
@@ -453,16 +470,18 @@ jobs:
           echo "PROFILE_ASSERT_JSON=$RUNNER_TEMP/profile-assert-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "TELEMETRY_JSON=$RUNNER_TEMP/telemetry-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           echo "PIPELINE_SMOKE_JSON=$RUNNER_TEMP/pipeline-smoke-profile-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
-          echo "PROFILE_DATA_DIR=$RUNNER_TEMP/seqdesk-profile-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "PROFILE_RUN_DIR=$RUNNER_TEMP/seqdesk-profile-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "PROFILE_DATA_DIR=$WORK/data" >> "$GITHUB_ENV"
+          echo "PROFILE_RUN_DIR=$WORK/runs" >> "$GITHUB_ENV"
+          # Postgres stays on local $RUNNER_TEMP, not NFS /net/runner (NFS has fsync/locking
+          # quirks for a DB) — it's small (~hundreds of MB), so /home's headroom is fine.
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-profile-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-profile-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/profile-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/profile-npm-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_CACHE=$RUNNER_TEMP/profile-npm-cache-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_PREFIX=$RUNNER_TEMP/profile-npm-prefix-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$WORK/release-artifact" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$WORK/npm-artifact" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$WORK/npm-cache" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$WORK/npm-prefix" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$WORK/release-server" >> "$GITHUB_ENV"
           echo "MOCK_SERVER_LOG=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "NPM_PACK_METADATA=$RUNNER_TEMP/profile-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
 
@@ -807,4 +826,6 @@ jobs:
             pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
             sleep 2
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}" || true
+          # Remove the whole shared-FS work dir (postgres stopped + monitor killed above). It
+          # lives on /net/runner, which is NOT auto-reclaimed between jobs like $RUNNER_TEMP.
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}" "${ALMA_WORK:-}" || true
