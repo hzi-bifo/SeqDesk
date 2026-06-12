@@ -778,16 +778,25 @@ jobs:
               2>/dev/null | sort | while IFS= read -r f; do
                 echo "::group::$f"; sed -n '1,200p' "$f" 2>/dev/null; echo "::endgroup::"; done || true
             echo "::group::simulate-reads forensics (why no reads/*)"
-            echo "--- SIMULATE work-dir tree (does reads/ exist + have fastq.gz?) ---"
-            find "$INSTALLED_RUNS" -path '*SIMULATE-READS*/work/*' -maxdepth 4 -printf '%y %10s  %p\n' 2>/dev/null | head -100
+            echo "--- one SIMULATE work-dir tree, DEEP (does reads/ have fastq.gz?) ---"
+            wd="$(find "$INSTALLED_RUNS" -path '*SIMULATE-READS*/work/*/.command.sh' 2>/dev/null | head -1 | xargs -r dirname)"
+            echo "work dir: ${wd:-<none>}"; [ -n "$wd" ] && ls -laR "$wd" 2>&1 | head -60
             echo "--- .exitcode(s) ---"
             find "$INSTALLED_RUNS" -path '*SIMULATE-READS*' -name '.exitcode' 2>/dev/null | while IFS= read -r f; do echo "$f => $(cat "$f" 2>/dev/null)"; done
-            echo "--- release generate-reads.mjs (size / line count — intact?) ---"
-            find "$APP_DIR"/releases -path '*simulate-reads/scripts/generate-reads.mjs' 2>/dev/null | while IFS= read -r f; do ls -la "$f"; wc -l "$f"; done
-            echo "--- a SIMULATE .command.run (conda activation + node path) ---"
-            find "$INSTALLED_RUNS" -path '*SIMULATE-READS*/work/*' -name '.command.run' 2>/dev/null | head -1 | while IFS= read -r f; do sed -n '1,70p' "$f"; done
-            echo "--- node version on the conda env PATH ---"
+            echo "--- locate the release generate-reads.mjs (follow symlinks) ---"
+            RELSCRIPT="$(find -L "$APP_DIR" -path '*simulate-reads/scripts/generate-reads.mjs' 2>/dev/null | head -1)"
+            echo "RELSCRIPT=${RELSCRIPT:-<not found>}"; [ -n "$RELSCRIPT" ] && { ls -laL "$RELSCRIPT"; wc -l "$RELSCRIPT"; }
+            echo "--- DIRECT repro: run generate-reads.mjs with the installed node in a temp dir ---"
             "$SEQDESK_CONDA_ENV/bin/node" --version 2>&1 || echo "(no node at $SEQDESK_CONDA_ENV/bin/node)"
+            if [ -n "$RELSCRIPT" ]; then
+              TMPD="$(mktemp -d)"; ( cd "$TMPD" && mkdir -p reads manifests summary
+                "$SEQDESK_CONDA_ENV/bin/node" "$RELSCRIPT" \
+                  --sample-id REPRO-1 --order-id o1 --simulation-mode synthetic --mode shortReadPaired \
+                  --read-count 10 --read-length 75 --reads-dir reads \
+                  --manifest-path manifests/REPRO-1.json --summary-path summary/REPRO-1.tsv; echo "node exit=$?"
+                echo "reads/ ->"; ls -la reads 2>&1; echo "cwd=$(pwd)" )
+              rm -rf "$TMPD"
+            fi
             echo "::endgroup::"
           fi
           [ "$rc" = 0 ] || fail=1
