@@ -329,7 +329,19 @@ jobs:
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
-          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          # Persistent, shared Nextflow conda cacheDir (a sibling of the per-run work root, so
+          # the per-run cleanup and the canary stale-dir prune both leave it intact) so per-process
+          # pipeline conda envs — metaxpath's especially — are solved ONCE and reused across runs
+          # instead of cold-built every run (the cold classic-conda solve was stalling metaxpath
+          # past its timeout). The env override wins over the installed config; harmless when
+          # ALMA_WORK is unset (cacheDir simply stays at Nextflow's default).
+          CONDA_CACHE_DIR=""
+          if [ -n "${ALMA_WORK:-}" ]; then
+            CONDA_CACHE_DIR="$(dirname "$(dirname "$ALMA_WORK")")/seqdesk-conda-cache"
+            mkdir -p "$CONDA_CACHE_DIR" 2>/dev/null || true
+          fi
+          echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
+          SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
             kill "$APP_PID" >/dev/null 2>&1 || true
@@ -414,7 +426,9 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    timeout-minutes: 75
+    # 120 (not 75): metaxpath's first cold conda solve can take up to its 3600s run timeout
+    # on top of install + the other Gemma runs; later runs reuse the shared conda cache.
+    timeout-minutes: 120
     env:
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
@@ -700,7 +714,19 @@ jobs:
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
-          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          # Persistent, shared Nextflow conda cacheDir (a sibling of the per-run work root, so
+          # the per-run cleanup and the canary stale-dir prune both leave it intact) so per-process
+          # pipeline conda envs — metaxpath's especially — are solved ONCE and reused across runs
+          # instead of cold-built every run (the cold classic-conda solve was stalling metaxpath
+          # past its timeout). The env override wins over the installed config; harmless when
+          # ALMA_WORK is unset (cacheDir simply stays at Nextflow's default).
+          CONDA_CACHE_DIR=""
+          if [ -n "${ALMA_WORK:-}" ]; then
+            CONDA_CACHE_DIR="$(dirname "$(dirname "$ALMA_WORK")")/seqdesk-conda-cache"
+            mkdir -p "$CONDA_CACHE_DIR" 2>/dev/null || true
+          fi
+          echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
+          SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
             kill "$APP_PID" >/dev/null 2>&1 || true
@@ -802,11 +828,14 @@ jobs:
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
             # metaxpath (private add-on, STUDY target — the app rejects order targets).
-            # Promoted to a HARD gate now that its two flake causes are fixed: the
-            # completed->running demote (a7186aa) and the /home "No space left" disk-out (the
-            # heavy work now lives on /net/broker). Still a clean SKIP if the profile doesn't
-            # enable it (--skip-if-disabled), so it can't red the suite where it isn't enabled.
-            run_gemma metaxpath    1800 --study-alias gemma-nanopore-metaxpath
+            # HARD gate. Flake causes fixed: the completed->running demote (a7186aa); the /home
+            # "No space left" disk-out (heavy work now on the shared FS); and the false-COMPLETED
+            # where the monitor scraped a mid-run "exit code: 0" from live conda/Nextflow output
+            # and finalized the run before classification ran (inferPipelineExitCode now trusts
+            # ONLY the wrapper's canonical exit marker). Timeout is generous (3600s) so the FIRST
+            # cold conda solve has room; later runs reuse the shared conda cache and are fast.
+            # Still a clean SKIP if the profile doesn't enable it (--skip-if-disabled).
+            run_gemma metaxpath    3600 --study-alias gemma-nanopore-metaxpath
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
             # and copy it for download. FULLY non-fatal — set +e/+o pipefail in a subshell so a
@@ -822,6 +851,14 @@ jobs:
               [ -n "$mxdir" ] && [ -f "$mxdir/trace.txt" ] && cut -f4,5,6 "$mxdir/trace.txt" 2>/dev/null | head -40
               echo "--- pipeline.out tail (classification summary?) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && tail -40 "$mxdir/logs/pipeline.out"
+              echo "--- pipeline.err tail (conda solver / Nextflow errors?) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.err" ] && tail -60 "$mxdir/logs/pipeline.err"
+              echo "--- .nextflow.log tail (process / conda-build outcome) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/.nextflow.log" ] && tail -60 "$mxdir/.nextflow.log"
+              echo "--- generated config conda block (cacheDir wired through?) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/nextflow.config" ] && grep -A5 'conda {' "$mxdir/nextflow.config" 2>/dev/null | head -24
+              echo "--- shared conda cache state (cacheDir=${CONDA_CACHE_DIR:-<unset>}) ---"
+              [ -n "${CONDA_CACHE_DIR:-}" ] && ls -1 "$CONDA_CACHE_DIR" 2>/dev/null | head -20
               echo "--- candidate report files + dump ---"
               rep="$(find "$mxdir" -type f 2>/dev/null | grep -v '/work/conda/' | grep -iE 'report|top50|taxonom|classif|kraken|abundance|[.]tsv$' | head -5)"
               printf '%s\n' "$rep"

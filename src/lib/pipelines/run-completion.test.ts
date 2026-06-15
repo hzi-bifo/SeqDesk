@@ -226,15 +226,56 @@ describe("run-completion", () => {
     expect(code).toBe(17);
   });
 
-  it("falls back to stderr when stdout has no parseable code", async () => {
+  it("parses the canonical marker with its trailing timestamp", async () => {
     const runFolder = path.join(tempDir, "run-2");
     const logsDir = path.join(runFolder, "logs");
     await fs.mkdir(logsDir, { recursive: true });
-    await fs.writeFile(path.join(logsDir, "pipeline.out"), "completed but no code");
-    await fs.writeFile(path.join(logsDir, "pipeline.err"), "job exited with code 9");
+    await fs.writeFile(
+      path.join(logsDir, "pipeline.out"),
+      "...\nPipeline completed with exit code: 0 at Mon Jun 15 12:00:00 UTC 2026\n"
+    );
+
+    const code = await inferPipelineExitCode(runFolder);
+    expect(code).toBe(0);
+  });
+
+  it("falls back to the canonical marker in stderr", async () => {
+    const runFolder = path.join(tempDir, "run-2b");
+    const logsDir = path.join(runFolder, "logs");
+    await fs.mkdir(logsDir, { recursive: true });
+    await fs.writeFile(path.join(logsDir, "pipeline.out"), "running, no marker yet");
+    await fs.writeFile(
+      path.join(logsDir, "pipeline.err"),
+      "Pipeline completed with exit code: 9 at Mon Jun 15 12:00:00 UTC 2026"
+    );
 
     const code = await inferPipelineExitCode(runFolder);
     expect(code).toBe(9);
+  });
+
+  it("ignores mid-run exit-code chatter without the canonical marker", async () => {
+    // Regression: the monitor used to scrape any "exit code: N" / "exited with
+    // code N" substring, so live Nextflow/conda output finalized a still-running
+    // run as completed (metaxpath marked completed while building its conda env).
+    const runFolder = path.join(tempDir, "run-2c");
+    const logsDir = path.join(runFolder, "logs");
+    await fs.mkdir(logsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(logsDir, "pipeline.out"),
+      [
+        "executor >  local",
+        "[a1/b2c3d4] process > MV_FASTQ (2 of 5) [ 40%] 2 of 5",
+        "Creating env using conda: /net/broker/conda/metax.env.yaml",
+        "some tool reported exit code: 0 while solving",
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(logsDir, "pipeline.err"),
+      "Caused by: process terminated; a helper exited with code 9"
+    );
+
+    const code = await inferPipelineExitCode(runFolder);
+    expect(code).toBeNull();
   });
 
   it("returns null when no exit code can be inferred", async () => {

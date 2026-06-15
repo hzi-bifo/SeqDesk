@@ -88,19 +88,30 @@ export async function inferPipelineExitCode(runFolder: string): Promise<number |
   const stdoutPath = path.join(runFolder, "logs", "pipeline.out");
   const stderrPath = path.join(runFolder, "logs", "pipeline.err");
 
-  const patterns = [
-    /Pipeline completed with exit code:\s*(\d+)/i,
-    /exit code[:=]\s*(\d+)/i,
-    /exited with code\s*(\d+)/i,
-  ];
+  // ONLY the canonical marker written by the run wrapper's EXIT trap is
+  // authoritative. generic-executor installs
+  //   trap 'echo "Pipeline completed with exit code: $? at ..." >> pipeline.out' EXIT
+  // so this line is appended exactly once, on actual process exit, and carries
+  // the real exit status even when a command aborts under `set -e`. Its presence
+  // therefore means "the run wrapper has finished"; its absence means "still
+  // running" (or hard-killed without running the trap).
+  //
+  // We deliberately do NOT scrape generic "exit code: N" / "exited with code N"
+  // substrings. Nextflow streams task error reports, conda/mamba solver output,
+  // and tool logs into this same pipeline.out / pipeline.err WHILE the run is
+  // still executing, and any of those can contain such a substring (commonly
+  // "...exit code: 0"). Matching them made the monitor infer EXITED mid-run and
+  // finalize the run as completed before Nextflow had done its real work — e.g.
+  // metaxpath was marked "completed" while still building its conda env, with
+  // classification never executed (a false-green run + gate).
+  const marker = /Pipeline completed with exit code:\s*(\d+)/i;
 
   const readAndMatch = async (filePath: string): Promise<number | null> => {
     try {
       const content = await fs.readFile(filePath, "utf-8");
       const lines = content.split(/\r?\n/).slice(-80).join("\n");
-      for (const pattern of patterns) {
-        const match = lines.match(pattern);
-        if (!match?.[1]) continue;
+      const match = lines.match(marker);
+      if (match?.[1]) {
         const parsed = Number.parseInt(match[1], 10);
         if (!Number.isNaN(parsed)) {
           return parsed;
@@ -112,15 +123,12 @@ export async function inferPipelineExitCode(runFolder: string): Promise<number |
     return null;
   };
 
+  // The trap only ever writes the marker to pipeline.out; pipeline.err is checked
+  // purely as a defensive fallback for the same authoritative marker.
   const stdoutCode = await readAndMatch(stdoutPath);
   if (stdoutCode !== null) {
     return stdoutCode;
   }
 
-  const stderrCode = await readAndMatch(stderrPath);
-  if (stderrCode !== null) {
-    return stderrCode;
-  }
-
-  return null;
+  return await readAndMatch(stderrPath);
 }
