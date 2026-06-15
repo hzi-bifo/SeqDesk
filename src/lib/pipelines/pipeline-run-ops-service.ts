@@ -1184,6 +1184,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
           updateData.lastEventAt = now;
           updateData.queueStatus = queueState || 'COMPLETED';
         } else {
+          console.warn(
+            `[RUN-FINALIZE] ops-service no-trace completed run=${runId} pipeline=${run.pipelineId} ` +
+              `queueState=${queueState} isCompletedQueueState=${isCompletedQueueState} ` +
+              `isExitedLocalState=${isExitedLocalState} inferredExitCode=${inferredExitCode}`,
+          );
           updateData.status = 'completed';
           updateData.progress = 100;
           updateData.currentStep = 'Completed';

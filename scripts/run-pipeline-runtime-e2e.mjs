@@ -563,6 +563,13 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
   let latestQueue = null;
 
   while (Date.now() < deadline) {
+    // Reconcile FIRST, then read — so the observed status reflects the reconciled state, not a
+    // transient pre-reconciliation value. A local run can be briefly marked 'completed' and then
+    // demoted back to 'running' by the monitor (a single early process reads as 100% while the
+    // workflow is still building its conda envs); reading BEFORE syncing caught that transient
+    // 'completed' as terminal while the very same poll demoted it, so the writeback assertion
+    // then saw 'running'. Syncing first makes the poll wait for genuine completion.
+    await syncRun(client, runId);
     const runPayload = await requestJson(
       client,
       `/api/pipelines/runs/${runId}`,
@@ -571,7 +578,6 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
     );
     latestRun = runPayload?.run || runPayload;
     latestQueue = await fetchQueueStatus(client, runId);
-    await syncRun(client, runId);
 
     if (latestRun?.status === "completed") {
       return { run: latestRun, queue: latestQueue };
