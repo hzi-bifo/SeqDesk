@@ -56,11 +56,12 @@ const WRITEBACK_SPEC = {
   // completion on real ONT input and produced output.
   "reads-qc": { kind: "completes" },
   "read-cleaning": { kind: "completes" },
-  // metaxpath is a private, STUDY-scoped add-on (installed via the ci-runner profile, not
-  // in this repo's pipelines/; the app rejects order targets). Its taxonomy/path writeback
-  // isn't exposed by the run GET, so we assert the universal `completes` gate. Driven
-  // warn-only on the real Gemma study in the Alma install E2E until the private package is
-  // proven green on the runner.
+  // metaxpath is a private, STUDY-scoped add-on (installed via the ci-runner profile, not in
+  // this repo's pipelines/; the app rejects order targets). Its taxonomy/path writeback isn't
+  // exposed by the run GET, so on top of the universal `completes` gate we assert it actually
+  // CLASSIFIED — assertMetaxpathTaxonomy fetches the top-50 taxonomy report and requires a
+  // populated table (and the expected taxon when SEQDESK_METAXPATH_EXPECT_TAXON is set). Hard
+  // on the real Gemma study in the Alma install E2E.
   metaxpath: { kind: "completes" },
 };
 
@@ -774,6 +775,11 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     // retrieval (below the dispatch) prove the outputs/logs are reachable. Nothing more
     // to assert for pipelines whose writeback isn't exposed by the run GET.
     writeback = { kind: "completes", note: "ran to completion; writeback not exposed via run GET" };
+    // metaxpath: go beyond `completes` and prove it actually classified (populated top-50
+    // taxonomy report; + the expected taxon when SEQDESK_METAXPATH_EXPECT_TAXON is set).
+    if (pipelineId === "metaxpath") {
+      writeback.taxonomy = await assertMetaxpathTaxonomy({ client, run, runId });
+    }
   } else {
     fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
@@ -856,6 +862,61 @@ async function assertRunRetrieval({ client, run, runId }) {
     fileBytes: bytes.length,
     fromArtifact: Boolean(artifacts.find((a) => a?.path)),
   };
+}
+
+// metaxpath proof: a `completes` gate only shows the job exited 0. This proves it actually
+// CLASSIFIED — fetch the top-50 taxonomy report through the app and require a populated table
+// of taxa (multiple rows, each with a numeric count/abundance), not just a header. Match by
+// filename, since metaxpath is a private package and we don't want to depend on its outputIds.
+// Tier 2 (the strongest proof): set SEQDESK_METAXPATH_EXPECT_TAXON to a known organism for the
+// dataset and we additionally require it to appear in the report — "ran" -> "got the right answer".
+async function assertMetaxpathTaxonomy({ client, run, runId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const report =
+    artifacts.find((a) => /combined_report\.top50\.txt$/i.test(a?.path || "")) ||
+    artifacts.find((a) => /combined_report\.top50\.(txt|tsv|csv|html)$/i.test(a?.path || "")) ||
+    artifacts.find((a) => /combined_report\./i.test(a?.path || ""));
+  if (!report?.path) {
+    fail(
+      `metaxpath: run ${runId} produced no combined_report taxonomy artifact`,
+      JSON.stringify({ runId, artifacts: artifacts.map((a) => a?.path) }, null, 2),
+    );
+  }
+  const res = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(report.path)}&download=1`,
+  );
+  if (!res.ok) {
+    fail(`metaxpath: could not fetch taxonomy report ${report.path} (${res.status})`, summarizeBody(await res.text()));
+  }
+  const raw = Buffer.from(await res.arrayBuffer()).toString("utf8");
+  // Strip tags if we fell back to the HTML report so row/marker checks see text.
+  const text = report.path.toLowerCase().endsWith(".html") ? raw.replace(/<[^>]+>/g, " ") : raw;
+  const rows = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  // A real classification report has multiple taxa, each carrying a numeric count/abundance.
+  const taxaRows = rows.filter((l) => /\d/.test(l) && /[A-Za-z]{3,}/.test(l));
+  const MIN_TAXA = 3;
+  if (taxaRows.length < MIN_TAXA) {
+    fail(
+      `metaxpath: taxonomy report ${report.path} has only ${taxaRows.length} classification row(s) (expected >= ${MIN_TAXA})`,
+      JSON.stringify({ runId, sample: rows.slice(0, 12) }, null, 2),
+    );
+  }
+  const expectTaxon = (process.env.SEQDESK_METAXPATH_EXPECT_TAXON || "").trim();
+  let expectedTaxonFound = null;
+  if (expectTaxon) {
+    expectedTaxonFound = text.toLowerCase().includes(expectTaxon.toLowerCase());
+    if (!expectedTaxonFound) {
+      fail(
+        `metaxpath: expected taxon "${expectTaxon}" not found in ${report.path}`,
+        JSON.stringify({ runId, taxaRowsSample: taxaRows.slice(0, 15) }, null, 2),
+      );
+    }
+  }
+  console.log(
+    `metaxpath taxonomy OK: ${taxaRows.length} taxa in ${report.path.split("/").pop()}` +
+      (expectTaxon ? ` (expected taxon "${expectTaxon}" present)` : ""),
+  );
+  return { report: report.path, taxaRows: taxaRows.length, expectTaxon: expectTaxon || null, expectedTaxonFound };
 }
 
 // Assert PipelineArtifact rows were persisted for a run (e.g. report/summary pipelines
