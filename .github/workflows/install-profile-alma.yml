@@ -813,17 +813,22 @@ jobs:
             # find|head SIGPIPE or an empty match can never red the step.
             (
               set +e +o pipefail
-              echo "::group::metaxpath outputs (excluding conda env)"
-              mx_files="$(find "$PROFILE_RUN_DIR" -path '*METAXPATH*' -type f 2>/dev/null | grep -v '/work/conda/' | grep -iE '[.](txt|tsv|csv|html|json)$|report')"
-              printf '%s\n' "$mx_files" | sort | head -50
-              mx_report="$(printf '%s\n' "$mx_files" | grep -iE 'combined_report|top50|taxonom|classif|kraken|report' | grep -iE '[.](txt|tsv|csv)$' | head -1)"
-              [ -z "$mx_report" ] && mx_report="$(printf '%s\n' "$mx_files" | grep -iE 'combined_report|report' | head -1)"
-              if [ -n "$mx_report" ] && [ -f "$mx_report" ]; then
-                echo "--- dumping taxonomy report: $mx_report ---"
-                sed -n '1,80p' "$mx_report"
-                cp "$mx_report" "$RUNNER_TEMP/metaxpath-report-$RUN_SUFFIX.${mx_report##*.}"
-              else
-                echo "(no taxonomy report file matched among metaxpath outputs above)"
+              echo "::group::metaxpath run-folder forensics"
+              mxdir="$(find "$PROFILE_RUN_DIR" -maxdepth 1 -type d -name 'METAXPATH-*' | head -1)"
+              echo "run dir: ${mxdir:-<none>}"
+              echo "--- all output files (excluding conda env) ---"
+              [ -n "$mxdir" ] && find "$mxdir" -type f 2>/dev/null | grep -v '/work/conda/' | sed "s#${mxdir}/##" | sort | head -90
+              echo "--- nextflow trace (name | status | exit) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/trace.txt" ] && cut -f4,5,6 "$mxdir/trace.txt" 2>/dev/null | head -40
+              echo "--- pipeline.out tail (classification summary?) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && tail -40 "$mxdir/logs/pipeline.out"
+              echo "--- candidate report files + dump ---"
+              rep="$(find "$mxdir" -type f 2>/dev/null | grep -v '/work/conda/' | grep -iE 'report|top50|taxonom|classif|kraken|abundance|[.]tsv$' | head -5)"
+              printf '%s\n' "$rep"
+              firstrep="$(printf '%s\n' "$rep" | head -1)"
+              if [ -n "$firstrep" ] && [ -f "$firstrep" ]; then
+                echo "--- ${firstrep} ---"; sed -n '1,80p' "$firstrep"
+                cp "$firstrep" "$RUNNER_TEMP/metaxpath-report-$RUN_SUFFIX.${firstrep##*.}"
               fi
               echo "::endgroup::"
             ) || true
