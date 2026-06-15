@@ -17,7 +17,7 @@ Two self-hosted CI harnesses prove SeqDesk's pipelines actually **run and read/w
 | **reads-qc** | ✅ / ✅ | ✅ SLURM | covered — `completes` gate (the `completed→running` flip is fixed, `a7186aa`) |
 | **simulate-reads** | ✅ / ✅ | ✅ SLURM + local | covered — new active `Read` (replace); fixed a fragile entry-point guard that skipped `main()` under symlinked installs |
 | read-cleaning | ⚠️ / — | 📋 planned | managed kraken2 DB **asserted applied** on the installed app; full run needs a **hosted raw spiked dataset** (`scripts/build-read-cleaning-fixture.mjs`) |
-| metaxpath | — | ✅ Alma (**hard**) | private package; runs the ~3-min classification on the Gemma study (skips cleanly if not enabled). Asserts a **populated top-50 taxonomy report** (≥3 taxa), not just `completes`; set `SEQDESK_METAXPATH_EXPECT_TAXON` to also require the known organism |
+| metaxpath | — | ✅ Alma (**hard** `completes`) | private package; ~3-min classification on the Gemma study (skips if not enabled). A **taxonomy-content** proof (≥3 taxa in the top-50 report; + `SEQDESK_METAXPATH_EXPECT_TAXON` for the known organism) is wired but **warns** for now — metaxpath exposes no curated run artifacts, so its report isn't reachable via the app; enforces automatically once it curates `combined_report` |
 | mag | — | 📋 planned | needs **GTDB** staged on the shared FS |
 | submg | — | 📋 planned | needs **ENA test-server** credentials |
 
