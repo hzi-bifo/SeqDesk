@@ -1004,7 +1004,37 @@ async function assertMetaxpathTrace({ client, run, runId }) {
     try {
       const dbg = await client.request(`/api/pipelines/runs/${runId}/debug`);
       if (dbg.ok) {
-        console.warn(`metaxpath DEBUG BUNDLE ${runId}:\n${(await dbg.text()).slice(0, 8000)}`);
+        const raw = await dbg.text();
+        // Try to surface the run's events + steps (which name the finalizer) compactly;
+        // fall back to head+tail of the raw bundle if the shape isn't what we expect.
+        let printed = false;
+        try {
+          const b = JSON.parse(raw);
+          const run = b.run || b;
+          console.warn(
+            `metaxpath RUN ${runId}: status=${run.status} statusSource=${run.statusSource} ` +
+              `queueStatus=${run.queueStatus} progress=${run.progress} completedAt=${run.completedAt} ` +
+              `lastEventAt=${run.lastEventAt} lastWeblogAt=${run.lastWeblogAt} lastTraceAt=${run.lastTraceAt}`,
+          );
+          const events = b.events || b.run?.events || [];
+          if (Array.isArray(events)) {
+            console.warn(`metaxpath EVENTS (${events.length}):`);
+            for (const e of events.slice(-30)) {
+              console.warn(`  ${e.occurredAt || e.createdAt} src=${e.source} type=${e.eventType} status=${e.status} step=${e.stepId || e.processName || ""}`);
+            }
+          }
+          const steps = b.steps || b.run?.steps || [];
+          if (Array.isArray(steps)) {
+            console.warn(`metaxpath STEPS (${steps.length}): ${steps.map((s) => `${s.stepId}:${s.status}`).join(", ")}`);
+          }
+          printed = true;
+        } catch {
+          /* not JSON or unexpected shape */
+        }
+        if (!printed) {
+          console.warn(`metaxpath DEBUG BUNDLE ${runId} (head):\n${raw.slice(0, 4000)}`);
+          console.warn(`metaxpath DEBUG BUNDLE ${runId} (tail):\n${raw.slice(-6000)}`);
+        }
       } else {
         console.warn(`metaxpath debug bundle fetch failed (${dbg.status})`);
       }

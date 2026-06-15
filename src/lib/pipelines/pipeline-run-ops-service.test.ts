@@ -1017,6 +1017,59 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     expect(update.data).toMatchObject({ status: 'failed', currentStep: 'Failed' });
   });
 
+  it('demotes a falsely-completed LOCAL run with no exit marker while its PID is alive', async () => {
+    // metaxpath false-completion: a local run was marked completed while only INPUT_CHECK had
+    // run (trace 1/1 = 100% trivially) and Nextflow is still building conda. With the local PID
+    // alive and NO canonical exit marker, the run has outstanding work and must be demoted back
+    // to running — overallProgress=100 from a single early task is not proof of completion.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...traceRun,
+      status: 'completed',
+      completedAt: new Date('2026-03-03T11:00:00Z'),
+      queueJobId: 'local-4242',
+    });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.inferPipelineExitCode.mockResolvedValue(null); // no marker -> run.sh still running
+    // Default execFile mock makes `ps -p <pid>` succeed -> queueIsActive (PID alive).
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'INPUT_CHECK', status: 'COMPLETED', complete: new Date('2026-03-03T10:00:00Z') }],
+        overallProgress: 100,
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'running' });
+    expect(update.data.completedAt).toBeNull();
+  });
+
+  it('keeps a completed LOCAL run completed once its exit marker exists (PID may linger)', async () => {
+    // Counterpart: a genuinely finished local run HAS the canonical marker, so even if the PID
+    // briefly lingers it must stay completed (no demotion).
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      ...traceRun,
+      status: 'completed',
+      completedAt: new Date('2026-03-03T11:00:00Z'),
+      queueJobId: 'local-4242',
+    });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.inferPipelineExitCode.mockResolvedValue(0); // marker present -> genuinely finished
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'INPUT_CHECK', status: 'COMPLETED', complete: new Date('2026-03-03T10:00:00Z') }],
+        overallProgress: 100,
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0]?.[0];
+    expect(update?.data?.status).not.toBe('running');
+    expect(update?.data?.completedAt ?? undefined).not.toBeNull();
+  });
+
   it('marks a trace run cancelled when the queue reports CANCELLED and no task runs', async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
     mocks.execFile.mockImplementation((file, _args, callback) => {

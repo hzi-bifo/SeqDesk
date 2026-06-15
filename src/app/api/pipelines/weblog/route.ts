@@ -570,6 +570,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (outputsReady) {
+          console.warn(`[RUN-FINALIZE] weblog completed run=${runId} event=${event}`);
           runUpdates.status = 'completed';
           runUpdates.currentStep = 'Completed';
           runUpdates.completedAt = parsedEventTime || eventAt;

@@ -1500,7 +1500,19 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   // differ from their step defs, so a lingering wrapper un-completed a genuinely finished
   // run. Non-terminal runs keep the original behaviour: an active scheduler outranks a
   // complete trace.
-  const traceShowsOutstandingWork = hasRunning || traceResult.overallProgress < 100;
+  // For a LOCAL run, trace overallProgress === 100 is an UNRELIABLE "finished" signal: a single
+  // early process (e.g. metaxpath's INPUT_CHECK) reads as 1/1 = 100% while the rest are still
+  // pending and Nextflow is mid-conda-build. The authoritative "the workflow finished" signal for
+  // a local run is the wrapper's canonical exit marker (inferPipelineExitCode). Until that marker
+  // exists, an active local PID means work is genuinely outstanding — so a prematurely 'completed'
+  // local run is demoted back to running rather than pinned complete. SLURM runs are unaffected
+  // (terminal state comes from the scheduler), and bug #5's lingering inline-wrapper case has the
+  // marker by the time its sbatch lingers, so this clause is false there.
+  const isLocalRun = (run.queueJobId || '').startsWith('local-');
+  const traceShowsOutstandingWork =
+    hasRunning ||
+    traceResult.overallProgress < 100 ||
+    (isLocalRun && inferredExitCode === null);
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
     queueIsActive &&
@@ -1508,6 +1520,16 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   if (forceRunningFromQueue) {
     nextStatus = 'running';
     statusDeterminedByQueue = true;
+  }
+
+  if (nextStatus === 'completed' && run.status !== 'completed') {
+    console.warn(
+      `[RUN-FINALIZE] ops-service completed run=${runId} pipeline=${run.pipelineId} ` +
+        `traceCompletedKnownWork=${traceCompletedKnownWork} statusDeterminedByQueue=${statusDeterminedByQueue} ` +
+        `inferredExitCode=${inferredExitCode} totalSteps=${totalSteps} completedKnownSteps=${completedKnownSteps} ` +
+        `overallProgress=${traceResult.overallProgress} queueState=${normalizedQueueState} hasRunning=${hasRunning} ` +
+        `isLocalRun=${isLocalRun} forceRunningFromQueue=${forceRunningFromQueue}`,
+    );
   }
 
   const activeQueueCurrentStep =

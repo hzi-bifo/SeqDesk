@@ -237,6 +237,7 @@ async function finalizeLocalRun(
   exitCode: number | null
 ): Promise<void> {
   const completedAt = new Date();
+  console.warn(`[RUN-FINALIZE] finalizeLocalRun run=${runId} pipeline=${pipelineId} exitCode=${exitCode}`);
   if (exitCode === 0) {
     // Guard against a terminal state: if the run was already cancelled (or
     // otherwise finalized) before the child exited, leave it alone.
