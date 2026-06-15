@@ -807,21 +807,26 @@ jobs:
             # heavy work now lives on /net/broker). Still a clean SKIP if the profile doesn't
             # enable it (--skip-if-disabled), so it can't red the suite where it isn't enabled.
             run_gemma metaxpath    1800 --study-alias gemma-nanopore-metaxpath
-            # Surface metaxpath's taxonomy report (not a curated run artifact yet) so the
-            # classified taxa are visible in the log AND downloadable — used to pick the expected
-            # organism for SEQDESK_METAXPATH_EXPECT_TAXON. Runs before cleanup frees the run dir.
-            mx_report="$(find "$PROFILE_RUN_DIR" -name 'metaxpath.combined_report.top50.txt' 2>/dev/null | head -1)"
-            [ -z "$mx_report" ] && mx_report="$(find "$PROFILE_RUN_DIR" -name 'metaxpath.combined_report.top50.html' 2>/dev/null | head -1)"
-            [ -z "$mx_report" ] && mx_report="$(find "$PROFILE_RUN_DIR" -iname 'metaxpath.combined_report*' 2>/dev/null | head -1)"
-            if [ -n "$mx_report" ]; then
-              echo "::group::metaxpath taxonomy report — $mx_report"
-              sed -n '1,80p' "$mx_report"
+            # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
+            # curated artifact). List its non-conda output files, dump the best report candidate,
+            # and copy it for download. FULLY non-fatal — set +e/+o pipefail in a subshell so a
+            # find|head SIGPIPE or an empty match can never red the step.
+            (
+              set +e +o pipefail
+              echo "::group::metaxpath outputs (excluding conda env)"
+              mx_files="$(find "$PROFILE_RUN_DIR" -path '*METAXPATH*' -type f 2>/dev/null | grep -v '/work/conda/' | grep -iE '[.](txt|tsv|csv|html|json)$|report')"
+              printf '%s\n' "$mx_files" | sort | head -50
+              mx_report="$(printf '%s\n' "$mx_files" | grep -iE 'combined_report|top50|taxonom|classif|kraken|report' | grep -iE '[.](txt|tsv|csv)$' | head -1)"
+              [ -z "$mx_report" ] && mx_report="$(printf '%s\n' "$mx_files" | grep -iE 'combined_report|report' | head -1)"
+              if [ -n "$mx_report" ] && [ -f "$mx_report" ]; then
+                echo "--- dumping taxonomy report: $mx_report ---"
+                sed -n '1,80p' "$mx_report"
+                cp "$mx_report" "$RUNNER_TEMP/metaxpath-report-$RUN_SUFFIX.${mx_report##*.}"
+              else
+                echo "(no taxonomy report file matched among metaxpath outputs above)"
+              fi
               echo "::endgroup::"
-              cp "$mx_report" "$RUNNER_TEMP/metaxpath-report-$RUN_SUFFIX.${mx_report##*.}" 2>/dev/null || true
-            else
-              echo "metaxpath report not found under $PROFILE_RUN_DIR — METAXPATH outputs present:"
-              find "$PROFILE_RUN_DIR" -ipath '*METAXPATH*' \( -name '*.txt' -o -name '*.tsv' -o -name '*.html' \) 2>/dev/null | head -20
-            fi
+            ) || true
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1
