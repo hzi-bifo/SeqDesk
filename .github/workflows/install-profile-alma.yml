@@ -117,10 +117,28 @@ jobs:
           PORT=$((19000 + (GITHUB_RUN_NUMBER % 1000)))
           MOCK_RELEASE_PORT=$((21000 + (GITHUB_RUN_NUMBER % 1000)))
           DB_NAME="seqdesk_plain_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          # /home is ~full (the install's 2G preflight fails there). Root the heavy work dirs on
+          # a writable big shared FS — probe /net/broker then /net/runner, fall back to
+          # $RUNNER_TEMP. Same pattern as the profile job. Small logs/JSON + postgres stay on
+          # $RUNNER_TEMP (tiny; logs are uploaded as artifacts).
+          ALMA_WORK_ROOT=""
+          for cand in "${{ vars.ALMA_WORK_ROOT || '' }}" /net/broker/autotest/seqdesk-ci/alma-work /net/runner/seqdesk-alma; do
+            [ -z "$cand" ] && continue
+            if mkdir -p "$cand/$RUN_SUFFIX" 2>/dev/null; then ALMA_WORK_ROOT="$cand"; break; fi
+          done
+          if [ -n "$ALMA_WORK_ROOT" ]; then
+            WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
+            find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+          else
+            WORK="$RUNNER_TEMP/seqdesk-alma-$RUN_SUFFIX"; mkdir -p "$WORK"
+            echo "WARN: no shared FS writable — falling back to \$RUNNER_TEMP (/home may be full)"
+          fi
+          echo "Alma work dir: $WORK ($(df -h "$WORK" | awk 'NR==2{print $4" free on "$6}'))"
           echo "PORT=$PORT" >> "$GITHUB_ENV"
           echo "MOCK_RELEASE_PORT=$MOCK_RELEASE_PORT" >> "$GITHUB_ENV"
           echo "DB_NAME=$DB_NAME" >> "$GITHUB_ENV"
-          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "ALMA_WORK=$WORK" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$WORK/app" >> "$GITHUB_ENV"
           echo "INSTALL_LOG=$RUNNER_TEMP/install-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "SERVER_LOG=$RUNNER_TEMP/server-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-plain-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
@@ -128,11 +146,11 @@ jobs:
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-plain-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-plain-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/plain-release-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_ARTIFACT_DIR=$RUNNER_TEMP/plain-npm-artifact-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_CACHE=$RUNNER_TEMP/plain-npm-cache-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "NPM_PREFIX=$RUNNER_TEMP/plain-npm-prefix-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/plain-release-server-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$WORK/release-artifact" >> "$GITHUB_ENV"
+          echo "NPM_ARTIFACT_DIR=$WORK/npm-artifact" >> "$GITHUB_ENV"
+          echo "NPM_CACHE=$WORK/npm-cache" >> "$GITHUB_ENV"
+          echo "NPM_PREFIX=$WORK/npm-prefix" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$WORK/release-server" >> "$GITHUB_ENV"
           echo "MOCK_SERVER_LOG=$RUNNER_TEMP/plain-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "NPM_PACK_METADATA=$RUNNER_TEMP/plain-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
 
@@ -387,7 +405,7 @@ jobs:
             pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
             sleep 2
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" || true
+          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${ALMA_WORK:-}" || true
 
   install-with-profile:
     name: Install with hosted profile on AlmaLinux
