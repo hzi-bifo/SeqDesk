@@ -775,9 +775,12 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     // retrieval (below the dispatch) prove the outputs/logs are reachable. Nothing more
     // to assert for pipelines whose writeback isn't exposed by the run GET.
     writeback = { kind: "completes", note: "ran to completion; writeback not exposed via run GET" };
-    // metaxpath: go beyond `completes` and prove it actually classified (populated top-50
-    // taxonomy report; + the expected taxon when SEQDESK_METAXPATH_EXPECT_TAXON is set).
+    // metaxpath: go beyond `completes` and prove it actually classified. The trace proof
+    // (hard) requires real classification processes to have COMPLETED — catches a run that
+    // finalized as completed after only ingesting reads. The taxonomy proof (content) is the
+    // stronger check but WARNS until metaxpath curates its combined_report artifact.
     if (pipelineId === "metaxpath") {
+      writeback.trace = await assertMetaxpathTrace({ client, run, runId });
       writeback.taxonomy = await assertMetaxpathTaxonomy({ client, run, runId });
     }
   } else {
@@ -923,6 +926,104 @@ async function assertMetaxpathTaxonomy({ client, run, runId }) {
       (expectTaxon ? ` (expected taxon "${expectTaxon}" present)` : ""),
   );
   return { report: report.path, taxaRows: taxaRows.length, expectTaxon: expectTaxon || null, expectedTaxonFound };
+}
+
+// Pure parser for a Nextflow trace.txt: summarize the work that actually finished.
+// Trace columns are tab-separated; SeqDesk's generic-executor uses the default field order
+// (task_id, hash, native_id, name, status, exit, ...), so name = col 3, status = col 4 (0-based).
+// We treat COMPLETED and CACHED as "done", strip the per-task "(tag)" suffix to get the
+// process name, and separate the trivial input-handling processes (INPUT_CHECK, MV_FASTQ)
+// from the "meaningful" classification work — so a run that only ingested reads and stopped
+// is distinguishable from one that actually classified. Exported shape is asserted on below.
+export function summarizeTraceCompleteness(text) {
+  const TRIVIAL = new Set(["INPUT_CHECK", "MV_FASTQ"]);
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter(Boolean);
+  let completedRowCount = 0;
+  const completedProcesses = new Set();
+  const meaningfulProcesses = new Set();
+  for (const line of lines) {
+    const cols = line.split("\t");
+    if (cols.length < 5) continue;
+    const name = (cols[3] || "").trim();
+    const status = (cols[4] || "").trim().toUpperCase();
+    if (name === "name" || status === "STATUS") continue; // header row
+    if (status !== "COMPLETED" && status !== "CACHED") continue;
+    completedRowCount += 1;
+    const base = name.replace(/\s*\(.*\)\s*$/, "").trim(); // strip "(sampleTag)"
+    if (!base) continue;
+    completedProcesses.add(base);
+    if (!TRIVIAL.has(base)) meaningfulProcesses.add(base);
+  }
+  return {
+    completedRowCount,
+    completedProcesses: Array.from(completedProcesses).sort(),
+    meaningfulProcesses: Array.from(meaningfulProcesses).sort(),
+  };
+}
+
+// metaxpath proof (the other half of "really working"): a `completes` gate + the app fix
+// guarantee Nextflow genuinely exited 0, but NOT that it did its classification work. Fetch
+// the run's trace.txt through the app and require the trace to show real classification
+// processes COMPLETED — not just the trivial INPUT_CHECK + MV_FASTQ that the false-green run
+// had. Thresholds sit far below a real Gemma run (~13 processes across 5 samples) and far
+// above the false-green (3 rows, 0 meaningful), so this cannot red a genuinely-working run.
+// If trace.txt can't be fetched or parses to zero completed rows (a format/plumbing issue,
+// not a real "did nothing"), WARN instead of failing.
+async function assertMetaxpathTrace({ client, run, runId }) {
+  const MIN_MEANINGFUL = 3; // distinct classification processes beyond INPUT_CHECK/MV_FASTQ
+  if (!run?.runFolder) {
+    console.warn(`WARN metaxpath: run ${runId} has no runFolder — trace proof skipped.`);
+    return { checked: false, reason: "no-runFolder" };
+  }
+  const tracePath = `${run.runFolder}/trace.txt`;
+  const res = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(tracePath)}&download=1`,
+  );
+  if (!res.ok) {
+    console.warn(
+      `WARN metaxpath: trace.txt not retrievable for run ${runId} (${res.status}) — trace proof skipped.`,
+    );
+    return { checked: false, reason: `http-${res.status}` };
+  }
+  const text = Buffer.from(await res.arrayBuffer()).toString("utf8");
+  const summary = summarizeTraceCompleteness(text);
+  if (summary.completedRowCount === 0) {
+    console.warn(
+      `WARN metaxpath: trace.txt for run ${runId} parsed to 0 completed rows ` +
+        `(possible format change) — trace proof skipped.`,
+    );
+    return { checked: false, reason: "no-completed-rows" };
+  }
+  if (summary.meaningfulProcesses.length < MIN_MEANINGFUL) {
+    fail(
+      `metaxpath: trace shows the run finalized as completed but only ran ` +
+        `${summary.meaningfulProcesses.length} classification process(es) ` +
+        `(expected >= ${MIN_MEANINGFUL}) — it ingested reads but never classified (false completion).`,
+      JSON.stringify(
+        {
+          runId,
+          completedRowCount: summary.completedRowCount,
+          completedProcesses: summary.completedProcesses,
+          meaningfulProcesses: summary.meaningfulProcesses,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  console.log(
+    `metaxpath trace OK: ${summary.completedRowCount} completed task(s), ` +
+      `${summary.meaningfulProcesses.length} classification process(es) ` +
+      `[${summary.meaningfulProcesses.join(", ")}]`,
+  );
+  return {
+    checked: true,
+    completedRowCount: summary.completedRowCount,
+    meaningfulProcesses: summary.meaningfulProcesses,
+  };
 }
 
 // Assert PipelineArtifact rows were persisted for a run (e.g. report/summary pipelines

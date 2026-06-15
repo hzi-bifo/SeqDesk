@@ -784,8 +784,12 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     expect(update.data.completedAt ?? undefined).not.toBeNull();
   });
 
-  it('completes the run when all trace tasks finished and progress is 100', async () => {
+  it('completes the run when all trace tasks finished and the exit marker confirms success', async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    // order-pipe has no step defs (totalSteps === 0), so a 100% trace alone is NOT proof of
+    // completion (it is trivially 100% mid-run). A real finished run also has the wrapper's
+    // canonical exit marker; that positive evidence is what finalizes it.
+    mocks.inferPipelineExitCode.mockResolvedValue(0);
     mocks.parseTraceFile.mockResolvedValue(
       trace({
         tasks: [
@@ -853,6 +857,9 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
   it('forces the run back to running when the queue is still active despite a completed trace', async () => {
     // Start from "queued" so the forced status change is recorded in updateData.
     mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'queued' });
+    // order-pipe has no step defs, so the exit marker (not the 100% trace alone) is what
+    // would finalize it — forceRunningFromQueue must then still demote it while the queue is active.
+    mocks.inferPipelineExitCode.mockResolvedValue(0);
     // Queue still RUNNING -> forceRunningFromQueue path.
     mocks.execFile.mockImplementation((file, _args, callback) => {
       if (file === 'squeue') {
@@ -926,6 +933,9 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
       status: 'queued',
       pipelineId: 'mag',
     });
+    // No step defs mocked (totalSteps === 0), so the exit marker is what finalizes the trace
+    // run; the mag output-materialization guard then holds it in running until outputs exist.
+    mocks.inferPipelineExitCode.mockResolvedValue(0);
     mocks.db.assembly.count.mockResolvedValue(0);
     mocks.parseTraceFile.mockResolvedValue(
       trace({
@@ -941,6 +951,70 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     // No outputs => demoted back to running/finalizing.
     expect(update.data.status).toBe('running');
     expect(result.body.synced).toBe(true);
+  });
+
+  it('does NOT complete a no-step-def run on a trivially-100% trace without exit evidence', async () => {
+    // Regression (metaxpath conda-gap false completion): metaxpath has no package step defs
+    // (totalSteps === 0) and builds a per-process conda env after INPUT_CHECK. In that gap the
+    // trace holds a single COMPLETED task, so overallProgress is trivially 100 while the
+    // workflow is still going and no exit marker exists yet. The run must STAY running — not
+    // finalize as completed via the trace (statusSource=trace), which is what shipped before.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.getStepsForPipeline.mockReturnValue([]); // private pipeline: full DAG unknown
+    mocks.inferPipelineExitCode.mockResolvedValue(null); // no canonical exit marker yet
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'INPUT_CHECK', status: 'COMPLETED', complete: new Date('2026-03-03T10:00:00Z') }],
+        overallProgress: 100,
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body.status).not.toBe('completed');
+    const update = mocks.db.pipelineRun.update.mock.calls[0]?.[0];
+    expect(update?.data?.status).not.toBe('completed');
+    expect(update?.data?.completedAt ?? undefined).toBeUndefined();
+  });
+
+  it('completes a no-step-def run once the canonical exit marker reports success', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.inferPipelineExitCode.mockResolvedValue(0); // wrapper exited 0 -> real completion
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [
+          { process: 'INPUT_CHECK', status: 'COMPLETED' },
+          { process: 'CLASSIFY', status: 'COMPLETED', complete: new Date('2026-03-03T11:00:00Z') },
+        ],
+        overallProgress: 100,
+        completedAt: new Date('2026-03-03T11:00:00Z'),
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'completed', progress: 100, currentStep: 'Completed' });
+  });
+
+  it('fails a no-step-def run when the canonical exit marker reports a non-zero code', async () => {
+    // fix: a non-zero marker is authoritative failure even with no failed trace task (e.g. the
+    // per-process conda env build failed before any task ran) — the run must not hang in running.
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...traceRun, status: 'running' });
+    mocks.getStepsForPipeline.mockReturnValue([]);
+    mocks.inferPipelineExitCode.mockResolvedValue(127);
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [{ process: 'INPUT_CHECK', status: 'COMPLETED' }],
+        overallProgress: 100,
+      })
+    );
+
+    await syncPipelineRunForOperator('run-1');
+
+    const update = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({ status: 'failed', currentStep: 'Failed' });
   });
 
   it('marks a trace run cancelled when the queue reports CANCELLED and no task runs', async () => {

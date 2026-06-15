@@ -1372,10 +1372,20 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       ? Math.min(99, Math.round((completedKnownSteps / totalSteps) * 100))
       : traceResult.overallProgress;
 
+  // A complete trace proves completion ONLY when we know the pipeline's full DAG
+  // (totalSteps > 0) and every defined step finished. For a pipeline with NO registered steps
+  // (totalSteps === 0, e.g. the private metaxpath add-on whose package ships no step defs) the
+  // trace cannot prove completion: overallProgress is computed over the tasks ALREADY in the
+  // trace, so it is trivially 100% in the gap after the first process finishes and before the
+  // next is submitted — metaxpath sits in exactly that gap for minutes while Nextflow builds a
+  // per-process conda env. Such a run must be finalized from POSITIVE exit evidence instead
+  // (the wrapper's canonical exit marker or a terminal scheduler state, handled below), never
+  // from trace progress alone — which used to mark metaxpath completed after only INPUT_CHECK.
   const traceCompletedKnownWork =
     hasTasks &&
     traceResult.overallProgress === 100 &&
-    (totalSteps === 0 || completedKnownSteps >= totalSteps);
+    totalSteps > 0 &&
+    completedKnownSteps >= totalSteps;
   const currentStep =
     runningStepLabels.length > 0
       ? `Running: ${runningStepLabels.join(', ')}`
@@ -1457,6 +1467,23 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     nextStatus = 'cancelled';
     statusDeterminedByQueue = true;
   } else if (!hasRunning && queueFailed) {
+    nextStatus = 'failed';
+    statusDeterminedByQueue = true;
+  }
+
+  // A canonical NON-ZERO exit marker is authoritative failure evidence. Map it to failed even
+  // when no individual trace task recorded a failure — e.g. the run died building a per-process
+  // conda env before any task ran. Without this, a pipeline whose DAG we don't track
+  // (totalSteps === 0, e.g. metaxpath) that exited non-zero would hang in 'running': the trace
+  // shows no failed task, the local scheduler state is EXITED (not a "failed" queue state), and
+  // the success paths above require exit code 0.
+  if (
+    !hasRunning &&
+    nextStatus !== 'completed' &&
+    nextStatus !== 'cancelled' &&
+    inferredExitCode !== null &&
+    inferredExitCode !== 0
+  ) {
     nextStatus = 'failed';
     statusDeterminedByQueue = true;
   }
