@@ -861,21 +861,24 @@ jobs:
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && { grep -n "Pipeline completed with exit code" "$mxdir/logs/pipeline.out" || echo "NO MARKER — run.sh had not exited"; }
               echo "--- .nextflow.log completion/conda/error markers (whole file) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/.nextflow.log" ] && grep -iE "Workflow completed|Execution complete|terminated with|aborted|ERROR ~|Goodbye|Creating Conda|Conda environment|exit status" "$mxdir/.nextflow.log" | tail -25
-              echo "--- runner memory (METAX_PROFILE requests 64 GB; OOM -> exit '-') ---"
-              free -h 2>/dev/null || true
-              echo "--- FAILED process (METAX_PROFILE) work dir: command logs + exitcode + conda env ---"
-              mpdir="$([ -n "$mxdir" ] && grep -rl 'metax profile' "$mxdir"/work/*/*/.command.sh 2>/dev/null | head -1 | xargs -r dirname)"
-              echo "METAX_PROFILE work dir: ${mpdir:-<none>}"
-              if [ -n "$mpdir" ]; then
-                echo "  .exitcode: $(cat "$mpdir/.exitcode" 2>/dev/null || echo '<absent: task killed/aborted before exit>')"
-                echo "  --- .command.err (tail) ---"; tail -50 "$mpdir/.command.err" 2>/dev/null
-                echo "  --- .command.log (tail) ---"; tail -50 "$mpdir/.command.log" 2>/dev/null
-                echo "  --- .command.out (tail) ---"; tail -20 "$mpdir/.command.out" 2>/dev/null
-                echo "  --- conda/env directive in .command.run ---"; grep -iE "conda|CONDA_PREFIX|nxf_conda|activate|micromamba|mamba" "$mpdir/.command.run" 2>/dev/null | head -10
+              echo "--- METAX_PROFILE failure: error report (Caused by / Command error) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -A5 'Caused by' "$mxdir/logs/pipeline.out" 2>/dev/null | head -12
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -A25 'Command error:' "$mxdir/logs/pipeline.out" 2>/dev/null | head -30
+              echo "--- runner memory + OOM check (peakMemory was ~3GB, so likely NOT oom) ---"
+              free -h 2>/dev/null | head -3 || true
+              dmesg 2>/dev/null | grep -iE "out of memory|killed process|oom-kill" | tail -5 || echo "dmesg unavailable"
+              echo "--- FAILED process work dir (resolved from the error report) ---"
+              wd="$([ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -oE '/[^ ]*/work/[a-f0-9]{2}/[a-f0-9]+' "$mxdir/logs/pipeline.out" 2>/dev/null | tail -1)"
+              echo "work dir: ${wd:-<none>}"
+              if [ -n "$wd" ] && [ -d "$wd" ]; then
+                echo "  .exitcode=$(cat "$wd/.exitcode" 2>/dev/null || echo '<absent: killed/aborted before writing exit code>')"
+                echo "  --- .command.err ---"; tail -50 "$wd/.command.err" 2>/dev/null
+                echo "  --- .command.log ---"; tail -60 "$wd/.command.log" 2>/dev/null
+                echo "  --- .command.run conda/env lines ---"; grep -iE "conda|CONDA|activate|mamba|nxf_|NXF_" "$wd/.command.run" 2>/dev/null | head -12
               fi
               echo "--- metax DB payload present? ---"
-              ls -ldL /net/broker/checkm_refdata/metaxpath_db /net/broker/checkm_refdata/metaxpath_db/payload 2>/dev/null | head
-              [ -n "$mxdir" ] && grep -oE -- "--db [^ ]+|--dmp-dir [^ ]+" "$mxdir"/work/*/*/.command.sh 2>/dev/null | sort -u | while read -r flag p; do echo "  $flag $p: $([ -e "$p" ] && echo EXISTS || echo MISSING)"; done
+              ls -ldL /net/broker/checkm_refdata/metaxpath_db/payload 2>/dev/null | head
+              [ -n "$mxdir" ] && grep -hoE -- "--db [^ ]+|--dmp-dir [^ ]+" "$mxdir"/work/*/*/.command.sh 2>/dev/null | sort -u | while read -r flag p; do echo "  $flag $p: $([ -e "$p" ] && echo EXISTS || echo MISSING)"; done
               echo "--- weblog hits in pipeline.out (status / event) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -iE "weblog|response code" "$mxdir/logs/pipeline.out" | tail -8
               echo "--- installed app server log: pipeline finalization ---"
