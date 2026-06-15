@@ -861,6 +861,21 @@ jobs:
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && { grep -n "Pipeline completed with exit code" "$mxdir/logs/pipeline.out" || echo "NO MARKER — run.sh had not exited"; }
               echo "--- .nextflow.log completion/conda/error markers (whole file) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/.nextflow.log" ] && grep -iE "Workflow completed|Execution complete|terminated with|aborted|ERROR ~|Goodbye|Creating Conda|Conda environment|exit status" "$mxdir/.nextflow.log" | tail -25
+              echo "--- runner memory (METAX_PROFILE requests 64 GB; OOM -> exit '-') ---"
+              free -h 2>/dev/null || true
+              echo "--- FAILED process (METAX_PROFILE) work dir: command logs + exitcode + conda env ---"
+              mpdir="$([ -n "$mxdir" ] && grep -rl 'metax profile' "$mxdir"/work/*/*/.command.sh 2>/dev/null | head -1 | xargs -r dirname)"
+              echo "METAX_PROFILE work dir: ${mpdir:-<none>}"
+              if [ -n "$mpdir" ]; then
+                echo "  .exitcode: $(cat "$mpdir/.exitcode" 2>/dev/null || echo '<absent: task killed/aborted before exit>')"
+                echo "  --- .command.err (tail) ---"; tail -50 "$mpdir/.command.err" 2>/dev/null
+                echo "  --- .command.log (tail) ---"; tail -50 "$mpdir/.command.log" 2>/dev/null
+                echo "  --- .command.out (tail) ---"; tail -20 "$mpdir/.command.out" 2>/dev/null
+                echo "  --- conda/env directive in .command.run ---"; grep -iE "conda|CONDA_PREFIX|nxf_conda|activate|micromamba|mamba" "$mpdir/.command.run" 2>/dev/null | head -10
+              fi
+              echo "--- metax DB payload present? ---"
+              ls -ldL /net/broker/checkm_refdata/metaxpath_db /net/broker/checkm_refdata/metaxpath_db/payload 2>/dev/null | head
+              [ -n "$mxdir" ] && grep -oE -- "--db [^ ]+|--dmp-dir [^ ]+" "$mxdir"/work/*/*/.command.sh 2>/dev/null | sort -u | while read -r flag p; do echo "  $flag $p: $([ -e "$p" ] && echo EXISTS || echo MISSING)"; done
               echo "--- weblog hits in pipeline.out (status / event) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -iE "weblog|response code" "$mxdir/logs/pipeline.out" | tail -8
               echo "--- installed app server log: pipeline finalization ---"
