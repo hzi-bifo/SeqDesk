@@ -998,6 +998,20 @@ async function assertMetaxpathTrace({ client, run, runId }) {
     return { checked: false, reason: "no-completed-rows" };
   }
   if (summary.meaningfulProcesses.length < MIN_MEANINGFUL) {
+    // Diagnostic: the run was marked completed with no classification work. Dump the run's
+    // debug bundle (status/queueStatus/statusSource/progress/completedAt + event + step rows)
+    // and the raw trace so we can pin WHICH finalizer prematurely completed it.
+    try {
+      const dbg = await client.request(`/api/pipelines/runs/${runId}/debug`);
+      if (dbg.ok) {
+        console.warn(`metaxpath DEBUG BUNDLE ${runId}:\n${(await dbg.text()).slice(0, 8000)}`);
+      } else {
+        console.warn(`metaxpath debug bundle fetch failed (${dbg.status})`);
+      }
+    } catch (err) {
+      console.warn(`metaxpath debug bundle error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    console.warn(`metaxpath trace.txt raw (first 1500 chars):\n${text.slice(0, 1500)}`);
     fail(
       `metaxpath: trace shows the run finalized as completed but only ran ` +
         `${summary.meaningfulProcesses.length} classification process(es) ` +

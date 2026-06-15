@@ -855,6 +855,16 @@ jobs:
               [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.err" ] && tail -60 "$mxdir/logs/pipeline.err"
               echo "--- .nextflow.log tail (process / conda-build outcome) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/.nextflow.log" ] && tail -60 "$mxdir/.nextflow.log"
+              echo "--- run.sh (launcher: foreground nextflow? backgrounding?) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/run.sh" ] && cat "$mxdir/run.sh"
+              echo "--- exit marker in pipeline.out (did run.sh exit, and with what code?) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && { grep -n "Pipeline completed with exit code" "$mxdir/logs/pipeline.out" || echo "NO MARKER — run.sh had not exited"; }
+              echo "--- .nextflow.log completion/conda/error markers (whole file) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/.nextflow.log" ] && grep -iE "Workflow completed|Execution complete|terminated with|aborted|ERROR ~|Goodbye|Creating Conda|Conda environment|exit status" "$mxdir/.nextflow.log" | tail -25
+              echo "--- weblog hits in pipeline.out (status / event) ---"
+              [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ] && grep -iE "weblog|response code" "$mxdir/logs/pipeline.out" | tail -8
+              echo "--- installed app server log: pipeline finalization ---"
+              [ -n "${SERVER_LOG:-}" ] && [ -f "${SERVER_LOG:-}" ] && grep -iE "metaxpath|finaliz|local execution|Pipeline (Run|Weblog)|process.*close|exit code" "$SERVER_LOG" | tail -40
               echo "--- generated config conda block (cacheDir wired through?) ---"
               [ -n "$mxdir" ] && [ -f "$mxdir/nextflow.config" ] && grep -A5 'conda {' "$mxdir/nextflow.config" 2>/dev/null | head -24
               echo "--- shared conda cache state (cacheDir=${CONDA_CACHE_DIR:-<unset>}) ---"
