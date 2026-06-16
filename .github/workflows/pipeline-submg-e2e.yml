@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pipeline-submg-e2e
+  group: pipeline-submg-e2e-gh
   cancel-in-progress: false
 
 jobs:
