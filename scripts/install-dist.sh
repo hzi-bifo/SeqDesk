@@ -2370,10 +2370,14 @@ function trimString(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-const configPath = path.join(installDir, "seqdesk.config.json");
+// Prefer the canonical settings.json, fall back to the legacy name so an
+// existing install's runtime config is still detected after the rename.
+const configPath = ["settings.json", "seqdesk.config.json"]
+  .map((name) => path.join(installDir, name))
+  .find((candidate) => fs.existsSync(candidate));
 
 let config = {};
-if (fs.existsSync(configPath)) {
+if (configPath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
     if (parsed && typeof parsed === "object") {
@@ -2670,9 +2674,14 @@ print_preflight_summary() {
 
 print_config_summary() {
     local config_status="will create"
-    if [ -f "seqdesk.config.json" ]; then
-        config_status="exists (will update)"
-    fi
+    local config_name="settings.json"
+    for f in settings.json seqdesk.config.json; do
+        if [ -f "$f" ]; then
+            config_name="$f"
+            config_status="exists (will update)"
+            break
+        fi
+    done
 
     local pipeline_label="disabled"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
@@ -2706,7 +2715,7 @@ print_config_summary() {
     if [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
         print_kv "Researcher account" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
     fi
-    print_kv "seqdesk.config.json" "$config_status"
+    print_kv "$config_name" "$config_status"
 }
 
 confirm_config() {
@@ -2860,8 +2869,23 @@ sync_release_shared_paths() {
 
     mkdir -p "$SEQDESK_DIR/data" "$SEQDESK_DIR/pipelines" "$SEQDESK_DIR/pipeline_runs"
 
-    if [ -f "$release_dir/seqdesk.config.json" ] && [ ! -e "$SEQDESK_DIR/seqdesk.config.json" ]; then
-        cp "$release_dir/seqdesk.config.json" "$SEQDESK_DIR/seqdesk.config.json"
+    # Resolve the shared runtime config filename: prefer an existing canonical
+    # settings.json, then a legacy seqdesk.config.json (so upgrades keep ONE
+    # file), otherwise create the canonical settings.json. The per-release
+    # symlink and the writer (which runs in current/ and writes THROUGH this
+    # symlink) MUST agree on this name or the live config would split in two.
+    local shared_config_name="settings.json"
+    for f in settings.json seqdesk.config.json; do
+        if [ -e "$SEQDESK_DIR/$f" ]; then shared_config_name="$f"; break; fi
+    done
+
+    if [ ! -e "$SEQDESK_DIR/$shared_config_name" ]; then
+        for f in settings.json seqdesk.config.json; do
+            if [ -f "$release_dir/$f" ]; then
+                cp "$release_dir/$f" "$SEQDESK_DIR/$shared_config_name"
+                break
+            fi
+        done
     fi
 
     if [ -d "$release_dir/data" ]; then
@@ -2872,8 +2896,8 @@ sync_release_shared_paths() {
         cp -R "$release_dir/pipelines/." "$SEQDESK_DIR/pipelines/"
     fi
 
-    rm -f "$release_dir/seqdesk.config.json"
-    ln -s "../../seqdesk.config.json" "$release_dir/seqdesk.config.json"
+    rm -f "$release_dir/settings.json" "$release_dir/seqdesk.config.json"
+    ln -s "../../$shared_config_name" "$release_dir/$shared_config_name"
 
     rm -rf "$release_dir/data" "$release_dir/pipelines" "$release_dir/pipeline_runs"
     ln -s "../../data" "$release_dir/data"
@@ -3196,7 +3220,14 @@ function buildInstallProfileConfig(filePath) {
   return safeProfile;
 }
 
-const config = readJson('seqdesk.config.json') || {};
+// Preferred runtime config filename order. "settings.json" is the canonical
+// name; older names stay as fallbacks so existing installs keep a SINGLE file.
+// In a dist install current/<name> is a symlink to ../../<name>, so writing the
+// resolved (existing) name writes through that symlink to the shared file.
+const CONFIG_FILE_NAMES = ['settings.json', 'seqdesk.config.json'];
+const configTarget = CONFIG_FILE_NAMES.find((name) => fs.existsSync(name)) || 'settings.json';
+
+const config = readJson(configTarget) || {};
 
 const installProfile = buildInstallProfileConfig(profileConfigFile);
 if (installProfile) {
@@ -3269,9 +3300,14 @@ if (adminBootstrap || researcherBootstrap) {
   config.bootstrap.users = users;
 }
 
-fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
+fs.writeFileSync(configTarget, JSON.stringify(config, null, 2));
 NODE
-    print_kv "seqdesk.config.json" "written"
+
+    local written_config_name="settings.json"
+    for f in settings.json seqdesk.config.json; do
+        if [ -e "$f" ]; then written_config_name="$f"; break; fi
+    done
+    print_kv "$written_config_name" "written"
 }
 
 clear_bootstrap_plaintext_passwords() {
@@ -3347,7 +3383,9 @@ function trimOrUndefined(value) {
 
 function loadDatabaseConfigFromConfig() {
   try {
-    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const configFile = ["settings.json", "seqdesk.config.json"].find((name) => fs.existsSync(name));
+    if (!configFile) return {};
+    const raw = fs.readFileSync(configFile, "utf8");
     const parsed = JSON.parse(raw);
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
     if (!runtime || typeof runtime !== "object") return {};
@@ -4098,7 +4136,7 @@ configure_postgres_urls
 
 if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
     SEQDESK_NEXTAUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
-    print_info "Generated runtime.nextAuthSecret for seqdesk.config.json"
+    print_info "Generated runtime.nextAuthSecret for the runtime config"
 fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
@@ -4341,9 +4379,12 @@ fi
 if [ -n "$SEQDESK_PIPELINE_DATABASE_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
     print_kv "Pipeline DB directory" "$SEQDESK_PIPELINE_DATABASE_DIR"
 fi
-if [ -f "$SEQDESK_DIR/seqdesk.config.json" ]; then
-    print_kv "Config" "$SEQDESK_DIR/seqdesk.config.json"
-fi
+for f in settings.json seqdesk.config.json; do
+    if [ -f "$SEQDESK_DIR/$f" ]; then
+        print_kv "Config" "$SEQDESK_DIR/$f"
+        break
+    fi
+done
 print_kv "Started" "$INSTALL_STARTED_AT"
 print_kv "Finished" "$INSTALL_FINISHED_AT"
 print_kv "Elapsed" "$(format_elapsed "$ELAPSED")"
