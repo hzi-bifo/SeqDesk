@@ -151,14 +151,31 @@ function buildSafeInstallProfileMetadata(profile) {
   return metadata;
 }
 
+// The installer writes the runtime config as settings.json on fresh installs but
+// REUSES an existing seqdesk.config.json on upgrade (install-dist.sh / install.sh,
+// A13). Resolve reads/writes to whichever exists, preferring canonical settings.json,
+// so a settings.json install can still recover runtime.databaseUrl / nextAuthSecret.
+// Without this, ensureDatabaseEnv leaves NEXTAUTH_SECRET unset and encryptSecret
+// throws "no key material available" when a profile provisions a secret.
+const RUNTIME_CONFIG_FILE_NAMES = ["settings.json", "seqdesk.config.json"];
+
+function resolveRuntimeConfigPath() {
+  for (const name of RUNTIME_CONFIG_FILE_NAMES) {
+    if (fs.existsSync(name)) return name;
+  }
+  return RUNTIME_CONFIG_FILE_NAMES[0];
+}
+
 function persistSafeInstallProfileMetadata(profile) {
   const metadata = buildSafeInstallProfileMetadata(profile);
   if (!metadata) return false;
 
+  // Read and write the SAME resolved file so we never split into two configs.
+  const configPath = resolveRuntimeConfigPath();
   let config = {};
   try {
-    if (fs.existsSync("seqdesk.config.json")) {
-      const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
       config = isRecord(parsed) ? parsed : {};
     }
   } catch {
@@ -166,13 +183,13 @@ function persistSafeInstallProfileMetadata(profile) {
   }
 
   config.installProfile = metadata;
-  fs.writeFileSync("seqdesk.config.json", JSON.stringify(config, null, 2));
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   return true;
 }
 
 function loadDatabaseConfigFromConfig() {
   try {
-    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const raw = fs.readFileSync(resolveRuntimeConfigPath(), "utf8");
     const parsed = JSON.parse(raw);
     const runtime = isRecord(parsed?.runtime) ? parsed.runtime : {};
     return {

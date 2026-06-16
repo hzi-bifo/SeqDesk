@@ -5,6 +5,7 @@ import path from "path";
 import { spawnSync } from "child_process";
 
 const CONFIG_FILE_NAMES = [
+  "settings.json",
   "seqdesk.config.json",
   ".seqdeskrc",
   ".seqdeskrc.json",

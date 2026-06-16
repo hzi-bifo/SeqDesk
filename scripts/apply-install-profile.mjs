@@ -56,7 +56,7 @@ async function main() {
       `Profile changes: orderForm=${result.appliedOrderForm ? "yes" : "no"}, pipelinesEnabled=${result.enabledPipelines}`
     );
     if (result.persistedProfile) {
-      console.log("Persisted safe install profile metadata in seqdesk.config.json");
+      console.log("Persisted safe install profile metadata in the runtime config");
     }
   } finally {
     await prisma.$disconnect();

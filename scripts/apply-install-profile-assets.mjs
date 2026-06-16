@@ -96,9 +96,19 @@ function sanitizeSummaryValue(value) {
   return sanitized;
 }
 
+// Prefer canonical settings.json, fall back to seqdesk.config.json (A13).
+const RUNTIME_CONFIG_FILE_NAMES = ["settings.json", "seqdesk.config.json"];
+
+function resolveRuntimeConfigPath() {
+  for (const name of RUNTIME_CONFIG_FILE_NAMES) {
+    if (fs.existsSync(name)) return name;
+  }
+  return RUNTIME_CONFIG_FILE_NAMES[0];
+}
+
 function loadDatabaseConfigFromConfig() {
   try {
-    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const raw = fs.readFileSync(resolveRuntimeConfigPath(), "utf8");
     const parsed = JSON.parse(raw);
     const runtime = isRecord(parsed?.runtime) ? parsed.runtime : {};
     return {
