@@ -10,13 +10,12 @@ import {
   type PipelineExecutionOverride,
   type ExecutionSettings,
 } from "@/lib/pipelines/execution-settings";
-import { normalizeOrderFormSchema } from "@/lib/orders/fixed-sections";
 import { normalizeStudyFormSchema } from "@/lib/studies/fixed-sections";
 import {
   ORDER_FORM_DEFAULTS_VERSION,
   STUDY_FORM_DEFAULTS_VERSION,
 } from "@/lib/modules/default-form-fields";
-import { buildOrderFormSchema } from "@/lib/forms/order-form-schema.mjs";
+import { buildOrderFormConfigSchema } from "@/lib/forms/order-form-schema.mjs";
 import type { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 
 type JsonRecord = Record<string, unknown>;
@@ -323,16 +322,19 @@ interface ProfileBlockResult {
   pipelineAllowlist?: string[];
   // pipelines.databaseDirectory -> pipelineExecution.pipelineDatabaseDir.
   pipelineDatabaseDir?: string;
-  // Projected OrderFormConfig.schema object built from forms.order (Phase 4).
-  // Written to db.orderFormConfig.upsert (the SAME store the installer's
-  // applyOrderForm + the in-app GET /api/admin/form-config reader use). The order
-  // form must KEEP landing in OrderFormConfig (NOT extraSettings) because the app's
-  // order-form READ path uses OrderFormConfig.
-  orderFormSchema?: {
+  // Raw forms.order blob ({fields, groups, enabledMixsChecklists, defaultsVersion})
+  // parsed from settings.json. The POST handler manage-merges this over the EXISTING
+  // OrderFormConfig.schema via the shared buildOrderFormConfigSchema (the SAME builder
+  // the installer's applyOrderForm uses), then writes db.orderFormConfig.upsert (the
+  // SAME store the in-app GET /api/admin/form-config reader uses). The order form must
+  // KEEP landing in OrderFormConfig (NOT extraSettings) because the app's order-form
+  // READ path uses OrderFormConfig. Carrying the raw blob (not a pre-built schema) lets
+  // the merge run against the live existing schema so import == install.
+  orderForm?: {
     fields: FormFieldDefinition[];
     groups: FormFieldGroup[];
     enabledMixsChecklists: string[];
-    moduleDefaultsVersion: number;
+    defaultsVersion: number;
   };
   // True when any block contributed a value (folds into hasAnyValue detection).
   hasAnyBlock: boolean;
@@ -348,7 +350,10 @@ interface EmbeddedFormBlob {
   defaultsVersion?: number;
 }
 
-function readEmbeddedFormBlob(value: unknown): EmbeddedFormBlob | undefined {
+function readEmbeddedFormBlob(
+  value: unknown,
+  { allowMixsOnly = false }: { allowMixsOnly?: boolean } = {}
+): EmbeddedFormBlob | undefined {
   const form = toRecord(value);
   if (!form) {
     return undefined;
@@ -360,9 +365,28 @@ function readEmbeddedFormBlob(value: unknown): EmbeddedFormBlob | undefined {
     ? (form.groups as FormFieldGroup[])
     : [];
   const enabledMixsChecklists = toStringArray(form.enabledMixsChecklists);
-  const defaultsVersion = toOptionalInt(form.defaultsVersion);
-  // Treat as a populated form only when it carries fields or groups.
-  if (fields.length === 0 && groups.length === 0) {
+  // Mirror the installer's readFormConfig + toOptionalInt: a non-positive
+  // defaultsVersion is dropped to undefined so the caller's `?? DEFAULT`
+  // substitutes the canonical default. The installer's toOptionalInt has a
+  // `> 0` guard; without matching it here the importer would persist
+  // moduleDefaultsVersion: 0 where the installer writes the default (4).
+  const parsedDefaultsVersion = toOptionalInt(form.defaultsVersion);
+  const defaultsVersion =
+    parsedDefaultsVersion !== undefined && parsedDefaultsVersion > 0
+      ? parsedDefaultsVersion
+      : undefined;
+  // Treat as populated when it carries fields or groups. The ORDER form is ALSO
+  // populated by enabledMixsChecklists alone (allowMixsOnly), so a MIxS-only
+  // forms.order is consumed by the importer exactly like the installer's
+  // applyOrderForm, whose gate proceeds on enabledMixsChecklists.length > 0.
+  // Study/runAssignment keep the fields-or-groups requirement: their consumers
+  // OVERWRITE (normalizeStudyFormSchema), so admitting a MIxS-only blob there
+  // would destructively blank an existing study/run-assignment form.
+  const hasShape =
+    fields.length > 0 ||
+    groups.length > 0 ||
+    (allowMixsOnly && enabledMixsChecklists.length > 0);
+  if (!hasShape) {
     return undefined;
   }
   return { fields, groups, enabledMixsChecklists, defaultsVersion };
@@ -785,27 +809,31 @@ function parseProfileBlocks(config: unknown): ProfileBlockResult {
     const appliedForms: JsonRecord = {};
 
     // ORDER -> OrderFormConfig.schema (dedicated store; NOT extraSettings).
-    const orderBlob = readEmbeddedFormBlob(forms.order);
+    // STOP normalizing/overwriting: manage-merge the raw forms.order blob over the
+    // EXISTING schema with the SAME shared builder the installer's applyOrderForm
+    // uses, so import == install for the same forms.order + existing state. The GET
+    // /api/admin/form-config reader re-applies fixed-section normalization on every
+    // read, so storing the installer-style un-normalized merged shape is correct.
+    const orderBlob = readEmbeddedFormBlob(forms.order, { allowMixsOnly: true });
     if (orderBlob) {
-      const normalized = normalizeOrderFormSchema({
+      const orderForm = {
         fields: orderBlob.fields,
         groups: orderBlob.groups,
-      });
-      const orderSchema = buildOrderFormSchema({
-        fields: normalized.fields,
-        groups: normalized.groups,
         enabledMixsChecklists: orderBlob.enabledMixsChecklists,
-        // Stamp the canonical defaults version so the in-app reader does not
-        // re-inject module defaults on every read (it gates re-injection on
-        // moduleDefaultsVersion < ORDER_FORM_DEFAULTS_VERSION).
-        moduleDefaultsVersion: ORDER_FORM_DEFAULTS_VERSION,
-      });
+        defaultsVersion: orderBlob.defaultsVersion ?? ORDER_FORM_DEFAULTS_VERSION,
+      };
       result.hasAnyBlock = true;
-      result.orderFormSchema = orderSchema;
+      result.orderForm = orderForm;
+      // Preview against an empty existing schema (the POST handler recomputes
+      // against the live OrderFormConfig before persisting).
+      const previewSchema = buildOrderFormConfigSchema({
+        profileForm: orderForm,
+        existingSchema: {},
+      });
       appliedForms.order = {
-        fields: orderSchema.fields,
-        groups: orderSchema.groups,
-        enabledMixsChecklists: orderSchema.enabledMixsChecklists,
+        fields: previewSchema.fields,
+        groups: previewSchema.groups,
+        enabledMixsChecklists: previewSchema.enabledMixsChecklists,
       };
     }
 
@@ -1269,19 +1297,37 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Phase 4: project forms.order into the DEDICATED OrderFormConfig store (the same
-    // store the installer's applyOrderForm + the in-app GET /api/admin/form-config
+    // Phase 4 + A11: project forms.order into the DEDICATED OrderFormConfig store (the
+    // same store the installer's applyOrderForm + the in-app GET /api/admin/form-config
     // reader use). schema is a JSON STRING column with moduleDefaultsVersion stamped.
-    if (blocks.orderFormSchema) {
+    // Manage-merge over the EXISTING schema with the SAME shared builder the installer
+    // uses, and PRESERVE the existing coreFieldConfig + bump version, so importing the
+    // same forms.order over the same existing state writes exactly what the installer
+    // would (import == install).
+    if (blocks.orderForm) {
       const existingOrderForm = await db.orderFormConfig.findUnique({
         where: { id: "singleton" },
       });
-      const orderSchemaJson = JSON.stringify(blocks.orderFormSchema);
+      let existingSchema: Record<string, unknown> = {};
+      if (existingOrderForm?.schema) {
+        try {
+          const parsed = JSON.parse(existingOrderForm.schema) as unknown;
+          existingSchema = toRecord(parsed) || {};
+        } catch {
+          existingSchema = {};
+        }
+      }
+      const nextSchema = buildOrderFormConfigSchema({
+        profileForm: blocks.orderForm,
+        existingSchema,
+      });
+      const orderSchemaJson = JSON.stringify(nextSchema);
       await db.orderFormConfig.upsert({
         where: { id: "singleton" },
         update: {
           schema: orderSchemaJson,
-          coreFieldConfig: "{}",
+          // PRESERVE the admin-curated core field config (do NOT reset to "{}").
+          coreFieldConfig: existingOrderForm?.coreFieldConfig || "{}",
           version: (existingOrderForm?.version || 0) + 1,
         },
         create: {

@@ -2,8 +2,14 @@ import fs from "fs";
 import path from "path";
 import { encryptSecret } from "./secret-store.mjs";
 import {
-  buildOrderFormSchema,
+  buildOrderFormConfigSchema,
   ORDER_FORM_DEFAULTS_VERSION,
+  isRecord,
+  toRecord,
+  normalizeStringArray,
+  mergeManagedGroups,
+  mergeManagedFields,
+  mergeManagedStringArrays,
 } from "../../src/lib/forms/order-form-schema.mjs";
 
 const SITE_SETTINGS_ID = "singleton";
@@ -51,14 +57,6 @@ function parseArgs(argv) {
   }
 
   return args;
-}
-
-function isRecord(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
-}
-
-function toRecord(value) {
-  return isRecord(value) ? value : {};
 }
 
 function parseJsonObject(value) {
@@ -153,14 +151,31 @@ function buildSafeInstallProfileMetadata(profile) {
   return metadata;
 }
 
+// The installer writes the runtime config as settings.json on fresh installs but
+// REUSES an existing seqdesk.config.json on upgrade (install-dist.sh / install.sh,
+// A13). Resolve reads/writes to whichever exists, preferring canonical settings.json,
+// so a settings.json install can still recover runtime.databaseUrl / nextAuthSecret.
+// Without this, ensureDatabaseEnv leaves NEXTAUTH_SECRET unset and encryptSecret
+// throws "no key material available" when a profile provisions a secret.
+const RUNTIME_CONFIG_FILE_NAMES = ["settings.json", "seqdesk.config.json"];
+
+function resolveRuntimeConfigPath() {
+  for (const name of RUNTIME_CONFIG_FILE_NAMES) {
+    if (fs.existsSync(name)) return name;
+  }
+  return RUNTIME_CONFIG_FILE_NAMES[0];
+}
+
 function persistSafeInstallProfileMetadata(profile) {
   const metadata = buildSafeInstallProfileMetadata(profile);
   if (!metadata) return false;
 
+  // Read and write the SAME resolved file so we never split into two configs.
+  const configPath = resolveRuntimeConfigPath();
   let config = {};
   try {
-    if (fs.existsSync("seqdesk.config.json")) {
-      const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
       config = isRecord(parsed) ? parsed : {};
     }
   } catch {
@@ -168,13 +183,13 @@ function persistSafeInstallProfileMetadata(profile) {
   }
 
   config.installProfile = metadata;
-  fs.writeFileSync("seqdesk.config.json", JSON.stringify(config, null, 2));
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   return true;
 }
 
 function loadDatabaseConfigFromConfig() {
   try {
-    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const raw = fs.readFileSync(resolveRuntimeConfigPath(), "utf8");
     const parsed = JSON.parse(raw);
     const runtime = isRecord(parsed?.runtime) ? parsed.runtime : {};
     return {
@@ -205,162 +220,6 @@ function ensureDatabaseEnv() {
   }
 }
 
-function itemKey(item, fallbackPrefix) {
-  if (typeof item.name === "string" && item.name.trim()) {
-    return `name:${item.name.trim()}`;
-  }
-  if (typeof item.id === "string" && item.id.trim()) {
-    return `id:${item.id.trim()}`;
-  }
-  return `${fallbackPrefix}:${JSON.stringify(item)}`;
-}
-
-function mergeByKey(existingItems, incomingItems, keyFn) {
-  const merged = [];
-  const indexByKey = new Map();
-
-  for (const item of existingItems) {
-    if (!isRecord(item)) continue;
-    const key = keyFn(item);
-    indexByKey.set(key, merged.length);
-    merged.push(item);
-  }
-
-  for (const item of incomingItems) {
-    if (!isRecord(item)) continue;
-    const key = keyFn(item);
-    const existingIndex = indexByKey.get(key);
-    if (existingIndex === undefined) {
-      indexByKey.set(key, merged.length);
-      merged.push(item);
-      continue;
-    }
-    merged[existingIndex] = {
-      ...merged[existingIndex],
-      ...item,
-    };
-  }
-
-  return merged;
-}
-
-function sortByOrder(items) {
-  return [...items].sort((a, b) => {
-    const aOrder = typeof a.order === "number" ? a.order : 9999;
-    const bOrder = typeof b.order === "number" ? b.order : 9999;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    return String(a.label || a.name || a.id || "").localeCompare(
-      String(b.label || b.name || b.id || "")
-    );
-  });
-}
-
-function isLegacyOrderPlatformField(field) {
-  return (
-    field?.id === "system_platform" ||
-    field?.name === "platform" ||
-    field?.systemKey === "platform"
-  );
-}
-
-function mergeGroups(existingGroups, incomingGroups) {
-  return sortByOrder(
-    mergeByKey(
-      Array.isArray(existingGroups) ? existingGroups : [],
-      Array.isArray(incomingGroups) ? incomingGroups : [],
-      (group) => `id:${group.id || group.name || ""}`
-    )
-  );
-}
-
-function mergeFields(existingFields, incomingFields) {
-  return sortByOrder(
-    mergeByKey(
-      Array.isArray(existingFields)
-        ? existingFields.filter((field) => !isLegacyOrderPlatformField(field))
-        : [],
-      Array.isArray(incomingFields)
-        ? incomingFields.filter((field) => !isLegacyOrderPlatformField(field))
-        : [],
-      (field) => itemKey(field, "field")
-    )
-  );
-}
-
-function groupKey(group) {
-  return `id:${group.id || group.name || ""}`;
-}
-
-function managedItemKeys(items, keyFn) {
-  return normalizeStringArray(
-    (Array.isArray(items) ? items : [])
-      .filter((item) => isRecord(item))
-      .map((item) => keyFn(item))
-  );
-}
-
-function mergeManagedItems(existingItems, incomingItems, previousManagedKeys, keyFn) {
-  const incoming = (Array.isArray(incomingItems) ? incomingItems : []).filter((item) =>
-    isRecord(item)
-  );
-  const incomingKeys = new Set(managedItemKeys(incoming, keyFn));
-  const previousKeys = new Set(normalizeStringArray(previousManagedKeys));
-  const existing = (Array.isArray(existingItems) ? existingItems : []).filter((item) => {
-    if (!isRecord(item)) return false;
-    const key = keyFn(item);
-    return !previousKeys.has(key) || incomingKeys.has(key);
-  });
-  return {
-    items: sortByOrder(mergeByKey(existing, incoming, keyFn)),
-    managedKeys: Array.from(incomingKeys).sort(),
-  };
-}
-
-function mergeManagedGroups(existingGroups, incomingGroups, previousManagedKeys) {
-  return mergeManagedItems(existingGroups, incomingGroups, previousManagedKeys, groupKey);
-}
-
-function mergeManagedFields(existingFields, incomingFields, previousManagedKeys) {
-  const withoutLegacy = (items) =>
-    (Array.isArray(items) ? items : []).filter((field) => !isLegacyOrderPlatformField(field));
-  return mergeManagedItems(
-    withoutLegacy(existingFields),
-    withoutLegacy(incomingFields),
-    previousManagedKeys,
-    (field) => itemKey(field, "field")
-  );
-}
-
-function mergeStringArrays(existing, incoming) {
-  return Array.from(
-    new Set([
-      ...(Array.isArray(existing) ? existing.filter((item) => typeof item === "string") : []),
-      ...(Array.isArray(incoming) ? incoming.filter((item) => typeof item === "string") : []),
-    ])
-  );
-}
-
-function mergeManagedStringArrays(existing, incoming, previousManagedValues) {
-  const incomingValues = normalizeStringArray(incoming);
-  const incomingSet = new Set(incomingValues);
-  const previousSet = new Set(normalizeStringArray(previousManagedValues));
-  return {
-    items: Array.from(
-      new Set([
-        ...(Array.isArray(existing)
-          ? existing.filter(
-              (item) =>
-                typeof item === "string" &&
-                (!previousSet.has(item.trim()) || incomingSet.has(item.trim()))
-            )
-          : []),
-        ...incomingValues,
-      ])
-    ),
-    managedKeys: incomingValues,
-  };
-}
-
 function mergeManagedObject(existingObject, incomingObject, previousManagedKeys) {
   const incoming = toRecord(incomingObject);
   const incomingKeys = new Set(Object.keys(incoming));
@@ -376,18 +235,6 @@ function mergeManagedObject(existingObject, incomingObject, previousManagedKeys)
     object: next,
     managedKeys: Array.from(incomingKeys).sort(),
   };
-}
-
-function normalizeStringArray(value) {
-  if (!Array.isArray(value)) return [];
-  return Array.from(
-    new Set(
-      value
-        .filter((item) => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    )
-  );
 }
 
 function normalizeExecutionMode(value) {
@@ -751,46 +598,12 @@ async function applyOrderForm(prisma, profile) {
   ) {
     return false;
   }
-  const groups = mergeManagedGroups(
-    existingSchema.groups,
-    profileForm.groups,
-    managed.orderFormGroups
-  );
-  const fields = mergeManagedFields(
-    existingSchema.fields,
-    profileForm.fields,
-    managed.orderFormFields
-  );
-  const enabledMixsChecklists = mergeManagedStringArrays(
-    existingSchema.enabledMixsChecklists,
-    profileForm.enabledMixsChecklists,
-    managed.orderFormEnabledMixsChecklists
-  );
-
-  const nextSchema = {
-    ...existingSchema,
-    // Build the canonical {fields, groups, enabledMixsChecklists, moduleDefaultsVersion}
-    // envelope with the SAME shared helper the in-app infrastructure importer uses, so the
-    // installer and importer write byte-identical OrderFormConfig.schema shapes (same store,
-    // same keys, same version key). The version is stamped under `moduleDefaultsVersion` —
-    // the key the in-app GET form-config / form-schema readers consult — NOT the orphan
-    // `installProfileDefaultsVersion`.
-    ...buildOrderFormSchema({
-      groups: groups.items,
-      fields: fields.items,
-      enabledMixsChecklists: enabledMixsChecklists.items,
-      moduleDefaultsVersion: profileForm.defaultsVersion,
-    }),
-    installProfileManaged: {
-      ...managed,
-      orderFormGroups: groups.managedKeys,
-      orderFormFields: fields.managedKeys,
-      orderFormEnabledMixsChecklists: enabledMixsChecklists.managedKeys,
-    },
-  };
-  // Drop any stale orphan version key carried forward by the `...existingSchema` spread above
-  // so a re-apply over an old schema does not leave both keys.
-  delete nextSchema.installProfileDefaultsVersion;
+  // Build the manage-merged {fields, groups, enabledMixsChecklists,
+  // moduleDefaultsVersion} envelope + installProfileManaged bookkeeping with the
+  // SAME shared builder the in-app infrastructure importer uses, so the installer
+  // and importer write byte-identical OrderFormConfig.schema shapes (same store,
+  // same keys, same version key under `moduleDefaultsVersion`).
+  const nextSchema = buildOrderFormConfigSchema({ profileForm, existingSchema });
 
   await prisma.orderFormConfig.upsert({
     where: { id: ORDER_FORM_ID },

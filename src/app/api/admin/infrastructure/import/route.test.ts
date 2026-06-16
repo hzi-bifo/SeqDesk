@@ -705,6 +705,80 @@ describe("POST /api/admin/infrastructure/import", () => {
     ).toBe(false);
   });
 
+  // A11 parity (DIVERGENCE 2): a MIxS-only forms.order — only enabledMixsChecklists,
+  // no fields/groups — must be APPLIED by the importer, exactly as the installer's
+  // applyOrderForm does (its gate proceeds on enabledMixsChecklists.length > 0).
+  // The builder-level test (order-form-schema.test.ts) proves parity below the gate;
+  // this guards the route gate (readEmbeddedFormBlob) that used to skip the blob.
+  it("applies a MIxS-only forms.order (enabledMixsChecklists, no fields/groups) instead of skipping it", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          forms: {
+            order: {
+              enabledMixsChecklists: ["MIMS.me", "MIMAG"],
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+
+    const ofCall = mocks.db.orderFormConfig.upsert.mock.calls[0]?.[0];
+    expect(ofCall).toBeDefined();
+    const schema = JSON.parse(ofCall.create?.schema ?? ofCall.update?.schema);
+    expect(schema.enabledMixsChecklists).toEqual(
+      expect.arrayContaining(["MIMS.me", "MIMAG"])
+    );
+    expect(
+      (body.warnings ?? []).some((w: string) => w.includes("not imported here"))
+    ).toBe(false);
+  });
+
+  // A11 parity (DIVERGENCE 1): a non-positive forms.order defaultsVersion must be
+  // dropped to the canonical default (ORDER_FORM_DEFAULTS_VERSION = 4), matching the
+  // installer's readFormConfig + toOptionalInt (`> 0` guard then `|| defaultVersion`).
+  // The importer previously persisted moduleDefaultsVersion: 0 here.
+  it("drops a non-positive forms.order defaultsVersion to the canonical default (matching the installer)", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          sequencingDataDir: "/data/sequencing",
+          forms: {
+            order: {
+              defaultsVersion: 0,
+              groups: [
+                { id: "group_sequencing", name: "Sequencing Information", order: 1 },
+              ],
+              fields: [
+                {
+                  id: "field_ont_run_type",
+                  type: "select",
+                  label: "Run Type",
+                  name: "run_type",
+                  order: 10,
+                  groupId: "group_sequencing",
+                },
+              ],
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).success).toBe(true);
+
+    const ofCall = mocks.db.orderFormConfig.upsert.mock.calls[0]?.[0];
+    expect(ofCall).toBeDefined();
+    const schema = JSON.parse(ofCall.create?.schema ?? ofCall.update?.schema);
+    // 4 = ORDER_FORM_DEFAULTS_VERSION; NOT the literal 0 from the input.
+    expect(schema.moduleDefaultsVersion).toBe(4);
+  });
+
   // Finding F16: a real WEB infrastructure-setup.json carrying top-level
   // access/ena/notifications/telemetry blocks must persist those into the SAME
   // SiteSettings.extraSettings store the per-section settings UI writes

@@ -19,7 +19,16 @@ PIPELINES_ENABLED=""
 USE_OVERRIDE_CHANNELS=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONFIG_PATH="${REPO_ROOT}/seqdesk.config.json"
+# A13: read AND write the SAME runtime config the installer already wrote
+# (settings.json on fresh installs, seqdesk.config.json on legacy upgrades) so the
+# conda/execution settings land in the canonical file — never a second, orphaned one.
+if [[ -f "${REPO_ROOT}/settings.json" ]]; then
+  CONFIG_PATH="${REPO_ROOT}/settings.json"
+elif [[ -f "${REPO_ROOT}/seqdesk.config.json" ]]; then
+  CONFIG_PATH="${REPO_ROOT}/seqdesk.config.json"
+else
+  CONFIG_PATH="${REPO_ROOT}/settings.json"
+fi
 CONFIG_TEMPLATE="${REPO_ROOT}/seqdesk.config.example.json"
 DATA_PATH=""
 RUN_DIR=""
@@ -42,7 +51,7 @@ Options:
   --no-strict           Do not set channel_priority strict
   --force               Recreate the env if it already exists
   --write-config         Create/update seqdesk.config.json
-  --config-path PATH     Config file path (default: seqdesk.config.json)
+  --config-path PATH     Config file path (default: settings.json, else seqdesk.config.json)
   --data-path PATH       Sequencing data base path (default: ./data)
   --run-dir PATH         Pipeline run directory (default: ./pipeline_runs)
   --site-name NAME       Facility name
@@ -356,7 +365,7 @@ if [[ "$WRITE_CONFIG" -eq 1 ]]; then
 const fs = require('fs');
 const path = require('path');
 
-const configPath = process.env.SEQDESK_CONFIG_PATH || 'seqdesk.config.json';
+const configPath = process.env.SEQDESK_CONFIG_PATH || 'settings.json';
 const templatePath = process.env.SEQDESK_CONFIG_TEMPLATE || 'seqdesk.config.example.json';
 
 function readJson(filePath) {

@@ -42,7 +42,11 @@ function requireField(items, name, label) {
 }
 
 function loadInstallConfig(installDir) {
-  const configPath = path.join(installDir, "seqdesk.config.json");
+  // settings.json on fresh installs, seqdesk.config.json on legacy upgrades (A13).
+  const names = ["settings.json", "seqdesk.config.json"];
+  const configPath =
+    names.map((n) => path.join(installDir, n)).find((p) => fs.existsSync(p)) ||
+    path.join(installDir, names[0]);
   if (!fs.existsSync(configPath)) fail(`Missing installed config: ${configPath}`);
   return parseJsonObject(fs.readFileSync(configPath, "utf8"), configPath);
 }

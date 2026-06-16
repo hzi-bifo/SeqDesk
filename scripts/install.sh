@@ -1102,8 +1102,13 @@ fi
 # HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
 export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
 
-if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
-  CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
+CONFIG_FILE=""
+for f in settings.json seqdesk.config.json; do
+  if [[ -f "$f" ]]; then CONFIG_FILE="$f"; break; fi
+done
+
+if [[ -z "${PORT:-}" && -n "$CONFIG_FILE" ]]; then
+  CONFIG_PORT=$(SEQDESK_CONFIG_FILE="$CONFIG_FILE" node <<'NODE' 2>/dev/null || true
 const fs = require("fs");
 
 function toOptionalPort(value) {
@@ -1124,7 +1129,7 @@ function toOptionalPort(value) {
 }
 
 try {
-  const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+  const parsed = JSON.parse(fs.readFileSync(process.env.SEQDESK_CONFIG_FILE, "utf8"));
   const appPort = toOptionalPort(parsed?.app?.port);
   if (appPort) {
     process.stdout.write(appPort);
@@ -1170,9 +1175,10 @@ let databaseUrl = trim(process.env.DATABASE_URL);
 let directUrl = trim(process.env.DIRECT_URL);
 const envDatabaseUrl = databaseUrl;
 
-if ((!databaseUrl || !directUrl) && fs.existsSync("seqdesk.config.json")) {
+const configFile = ["settings.json", "seqdesk.config.json"].find((name) => fs.existsSync(name));
+if ((!databaseUrl || !directUrl) && configFile) {
   try {
-    const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(configFile, "utf8"));
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
     if (!databaseUrl) databaseUrl = trim(runtime?.databaseUrl);
     if (!directUrl) directUrl = envDatabaseUrl || trim(runtime?.directUrl) || databaseUrl;
@@ -1361,7 +1367,15 @@ function toOptionalPositiveInt(value) {
   return intValue > 0 ? intValue : undefined;
 }
 
-const config = readJson('seqdesk.config.json') || {};
+// Preferred runtime config filename order. "settings.json" is the canonical
+// name; older names stay as fallbacks so existing installs keep a SINGLE file
+// (mirrors CONFIG_FILE_NAMES in the in-app importer's upsertPortInConfigFile).
+const CONFIG_FILE_NAMES = ['settings.json', 'seqdesk.config.json'];
+// Reuse the existing config file if one is present (legacy installs keep one
+// file, not a split); otherwise create the canonical settings.json fresh.
+const configTarget = CONFIG_FILE_NAMES.find((name) => fs.existsSync(name)) || 'settings.json';
+
+const config = readJson(configTarget) || {};
 
 config.site = config.site || {};
 if (dataPath) config.site.dataBasePath = dataPath;
@@ -1416,8 +1430,8 @@ if (
   if (notificationRelayToken) config.notifications.relayToken = notificationRelayToken;
 }
 
-fs.writeFileSync('seqdesk.config.json', JSON.stringify(config, null, 2));
-console.log('Wrote seqdesk.config.json');
+fs.writeFileSync(configTarget, JSON.stringify(config, null, 2));
+console.log('Wrote ' + configTarget);
 NODE
 }
 
@@ -1487,7 +1501,9 @@ function trimOrUndefined(value) {
 
 function loadDatabaseConfigFromConfig() {
   try {
-    const raw = fs.readFileSync("seqdesk.config.json", "utf8");
+    const configFile = ["settings.json", "seqdesk.config.json"].find((name) => fs.existsSync(name));
+    if (!configFile) return {};
+    const raw = fs.readFileSync(configFile, "utf8");
     const parsed = JSON.parse(raw);
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
     if (!runtime || typeof runtime !== "object") return {};
@@ -2138,7 +2154,7 @@ configure_postgres_urls
 
 if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
     SEQDESK_NEXTAUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
-    print_info "Generated runtime.nextAuthSecret for seqdesk.config.json"
+    print_info "Generated runtime.nextAuthSecret for the runtime config"
 fi
 
 export NEXTAUTH_URL="$SEQDESK_NEXTAUTH_URL"

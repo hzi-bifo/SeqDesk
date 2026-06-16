@@ -317,12 +317,13 @@ jobs:
       - name: Verify install artifacts and config
         run: |
           set -euo pipefail
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
           test -f "$INSTALL_DIR/package.json"
-          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -f "$CFG"
           test -x "$INSTALL_DIR/start.sh"
-          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          cp "$CFG" "$CONFIG_SNAPSHOT"
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
-            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --file "$CFG" \
             --expected-port "$PORT"
 
       - name: Verify installed app startup and auth flows
@@ -704,12 +705,13 @@ jobs:
       - name: Verify install artifacts and profile settings
         run: |
           set -euo pipefail
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
           test -f "$INSTALL_DIR/package.json"
-          test -f "$INSTALL_DIR/seqdesk.config.json"
+          test -f "$CFG"
           test -x "$INSTALL_DIR/start.sh"
-          cp "$INSTALL_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          cp "$CFG" "$CONFIG_SNAPSHOT"
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
-            --file "$INSTALL_DIR/seqdesk.config.json" \
+            --file "$CFG" \
             --expected-port "$PORT" \
             --expected-pipelines-enabled true
           node "$GITHUB_WORKSPACE/scripts/assert-install-profile-applied.mjs" \

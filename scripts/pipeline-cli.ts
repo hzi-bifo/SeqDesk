@@ -191,10 +191,19 @@ function readRuntimeString(source: unknown): string {
 }
 
 async function loadRuntimeEnvironment(installDir: string): Promise<void> {
-  const configPath = path.join(installDir, 'seqdesk.config.json');
   let config: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    // A13: prefer canonical settings.json, fall back to legacy seqdesk.config.json.
+    let raw = '{}';
+    for (const name of ['settings.json', 'seqdesk.config.json']) {
+      try {
+        raw = await fs.readFile(path.join(installDir, name), 'utf-8');
+        break;
+      } catch {
+        // try the next candidate
+      }
+    }
+    const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       config = parsed as Record<string, unknown>;
     }

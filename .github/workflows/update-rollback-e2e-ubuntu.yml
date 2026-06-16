@@ -192,6 +192,7 @@ jobs:
       - name: Point the app's update server at the mock (runtime.updateServer)
         run: |
           set -euo pipefail
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
           node -e '
             const fs = require("fs");
             const [file, url] = [process.argv[1], process.argv[2]];
@@ -200,7 +201,7 @@ jobs:
             cfg.runtime.updateServer = url;
             fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
             console.log("patched runtime.updateServer ->", url);
-          ' "$INSTALL_DIR/seqdesk.config.json" "http://127.0.0.1:${MOCK_RELEASE_PORT}"
+          ' "$CFG" "http://127.0.0.1:${MOCK_RELEASE_PORT}"
           "$PM2_BIN" restart seqdesk
 
       - name: Wait for the app to be ready
