@@ -199,16 +199,18 @@ jobs:
       - name: Verify install artifacts
         run: |
           set -euo pipefail
+          CFG="$CANARY_DIR/settings.json"; [ -f "$CFG" ] || CFG="$CANARY_DIR/seqdesk.config.json"
           test -f "$CANARY_DIR/package.json"
-          test -f "$CANARY_DIR/seqdesk.config.json"
+          test -f "$CFG"
           test -x "$CANARY_DIR/start.sh"
-          cp "$CANARY_DIR/seqdesk.config.json" "$CONFIG_SNAPSHOT"
+          cp "$CFG" "$CONFIG_SNAPSHOT"
 
       - name: Validate installed config values
         run: |
           set -euo pipefail
+          CFG="$CANARY_DIR/settings.json"; [ -f "$CFG" ] || CFG="$CANARY_DIR/seqdesk.config.json"
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
-            --file "$CANARY_DIR/seqdesk.config.json" \
+            --file "$CFG" \
             --expected-port "$PORT"
 
       - name: Verify canary app startup, auth flows, and pipeline store

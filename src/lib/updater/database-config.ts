@@ -31,8 +31,17 @@ export async function loadInstalledDatabaseConfig(
 
   if (!databaseUrl || !directUrl) {
     try {
-      const configPath = path.join(baseDir, "seqdesk.config.json");
-      const parsed = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      // A13: prefer canonical settings.json, fall back to legacy seqdesk.config.json.
+      let raw = "{}";
+      for (const name of ["settings.json", "seqdesk.config.json"]) {
+        try {
+          raw = await fs.readFile(path.join(baseDir, name), "utf8");
+          break;
+        } catch {
+          // try the next candidate
+        }
+      }
+      const parsed = JSON.parse(raw) as {
         runtime?: { databaseUrl?: unknown; directUrl?: unknown };
       };
 

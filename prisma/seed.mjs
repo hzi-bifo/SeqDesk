@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import { hashSync } from "bcryptjs";
 
 const CONFIG_FILE_NAMES = [
+  "settings.json",
   "seqdesk.config.json",
   ".seqdeskrc",
   ".seqdeskrc.json",

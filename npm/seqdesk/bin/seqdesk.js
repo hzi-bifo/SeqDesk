@@ -622,16 +622,23 @@ async function runDoctor(argv) {
     }
   }
 
-  const configPath = path.join(installDir, "seqdesk.config.json");
+  // A13: the installer writes settings.json on fresh installs (seqdesk.config.json
+  // only on legacy upgrades). Resolve to whichever exists so doctor reads the real
+  // runtime config and its runtime.* / TCP / HTTP checks actually run.
+  const configPath =
+    ["settings.json", "seqdesk.config.json"]
+      .map((n) => path.join(installDir, n))
+      .find(fileExists) || path.join(installDir, "settings.json");
+  const configName = path.basename(configPath);
   let config = null;
   if (!fileExists(configPath)) {
-    addCheck(checks, "fail", "seqdesk.config.json", "missing");
+    addCheck(checks, "fail", configName, "missing");
   } else {
     try {
       config = readJsonFile(configPath);
-      addCheck(checks, "pass", "seqdesk.config.json", "parseable");
+      addCheck(checks, "pass", configName, "parseable");
     } catch (error) {
-      addCheck(checks, "fail", "seqdesk.config.json", `invalid JSON: ${error.message}`);
+      addCheck(checks, "fail", configName, `invalid JSON: ${error.message}`);
     }
   }
 

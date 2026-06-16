@@ -279,7 +279,7 @@ fi
 # HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
 export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
 
-if [[ -z "${PORT:-}" && -f seqdesk.config.json ]]; then
+if [[ -z "${PORT:-}" ]] && { [[ -f settings.json ]] || [[ -f seqdesk.config.json ]]; }; then
   CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true
 const fs = require("fs");
 
@@ -301,7 +301,8 @@ function toOptionalPort(value) {
 }
 
 try {
-  const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+  const cfg = ["settings.json", "seqdesk.config.json"].find((n) => fs.existsSync(n));
+  const parsed = JSON.parse(fs.readFileSync(cfg, "utf8"));
   const appPort = toOptionalPort(parsed?.app?.port);
   if (appPort) {
     process.stdout.write(appPort);
@@ -342,9 +343,10 @@ let databaseUrl = trim(process.env.DATABASE_URL);
 let directUrl = trim(process.env.DIRECT_URL);
 const envDatabaseUrl = databaseUrl;
 
-if ((!databaseUrl || !directUrl) && fs.existsSync("seqdesk.config.json")) {
+const runtimeCfg = ["settings.json", "seqdesk.config.json"].find((n) => fs.existsSync(n));
+if ((!databaseUrl || !directUrl) && runtimeCfg) {
   try {
-    const parsed = JSON.parse(fs.readFileSync("seqdesk.config.json", "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(runtimeCfg, "utf8"));
     const runtime = parsed && typeof parsed === "object" ? parsed.runtime : undefined;
     if (!databaseUrl) databaseUrl = trim(runtime?.databaseUrl);
     if (!directUrl) directUrl = envDatabaseUrl || trim(runtime?.directUrl) || databaseUrl;
