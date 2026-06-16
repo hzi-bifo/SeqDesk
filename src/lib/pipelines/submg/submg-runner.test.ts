@@ -41,7 +41,31 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
-import { prepareSubmgRun, processSubmgRunResults } from "./submg-runner";
+import { prepareSubmgRun, processSubmgRunResults, normalizeInstrumentModel } from "./submg-runner";
+
+describe("normalizeInstrumentModel", () => {
+  it("passes exact ENA controlled values through unchanged", () => {
+    expect(normalizeInstrumentModel("Illumina NovaSeq 6000")).toBe("Illumina NovaSeq 6000");
+    expect(normalizeInstrumentModel("NextSeq 500")).toBe("NextSeq 500");
+    expect(normalizeInstrumentModel("MinION")).toBe("MinION");
+  });
+  it("matches case-insensitively and canonicalizes", () => {
+    expect(normalizeInstrumentModel("illumina miseq")).toBe("Illumina MiSeq");
+  });
+  it("adds the 'Illumina ' prefix for common shorthands", () => {
+    expect(normalizeInstrumentModel("NovaSeq 6000")).toBe("Illumina NovaSeq 6000");
+    expect(normalizeInstrumentModel("MiSeq")).toBe("Illumina MiSeq");
+    expect(normalizeInstrumentModel("HiSeq 2500")).toBe("Illumina HiSeq 2500");
+  });
+  it("falls back to 'unspecified' for unmappable values", () => {
+    expect(normalizeInstrumentModel("Acme Sequencer 9000")).toBe("unspecified");
+  });
+  it("uses the default for empty/null", () => {
+    expect(normalizeInstrumentModel("")).toBe("Illumina NovaSeq 6000");
+    expect(normalizeInstrumentModel(null)).toBe("Illumina NovaSeq 6000");
+    expect(normalizeInstrumentModel(undefined)).toBe("Illumina NovaSeq 6000");
+  });
+});
 
 let tempDir: string;
 

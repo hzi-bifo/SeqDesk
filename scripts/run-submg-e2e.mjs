@@ -393,23 +393,21 @@ async function main() {
       );
     }
 
-    // (b2) ENA-valid sequencing metadata on the order (only matters for read
-    //      submission). submg passes the order's instrumentModel/library fields
-    //      verbatim into the webin read manifest, and ENA requires EXACT controlled
-    //      values — the seed stores "NovaSeq 6000", which ENA rejects (it wants the
-    //      canonical "Illumina NovaSeq 6000"). Pin known-valid values.
+    // (b2) ENA-valid library metadata on the order (only matters for read submission).
+    //      NOTE: instrumentModel is intentionally NOT pinned — the seed stores
+    //      "NovaSeq 6000", and the submg runner now normalizes it to the ENA-valid
+    //      "Illumina NovaSeq 6000", so this leg exercises that normalization end to end.
     if (targetSample.orderId) {
       await prisma.order.update({
         where: { id: targetSample.orderId },
         data: {
           platform: "ILLUMINA",
-          instrumentModel: "Illumina NovaSeq 6000",
           librarySource: "METAGENOMIC",
           librarySelection: "RANDOM",
           libraryStrategy: "WGS",
         },
       });
-      console.log("Pinned ENA-valid sequencing metadata on the order.");
+      console.log("Pinned ENA-valid library metadata on the order.");
     }
 
     // (c) taxId / scientificName / checklist metadata. The ENA study registration
