@@ -182,7 +182,12 @@ export async function seedMagSmokeExampleDataset({
   const fixtureDir = path.join(dataBasePath, "fixtures", MAG_SMOKE_PROFILE_ID, MAG_SMOKE_FIXTURE_ID);
   const stageDir = path.join(fixtureDir, ".stage");
   const stageReadsDir = path.join(stageDir, "reads");
-  const downloadsDir = path.join(fixtureDir, ".downloads");
+  // extractVerifiedFastqBundle reads the cached archive from the PROFILE-level .downloads dir —
+  // dataBasePath/fixtures/<profileId>/.downloads/<fixtureId>.tar.gz — NOT a fixture-level one.
+  // Staging it a level too deep (under <fixtureId>/.downloads) made the extractor miss it and
+  // fall through to downloading source.url (a single R1 fastq, sha a90f4d48…), whose SHA can
+  // never match the bundle's — the recurring "expected … got …" 500. Match the extractor exactly.
+  const downloadsDir = path.join(dataBasePath, "fixtures", MAG_SMOKE_PROFILE_ID, ".downloads");
 
   await fsp.rm(stageDir, { recursive: true, force: true });
   await fsp.mkdir(stageReadsDir, { recursive: true });
