@@ -267,11 +267,16 @@ jobs:
           if [ "$READY" -ne 1 ]; then echo "Installed app did not become ready." >&2; tail -n 200 "$WORK/server.log" || true; exit 1; fi
 
           echo "=== run the submg integration against the INSTALLED app ==="
-          rc=0
+          # Capture the DRIVER's exit via PIPESTATUS[0] — not the pipeline's (tee can
+          # report a spurious non-zero when the driver process.exit() closes the pipe).
+          set +e +o pipefail
           DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
           SEQDESK_SUBMG_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
-            npm run pipeline:e2e:submg 2>&1 | tee "$WORK/submg-installed.log" || rc=$?
+            npm run pipeline:e2e:submg 2>&1 | tee "$WORK/submg-installed.log"
+          rc=${PIPESTATUS[0]}
+          set -e -o pipefail
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
+          echo "installed-app submg driver exit code: $rc"
           if [ "$rc" != 0 ]; then
             echo "--- installed-app submg run logs ---"
             find "$INSTALLED_RUNS" -type f \( -name 'pipeline.out' -o -name 'pipeline.err' -o -name 'run.sh' \
