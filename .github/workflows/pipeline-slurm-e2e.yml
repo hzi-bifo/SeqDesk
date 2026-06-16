@@ -768,6 +768,33 @@ jobs:
           run_installed study-demo-report-slurm --pipeline-id study-demo-report --skip-local
           run_installed fastqc-slurm            --pipeline-id fastqc            --skip-local
           run_installed reads-qc-slurm          --pipeline-id reads-qc          --skip-local
+
+          # App-resilience on the INSTALLED app — the same pipeline-ops dimensions the
+          # source-boot steps assert, now on the realistic facility install: no-data → clean
+          # 400, run visibility/permissions (403/401) + pipeline.completed notification,
+          # failure → DB failed, cancel → scancel → cancelled, stuck-run reconcile via /sync.
+          # The scripts are HTTP-only (SLURM commands are host-level); point them at the
+          # installed app. Warn-only with the rest of this step.
+          run_installed_resil() {
+            local label="$1"; shift
+            echo "::group::installed-app resilience: $label"
+            local prc=0
+            "$@" >"$WORK/install-resil-$label.log" 2>&1 || prc=$?
+            sed -n '1,120p' "$WORK/install-resil-$label.log" 2>/dev/null || true
+            echo "::endgroup::"
+            echo "installed-app resilience [$label] exit: $prc"
+            [ "$prc" = 0 ] || rc=1
+          }
+          export SEQDESK_SLURM_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT"
+          export SEQDESK_SLURM_E2E_EMAIL=admin@example.com SEQDESK_SLURM_E2E_PASSWORD=admin
+          export SEQDESK_APPCHECK_BASE_URL="http://127.0.0.1:$INSTALLED_PORT"
+          export SEQDESK_APPCHECK_EMAIL=admin@example.com SEQDESK_APPCHECK_PASSWORD=admin
+          run_installed_resil nodata  npm run pipeline:e2e:appcheck -- --check nodata
+          run_installed_resil access  npm run pipeline:e2e:appcheck -- --check access
+          run_installed_resil failure npm run pipeline:e2e:slurm-failure
+          run_installed_resil cancel  npm run pipeline:e2e:slurm-cancel
+          run_installed_resil stuck   npm run pipeline:e2e:appcheck -- --check stuck
+
           kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
           echo "installed-app pipelines overall rc: $rc"
           if [ "$rc" != 0 ]; then
