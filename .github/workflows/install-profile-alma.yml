@@ -426,9 +426,10 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    # 120 (not 75): metaxpath's first cold conda solve can take up to its 3600s run timeout
-    # on top of install + the other Gemma runs; later runs reuse the shared conda cache.
-    timeout-minutes: 120
+    # 180: two heavy pipelines now run here (metaxpath + mag), each with first-run cold conda
+    # solves up to their 3600s run timeouts, on top of install + the fast Gemma runs. Later runs
+    # reuse the shared conda cache and finish well under this.
+    timeout-minutes: 180
     env:
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
@@ -903,6 +904,30 @@ jobs:
               fi
               echo "::endgroup::"
             ) || true
+
+            # mag (nf-core/mag 3.0.0, short-read paired-end) — the Gemma ONT reads can't drive it,
+            # so seed a tiny PUBLIC nf-core/mag example dataset (test_minigut paired-end) as a real
+            # order/study/sample, then run mag LIGHTWEIGHT (MEGAHIT only; skip SPAdes + binning-QC +
+            # GTDB-Tk, which need huge DBs/RAM) to prove an assembly is generated AND saved to the DB
+            # on this runner. Warn-only while we bring it up. The host-derived process.resourceLimits
+            # cap (generic-executor) lets mag's oversized per-process memory declarations run here.
+            run_gemma_warn mag 3600 --order-number DEV-MAG-ILMN-001 \
+              --seed-example-dataset mag-smoke \
+              --config-json '{"skipSpades":true,"skipConcoct":true,"skipProkka":true,"skipBinQc":true,"skipGtdbtk":true}'
+            ( set +e +o pipefail
+              echo "::group::mag run-folder forensics"
+              magdir="$(find "$PROFILE_RUN_DIR" -maxdepth 1 -type d -name 'MAG-*' | head -1)"
+              echo "run dir: ${magdir:-<none>}"
+              [ -n "$magdir" ] && [ -f "$magdir/trace.txt" ] && { echo "--- trace (name|status|exit) ---"; cut -f4,5,6 "$magdir/trace.txt" 2>/dev/null | head -50; }
+              [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && { echo "--- pipeline.out tail ---"; tail -30 "$magdir/logs/pipeline.out"; }
+              [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && { echo "--- exit marker ---"; grep -n "Pipeline completed with exit code" "$magdir/logs/pipeline.out" || echo "NO MARKER"; }
+              echo "--- assembly outputs on disk ---"
+              [ -n "$magdir" ] && find "$magdir" -type f \( -name '*.contigs.fa.gz' -o -name '*.contigs.fa' -o -name '*.fasta.gz' \) 2>/dev/null | grep -v '/work/conda/' | head -10
+              echo "--- error report (Caused by) ---"
+              [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$magdir/logs/pipeline.out" 2>/dev/null | head -12
+              echo "::endgroup::"
+            ) || true
+
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
               exit 1

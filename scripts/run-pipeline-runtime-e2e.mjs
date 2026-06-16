@@ -63,6 +63,13 @@ const WRITEBACK_SPEC = {
   // BUT metaxpath currently exposes no curated run artifacts, so that content check WARNS until
   // metaxpath curates its combined_report output; once it does, the check enforces automatically.
   metaxpath: { kind: "completes" },
+  // mag (nf-core/mag, short-read paired-end) on a tiny public example dataset. `completes` is a
+  // genuine assembly proof for mag: the app holds a mag run in `running` until materialized
+  // outputs exist (countMaterializedOutputs > 0 in pipeline-run-ops-service), so reaching
+  // `completed` means an assembly was generated AND saved to the DB. Run lightweight (MEGAHIT only,
+  // skip binning-QC/GTDB) so it fits the CI runner. assertMagAssembly additionally surfaces the
+  // assembly count from the run results.
+  mag: { kind: "completes" },
 };
 
 // CONFIG -> OUTPUT plumbing marker for study-demo-report: a unique report_title we
@@ -1753,6 +1760,20 @@ async function main() {
 
   const client = createClient(baseUrl);
   const session = await loginAdmin({ client, baseUrl, email, password });
+
+  // Optionally provision an example dataset (real order/study/samples/reads) before the run, e.g.
+  // mag needs paired short reads the Gemma ONT data can't provide. POSTs the admin seed route and
+  // waits for it (synchronous), so the dataset exists before we look up the order/study below.
+  const seedExample = toOptionalString(args["seed-example-dataset"]);
+  if (seedExample) {
+    const seedPath = `/api/admin/seed/example-datasets/${seedExample}`;
+    const seedRes = await client.request(seedPath, { method: "POST" });
+    const seedBody = await seedRes.text();
+    if (!seedRes.ok) {
+      fail(`Failed to seed example dataset '${seedExample}' (${seedRes.status})`, summarizeBody(seedBody));
+    }
+    console.log(`Seeded example dataset '${seedExample}': ${summarizeBody(seedBody)}`);
+  }
 
   // Study-scoped pipelines (per manifest targets.supported) run against a study;
   // everything else runs against an order.

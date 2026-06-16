@@ -255,6 +255,22 @@ function buildRunConfig(
     ['report.overwrite = true', 'timeline.overwrite = true', 'trace.overwrite = true', 'dag.overwrite = true'].join('\n'),
   );
 
+  // Cap per-process resource REQUESTS to what THIS host actually has. nf-core pipelines (mag,
+  // metaxpath, ...) declare production-sized memory for some processes (e.g. 64-96 GB); on a
+  // smaller machine Nextflow's local executor REJECTS them pre-flight ("Process requirement
+  // exceeds available memory") before they ever run. resourceLimits caps the REQUEST (not actual
+  // usage), so those processes are admitted and run within the host on tiny test data. Local
+  // execution only — SLURM jobs are bounded by their sbatch --mem, and for a remote compute node
+  // this app host's size would be the wrong cap.
+  if (!settings.useSlurm) {
+    const totalMemGb = Math.floor(os.totalmem() / 1024 ** 3);
+    const memCapGb = Math.max(1, Math.floor(totalMemGb * 0.9));
+    const cpuCap = Math.max(1, os.cpus().length);
+    sections.push(
+      ['process {', `  resourceLimits = [ memory: ${memCapGb}.GB, cpus: ${cpuCap}, time: 240.h ]`, '}'].join('\n'),
+    );
+  }
+
   // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
   const condaBlock = [
     `profiles {`,
