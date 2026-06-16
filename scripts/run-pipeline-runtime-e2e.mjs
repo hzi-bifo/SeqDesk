@@ -580,7 +580,23 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
     latestQueue = await fetchQueueStatus(client, runId);
 
     if (latestRun?.status === "completed") {
-      return { run: latestRun, queue: latestQueue };
+      // Confirm it is GENUINELY completed, not a transient the monitor will demote. A local run
+      // can be briefly marked completed (a single early process reads as 100%) and then demoted
+      // back to running on the next reconcile. Re-sync and re-read: a real completion (exit marker
+      // present) stays completed; a transient flips back to running, so we keep waiting instead of
+      // failing the writeback assertion on the demoted status.
+      await syncRun(client, runId);
+      const confirmPayload = await requestJson(
+        client,
+        `/api/pipelines/runs/${runId}`,
+        {},
+        "Confirm pipeline completion",
+      );
+      const confirmRun = confirmPayload?.run || confirmPayload;
+      if (confirmRun?.status === "completed") {
+        return { run: confirmRun, queue: latestQueue };
+      }
+      latestRun = confirmRun; // demoted -> still running; keep polling
     }
     if (["failed", "cancelled", "canceled"].includes(latestRun?.status)) {
       fail(
