@@ -64,6 +64,12 @@ describe("ENA test-server submission (live)", () => {
           title: "SeqDesk CI test sample",
           taxId: "562", // Escherichia coli — a valid NCBI TAXON_ID
           scientificName: "Escherichia coli",
+          // ENA's default sample checklist (ERC000011) requires these two BioSample
+          // attributes; without them BioSamples rejects the sample registration.
+          attributes: {
+            "collection date": "2026-01-01",
+            "geographic location (country and/or sea)": "Germany",
+          },
         },
       ]);
 

@@ -81,6 +81,7 @@ jobs:
             echo "INSTALL_LOG=$RUNNER_TEMP/ena-e2e-install.log"
             echo "SERVER_LOG=$RUNNER_TEMP/ena-e2e-server.log"
             echo "NPM_PREFIX=$RUNNER_TEMP/ena-e2e-prefix"
+            echo "DATA_DIR=$RUNNER_TEMP/seqdesk-ena-data"
           } >> "$GITHUB_ENV"
 
       - name: Start PostgreSQL (throwaway DB)
@@ -98,9 +99,10 @@ jobs:
         run: |
           set -euo pipefail
           npm install -g seqdesk@latest --prefix "$NPM_PREFIX"
+          mkdir -p "$DATA_DIR"
           PATH="$NPM_PREFIX/bin:$PATH" SEQDESK_LOG="$INSTALL_LOG" \
             seqdesk -y --without-pipelines --no-pm2 \
-              --dir "$INSTALL_DIR" --port "$PORT" \
+              --dir "$INSTALL_DIR" --port "$PORT" --data-path "$DATA_DIR" \
               --nextauth-url "http://127.0.0.1:$PORT" \
               --database-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public" \
               --database-direct-url "postgresql://seqdesk:seqdesk@127.0.0.1:5432/${DB_NAME}?schema=public"
