@@ -835,7 +835,13 @@ jobs:
             # ONLY the wrapper's canonical exit marker). Timeout is generous (3600s) so the FIRST
             # cold conda solve has room; later runs reuse the shared conda cache and are fast.
             # Still a clean SKIP if the profile doesn't enable it (--skip-if-disabled).
-            run_gemma metaxpath    3600 --study-alias gemma-nanopore-metaxpath
+            # METAX_PROFILE (64 GB) / PRED_VFS_AMRS (96 GB) are production-sized memory declarations
+            # that exceed this runner's ~62 GB, so Nextflow's local executor rejects them pre-flight
+            # ("Process requirement exceeds available memory"). The CI fixture is tiny (5 small
+            # samples; actual peak ~3 GB), so override both down to fit the runner — this lets
+            # metaxpath actually classify on the test data instead of being rejected before it runs.
+            run_gemma metaxpath    3600 --study-alias gemma-nanopore-metaxpath \
+              --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
             # and copy it for download. FULLY non-fatal — set +e/+o pipefail in a subshell so a
