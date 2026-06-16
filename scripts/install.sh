@@ -2174,6 +2174,22 @@ if npm run db:seed; then
     SEED_OK="true"
 fi
 # Fallback: run seed.mjs directly if prisma db seed failed
+# Materialize the storage directories captured during configuration. The config
+# and DB infrastructure record now point at these paths, but nothing has created
+# them yet -- create any explicitly provided data/run directory so the app does
+# not reference a path that is missing on disk. Warn-only: a privileged or
+# network mount may need manual creation and must not abort an otherwise
+# successful install.
+for storage_dir in "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"; do
+    [ -n "$storage_dir" ] || continue
+    [ -d "$storage_dir" ] && continue
+    if mkdir -p "$storage_dir" 2>/dev/null; then
+        print_success "Created directory: $storage_dir"
+    else
+        print_warning "Could not create $storage_dir -- create it manually before use"
+    fi
+done
+
 if [ "$SEED_OK" = "false" ]; then
     print_info "Prisma seed command failed, trying direct seed..."
     if [ -f prisma/seed.mjs ] && node prisma/seed.mjs; then
