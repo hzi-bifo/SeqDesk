@@ -191,6 +191,25 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:submg 2>&1 | tee "$SUBMG_E2E_LOG"
 
+      # Samples + ASSEMBLY: submit the mag-produced assembly to ENA (webin-cli genome
+      # upload) and assert SeqDesk takes up the assembly accession (ERZ) — the full
+      # "mag → submg" handoff. Warn-only (continue-on-error) while the assembly path
+      # (heavier webin upload from a hosted runner + ENA async validation) is proven
+      # out; the samples legs above/below remain the hard gates. Runs on the still-up
+      # source-boot app, on a second seeded study (the samples leg registered the first).
+      - name: Run submg WITH assembly submission (mag-style assembly → ENA, warn-only)
+        if: ${{ env.ENA_USERNAME != '' }}
+        continue-on-error: true
+        env:
+          SEQDESK_SUBMG_E2E_BASE_URL: http://127.0.0.1:8897
+          SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
+          SEQDESK_SUBMG_E2E_PASSWORD: admin
+          SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
+        run: |
+          set -euo pipefail
+          npm run pipeline:e2e:submg 2>&1 | tee "$RUNNER_TEMP/submg-assembly.log"
+
       # Proof on the *installed* app (the realistic facility flow): install a
       # source-built release via the npm launcher + a mock release server, then run
       # the same submg integration against that installed instance and assert SeqDesk
@@ -327,6 +346,7 @@ jobs:
           path: |
             ${{ env.SERVER_LOG }}
             ${{ env.SUBMG_E2E_LOG }}
+            ${{ runner.temp }}/submg-assembly.log
             ${{ env.SEQDESK_RUN_DIR }}
             ${{ env.INSTALLED_RUNS }}
             ${{ runner.temp }}/install-submg/submg-installed.log
