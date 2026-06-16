@@ -122,6 +122,15 @@ rm -rf \
   "${RELEASE_DIR}/test-results" \
   "${RELEASE_DIR}/work" \
   2>/dev/null || true
+
+# Install-time scripts (scripts/apply-form-configs.mjs and scripts/lib/install-profile-apply-core.mjs)
+# import the shared order-form schema helper from src/. The bulk of src/ is stripped above, so
+# recreate JUST that helper at the exact path the importers expect.
+if [[ -f "${ROOT_DIR}/src/lib/forms/order-form-schema.mjs" ]]; then
+  mkdir -p "${RELEASE_DIR}/src/lib/forms"
+  cp "${ROOT_DIR}/src/lib/forms/order-form-schema.mjs" "${RELEASE_DIR}/src/lib/forms/order-form-schema.mjs"
+fi
+
 rm -f \
   "${RELEASE_DIR}"/seqdesk-*.tar.gz \
   "${RELEASE_DIR}"/*.db \

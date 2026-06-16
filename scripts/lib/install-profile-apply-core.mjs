@@ -1,6 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { encryptSecret } from "./secret-store.mjs";
+import {
+  buildOrderFormSchema,
+  ORDER_FORM_DEFAULTS_VERSION,
+} from "../../src/lib/forms/order-form-schema.mjs";
 
 const SITE_SETTINGS_ID = "singleton";
 const ORDER_FORM_ID = "singleton";
@@ -72,6 +76,14 @@ function toOptionalString(value) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function firstOptionalString(...values) {
+  for (const value of values) {
+    const normalized = toOptionalString(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
 }
 
 function toOptionalBoolean(value) {
@@ -693,7 +705,7 @@ function parseModulesConfig(raw) {
   };
 }
 
-function readFormConfig(profile, formKey) {
+function readFormConfig(profile, formKey, defaultVersion = 1) {
   const form = toRecord(toRecord(profile.forms)[formKey]);
   return {
     groups: Array.isArray(form.groups) ? form.groups : [],
@@ -701,7 +713,7 @@ function readFormConfig(profile, formKey) {
     enabledMixsChecklists: Array.isArray(form.enabledMixsChecklists)
       ? form.enabledMixsChecklists
       : [],
-    defaultsVersion: toOptionalInt(form.defaultsVersion) || 1,
+    defaultsVersion: toOptionalInt(form.defaultsVersion) || defaultVersion,
   };
 }
 
@@ -723,7 +735,7 @@ async function updateSiteSettings(prisma, update) {
 }
 
 async function applyOrderForm(prisma, profile) {
-  const profileForm = readFormConfig(profile, "order");
+  const profileForm = readFormConfig(profile, "order", ORDER_FORM_DEFAULTS_VERSION);
   const existing = await prisma.orderFormConfig.findUnique({
     where: { id: ORDER_FORM_ID },
   });
@@ -757,10 +769,18 @@ async function applyOrderForm(prisma, profile) {
 
   const nextSchema = {
     ...existingSchema,
-    groups: groups.items,
-    fields: fields.items,
-    enabledMixsChecklists: enabledMixsChecklists.items,
-    installProfileDefaultsVersion: profileForm.defaultsVersion,
+    // Build the canonical {fields, groups, enabledMixsChecklists, moduleDefaultsVersion}
+    // envelope with the SAME shared helper the in-app infrastructure importer uses, so the
+    // installer and importer write byte-identical OrderFormConfig.schema shapes (same store,
+    // same keys, same version key). The version is stamped under `moduleDefaultsVersion` —
+    // the key the in-app GET form-config / form-schema readers consult — NOT the orphan
+    // `installProfileDefaultsVersion`.
+    ...buildOrderFormSchema({
+      groups: groups.items,
+      fields: fields.items,
+      enabledMixsChecklists: enabledMixsChecklists.items,
+      moduleDefaultsVersion: profileForm.defaultsVersion,
+    }),
     installProfileManaged: {
       ...managed,
       orderFormGroups: groups.managedKeys,
@@ -768,6 +788,9 @@ async function applyOrderForm(prisma, profile) {
       orderFormEnabledMixsChecklists: enabledMixsChecklists.managedKeys,
     },
   };
+  // Drop any stale orphan version key carried forward by the `...existingSchema` spread above
+  // so a re-apply over an old schema does not leave both keys.
+  delete nextSchema.installProfileDefaultsVersion;
 
   await prisma.orderFormConfig.upsert({
     where: { id: ORDER_FORM_ID },
@@ -986,8 +1009,20 @@ async function applySiteProfile(prisma, profile) {
   );
 
   const ena = toRecord(profile.ena);
-  const enaUsername = toOptionalString(ena.username);
-  const enaPassword = toOptionalString(ena.password);
+  const enaUsername = firstOptionalString(
+    ena.username,
+    ena.webinUsername,
+    ena.enaUsername,
+    ena.webin_username,
+    ena.ena_username
+  );
+  const enaPassword = firstOptionalString(
+    ena.password,
+    ena.webinPassword,
+    ena.enaPassword,
+    ena.webin_password,
+    ena.ena_password
+  );
   const enaTestMode = toOptionalBoolean(ena.testMode);
   const enaCenterName = toOptionalString(ena.centerName);
   const enaBrokerAccount = toOptionalBoolean(ena.brokerAccount);

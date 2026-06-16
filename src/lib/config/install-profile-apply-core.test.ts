@@ -9,6 +9,9 @@ import {
   normalizeNotificationManagedSettings,
   normalizeSequencingFilesConfig,
 } from "../../../scripts/lib/install-profile-apply-core.mjs";
+import { decryptSecret, isEncrypted } from "../../../scripts/lib/secret-store.mjs";
+
+process.env.NEXTAUTH_SECRET ||= "test-secret-for-install-profile-core";
 
 const MANAGED_KEY = "installProfileManaged";
 
@@ -321,6 +324,37 @@ describe("install profile applicator core", () => {
     });
   });
 
+  it("applies ENA credentials from canonical and Webin alias profile keys", async () => {
+    const prisma = createPrisma({
+      extraSettings: JSON.stringify({
+        ena: { centerName: "OLD" },
+      }),
+    });
+
+    await applySiteProfile(prisma, {
+      id: "dev",
+      version: "1.0.0",
+      ena: {
+        testMode: "false",
+        webinUsername: " Webin-12345 ",
+        webinPassword: " ena-secret ",
+        brokerAccount: "true",
+        centerName: " HZI-BIFO ",
+      },
+    });
+
+    const { update, extra } = lastSiteSettingsWrite(prisma);
+
+    expect(update.enaUsername).toBe("Webin-12345");
+    expect(update.enaTestMode).toBe(false);
+    expect(isEncrypted(update.enaPassword as string)).toBe(true);
+    expect(decryptSecret(update.enaPassword as string)).toBe("ena-secret");
+    expect(extra.ena).toEqual({
+      centerName: "HZI-BIFO",
+      brokerAccount: true,
+    });
+  });
+
   it("prunes only previously profile-managed values on later reloads", async () => {
     const prisma = createPrisma();
     await applySiteProfile(prisma, {
@@ -456,6 +490,77 @@ describe("install profile applicator core", () => {
     const schema = lastOrderFormSchema(prisma);
     expect(schema.enabledMixsChecklists).toEqual(["local-checklist"]);
     expect(schema.installProfileManaged.orderFormEnabledMixsChecklists).toEqual([]);
+  });
+
+  it("F14: applies order + study + runAssignment from ONE forms source to their existing read stores", async () => {
+    // The "one settings.json" source: a SINGLE profile carries all three sub-forms under one
+    // `forms` key. Per the locked Phase 4 design, that one source PROJECTS onto the EXISTING
+    // read stores — order -> OrderFormConfig.schema (the app's order-form read path), study and
+    // runAssignment -> SiteSettings.extraSettings. Order must NOT be relocated into extraSettings.
+    const profile = {
+      id: "dev",
+      version: "1",
+      forms: {
+        order: {
+          fields: [{ id: "order-f1", label: "Order Field 1", groupId: "g" }],
+          groups: [],
+          defaultsVersion: 4,
+        },
+        study: { fields: [{ id: "study-f1", label: "Study Field 1", groupId: "g" }], groups: [] },
+        runAssignment: {
+          fields: [{ id: "run-f1", label: "Run Field 1", groupId: "g" }],
+          groups: [],
+        },
+      },
+    };
+
+    // Order is projected to OrderFormConfig.schema (the dedicated store the in-app reader uses).
+    const orderPrisma = createOrderFormPrisma();
+    await applyOrderForm(orderPrisma, profile);
+    const orderSchema = lastOrderFormSchema(orderPrisma);
+    expect(orderSchema.fields.map((f: { id: string }) => f.id)).toContain("order-f1");
+    // The order defaults version is stamped under the key the in-app reader consults so a
+    // re-apply is a no-op (no module-default re-injection).
+    expect(orderSchema.moduleDefaultsVersion).toBe(4);
+
+    // Study + runAssignment are projected to SiteSettings.extraSettings, from the SAME source.
+    const sitePrisma = createPrisma();
+    await applySiteProfile(sitePrisma, profile);
+    const { extra } = lastSiteSettingsWrite(sitePrisma);
+
+    expect(extra.studyFormFields.map((f: { id: string }) => f.id)).toContain("study-f1");
+    expect(
+      (extra.sequencingRunSampleFormFields as { id: string }[]).map((f) => f.id)
+    ).toContain("run-f1");
+
+    // Order must KEEP landing in OrderFormConfig — it must NOT be mirrored into extraSettings.
+    expect(extra.orderFormFields).toBeUndefined();
+  });
+
+  it("stamps the order-form defaults version under the same key the in-app reader consults", async () => {
+    const prisma = createOrderFormPrisma();
+
+    await applyOrderForm(prisma, {
+      id: "dev",
+      version: "1",
+      forms: {
+        order: {
+          defaultsVersion: 4,
+          enabledMixsChecklists: ["MIMS.me"],
+        },
+      },
+    });
+
+    const schema = lastOrderFormSchema(prisma);
+
+    // The in-app GET (form-config/route.ts:60) and apply-form-configs.mjs:203 gate/stamp on
+    // `moduleDefaultsVersion`. The install path must use the same key so a re-apply is a no-op
+    // instead of re-injecting module defaults.
+    expect(schema.moduleDefaultsVersion).toBe(4); // FAILS today: undefined
+
+    // Guard against the divergence regressing: the version must NOT live only under the
+    // orphaned key that zero readers consult.
+    expect(schema.installProfileDefaultsVersion).toBeUndefined();
   });
 
   it("recovers from malformed stored extraSettings", async () => {

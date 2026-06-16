@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 
 const CONFIG_FILE_NAMES = [
+  "settings.json",
   "seqdesk.config.json",
   ".seqdeskrc",
   ".seqdeskrc.json",

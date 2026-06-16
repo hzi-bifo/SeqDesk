@@ -8,6 +8,15 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    // Forms target (F11/F13): once the importer consumes settings.json.forms the
+    // order form lands in a dedicated OrderFormConfig row (the same sink the
+    // installer's applyOrderForm writes). Stubbed so the unified behavior has
+    // somewhere to land; harmless today because the route never touches it.
+    orderFormConfig: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      upsert: vi.fn(),
+    },
   },
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -32,7 +41,22 @@ vi.mock("fs/promises", () => ({
   },
 }));
 
+// Wrap the REAL secret-store so encryptSecret keeps producing genuine enc:v1
+// ciphertext (the format the readers decrypt) while letting us assert it is NOT
+// invoked on the side-effect-free dry-run preview (audit A15).
+const encryptSpy = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/security/secret-store", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/security/secret-store")
+  >("@/lib/security/secret-store");
+  encryptSpy.mockImplementation(actual.encryptSecret);
+  return { ...actual, encryptSecret: encryptSpy };
+});
+
 import { POST } from "./route";
+import { decryptSecret, isEncrypted } from "@/lib/security/secret-store";
+
+process.env.NEXTAUTH_SECRET ||= "test-secret-for-infrastructure-import";
 
 function makeRequest(body: Record<string, unknown> = {}) {
   return new NextRequest(
@@ -46,8 +70,13 @@ function makeRequest(body: Record<string, unknown> = {}) {
 }
 
 describe("POST /api/admin/infrastructure/import", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Re-bind the spy to the real encryptSecret after clearAllMocks wiped it.
+    const actual = await vi.importActual<
+      typeof import("@/lib/security/secret-store")
+    >("@/lib/security/secret-store");
+    encryptSpy.mockImplementation(actual.encryptSecret);
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "FACILITY_ADMIN" },
     });
@@ -56,6 +85,9 @@ describe("POST /api/admin/infrastructure/import", () => {
       extraSettings: JSON.stringify({}),
     });
     mocks.db.siteSettings.upsert.mockResolvedValue(undefined);
+    mocks.db.orderFormConfig.findUnique.mockResolvedValue(null);
+    mocks.db.orderFormConfig.findFirst.mockResolvedValue(null);
+    mocks.db.orderFormConfig.upsert.mockResolvedValue(undefined);
     mocks.readFile.mockRejectedValue(new Error("ENOENT"));
     mocks.writeFile.mockResolvedValue(undefined);
   });
@@ -265,6 +297,44 @@ describe("POST /api/admin/infrastructure/import", () => {
     expect(extraSettings.pipelineExecution.pipelineOverrides.metaxpath.slurm.queue).toBe("long");
   });
 
+  // Finding #9 (review): the WEB profile JSON carries a full `pipelines` block that the
+  // install-time apply-core consumes (enable -> installProfilePipelineAllowlist,
+  // databaseDirectory -> pipelineExecution.pipelineDatabaseDir), but the in-app importer
+  // silently drops it. Two consumers of the SAME file produce divergent runtime state.
+  it("applies the pipeline allowlist + database directory the installer reads from the WEB profile JSON", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          pipelines: {
+            enabled: true,
+            enable: ["simulate-reads", "fastqc", "fastq-checksum", "metaxpath"],
+            databaseDirectory: "/net/broker/checkm_refdata/metaxpath_db",
+            execution: { mode: "slurm", runDirectory: "/net/broker/devphil/pipeline" },
+            configs: { metaxpath: { metaxProfileMemory: "64 GB" } },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    const extraSettings = JSON.parse(upsertCall.update.extraSettings);
+
+    // FAILS today: importer never reads pipelines.enable -> installProfilePipelineAllowlist
+    // (the key the installer writes at apply-core.mjs:1019).
+    expect(extraSettings.installProfilePipelineAllowlist).toEqual([
+      "simulate-reads",
+      "fastqc",
+      "fastq-checksum",
+      "metaxpath",
+    ]);
+    // FAILS today: importer never reads pipelines.databaseDirectory.
+    expect(extraSettings.pipelineExecution?.pipelineDatabaseDir).toBe(
+      "/net/broker/checkm_refdata/metaxpath_db"
+    );
+  });
+
   it("dry run with port includes warning about restart", async () => {
     const response = await POST(
       makeRequest({
@@ -279,7 +349,7 @@ describe("POST /api/admin/infrastructure/import", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.warnings.length).toBeGreaterThan(0);
-    expect(body.warnings[0]).toContain("seqdesk.config.json");
+    expect(body.warnings[0]).toContain("settings.json");
     expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
   });
 
@@ -321,7 +391,7 @@ describe("POST /api/admin/infrastructure/import", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toContain("form setup");
+    expect(body.error).toContain("settings.json");
   });
 
   it("merges with existing extraSettings from database", async () => {
@@ -494,5 +564,359 @@ describe("POST /api/admin/infrastructure/import", () => {
     const body = await response.json();
     expect(body.applied.port).toBe(4000);
     expect(body.warnings.length).toBeGreaterThan(0);
+  });
+
+  // Finding F10: posting a full WEB profile export (dev.json top-level keys +
+  // the flat public/infrastructure-setup.json secret/bootstrap blocks) must NOT
+  // silently swallow the non-infra blocks. Minimum contract: every block the
+  // importer does not persist must be SURFACED — either applied or warned about.
+  // Today only `forms` warns; with no `forms` key present, warnings is empty and
+  // applied carries only the infra fields, so every other block is swallowed.
+  it("does not silently drop the non-infrastructure blocks of a full WEB profile export", async () => {
+    const fullProfile = {
+      // --- infrastructure (the ONLY part this endpoint is scoped to today) ---
+      sequencingDataDir: "/data/seq",
+      pipelineRunDir: "/data/runs",
+      condaPath: "/opt/conda",
+      // --- blocks the installer (apply-core) consumes but the importer ignores ---
+      access: { departmentSharing: true, allowDeleteSubmittedOrders: true },
+      auth: { allowRegistration: false, requireEmailVerification: true },
+      ena: { enabled: true, testMode: true, webinUsername: "Webin-1" },
+      telemetry: { enabled: true },
+      notifications: { inApp: { enabled: false } },
+      moduleSettings: {
+        "account-validation": { allowedDomains: ["example.org"] },
+      },
+      modules: { "account-validation": true, "billing-info": true },
+      sequencingFiles: { allowedExtensions: [".fastq.gz"], scanDepth: 4 },
+      sequencingTech: { platforms: ["ONT"] },
+      // --- secret/bootstrap blocks present in the flat infrastructure-setup.json ---
+      nextAuthSecret: "shh",
+      anthropicApiKey: "sk-ant-xxx",
+      adminSecret: "admin-shh",
+      databaseUrl: "postgresql://u:p@db/seqdesk",
+      directUrl: "postgresql://u:p@db/seqdesk",
+      bootstrap: { adminEmail: "admin@example.org" },
+      site: { name: "HZI", contactEmail: "ops@example.org" },
+    };
+
+    const response = await POST(
+      makeRequest({ dryRun: true, config: fullProfile })
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    const droppedBlocks = [
+      "access",
+      "auth",
+      "ena",
+      "telemetry",
+      "notifications",
+      "moduleSettings",
+      "modules",
+      "sequencingFiles",
+      "sequencingTech",
+      "nextAuthSecret",
+      "anthropicApiKey",
+      "adminSecret",
+      "databaseUrl",
+      "directUrl",
+      "bootstrap",
+      "site",
+    ];
+    const surfaced = (name: string) =>
+      Object.prototype.hasOwnProperty.call(body.applied ?? {}, name) ||
+      (body.warnings ?? []).some((w: string) =>
+        w.toLowerCase().includes(name.toLowerCase())
+      );
+
+    const swallowed = droppedBlocks.filter((b) => !surfaced(b));
+    // FAILS today: warnings = [] (no forms key) and applied = {dataBasePath,
+    // pipelineRunDir, condaPath}, so `swallowed` is the full list above.
+    expect(swallowed).toEqual([]);
+  });
+
+  // Finding F11 + F13 (consolidated): a combined settings.json carrying BOTH an
+  // infrastructure key AND a populated, canonical `forms.order` {groups,fields}
+  // object (the shape the installer's readFormConfig consumes from twincore.json)
+  // must round-trip — the importer must PERSIST the order-form definition (either
+  // a db.orderFormConfig.upsert call, or the order form embedded into the
+  // siteSettings upsert's extraSettings). Today parseImportValues never reads
+  // root.forms; it only detects + warns, so nothing durable is written.
+  it("round-trips a combined settings.json: a populated forms.order block is applied, not dropped", async () => {
+    const formsOrder = {
+      groups: [
+        { id: "group_sequencing", name: "Sequencing Information", order: 1 },
+      ],
+      fields: [
+        {
+          id: "field_ont_run_type",
+          type: "select",
+          label: "Run Type",
+          name: "run_type",
+          order: 10,
+          groupId: "group_sequencing",
+        },
+      ],
+    };
+
+    const response = await POST(
+      makeRequest({
+        config: {
+          sequencingDataDir: "/data/sequencing", // infra key -> applies today
+          forms: { order: formsOrder }, // forms key -> dropped today
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.applied.dataBasePath).toBe("/data/sequencing");
+
+    // THE UNIFICATION ASSERTION (fails today): the importer must persist the
+    // order-form definition somewhere durable so the single settings.json
+    // round-trips. Today nothing writes forms.order to the DB.
+    const persistedOrderFormFields = (() => {
+      // path A: dedicated OrderFormConfig table (matches installer apply-core)
+      const ofCall = mocks.db.orderFormConfig.upsert.mock.calls[0]?.[0];
+      if (ofCall) {
+        const schema =
+          typeof ofCall.update?.schema === "string"
+            ? JSON.parse(ofCall.update.schema)
+            : ofCall.update?.schema ?? ofCall.create?.schema;
+        return typeof schema === "string"
+          ? JSON.parse(schema).fields
+          : schema?.fields;
+      }
+      // path B: embedded into siteSettings.extraSettings
+      const ssCall = mocks.db.siteSettings.upsert.mock.calls[0]?.[0];
+      const extra = ssCall ? JSON.parse(ssCall.update.extraSettings) : {};
+      return extra?.forms?.order?.fields ?? extra?.orderFormFields;
+    })();
+
+    expect(persistedOrderFormFields).toBeDefined();
+    expect(persistedOrderFormFields).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "run_type" })])
+    );
+    // And it must NOT just hand-wave with the "not imported here" warning.
+    expect(
+      (body.warnings ?? []).some((w: string) => w.includes("not imported here"))
+    ).toBe(false);
+  });
+
+  // Finding F16: a real WEB infrastructure-setup.json carrying top-level
+  // access/ena/notifications/telemetry blocks must persist those into the SAME
+  // SiteSettings.extraSettings store the per-section settings UI writes
+  // (extraSettings.departmentSharing / .notifications / .telemetry / .ena.*).
+  // Today the importer reads only pipeline/data-path keys, so none survive.
+  it("persists access/ena/notifications/telemetry from a WEB infrastructure-setup.json into the same extraSettings store the per-section UI writes", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          sequencingDataDir: "/data/sequencing",
+          access: {
+            departmentSharing: false,
+            allowDeleteSubmittedOrders: true,
+            allowUserAssemblyDownload: true,
+            orderNotesEnabled: true,
+          },
+          ena: {
+            testMode: true,
+            username: "Webin-12345",
+            centerName: "Example Center",
+            brokerAccount: false,
+          },
+          notifications: { enabled: true },
+          telemetry: { enabled: false },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
+
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    const extraSettings = JSON.parse(upsertCall.update.extraSettings);
+
+    // The EXACT keys /api/admin/settings/access, notifications, telemetry, ena
+    // write to extraSettings. FAILS today: the importer copies none of them.
+    expect(extraSettings.departmentSharing).toBe(false);
+    expect(extraSettings.allowDeleteSubmittedOrders).toBe(true);
+    expect(extraSettings.allowUserAssemblyDownload).toBe(true);
+    expect(extraSettings.orderNotesEnabled).toBe(true);
+    expect(extraSettings.notifications?.enabled).toBe(true);
+    expect(extraSettings.telemetry?.enabled).toBe(false);
+    expect(extraSettings.ena?.centerName).toBe("Example Center");
+  });
+
+  it("imports ENA credentials from Webin alias fields into the settings columns", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          ena: {
+            testMode: false,
+            webinUsername: " Webin-54321 ",
+            webinPassword: " profile-secret ",
+            centerName: " Example Center ",
+            brokerAccount: true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied.ena).toEqual({
+      testMode: false,
+      username: "Webin-54321",
+      password: "***",
+      centerName: "Example Center",
+      brokerAccount: true,
+    });
+
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    expect(upsertCall.update.enaTestMode).toBe(false);
+    expect(upsertCall.update.enaUsername).toBe("Webin-54321");
+    expect(isEncrypted(upsertCall.update.enaPassword)).toBe(true);
+    expect(decryptSecret(upsertCall.update.enaPassword)).toBe("profile-secret");
+    const extraSettings = JSON.parse(upsertCall.update.extraSettings);
+    expect(extraSettings.ena).toEqual({
+      centerName: "Example Center",
+      brokerAccount: true,
+    });
+  });
+
+  // Audit A15: a dry-run preview must be fully side-effect-free for secrets. It must
+  // NOT call encryptSecret (which throws when key material is absent), must NOT 500/
+  // error, and must surface only a masked marker for the password.
+  it("dry-run carrying ena.password does not 500 and does not call encryptSecret", async () => {
+    const response = await POST(
+      makeRequest({
+        dryRun: true,
+        config: {
+          ena: {
+            testMode: false,
+            username: "Webin-99999",
+            password: "preview-secret",
+            centerName: "Preview Center",
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    // The preview surfaces only a masked marker, never ciphertext or plaintext.
+    expect(body.applied.ena.password).toBe("***");
+    expect(body.applied.ena.username).toBe("Webin-99999");
+    // The side-effect-free contract: no encryption is performed on a preview.
+    expect(encryptSpy).not.toHaveBeenCalled();
+    // And nothing is persisted.
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  // A real import must persist enaUsername + an ENCRYPTED enaPassword (the enc:v1
+  // format the readers decrypt) + extraSettings.ena.centerName — so the imported
+  // credentials actually work at submission time.
+  it("real import persists enaUsername + a non-plaintext enaPassword + extraSettings.ena.centerName", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          ena: {
+            testMode: false,
+            username: "Webin-77777",
+            password: "real-import-secret",
+            centerName: "Real Center",
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(encryptSpy).toHaveBeenCalled();
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
+
+    const upsertCall = mocks.db.siteSettings.upsert.mock.calls[0][0];
+    expect(upsertCall.update.enaUsername).toBe("Webin-77777");
+    // Stored value must NOT equal the input plaintext, must be genuine ciphertext,
+    // and must decrypt back to the original (matching the settings/ena writer +
+    // the submg-runner / submissions / ena-test / database-merge readers).
+    expect(upsertCall.update.enaPassword).not.toBe("real-import-secret");
+    expect(isEncrypted(upsertCall.update.enaPassword)).toBe(true);
+    expect(decryptSecret(upsertCall.update.enaPassword)).toBe(
+      "real-import-secret"
+    );
+
+    const extraSettings = JSON.parse(upsertCall.update.extraSettings);
+    expect(extraSettings.ena.centerName).toBe("Real Center");
+  });
+
+  // Finding F12: the importer must NOT resolve weblog settings from the phantom
+  // keys runtime.weblogUrl / runtime.weblogSecret — no producer in either repo
+  // emits them (real producers are flat nextflowWeblogUrl and nested
+  // pipelines.execution.weblog*). A config whose ONLY weblog-bearing keys live
+  // under a top-level `runtime` block must NOT have them picked up. FAILS today:
+  // firstDefined(..., runtime?.weblogUrl) / (..., runtime?.weblogSecret) at
+  // route.ts:333,337 resolve them straight through into `applied`.
+  it("ignores phantom runtime.weblogUrl/weblogSecret keys no producer emits (single canonical contract)", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          // a real infra key so we get a 200 (not "No supported settings")
+          condaPath: "/opt/conda",
+          runtime: {
+            weblogUrl: "http://phantom.invalid/api/weblog",
+            weblogSecret: "phantom-secret",
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // FAILS today: the phantom runtime.* values are resolved and surfaced.
+    expect(body.applied.weblogUrl).toBeUndefined();
+    expect(body.applied.weblogSecret).toBeUndefined();
+  });
+
+  // Finding F21: the importer's user-facing strings must speak ONE shared name
+  // "settings.json". (a) the form-only-payload 400 error must mention
+  // "settings.json" and NOT "form setup, not infrastructure setup"; (b) the
+  // port-restart warning must mention "settings.json" and NOT "seqdesk.config.json".
+  // NOTE: existing tests at route.test.ts ~:320 ("seqdesk.config.json") and
+  // ~:362 ("form setup") lock in the legacy names and must be flipped post-fix.
+  it("names the single document settings.json in the form-only error (not 'form setup, not infrastructure setup')", async () => {
+    const response = await POST(
+      makeRequest({
+        config: {
+          orderFormSettings: "/opt/seqdesk/order-form.json",
+          studyFormSettings: "/opt/seqdesk/study-form.json",
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    // FAILS today: route.ts:355 says "form setup, not infrastructure setup".
+    expect(body.error).toContain("settings.json");
+    expect(body.error).not.toMatch(/form setup, not infrastructure setup/i);
+  });
+
+  it("references settings.json (not seqdesk.config.json) in the port-restart warning", async () => {
+    const response = await POST(
+      makeRequest({
+        dryRun: true,
+        config: { pipelineRunDir: "/data/runs", port: 4000 },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const text = (body.warnings ?? []).join(" ");
+    // FAILS today: route.ts:524 warning mentions "seqdesk.config.json".
+    expect(text).toContain("settings.json");
+    expect(text).not.toContain("seqdesk.config.json");
   });
 });

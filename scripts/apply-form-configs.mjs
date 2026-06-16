@@ -2,6 +2,10 @@
 import fs from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
+import {
+  buildOrderFormSchema,
+  ORDER_FORM_DEFAULTS_VERSION,
+} from "../src/lib/forms/order-form-schema.mjs";
 
 const ORDER_GROUPS = [
   {
@@ -37,7 +41,6 @@ const STUDY_GROUPS = [
   },
 ];
 
-const ORDER_DEFAULTS_VERSION = 4;
 const STUDY_DEFAULTS_VERSION = 1;
 
 function isLegacyPlatformField(field) {
@@ -194,14 +197,18 @@ function parseExtraSettings(raw) {
 async function applyOrderConfig(prisma, configPath) {
   const { resolved, parsed } = readJsonFile(configPath);
   const fields = normalizeOrderFields(extractFields(parsed, "Order form"));
-  const schema = {
+  // Build the canonical OrderFormConfig.schema envelope with the SAME shared helper the
+  // in-app importer and install-time apply-core use, so every writer produces a byte-identical
+  // {fields, groups, enabledMixsChecklists, moduleDefaultsVersion} shape with the version
+  // stamped under `moduleDefaultsVersion` (= ORDER_FORM_DEFAULTS_VERSION = 4).
+  const schema = buildOrderFormSchema({
     fields,
     groups: ORDER_GROUPS,
     enabledMixsChecklists: Array.isArray(parsed.enabledMixsChecklists)
       ? parsed.enabledMixsChecklists
       : [],
-    moduleDefaultsVersion: ORDER_DEFAULTS_VERSION,
-  };
+    moduleDefaultsVersion: ORDER_FORM_DEFAULTS_VERSION,
+  });
 
   const existing = await prisma.orderFormConfig.findUnique({
     where: { id: "singleton" },

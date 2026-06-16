@@ -192,6 +192,44 @@ describe("bootstrapRuntimeEnv", () => {
     expect(process.env.DATABASE_URL).toBe("postgres://first");
   });
 
+  it("reads the preferred settings.json config file", async () => {
+    await writeFile(
+      tempDir,
+      "settings.json",
+      JSON.stringify({ runtime: { databaseUrl: "postgres://from-settings-json" } })
+    );
+
+    bootstrapRuntimeEnv(tempDir);
+    expect(process.env.DATABASE_URL).toBe("postgres://from-settings-json");
+  });
+
+  it("prefers settings.json over seqdesk.config.json when both exist", async () => {
+    await writeFile(
+      tempDir,
+      "settings.json",
+      JSON.stringify({ runtime: { databaseUrl: "postgres://from-settings-json" } })
+    );
+    await writeFile(
+      tempDir,
+      "seqdesk.config.json",
+      JSON.stringify({ runtime: { databaseUrl: "postgres://from-legacy-config" } })
+    );
+
+    bootstrapRuntimeEnv(tempDir);
+    expect(process.env.DATABASE_URL).toBe("postgres://from-settings-json");
+  });
+
+  it("still reads legacy seqdesk.config.json when settings.json is absent", async () => {
+    await writeFile(
+      tempDir,
+      "seqdesk.config.json",
+      JSON.stringify({ runtime: { databaseUrl: "postgres://from-legacy-config" } })
+    );
+
+    bootstrapRuntimeEnv(tempDir);
+    expect(process.env.DATABASE_URL).toBe("postgres://from-legacy-config");
+  });
+
   it("supports alternate config filenames", async () => {
     await writeFile(
       tempDir,

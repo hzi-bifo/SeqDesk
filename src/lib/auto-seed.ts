@@ -21,6 +21,7 @@ const DEFAULT_USER_PASSWORD_HASH =
 type BootstrapUserConfig = Record<string, unknown>;
 
 const CONFIG_FILE_NAMES = [
+  "settings.json",
   "seqdesk.config.json",
   ".seqdeskrc",
   ".seqdeskrc.json",

@@ -11,6 +11,13 @@
   "condaPath": "/net/broker/devphil/miniconda3",
   "condaEnv": "seqdesk-pipelines",
   "nextflowProfile": "conda",
-  "nextflowWeblogUrl": "http://dzif-student-0205:8000/api/pipelines/weblog",
-  "weblogSecret": "replace-with-random-secret"
+  "nextflowWeblogUrl": "https://broker-test.bifo.helmholtz-hzi.de/api/pipelines/weblog",
+  "weblogSecret": "replace-with-random-secret",
+  "privatePipelines": {
+    "metaxpath": {
+      "packageUrl": "https://seqdesk.org/api/private/metaxpath/0.1.0",
+      "key": "replace-with-metaxpath-key",
+      "sha256": "78a9d569af34dac31fd825e9ee4b1ab79f839de0708fd4ec47144af73871808a"
+    }
+  }
 }

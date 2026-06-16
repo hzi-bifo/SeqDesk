@@ -246,7 +246,7 @@ export default function InfrastructureOverviewPage() {
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <h2 className="text-base font-semibold">Import Setup JSON</h2>
+                <h2 className="text-base font-semibold">Import settings.json</h2>
                 <p className="text-sm text-muted-foreground">
                   Import infrastructure runtime values for this SeqDesk instance. Upload is optional.
                 </p>
@@ -353,10 +353,10 @@ export default function InfrastructureOverviewPage() {
                 ) : (
                   <Upload className="h-4 w-4 mr-2" />
                 )}
-                {importing ? "Saving..." : "Save Infrastructure Setup"}
+                {importing ? "Saving..." : "Save settings"}
               </Button>
               <p className="text-xs text-muted-foreground">
-                Supports flat infrastructure keys and <code>seqdesk.config.json</code>-style nested keys.
+                Supports flat infrastructure keys and <code>settings.json</code>-style nested keys.
               </p>
             </div>
 

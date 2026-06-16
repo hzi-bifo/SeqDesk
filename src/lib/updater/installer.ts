@@ -121,7 +121,7 @@ const RELEASES_DIR_NAME = 'releases';
 const CURRENT_LINK_NAME = 'current';
 const TEMP_DIR_NAME = '.update-temp';
 const SHARED_DIR_NAMES = ['data', 'pipelines', 'pipeline_runs'];
-const SHARED_FILE_NAMES = ['seqdesk.config.json'];
+const SHARED_FILE_NAMES = ['settings.json', 'seqdesk.config.json'];
 const SAFE_RELEASE_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 
 interface InstallLayout {

@@ -14,6 +14,7 @@ import path from 'path';
 import type { SeqDeskConfig, ResolvedConfig, ConfigSource } from './types';
 
 const CONFIG_FILE_NAMES = [
+  'settings.json',
   'seqdesk.config.json',
   '.seqdeskrc',
   '.seqdeskrc.json',
