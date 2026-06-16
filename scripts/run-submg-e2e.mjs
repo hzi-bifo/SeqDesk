@@ -213,13 +213,26 @@ function resolveOnDisk(dataBasePath, file) {
   return variants.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-// A tiny but well-formed FASTA so the runner's on-disk assembly check passes (and
-// so an opt-in --submit-assembly run has a real file to hand to webin-cli).
+// A realistic multi-contig metagenome assembly FASTA — what a mag (MEGAHIT) run
+// would produce — so ENA's genome-assembly validation accepts it on an opt-in
+// --submit-assembly run (a handful of 2.5–4.6 kb contigs of valid IUPAC bases,
+// 70-col wrapped). Deterministic (seeded LCG, no Math.random) for reproducibility.
 function buildAssemblyFasta() {
-  const seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
-  const lines = [">contig_1 e2e synthetic assembly"];
-  for (let i = 0; i < 8; i += 1) lines.push(seq);
-  return `${lines.join("\n")}\n`;
+  const bases = "ACGT";
+  let seed = 0x2545f491;
+  const nextBase = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return bases[(seed >>> 8) % 4];
+  };
+  const contigs = [];
+  for (let c = 1; c <= 6; c += 1) {
+    const length = 2500 + c * 350;
+    let seq = "";
+    for (let i = 0; i < length; i += 1) seq += nextBase();
+    const wrapped = seq.match(/.{1,70}/g).join("\n");
+    contigs.push(`>contig_${c} length=${length}\n${wrapped}`);
+  }
+  return `${contigs.join("\n")}\n`;
 }
 
 const ACCESSION_RE = /^(ERS|SAMEA|SAMN|ERR|ERX|ERZ|GCA)/i;
@@ -245,7 +258,8 @@ async function main() {
   }
 
   const client = createClient(baseUrl);
-  await loginAdmin(client, baseUrl, email, password);
+  const session = await loginAdmin(client, baseUrl, email, password);
+  const adminUserId = session?.user?.id;
   console.log(`Logged in as ${email} (FACILITY_ADMIN).`);
 
   await ensureDummyData(client);
@@ -336,7 +350,11 @@ async function main() {
       console.log(`Set checksums on read ${pairedRead.id}: ${Object.keys(checksumUpdate).join(", ")}.`);
     }
 
-    // (b) An assembly FASTA on disk + Assembly row (no upload API exists).
+    // (b) A mag-produced assembly: write a realistic FASTA on disk and create the
+    //     Assembly row linked to a COMPLETED `mag` PipelineRun — i.e. exactly what
+    //     the MAG pipeline leaves behind (there is no assembly-upload API). This is
+    //     the input submg consumes for assembly submission; `createdByPipelineRunId`
+    //     makes resolveAssemblySelection treat it as pipeline output (preferred).
     const hasAssemblyOnDisk = targetSample.assemblies.some(
       (assembly) => assembly.assemblyFile && resolveOnDisk(dataBasePath, assembly.assemblyFile),
     );
@@ -346,14 +364,52 @@ async function main() {
       const absPath = path.resolve(dataBasePath, relPath);
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, buildAssemblyFasta());
+      // Simulate the upstream mag run that generated this assembly.
+      let magRunId = null;
+      if (adminUserId) {
+        const magRun = await prisma.pipelineRun.create({
+          data: {
+            runNumber: `MAG-SUBMGE2E-${Date.now()}`,
+            pipelineId: "mag",
+            status: "completed",
+            targetType: "study",
+            studyId: study.id,
+            userId: adminUserId,
+            completedAt: new Date(),
+          },
+        });
+        magRunId = magRun.id;
+      }
       await prisma.assembly.create({
         data: {
           sampleId: targetSample.id,
-          assemblyName: `${targetSample.sampleId}_e2e_assembly`,
+          assemblyName: `${targetSample.sampleId}_mag_assembly`,
           assemblyFile: relPath,
+          ...(magRunId ? { createdByPipelineRunId: magRunId } : {}),
         },
       });
-      console.log(`Created assembly fixture at ${relPath}.`);
+      console.log(
+        `Created mag-style assembly fixture at ${relPath}${magRunId ? ` (mag run ${magRunId})` : ""}.`,
+      );
+    }
+
+    // (b2) ENA-valid sequencing metadata on the order (only matters for read
+    //      submission). submg passes the order's instrumentModel/library fields
+    //      verbatim into the webin read manifest, and ENA requires EXACT controlled
+    //      values — the seed stores "NovaSeq 6000", which ENA rejects (it wants the
+    //      canonical "Illumina NovaSeq 6000"). Pin known-valid values.
+    if (targetSample.orderId) {
+      await prisma.order.update({
+        where: { id: targetSample.orderId },
+        data: {
+          platform: "ILLUMINA",
+          instrumentModel: "Illumina NovaSeq 6000",
+          librarySource: "METAGENOMIC",
+          librarySelection: "RANDOM",
+          libraryStrategy: "WGS",
+        },
+      });
+      console.log("Pinned ENA-valid sequencing metadata on the order.");
     }
 
     // (c) taxId / scientificName / checklist metadata. The ENA study registration
@@ -566,27 +622,43 @@ async function main() {
     }
     console.log(`OK: submg wrote sample accession ${sampleAccession}.`);
 
-    // WARN: read / assembly accessions only when those submissions were requested
-    // (heavier webin-cli uploads; not part of the hard gate).
+    // When read submission was requested, assert SeqDesk took up the read accession.
     if (submitReads) {
       const readAccession = sampleAfter?.reads?.find(
         (r) => r.runAccessionNumber || r.experimentAccessionNumber,
       );
-      if (readAccession) {
-        console.log(
-          `OK: submg wrote read accession (run=${readAccession.runAccessionNumber}, exp=${readAccession.experimentAccessionNumber}).`,
+      if (!readAccession) {
+        fail(
+          "--submit-reads was requested but SeqDesk wrote back no read accession",
+          JSON.stringify({ runId, sampleId: targetSample.id, sampleAfter }, null, 2),
         );
-      } else {
-        console.warn("WARN: --submit-reads was set but no read accession was written back.");
       }
+      console.log(
+        `OK: submg wrote read accession (run=${readAccession.runAccessionNumber}, exp=${readAccession.experimentAccessionNumber}).`,
+      );
     }
+
+    // HARD (when requested) — the mag-style assembly was submitted and SeqDesk took
+    // up the assembly accession (ERZ/GCA). This is the "samples + reads + assembly"
+    // integration: SeqDesk fed submg the mag-produced assembly and ingested ENA's
+    // analysis accession back onto the Assembly row.
     if (submitAssembly) {
-      const assemblyAccession = sampleAfter?.assemblies?.find((a) => a.assemblyAccession);
-      if (assemblyAccession) {
-        console.log(`OK: submg wrote assembly accession ${assemblyAccession.assemblyAccession}.`);
-      } else {
-        console.warn("WARN: --submit-assembly was set but no assembly accession was written back.");
+      if (Number(processing.assembliesUpdated) < 1) {
+        fail(
+          "--submit-assembly was requested but SeqDesk recorded no assembly ingestion (results.assembliesUpdated < 1)",
+          JSON.stringify({ runId, results: processing }, null, 2),
+        );
       }
+      const assemblyAccession = sampleAfter?.assemblies?.find(
+        (a) => a.assemblyAccession && ACCESSION_RE.test(a.assemblyAccession),
+      );
+      if (!assemblyAccession) {
+        fail(
+          "--submit-assembly was requested but SeqDesk wrote back no assembly ENA accession",
+          JSON.stringify({ runId, sampleId: targetSample.id, sampleAfter }, null, 2),
+        );
+      }
+      console.log(`OK: submg wrote assembly accession ${assemblyAccession.assemblyAccession}.`);
     }
 
     return {
