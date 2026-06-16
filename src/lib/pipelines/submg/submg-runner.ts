@@ -1611,12 +1611,26 @@ export async function processSubmgRunResults(runId: string): Promise<SubmgProces
   for (const loggingDir of loggingDirs) {
     const entry = entryByIndex.get(loggingDir.index) || null;
 
-    const sampleAccessionPath = path.join(
+    // submg writes the accessions under biological_samples/, but nests everything
+    // beneath a per-run timestamp subdir (logging_<n>/<timestamp>/biological_samples/…),
+    // so resolve the file recursively rather than by a fixed depth. Fall back to the
+    // legacy flat path for older submg.
+    const flatSampleAccessionPath = path.join(
       loggingDir.path,
       "biological_samples",
       "sample_preliminary_accessions.txt"
     );
-    const sampleAccessionContent = await readFileIfExists(sampleAccessionPath);
+    const [recursiveSampleAccessionPath] = await findFilesRecursive(
+      loggingDir.path,
+      (filePath) =>
+        path.basename(filePath) === "sample_preliminary_accessions.txt" &&
+        filePath.includes(`${path.sep}biological_samples${path.sep}`)
+    );
+    const sampleAccessionContent =
+      (await readFileIfExists(flatSampleAccessionPath)) ||
+      (recursiveSampleAccessionPath
+        ? await readFileIfExists(recursiveSampleAccessionPath)
+        : null);
 
     if (sampleAccessionContent) {
       const lines = sampleAccessionContent

@@ -374,6 +374,88 @@ describe("submg runner", () => {
     });
   });
 
+  it("parses the submg >=1.0 layout (timestamp subdir + reads_<NAME>)", async () => {
+    const runFolder = path.join(tempDir, "SUBMG-20260303-00T");
+    // submg >=1.0 nests all outputs under a per-run timestamp dir and writes each
+    // read set's report under reads_<NAME>/ (not reads/<n>/).
+    const stamped = path.join(runFolder, "logging_0", "2026_03_03_120000");
+    await fs.mkdir(path.join(stamped, "biological_samples"), { recursive: true });
+    await fs.mkdir(path.join(stamped, "reads_SAMPLE-1"), { recursive: true });
+    await fs.mkdir(path.join(stamped, "assembly_fasta"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(stamped, "biological_samples", "sample_preliminary_accessions.txt"),
+      ["alias\taccession\texternal_accession", "SAMPLE-1\tERS555\tSAMEA555"].join("\n")
+    );
+    await fs.writeFile(
+      path.join(stamped, "reads_SAMPLE-1", "webin-cli.report"),
+      "run accession submission: ERR777\nexperiment accession submission: ERX777"
+    );
+    await fs.writeFile(
+      path.join(stamped, "assembly_fasta", "webin-cli.report"),
+      "analysis accession submission: ERZ888"
+    );
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      study: {
+        samples: [
+          {
+            id: "sample-1",
+            reads: [{ id: "read-1", checksum1: "md5r1", checksum2: "md5r2" }],
+            assemblies: [{ id: "asm-1" }],
+            bins: [],
+          },
+        ],
+      },
+    });
+    mocks.db.sample.update.mockResolvedValue({});
+    mocks.db.read.update.mockResolvedValue({});
+    mocks.db.assembly.update.mockResolvedValue({});
+    mocks.db.pipelineArtifact.findFirst.mockResolvedValue(null);
+    mocks.db.pipelineArtifact.create.mockResolvedValue({});
+
+    const metadataPath = path.join(runFolder, "submg-metadata.json");
+    await fs.mkdir(path.dirname(metadataPath), { recursive: true });
+    await fs.writeFile(
+      metadataPath,
+      JSON.stringify({
+        runId: "run-1",
+        studyId: "study-1",
+        generatedAt: "2026-03-03T12:00:00.000Z",
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            sampleCode: "SAMPLE-1",
+            sampleTitle: "Sample 1",
+            yamlPath: path.join(runFolder, "sample.yml"),
+            readIds: ["read-1"],
+            reads: [{ id: "read-1", checksum1: "md5r1", checksum2: "md5r2" }],
+            assemblyId: "asm-1",
+            assemblyFile: "/tmp/assembly.fa",
+            bins: [],
+          },
+        ],
+      })
+    );
+
+    const result = await processSubmgRunResults("run-1");
+
+    expect(result.samplesUpdated).toBe(1);
+    expect(result.readsUpdated).toBe(1);
+    expect(result.assembliesUpdated).toBe(1);
+    expect(mocks.db.sample.update).toHaveBeenCalledWith({
+      where: { id: "sample-1" },
+      data: { sampleAccessionNumber: "ERS555", biosampleNumber: "SAMEA555" },
+    });
+    expect(mocks.db.assembly.update).toHaveBeenCalledWith({
+      where: { id: "asm-1" },
+      data: { assemblyAccession: "ERZ888" },
+    });
+  });
+
   it("warns when a bin accession cannot be mapped or cannot be persisted", async () => {
     const runFolder = path.join(tempDir, "SUBMG-20260303-002");
     const loggingDir = path.join(runFolder, "logging_0");
