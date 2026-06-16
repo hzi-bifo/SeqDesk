@@ -1,21 +1,21 @@
 # Pipeline submg E2E (ENA test server)
 #
 # Proves the **submg** pipeline actually submits to ENA and writes the returned
-# accessions back into SeqDesk's DB — end to end, through the running app, on the
-# self-hosted AlmaLinux (Twincore) runner.
+# accessions back into SeqDesk's DB — end to end, through the running app.
 #
 # submg is a custom (non-Nextflow) runner: SeqDesk generates SubMG YAML, runs
 # `submg-cli submit` inside a conda env, parses the webin/SubMG receipts and
 # persists ENA accessions onto Sample/Read/Assembly rows. This workflow boots the
 # built app against a local PostgreSQL, provisions a `submg` conda env (submg from
 # source + Java + the ENA Webin-CLI jar), seeds a submittable study, registers it
-# on the ENA TEST server, then runs submg LOCALLY (the submission needs outbound
-# network, which SLURM compute nodes don't have) and asserts the sample accession
-# was written back.
+# on the ENA TEST server, runs submg, then asserts the sample accession was
+# written back.
 #
-# Network-dependent (ENA wwwdev.ebi.ac.uk) and credential-gated, so it is
-# scheduled + manual only. Requires repo secrets ENA_USERNAME / ENA_PWD (a Webin
-# TEST account); when absent, the live step self-skips so the workflow stays green.
+# submg only needs outbound network (to wwwdev.ebi.ac.uk) + conda + Postgres, so
+# it runs on a GitHub-hosted runner (like the sibling ena-submission-e2e), not the
+# self-hosted SLURM runner. Network- and credential-gated, so it is scheduled +
+# manual only and self-skips without the ENA_USERNAME / ENA_PWD secrets (a Webin
+# TEST account), keeping the workflow green when they are unset.
 
 name: Pipeline submg E2E
 
@@ -44,29 +44,26 @@ concurrency:
 
 jobs:
   submg_app_e2e:
-    name: Pipeline submg E2E (Self-hosted Alma)
-    # Self-hosted runner lives only on the private CI mirror; never run on the public repo.
-    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
-    runs-on:
-      group: bifo_dmz
-      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    timeout-minutes: 60
+    name: Pipeline submg E2E (ENA test server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash -el {0}
     env:
       NEXT_TELEMETRY_DISABLED: 1
-      SUBMG_CONDA_ENV: seqdesk-submg-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      SUBMG_CONDA_ENV: submg
       SUBMG_VERSION: v1.0.3
-      DB_HOST: 127.0.0.1
-      DB_PASSWORD: seqdesk
-      DB_PORT: 5432
+      PORT: "8897"
+      DB_NAME: seqdesk_submg_e2e
       DB_USER: seqdesk
-      FALLBACK_DB_PORT: 55436
+      DB_PASSWORD: seqdesk
       ENA_USERNAME: ${{ secrets.ENA_USERNAME }}
       ENA_PWD: ${{ secrets.ENA_PWD }}
+      DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_submg_e2e?schema=public
+      DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_submg_e2e?schema=public
     steps:
-      - name: Checkout code
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Note when skipped (no ENA secret)
@@ -90,22 +87,24 @@ jobs:
         if: ${{ env.ENA_USERNAME != '' }}
         run: |
           set -euo pipefail
-          RUN_SUFFIX="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-submg"
-          PORT=$((24000 + (GITHUB_RUN_NUMBER % 1000)))
-          DB_NAME="seqdesk_submg_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
           {
-            echo "PORT=$PORT"
-            echo "DB_NAME=$DB_NAME"
-            echo "SERVER_LOG=$RUNNER_TEMP/server-submg-$RUN_SUFFIX.log"
-            echo "SUBMG_E2E_LOG=$RUNNER_TEMP/submg-e2e-$RUN_SUFFIX.log"
-            echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-submg-$RUN_SUFFIX.json"
-            echo "SEQDESK_DATA_DIR=$RUNNER_TEMP/seqdesk-data-$RUN_SUFFIX"
-            echo "SEQDESK_RUN_DIR=$RUNNER_TEMP/seqdesk-runs-$RUN_SUFFIX"
-            echo "SEQDESK_DB_DIR=$RUNNER_TEMP/seqdesk-pipeline-dbs-$RUN_SUFFIX"
-            echo "PGDATA_DIR=$RUNNER_TEMP/postgres-submg-$RUN_SUFFIX"
-            echo "PG_LOG=$RUNNER_TEMP/postgres-submg-$RUN_SUFFIX.log"
-            echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-submg-$RUN_SUFFIX"
+            echo "SERVER_LOG=$RUNNER_TEMP/server-submg.log"
+            echo "SUBMG_E2E_LOG=$RUNNER_TEMP/submg-e2e.log"
+            echo "SEQDESK_DATA_DIR=$RUNNER_TEMP/seqdesk-submg-data"
+            echo "SEQDESK_RUN_DIR=$RUNNER_TEMP/seqdesk-submg-runs"
+            echo "SEQDESK_DB_DIR=$RUNNER_TEMP/seqdesk-submg-dbs"
           } >> "$GITHUB_ENV"
+
+      - name: Start PostgreSQL (throwaway DB)
+        if: ${{ env.ENA_USERNAME != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE ${DB_USER} WITH PASSWORD '${DB_PASSWORD}'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}"
+          fi
 
       - name: Provision the submg conda environment
         if: ${{ env.ENA_USERNAME != '' }}
@@ -113,106 +112,24 @@ jobs:
           set -euo pipefail
           # submg has NO PyPI/bioconda package; it installs from source. The submit
           # command lives under the `submg-cli` entry point and wraps the ENA Webin-CLI
-          # Java jar (so the env needs openjdk >=17). download-webin fetches that jar
-          # once at provision time (needs network now; not auto-fetched at submit time).
-          # pysam is submg's only C-extension dep — install it (and tk, for the
-          # customtkinter import) from conda so pip never has to build htslib. The
-          # remaining deps (PyYAML/requests/tqdm/yaspin/customtkinter/Pillow) are pure
-          # python / wheels and install fine via pip.
+          # Java jar (so the env needs openjdk >=17). pysam (its only C-extension dep)
+          # and tk (for the customtkinter import) come from conda so pip never builds.
+          # download-webin fetches the Webin jar once now (needs network; the jar lands
+          # in the user data dir, so the later app run must share $HOME — it does).
           conda create -y -n "$SUBMG_CONDA_ENV" \
             --override-channels -c conda-forge -c bioconda \
             python=3.11 'openjdk>=17' pip wheel pysam tk
-          SRC_DIR="$RUNNER_TEMP/submg-src-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          rm -rf "$SRC_DIR"
-          git clone --depth 1 --branch "$SUBMG_VERSION" https://github.com/ttubb/submg "$SRC_DIR"
-          conda run -n "$SUBMG_CONDA_ENV" python -m pip install "$SRC_DIR"
+          rm -rf "$RUNNER_TEMP/submg-src"
+          git clone --depth 1 --branch "$SUBMG_VERSION" https://github.com/ttubb/submg "$RUNNER_TEMP/submg-src"
+          conda run -n "$SUBMG_CONDA_ENV" python -m pip install "$RUNNER_TEMP/submg-src"
           conda run -n "$SUBMG_CONDA_ENV" submg-cli download-webin
-          conda run -n "$SUBMG_CONDA_ENV" java -version
           conda run -n "$SUBMG_CONDA_ENV" submg-cli --help >/dev/null
+          echo "SEQDESK_CONDA_PATH=$(conda info --base)" >> "$GITHUB_ENV"
           echo "submg ($SUBMG_VERSION) provisioned in env $SUBMG_CONDA_ENV."
-
-      - name: Resolve Conda base on PATH
-        if: ${{ env.ENA_USERNAME != '' }}
-        run: |
-          set -euo pipefail
-          CONDA_BASE="$(conda info --base)"
-          # The submg runner sources <base>/etc/profile.d/conda.sh then activates the
-          # env by NAME (config.condaEnv). Point the app at this base + env name.
-          echo "SEQDESK_CONDA_PATH=$CONDA_BASE" >> "$GITHUB_ENV"
-          echo "SEQDESK_CONDA_ENV_NAME=$SUBMG_CONDA_ENV" >> "$GITHUB_ENV"
-
-      - name: Setup PostgreSQL toolchain
-        if: ${{ env.ENA_USERNAME != '' }}
-        run: |
-          set -euo pipefail
-          rm -rf "$PG_TOOLCHAIN_DIR"
-          conda create -y -p "$PG_TOOLCHAIN_DIR" --override-channels -c conda-forge postgresql
-          echo "$PG_TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-
-      - name: Ensure PostgreSQL database
-        if: ${{ env.ENA_USERNAME != '' }}
-        run: |
-          set -euo pipefail
-          find_pg_bin_dir() {
-            if command -v initdb >/dev/null 2>&1 && command -v pg_ctl >/dev/null 2>&1; then
-              dirname "$(command -v initdb)"; return 0
-            fi
-            if command -v pg_config >/dev/null 2>&1; then
-              local candidate; candidate="$(pg_config --bindir 2>/dev/null || true)"
-              if [ -n "$candidate" ] && [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ]; then
-                echo "$candidate"; return 0
-              fi
-            fi
-            return 1
-          }
-          create_seqdesk_database() {
-            local port="$1" admin_user="$2"
-            psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "DO \$\$ BEGIN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD'; END \$\$;"
-            if ! psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
-              psql -h "$DB_HOST" -p "$port" -U "$admin_user" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER"
-            fi
-          }
-          wait_for_postgres() {
-            local port="$1"
-            for _ in $(seq 1 30); do
-              pg_isready -h "$DB_HOST" -p "$port" >/dev/null 2>&1 && return 0
-              sleep 1
-            done
-            return 1
-          }
-          if pg_isready -h "$DB_HOST" -p "$DB_PORT" >/dev/null 2>&1; then
-            if create_seqdesk_database "$DB_PORT" postgres; then
-              echo "Using existing local PostgreSQL on port $DB_PORT."; exit 0
-            fi
-          fi
-          PG_BIN_DIR="$(find_pg_bin_dir || true)"
-          if [ -n "$PG_BIN_DIR" ]; then
-            rm -rf "$PGDATA_DIR"
-            "$PG_BIN_DIR/initdb" -D "$PGDATA_DIR" -U postgres -A trust >/dev/null
-            { echo "listen_addresses = '127.0.0.1'"; echo "port = $FALLBACK_DB_PORT"; } >> "$PGDATA_DIR/postgresql.conf"
-            "$PG_BIN_DIR/pg_ctl" -D "$PGDATA_DIR" -l "$PG_LOG" start
-            wait_for_postgres "$FALLBACK_DB_PORT"
-            create_seqdesk_database "$FALLBACK_DB_PORT" postgres
-            echo "DB_PORT=$FALLBACK_DB_PORT" >> "$GITHUB_ENV"
-            echo "USE_EPHEMERAL_POSTGRES=1" >> "$GITHUB_ENV"
-            echo "PG_CTL_BIN=$PG_BIN_DIR/pg_ctl" >> "$GITHUB_ENV"
-            echo "Provisioned PostgreSQL via temporary user-space cluster."
-            exit 0
-          fi
-          echo "PostgreSQL provisioning requires existing local PostgreSQL or user-space tools." >&2
-          exit 1
 
       - name: Install dependencies
         if: ${{ env.ENA_USERNAME != '' }}
         run: npm ci
-
-      - name: Set database connection environment
-        if: ${{ env.ENA_USERNAME != '' }}
-        run: |
-          set -euo pipefail
-          DB_URL="postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=public"
-          echo "DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
-          echo "DIRECT_URL=$DB_URL" >> "$GITHUB_ENV"
 
       - name: Generate Prisma client
         if: ${{ env.ENA_USERNAME != '' }}
@@ -245,14 +162,13 @@ jobs:
           # the provisioned conda env by name to find submg-cli + the Webin jar.
           export SEQDESK_CONDA_ENABLED=true
           export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH"
-          export SEQDESK_CONDA_ENV="$SEQDESK_CONDA_ENV_NAME"
+          export SEQDESK_CONDA_ENV="$SUBMG_CONDA_ENV"
           echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV"
           PORT="$PORT" npm run start >"$SERVER_LOG" 2>&1 &
-          APP_PID=$!
-          echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
+          echo "APP_PID=$!" >> "$GITHUB_ENV"
           READY=0
           for _ in $(seq 1 120); do
-            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then READY=1; break; fi
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >/dev/null; then READY=1; break; fi
             sleep 2
           done
           if [ "$READY" -ne 1 ]; then
@@ -265,10 +181,10 @@ jobs:
       - name: Run submg ENA E2E (against the ENA TEST server)
         if: ${{ env.ENA_USERNAME != '' }}
         env:
-          SEQDESK_SUBMG_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_SUBMG_E2E_BASE_URL: http://127.0.0.1:8897
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
-          SEQDESK_SUBMG_E2E_CONDA_ENV: ${{ env.SUBMG_CONDA_ENV }}
+          SEQDESK_SUBMG_E2E_CONDA_ENV: submg
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
@@ -280,17 +196,18 @@ jobs:
         run: |
           set +e
           if [ -n "${SEQDESK_RUN_DIR:-}" ] && [ -d "$SEQDESK_RUN_DIR" ]; then
-            find "$SEQDESK_RUN_DIR" -maxdepth 4 -printf '%y %10s  %p\n' 2>/dev/null | head -200
+            find "$SEQDESK_RUN_DIR" -maxdepth 5 -printf '%y %10s  %p\n' 2>/dev/null | head -200
             find "$SEQDESK_RUN_DIR" -type f \( \
                  -name 'pipeline.out' -o -name 'pipeline.err' -o -name 'run.sh' \
               -o -name 'submg-metadata.json' -o -name 'output_*' -o -name 'error_*' \
-              -o -name 'sample_preliminary_accessions.txt' -o -name 'webin-cli.report' \) 2>/dev/null \
+              -o -name 'submg.log' -o -name 'sample_preliminary_accessions.txt' -o -name 'webin-cli.report' \) 2>/dev/null \
             | while IFS= read -r f; do
                 echo "::group::$f"; sed -n '1,300p' "$f"; echo "::endgroup::"
               done
           else
             echo "No run dir at '${SEQDESK_RUN_DIR:-<unset>}'."
           fi
+          echo "::group::server.log (tail)"; tail -n 120 "${SERVER_LOG:-/dev/null}" 2>/dev/null; echo "::endgroup::"
           true
 
       - name: Stop SeqDesk app
@@ -310,22 +227,6 @@ jobs:
           path: |
             ${{ env.SERVER_LOG }}
             ${{ env.SUBMG_E2E_LOG }}
-            ${{ env.PROVIDERS_JSON }}
-            ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Cleanup resources
-        if: ${{ always() && env.ENA_USERNAME != '' }}
-        run: |
-          set +e
-          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
-            "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
-            rm -rf "$PGDATA_DIR"
-          fi
-          if command -v psql >/dev/null 2>&1; then
-            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_submg_missing}" >/dev/null 2>&1 || true
-          fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" "${SEQDESK_DB_DIR:-}"
-          conda env remove -y -n "$SUBMG_CONDA_ENV" >/dev/null 2>&1 || true
