@@ -1527,6 +1527,22 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     statusDeterminedByQueue = true;
   }
 
+  // The scheduler job is still active while the workflow looks finished — either a completion
+  // EVENT was observed (reliable), or this is a no-step-def run whose trace reads 100% with
+  // nothing running (the only "done" signal those have). The run STAYS running here — we must
+  // NOT complete a no-step-def run on a 100% trace alone (the false-COMPLETE guard) — but it is
+  // in a transient finalizing state, so surface that label and keep completedAt null. A run WITH
+  // step defs whose 100% trace doesn't satisfy completedKnownSteps>=totalSteps is a mid-run
+  // false-100% (a single early task), so it's excluded and its live weblog step is preserved.
+  // (Without this, the traceCompletedKnownWork tightening dropped the finalizing display for
+  // no-step-def runs, leaving them showing "Processing…" while the scheduler wound down.)
+  const finalizingWhileQueueActive =
+    nextStatus === 'running' &&
+    queueIsActive &&
+    !hasRunning &&
+    (workflowCompletionReadyToFinalize ||
+      (totalSteps === 0 && traceResult.overallProgress === 100));
+
   if (nextStatus === 'completed' && run.status !== 'completed') {
     console.warn(
       `[RUN-FINALIZE] ops-service completed run=${runId} pipeline=${run.pipelineId} ` +
@@ -1563,7 +1579,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   const updateData: Record<string, unknown> = {
     progress: nextStatus === 'completed' ? 100 : progress,
     currentStep:
-      forceRunningFromQueue
+      forceRunningFromQueue || finalizingWhileQueueActive
         ? activeQueueCurrentStep
         : nextStatus === 'completed'
           ? 'Completed'
@@ -1588,7 +1604,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     updateData.lastTraceAt = latestEventAt;
   }
 
-  if (forceRunningFromQueue) {
+  if (forceRunningFromQueue || finalizingWhileQueueActive) {
     updateData.completedAt = null;
     updateData.lastEventAt = new Date();
     updateData.progress = Math.min(99, progress);
