@@ -191,13 +191,14 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:submg 2>&1 | tee "$SUBMG_E2E_LOG"
 
-      # Samples + ASSEMBLY: submit the mag-produced assembly to ENA (webin-cli genome
-      # upload) and assert SeqDesk takes up the assembly accession (ERZ) — the full
-      # "mag → submg" handoff. Warn-only (continue-on-error) while the assembly path
-      # (heavier webin upload from a hosted runner + ENA async validation) is proven
-      # out; the samples legs above/below remain the hard gates. Runs on the still-up
-      # source-boot app, on a second seeded study (the samples leg registered the first).
-      - name: Run submg WITH assembly submission (mag-style assembly → ENA, warn-only)
+      # Samples + READS + ASSEMBLY: the full "mag → submg" handoff. submg submits the
+      # reads (→ ENA run accessions), then the mag-produced assembly referencing those
+      # runs (submg requires ASSEMBLY|RUN_ACCESSIONS, which it derives from the read
+      # submission), and SeqDesk takes up the read + assembly accessions (ERR/ERZ).
+      # Warn-only (continue-on-error) while the heavier webin uploads from a hosted
+      # runner + ENA validation are proven out; the samples legs above/below remain the
+      # hard gates. Runs on the still-up source-boot app, on a second seeded study.
+      - name: Run submg WITH reads + assembly submission (mag-style → ENA, warn-only)
         if: ${{ env.ENA_USERNAME != '' }}
         continue-on-error: true
         env:
@@ -205,6 +206,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
         run: |
           set -euo pipefail
