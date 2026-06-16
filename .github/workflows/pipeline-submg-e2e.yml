@@ -115,9 +115,13 @@ jobs:
           # command lives under the `submg-cli` entry point and wraps the ENA Webin-CLI
           # Java jar (so the env needs openjdk >=17). download-webin fetches that jar
           # once at provision time (needs network now; not auto-fetched at submit time).
+          # pysam is submg's only C-extension dep — install it (and tk, for the
+          # customtkinter import) from conda so pip never has to build htslib. The
+          # remaining deps (PyYAML/requests/tqdm/yaspin/customtkinter/Pillow) are pure
+          # python / wheels and install fine via pip.
           conda create -y -n "$SUBMG_CONDA_ENV" \
-            --override-channels -c conda-forge \
-            python=3.11 'openjdk>=17' pip wheel
+            --override-channels -c conda-forge -c bioconda \
+            python=3.11 'openjdk>=17' pip wheel pysam tk
           SRC_DIR="$RUNNER_TEMP/submg-src-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rm -rf "$SRC_DIR"
           git clone --depth 1 --branch "$SUBMG_VERSION" https://github.com/ttubb/submg "$SRC_DIR"

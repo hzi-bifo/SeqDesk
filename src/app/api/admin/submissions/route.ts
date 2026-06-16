@@ -413,7 +413,10 @@ export async function POST(request: Request) {
 
       try {
         const pendingSubmission = await db.$transaction(async (tx) => {
-          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`submission:study:${entityId}`}))`;
+          // pg_advisory_xact_lock() returns void; $queryRaw tries to deserialize the
+          // result column and throws "Failed to deserialize column of type 'void'".
+          // $executeRaw runs the statement without deserializing a result set.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`submission:study:${entityId}`}))`;
 
           const existingSubmission = await tx.submission.findFirst({
             where: {

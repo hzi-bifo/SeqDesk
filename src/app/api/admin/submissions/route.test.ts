@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   db: {
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
+    $executeRaw: vi.fn(),
     submission: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -155,6 +156,7 @@ describe("POST /api/admin/submissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.db.$queryRaw.mockResolvedValue(undefined);
+    mocks.db.$executeRaw.mockResolvedValue(0);
     mocks.db.$transaction.mockImplementation(async (callback) => callback(mocks.db));
     mocks.db.submission.create.mockImplementation(async ({ data }) => ({
       id: "sub-pending",
