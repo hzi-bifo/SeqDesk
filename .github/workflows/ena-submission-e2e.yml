@@ -31,8 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      WEBIN_TEST_USERNAME: ${{ secrets.WEBIN_TEST_USERNAME }}
-      WEBIN_TEST_PASSWORD: ${{ secrets.WEBIN_TEST_PASSWORD }}
+      WEBIN_TEST_USERNAME: ${{ secrets.ENA_USERNAME || secrets.WEBIN_TEST_USERNAME }}
+      WEBIN_TEST_PASSWORD: ${{ secrets.ENA_PWD || secrets.WEBIN_TEST_PASSWORD }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -60,8 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      WEBIN_TEST_USERNAME: ${{ secrets.WEBIN_TEST_USERNAME }}
-      WEBIN_TEST_PASSWORD: ${{ secrets.WEBIN_TEST_PASSWORD }}
+      WEBIN_TEST_USERNAME: ${{ secrets.ENA_USERNAME || secrets.WEBIN_TEST_USERNAME }}
+      WEBIN_TEST_PASSWORD: ${{ secrets.ENA_PWD || secrets.WEBIN_TEST_PASSWORD }}
       NEXT_TELEMETRY_DISABLED: 1
       PORT: "8896"
       DB_NAME: seqdesk_ena_e2e
