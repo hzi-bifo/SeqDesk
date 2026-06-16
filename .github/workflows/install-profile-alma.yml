@@ -427,11 +427,13 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    # 210: three heavy pipelines can run here (metaxpath + mag + read-cleaning), each with a
-    # first-run cold conda solve up to its run timeout, on top of install + the fast Gemma runs.
-    # read-cleaning skips fast when its kraken2 DB is absent, so the extra headroom only matters
-    # once the DB is staged. Later runs reuse the shared conda cache and finish well under this.
-    timeout-minutes: 210
+    # 360 (6h): the ceiling must exceed the SUM of the per-run caps so a worst-case run (every
+    # pipeline hitting its own timeout) completes rather than being cut off mid-pipeline — here
+    # metaxpath 3h + mag 1h + read-cleaning 40m + the fast Gemma runs 45m + install ~20m ≈ 5h45m.
+    # This is a self-hosted runner, so there is NO 6h GitHub-hosted job cap. In practice each cap
+    # finishes EARLY once the shared conda cache is warm, so a normal run is ~2-3h; the ceiling
+    # only bites on the first full run that builds every per-process env cold.
+    timeout-minutes: 360
     env:
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
@@ -843,15 +845,19 @@ jobs:
             # "No space left" disk-out (heavy work now on the shared FS); and the false-COMPLETED
             # where the monitor scraped a mid-run "exit code: 0" from live conda/Nextflow output
             # and finalized the run before classification ran (inferPipelineExitCode now trusts
-            # ONLY the wrapper's canonical exit marker). Timeout is generous (3600s) so the FIRST
-            # cold conda solve has room; later runs reuse the shared conda cache and are fast.
+            # ONLY the wrapper's canonical exit marker). Timeout is VERY generous (10800s / 3h):
+            # METAX_PROFILE scans 5 ONT samples against the full metax DB (slow — DB-scan bound,
+            # not sample-size bound; ~1h for the classifications alone last run), and the ~8
+            # downstream steps build their per-process conda envs cold the FIRST run that reaches
+            # them. The cap finishes early once everything is cached, so a completing run proves
+            # the whole 13-step DAG — a long first wait is expected and fine.
             # Still a clean SKIP if the profile doesn't enable it (--skip-if-disabled).
             # METAX_PROFILE (64 GB) / PRED_VFS_AMRS (96 GB) are production-sized memory declarations
             # that exceed this runner's ~62 GB, so Nextflow's local executor rejects them pre-flight
             # ("Process requirement exceeds available memory"). The CI fixture is tiny (5 small
             # samples; actual peak ~3 GB), so override both down to fit the runner — this lets
             # metaxpath actually classify on the test data instead of being rejected before it runs.
-            run_gemma metaxpath    3600 --study-alias gemma-nanopore-metaxpath \
+            run_gemma metaxpath   10800 --study-alias gemma-nanopore-metaxpath \
               --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
