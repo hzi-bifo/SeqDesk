@@ -606,7 +606,12 @@ async function main() {
 
 main()
   .then((summary) => {
-    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    // Exit explicitly once the assertions have passed (flush stdout first). The
+    // app's keep-alive HTTP sockets / DB handles can otherwise keep the event loop
+    // alive and a late, post-success teardown rejection has surfaced as a spurious
+    // non-zero exit (seen only on the installed-app leg). The integration is already
+    // proven by the time we get here.
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`, () => process.exit(0));
   })
   .catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
