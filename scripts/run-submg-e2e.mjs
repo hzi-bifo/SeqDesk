@@ -531,7 +531,32 @@ async function main() {
       },
     });
 
-    // HARD: submg must have registered the sample on ENA and written the accession back.
+    // HARD #1 — SeqDesk took up submg's response: processSubmgRunResults parsed the
+    // ENA receipts and recorded what it ingested in PipelineRun.results. Proves the
+    // SeqDesk *integration* handled the response, not just that submg exited 0.
+    const runRow = await prisma.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { results: true },
+    });
+    let processing = null;
+    try {
+      processing = runRow?.results ? JSON.parse(runRow.results) : null;
+    } catch {
+      processing = null;
+    }
+    if (!processing || Number(processing.samplesUpdated) < 1) {
+      fail(
+        "SeqDesk did not record ingesting a sample accession (PipelineRun.results.samplesUpdated < 1)",
+        JSON.stringify({ runId, results: processing }, null, 2),
+      );
+    }
+    console.log(
+      `SeqDesk ingested submg's response: samplesUpdated=${processing.samplesUpdated}` +
+        `, readsUpdated=${processing.readsUpdated ?? 0}, assembliesUpdated=${processing.assembliesUpdated ?? 0}.`,
+    );
+
+    // HARD #2 — the ingested accession landed on the Sample row (ERS/SAMEA), persisted
+    // by SeqDesk from submg's sample_preliminary_accessions.txt.
     const sampleAccession = sampleAfter?.sampleAccessionNumber || sampleAfter?.biosampleNumber;
     if (!sampleAccession || !ACCESSION_RE.test(sampleAccession)) {
       fail(
