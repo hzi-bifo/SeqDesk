@@ -71,6 +71,47 @@ const DEFAULT_LIBRARY_SOURCE = "METAGENOMIC";
 const DEFAULT_LIBRARY_SELECTION = "RANDOM";
 const DEFAULT_LIBRARY_STRATEGY = "WGS";
 const DEFAULT_INSTRUMENT = "Illumina NovaSeq 6000";
+
+// ENA's controlled vocabulary for the read manifest INSTRUMENT field. webin-cli
+// rejects anything not in this exact list (e.g. a facility entering "NovaSeq 6000"
+// instead of "Illumina NovaSeq 6000"), so the runner normalizes the order's
+// instrumentModel onto it before emitting the manifest. "unspecified" is itself a
+// valid ENA value, so it is a safe fallback for anything we can't map.
+const ENA_VALID_INSTRUMENTS = [
+  "HiSeq X Five", "HiSeq X Ten", "Illumina Genome Analyzer", "Illumina Genome Analyzer II",
+  "Illumina Genome Analyzer IIx", "Illumina HiScanSQ", "Illumina HiSeq 1000",
+  "Illumina HiSeq 1500", "Illumina HiSeq 2000", "Illumina HiSeq 2500", "Illumina HiSeq 3000",
+  "Illumina HiSeq 4000", "Illumina HiSeq X", "Illumina iSeq 100", "Illumina MiSeq",
+  "Illumina MiniSeq", "Illumina NovaSeq 6000", "Illumina NovaSeq X", "Illumina NovaSeq X Plus",
+  "NextSeq 500", "NextSeq 550", "NextSeq 1000", "NextSeq 2000", "MinION", "GridION",
+  "PromethION", "Onso", "PacBio RS", "PacBio RS II", "Revio", "Sequel", "Sequel II",
+  "Sequel IIe", "BGISEQ-50", "BGISEQ-500", "MGISEQ-2000RS", "454 GS", "454 GS 20",
+  "454 GS FLX", "454 GS FLX+", "454 GS FLX Titanium", "454 GS Junior", "Ion Torrent Genexus",
+  "Ion Torrent PGM", "Ion Torrent Proton", "Ion Torrent S5", "Ion Torrent S5 XL",
+  "Ion GeneStudio S5", "Ion GeneStudio S5 Plus", "Ion GeneStudio S5 Prime",
+  "AB 3730xL Genetic Analyzer", "AB 3730 Genetic Analyzer", "AB 3500xL Genetic Analyzer",
+  "AB 3500 Genetic Analyzer", "AB 3130xL Genetic Analyzer", "AB 3130 Genetic Analyzer",
+  "AB 310 Genetic Analyzer", "DNBSEQ-T7", "DNBSEQ-G400", "DNBSEQ-G50", "DNBSEQ-G400 FAST",
+  "DNBSEQ-T10x4RS", "Element AVITI", "UG 100", "Sentosa SQ301", "GENIUS", "Genapsys Sequencer",
+  "GS111", "GenoCare 1600", "GenoLab M", "FASTASeq 300", "Tapestri", "unspecified",
+];
+const ENA_INSTRUMENT_BY_LOWER = new Map(
+  ENA_VALID_INSTRUMENTS.map((name) => [name.toLowerCase(), name])
+);
+
+// Map a free-text instrument model onto an ENA-valid value: exact (case-insensitive)
+// match wins; else retry with an "Illumina " prefix (covers "NovaSeq 6000" ->
+// "Illumina NovaSeq 6000", "MiSeq" -> "Illumina MiSeq", etc.); else fall back to the
+// ENA-accepted "unspecified" so a read submission never fails on the instrument field.
+export function normalizeInstrumentModel(value: string | null | undefined): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return DEFAULT_INSTRUMENT;
+  const exact = ENA_INSTRUMENT_BY_LOWER.get(trimmed.toLowerCase());
+  if (exact) return exact;
+  const prefixed = ENA_INSTRUMENT_BY_LOWER.get(`illumina ${trimmed.toLowerCase()}`);
+  if (prefixed) return prefixed;
+  return "unspecified";
+}
 const DEFAULT_INSERT_SIZE = 300;
 const DEFAULT_ASSEMBLY_COVERAGE = 1;
 const TEST_STUDY_ACCESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -1200,7 +1241,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
           librarySource: sample.order.librarySource || DEFAULT_LIBRARY_SOURCE,
           librarySelection: sample.order.librarySelection || DEFAULT_LIBRARY_SELECTION,
           libraryStrategy: sample.order.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
-          instrumentModel: sample.order.instrumentModel || DEFAULT_INSTRUMENT,
+          instrumentModel: normalizeInstrumentModel(sample.order.instrumentModel),
           insertSize,
         };
       })
