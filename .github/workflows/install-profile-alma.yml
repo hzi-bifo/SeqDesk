@@ -426,10 +426,11 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    # 180: two heavy pipelines now run here (metaxpath + mag), each with first-run cold conda
-    # solves up to their 3600s run timeouts, on top of install + the fast Gemma runs. Later runs
-    # reuse the shared conda cache and finish well under this.
-    timeout-minutes: 180
+    # 210: three heavy pipelines can run here (metaxpath + mag + read-cleaning), each with a
+    # first-run cold conda solve up to its run timeout, on top of install + the fast Gemma runs.
+    # read-cleaning skips fast when its kraken2 DB is absent, so the extra headroom only matters
+    # once the DB is staged. Later runs reuse the shared conda cache and finish well under this.
+    timeout-minutes: 210
     env:
       DB_HOST: 127.0.0.1
       DB_PASSWORD: seqdesk
@@ -445,6 +446,11 @@ jobs:
       # — so the rest of the profile (pipelines + the Gemma example dataset) still applies
       # and gets verified. Remove this once a compatible MetaxPath artifact is published.
       SEQDESK_METAXPATH_OPTIONAL: "1"
+      # read-cleaning (nf-core/detaxizer) needs a kraken2 DB to classify host/contaminant
+      # reads. Same shared-FS path + repo-var override as the SLURM E2E so a facility can
+      # stage the DB once for both harnesses. Absent → the read-cleaning smoke skips cleanly
+      # (it's gated on the DB, exactly like mag is gated on GTDB).
+      SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -822,9 +828,11 @@ jobs:
             }
             # Read-consuming pipelines that apply to the Gemma reads and run reliably
             # (hard-asserted). study-demo-report skips cleanly if not enabled on the profile.
-            # NOT run here: read-cleaning needs raw/unknown reads (Gemma reads are already
-            # CLEANED), and reads-qc surfaced a local-run completed->running flip that needs
-            # its own investigation — both tracked as follow-ups in PIPELINE_E2E_COVERAGE.md.
+            # read-cleaning is NOT run on the Gemma reads (they are already CLEANED, so they
+            # fail detaxizer's dataClassIn:[raw,unknown] gate) — it runs further down on the
+            # mag-smoke RAW minigut reads instead. reads-qc surfaced a local-run
+            # completed->running flip that needs its own investigation (a follow-up in
+            # PIPELINE_E2E_COVERAGE.md).
             run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
@@ -927,6 +935,37 @@ jobs:
               [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$magdir/logs/pipeline.out" 2>/dev/null | head -12
               echo "::endgroup::"
             ) || true
+
+            # read-cleaning (nf-core/detaxizer) — screen RAW reads for host/contaminant and stage
+            # cleaned reads. The Gemma reads are already CLEANED (dataClassIn:[raw,unknown] rejects
+            # them), so reuse the mag-smoke order seeded above (DEV-MAG-ILMN-001): its minigut reads
+            # are dataClass="raw" AND it's a human-gut metagenome, so detaxizer's default
+            # tax2filter="Homo sapiens" has real host reads to strip. Needs a kraken2 DB (the same
+            # managed kraken2Db key the admin pipeline-config UI exposes + the SLURM E2E pins). If
+            # the DB isn't staged on the shared FS, SKIP cleanly — read-cleaning is gated on the DB
+            # exactly like mag is gated on GTDB. Warn-only while we bring it up on the runner. The
+            # mag line above already seeded the order, so no re-seed here.
+            RC_KRAKEN2_DB="${SLURM_SHARED_KRAKEN2_DB:-/net/broker/checkm_refdata/kraken2_db}"
+            if [ -e "$RC_KRAKEN2_DB" ]; then
+              echo "read-cleaning: kraken2 DB present at $RC_KRAKEN2_DB — running detaxizer on the mag-smoke RAW reads."
+              run_gemma_warn read-cleaning 2400 --order-number DEV-MAG-ILMN-001 \
+                --config-json "{\"kraken2Db\":\"$RC_KRAKEN2_DB\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
+              ( set +e +o pipefail
+                echo "::group::read-cleaning run-folder forensics"
+                rcdir="$(find "$PROFILE_RUN_DIR" -maxdepth 1 -type d -name 'READ-CLEANING-*' | head -1)"
+                echo "run dir: ${rcdir:-<none>}"
+                [ -n "$rcdir" ] && [ -f "$rcdir/trace.txt" ] && { echo "--- trace (name|status|exit) ---"; cut -f4,5,6 "$rcdir/trace.txt" 2>/dev/null | head -50; }
+                [ -n "$rcdir" ] && [ -f "$rcdir/logs/pipeline.out" ] && { echo "--- pipeline.out tail ---"; tail -30 "$rcdir/logs/pipeline.out"; }
+                [ -n "$rcdir" ] && [ -f "$rcdir/logs/pipeline.out" ] && { echo "--- exit marker ---"; grep -n "Pipeline completed with exit code" "$rcdir/logs/pipeline.out" || echo "NO MARKER"; }
+                echo "--- cleaned-read / classification outputs on disk ---"
+                [ -n "$rcdir" ] && find "$rcdir" -type f \( -name '*filtered*.fastq.gz' -o -name '*.kraken2.*' -o -name '*classified*' -o -name '*_filtered.fastq.gz' \) 2>/dev/null | grep -v '/work/conda/' | head -10
+                echo "--- error report (Caused by) ---"
+                [ -n "$rcdir" ] && [ -f "$rcdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$rcdir/logs/pipeline.out" 2>/dev/null | head -12
+                echo "::endgroup::"
+              ) || true
+            else
+              echo "read-cleaning: kraken2 DB absent at '$RC_KRAKEN2_DB' — SKIPPING (stays gated on a staged kraken2 DB; set SLURM_SHARED_KRAKEN2_DB or place the DB at the default path)."
+            fi
 
             if [ "$gemma_fail" -ne 0 ]; then
               echo "One or more Gemma real-data pipeline runs failed."
