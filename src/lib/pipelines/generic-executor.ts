@@ -687,6 +687,24 @@ function stripReservedNextflowFlags(flags: string[]): string[] {
 }
 
 /**
+ * Per-pipeline environment exports from `manifest.execution.runtime.env`, appended to the
+ * runtime bootstrap so they land in the run script right before the nextflow launch. Lets a
+ * single pipeline set runtime knobs (e.g. NXF_SYNTAX_PARSER=v1 for older nf-core templates the
+ * strict v2 parser rejects) without touching the others. Keys must be safe shell identifiers;
+ * values are shell-quoted.
+ */
+function buildManifestEnvExports(execution: { runtime?: { env?: Record<string, string> } }): string {
+  const env = execution.runtime?.env;
+  if (!env || typeof env !== 'object') return '';
+  const lines = Object.entries(env)
+    .filter(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof value === 'string')
+    .map(([key, value]) => `export ${key}=${shellQuote(String(value))}`);
+  return lines.length
+    ? `\n# Pipeline-specific runtime environment (manifest execution.runtime.env)\n${lines.join('\n')}\n`
+    : '';
+}
+
+/**
  * Generate SLURM script for pipeline execution
  */
 function generateSlurmScript(
@@ -707,7 +725,7 @@ function generateSlurmScript(
   const dagFile = `${runFolder}/dag.dot`;
   const reportFile = `${runFolder}/report.html`;
   const timelineFile = `${runFolder}/timeline.html`;
-  const runtimeBootstrap = buildRuntimeBootstrap(settings);
+  const runtimeBootstrap = buildRuntimeBootstrap(settings) + buildManifestEnvExports(execution);
 
   const runName = buildNextflowRunName(runNumber, runId);
   const nameFlag = `-name ${shellQuote(runName)}`;
@@ -814,7 +832,7 @@ function generateLocalScript(
   const dagFile = `${runFolder}/dag.dot`;
   const reportFile = `${runFolder}/report.html`;
   const timelineFile = `${runFolder}/timeline.html`;
-  const runtimeBootstrap = buildRuntimeBootstrap(settings);
+  const runtimeBootstrap = buildRuntimeBootstrap(settings) + buildManifestEnvExports(execution);
 
   const runName = buildNextflowRunName(runNumber, runId);
   const nameFlag = `-name ${shellQuote(runName)}`;

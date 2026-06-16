@@ -71,7 +71,8 @@
       "readType": ""
     },
     "runtime": {
-      "allowMacOsArmConda": true
+      "allowMacOsArmConda": true,
+      "env": { "NXF_SYNTAX_PARSER": "v1" }
     }
   },
   "outputs": [

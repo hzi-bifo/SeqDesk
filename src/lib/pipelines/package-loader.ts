@@ -110,6 +110,13 @@ export interface PackageExecution {
     allowMacOsArmConda?: boolean;
     /** When true, skip Conda profile on macOS ARM and run using locally installed tools */
     allowMacOsArmLocal?: boolean;
+    /**
+     * Extra environment variables exported into the generated run script just before the
+     * nextflow launch. Use for per-pipeline runtime knobs the nf-core ecosystem needs — e.g.
+     * `NXF_SYNTAX_PARSER: "v1"` for older-template pipelines (detaxizer 1.3.0) that Nextflow
+     * 24.10+'s strict v2 parser rejects. Scoped to the one pipeline, so it never perturbs others.
+     */
+    env?: Record<string, string>;
   };
 }
 

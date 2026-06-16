@@ -812,11 +812,50 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
       writeback.trace = await assertMetaxpathTrace({ client, run, runId });
       writeback.taxonomy = await assertMetaxpathTaxonomy({ client, run, runId });
     }
+    // read-cleaning: prove SeqDesk INGESTED detaxizer's cleaned reads as reviewable candidates
+    // (the integration), not just that the job exited. The cleaned-reads API is exactly what the
+    // admin review UI reads, so a populated summary there is the end-to-end integration proof.
+    if (pipelineId === "read-cleaning") {
+      writeback.cleanedReads = await assertReadCleaningIntegration({ client, runId });
+    }
   } else {
     fail(`Writeback: unknown spec kind '${spec.kind}' for pipeline ${pipelineId}`);
   }
 
   return { ...writeback, observability, retrieval };
+}
+
+// read-cleaning integration proof: detaxizer's cleaned reads must be INGESTED by SeqDesk as
+// reviewable candidates — the round-trip pipeline output -> discover-outputs -> PendingReadCandidate
+// -> the cleaned-reads API the admin review UI reads. The `completes` gate only proves the job
+// exited 0; this proves the SeqDesk side actually took up the result (the "integration works").
+async function assertReadCleaningIntegration({ client, runId }) {
+  const res = await client.request(`/api/pipelines/runs/${runId}/cleaned-reads`);
+  const bodyText = await res.text();
+  if (!res.ok) {
+    fail(
+      `read-cleaning: cleaned-reads API not retrievable for run ${runId} (${res.status})`,
+      summarizeBody(bodyText),
+    );
+  }
+  let summary;
+  try {
+    summary = JSON.parse(bodyText);
+  } catch {
+    fail(`read-cleaning: cleaned-reads response was not JSON for run ${runId}`, summarizeBody(bodyText));
+  }
+  const candidates = Array.isArray(summary?.candidates) ? summary.candidates : [];
+  if (candidates.length < 1) {
+    fail(
+      `read-cleaning: detaxizer ran but SeqDesk ingested 0 cleaned-read candidates for run ${runId}`,
+      JSON.stringify({ runId, candidates: candidates.length, run: summary?.run }, null, 2),
+    );
+  }
+  console.log(
+    `read-cleaning integration OK: ${candidates.length} cleaned-read candidate(s) ingested ` +
+      `via the cleaned-reads API (the admin review surface)`,
+  );
+  return { checked: true, candidates: candidates.length };
 }
 
 // statusSource + step-level progress. statusSource records which path finalized the
