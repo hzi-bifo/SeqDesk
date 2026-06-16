@@ -4,7 +4,6 @@ import { createHash } from "crypto";
 import { spawnSync } from "child_process";
 
 import { db } from "@/lib/db";
-import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 
 // A tiny, public, paired-end metagenome example dataset for the MAG pipeline. Unlike the Gemma
 // MetaxPath dataset (whose source URL lives only in the gated hosted profile), nf-core/mag's
@@ -53,18 +52,6 @@ export interface MagSmokeExampleStatus {
   samplesCount: number;
   readsCount: number;
   sourceUrls: string[];
-}
-
-async function resolveDataBasePath(prisma: PrismaLike): Promise<string> {
-  const settings = await prisma.siteSettings.findUnique({
-    where: { id: "singleton" },
-    select: { dataBasePath: true },
-  });
-  const resolved = resolveDataBasePathFromStoredValue(settings?.dataBasePath);
-  if (!resolved.dataBasePath) {
-    throw new Error("Data base path is not configured");
-  }
-  return path.resolve(resolved.dataBasePath);
 }
 
 async function downloadTo(url: string, dest: string): Promise<void> {
@@ -150,7 +137,48 @@ export async function seedMagSmokeExampleDataset({
   logger?: SeedLogger;
   activity?: SeedActivity;
 } = {}): Promise<ApplyProfileSeedDataResult> {
-  const dataBasePath = await resolveDataBasePath(prisma);
+  const seedModule = (await import("../../../scripts/lib/install-profile-assets.mjs")) as {
+    applyProfileSeedData: (input: {
+      prisma: PrismaLike;
+      profile: unknown;
+      rootDir?: string;
+      logger?: SeedLogger;
+      activity?: SeedActivity;
+    }) => Promise<ApplyProfileSeedDataResult>;
+    resolveProfilePipelineAssetSettings: (
+      prisma: PrismaLike,
+      profile: unknown,
+    ) => Promise<{ dataBasePath?: string | null }>;
+  };
+
+  const profile = {
+    id: MAG_SMOKE_PROFILE_ID,
+    seedData: {
+      enabled: true,
+      fixtures: [
+        {
+          id: MAG_SMOKE_FIXTURE_ID,
+          kind: "exampleDataset",
+          orderNumber: MAG_SMOKE_ORDER_NUMBER,
+          source: {
+            type: "downloadedFastqBundle",
+            url: MAG_SMOKE_READS.r1,
+            sha256: "", // filled in below from the pre-staged archive
+          },
+        },
+      ],
+    },
+  };
+
+  // Resolve the data base path EXACTLY as applyProfileSeedData/extractVerifiedFastqBundle will,
+  // so the archive we pre-stage is found there (otherwise the extractor re-downloads source.url —
+  // a single fastq — and fails the SHA256 check). They use the raw settings.dataBasePath, NOT the
+  // resolveDataBasePathFromStoredValue-normalised path, so we must too.
+  const { dataBasePath } = await seedModule.resolveProfilePipelineAssetSettings(prisma, profile);
+  if (!dataBasePath) {
+    throw new Error("Data base path is not configured");
+  }
+
   const fixtureDir = path.join(dataBasePath, "fixtures", MAG_SMOKE_PROFILE_ID, MAG_SMOKE_FIXTURE_ID);
   const stageDir = path.join(fixtureDir, ".stage");
   const stageReadsDir = path.join(stageDir, "reads");
@@ -170,7 +198,7 @@ export async function seedMagSmokeExampleDataset({
     `${JSON.stringify(buildManifest(), null, 2)}\n`,
   );
 
-  // Pack { manifest.json, reads/ } into the archive the extractor expects, so the SHA256 check
+  // Pack { manifest.json, reads/ } into the archive the extractor expects, so its SHA256 check
   // matches and the download is skipped.
   const archivePath = path.join(downloadsDir, `${MAG_SMOKE_FIXTURE_ID}.tar.gz`);
   await fsp.rm(archivePath, { force: true });
@@ -180,39 +208,10 @@ export async function seedMagSmokeExampleDataset({
   if (tar.status !== 0) {
     throw new Error(`Failed to build MAG smoke bundle: ${tar.stderr || `tar exit ${tar.status}`}`);
   }
-  const sha256 = sha256OfFile(archivePath);
+  profile.seedData.fixtures[0].source.sha256 = sha256OfFile(archivePath);
 
   await activity?.update?.({ phase: "seeding", targetPath: fixtureDir });
-  const seedModule = (await import("../../../scripts/lib/install-profile-assets.mjs")) as {
-    applyProfileSeedData: (input: {
-      prisma: PrismaLike;
-      profile: unknown;
-      rootDir?: string;
-      logger?: SeedLogger;
-      activity?: SeedActivity;
-    }) => Promise<ApplyProfileSeedDataResult>;
-  };
-
-  return seedModule.applyProfileSeedData({
-    prisma,
-    profile: {
-      id: MAG_SMOKE_PROFILE_ID,
-      seedData: {
-        enabled: true,
-        fixtures: [
-          {
-            id: MAG_SMOKE_FIXTURE_ID,
-            kind: "exampleDataset",
-            orderNumber: MAG_SMOKE_ORDER_NUMBER,
-            source: { type: "downloadedFastqBundle", url: MAG_SMOKE_READS.r1, sha256 },
-          },
-        ],
-      },
-    },
-    rootDir,
-    logger,
-    activity,
-  });
+  return seedModule.applyProfileSeedData({ prisma, profile, rootDir, logger, activity });
 }
 
 export async function getMagSmokeExampleStatus(
