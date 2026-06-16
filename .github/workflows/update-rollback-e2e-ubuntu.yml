@@ -55,6 +55,11 @@ jobs:
     timeout-minutes: 45
     env:
       NEXT_TELEMETRY_DISABLED: 1
+      # This E2E updates from a LOCAL http mock release server. The updater requires
+      # https for downloads unless an operator opts in (installer.ts), so the running
+      # app (started via `pm2 start` which inherits this job env) must allow http here.
+      # Scope is the trusted localhost mock only; production keeps the https-only guard.
+      SEQDESK_ALLOW_INSECURE_UPDATE: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
