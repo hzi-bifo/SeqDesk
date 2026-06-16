@@ -1639,7 +1639,11 @@ export async function processSubmgRunResults(runId: string): Promise<SubmgProces
         .filter(Boolean);
 
       for (let i = 1; i < lines.length; i += 1) {
-        const parts = lines[i].split(/\s+/);
+        // sample_preliminary_accessions.txt is TAB-separated (alias / accession /
+        // external_accession). The alias is the sample TITLE, which routinely
+        // contains spaces (e.g. "Gut recovery day 0"), so split on tab — splitting
+        // on \s+ over-splits the alias and shifts the real accessions out of range.
+        const parts = lines[i].split("\t").map((part) => part.trim());
         if (parts.length < 3) continue;
 
         const [alias, sampleAccession, biosampleAccession] = parts;
