@@ -1489,7 +1489,7 @@ describe("submg runner", () => {
     );
     expect(yamlContent).toContain("OXFORD_NANOPORE");
     const script = await fs.readFile(result.scriptPath!, "utf8");
-    expect(script).toContain("--skip_checks");
+    expect(script).toContain("--skip-checks");
   });
 
   it("uses coverage from sample customFields and emits SLURM options", async () => {
@@ -1664,7 +1664,7 @@ describe("submg runner", () => {
     );
     expect(qualityContent).toContain("bin.001\t95\t2");
     const script = await fs.readFile(result.scriptPath!, "utf8");
-    expect(script).toContain("--submit_bins");
+    expect(script).toContain("--submit-bins");
   });
 
   it("warns when no bins exist and submitBins is enabled", async () => {

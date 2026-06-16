@@ -36,6 +36,7 @@
     "pipeline:e2e:slurm-failure": "node scripts/run-slurm-failure-e2e.mjs",
     "pipeline:e2e:slurm-cancel": "node scripts/run-slurm-cancel-e2e.mjs",
     "pipeline:e2e:appcheck": "node scripts/run-pipeline-appcheck-e2e.mjs",
+    "pipeline:e2e:submg": "node scripts/run-submg-e2e.mjs",
     "test": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run",
     "test:fast": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run",
     "test:live": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=live vitest run",

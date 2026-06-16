@@ -633,8 +633,11 @@ function buildSubmgScript(params: {
   executionSettings: ExecutionSettings;
   config: {
     skipChecks: boolean;
+    submitReads: boolean;
+    submitAssembly: boolean;
     submitBins: boolean;
     condaEnv: string;
+    testMode: boolean;
   };
   credentials: {
     username: string;
@@ -692,7 +695,7 @@ function buildSubmgScript(params: {
   lines.push('echo "Starting submg submission at $(date)" > "$STDOUT_LOG"');
   lines.push('echo "" > "$STDERR_LOG"');
   lines.push(
-    "trap 'EXIT_CODE=$?; echo \"Pipeline completed with exit code: ${EXIT_CODE} at $(date)\" >> \"$STDOUT_LOG\"; cp -f \"/tmp/seqdesk-slurm-$SLURM_JOB_ID.out\" \"$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.out\" 2>/dev/null || true; cp -f \"/tmp/seqdesk-slurm-$SLURM_JOB_ID.err\" \"$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.err\" 2>/dev/null || true; exit ${EXIT_CODE}' EXIT"
+    "trap 'EXIT_CODE=$?; echo \"Pipeline completed with exit code: ${EXIT_CODE} at $(date)\" >> \"$STDOUT_LOG\"; cp -f \"/tmp/seqdesk-slurm-${SLURM_JOB_ID:-local}.out\" \"$RUN_FOLDER/logs/slurm-${SLURM_JOB_ID:-local}.out\" 2>/dev/null || true; cp -f \"/tmp/seqdesk-slurm-${SLURM_JOB_ID:-local}.err\" \"$RUN_FOLDER/logs/slurm-${SLURM_JOB_ID:-local}.err\" 2>/dev/null || true; exit ${EXIT_CODE}' EXIT"
   );
   lines.push("");
 
@@ -713,11 +716,18 @@ function buildSubmgScript(params: {
     lines.push("");
   }
 
-  lines.push("if ! command -v submg >/dev/null 2>&1; then");
-  lines.push('  echo "submg command not found in PATH" >> "$STDERR_LOG"');
+  // Resolve the submg CLI. Upstream submg (>=1.0) ships the submit command under
+  // the `submg-cli` entry point; the bare `submg` entry point is a GUI/deprecation
+  // stub that does not accept `submit`. Prefer submg-cli, falling back to submg for
+  // any older/forked env that still exposes submit on the bare name.
+  lines.push("if command -v submg-cli >/dev/null 2>&1; then");
+  lines.push('  SUBMG_BIN="$(command -v submg-cli)"');
+  lines.push("elif command -v submg >/dev/null 2>&1; then");
+  lines.push('  SUBMG_BIN="$(command -v submg)"');
+  lines.push("else");
+  lines.push('  echo "submg-cli/submg command not found in PATH" >> "$STDERR_LOG"');
   lines.push("  exit 1");
   lines.push("fi");
-  lines.push('SUBMG_BIN="$(command -v submg)"');
   lines.push("");
   lines.push("extract_yaml_fastq_value() {");
   lines.push('  local key="$1"');
@@ -783,22 +793,30 @@ function buildSubmgScript(params: {
     );
     lines.push('  "$YAML_RUNTIME"');
 
+    // submg >=1.0 uses kebab-case flags. --development-service selects the ENA
+    // target (1 = wwwdev test server, 0 = production); submg does NOT honor the
+    // ENA_TEST_MODE env var, so the target must be passed explicitly here.
     const commandParts = [
       '"$SUBMG_BIN"',
       "submit",
       '--config "$YAML_RUNTIME"',
-      '--staging_dir "$STAGING_DIR"',
-      '--logging_dir "$LOGGING_DIR"',
-      "--submit_samples",
-      "--submit_reads",
-      "--submit_assembly",
+      '--staging-dir "$STAGING_DIR"',
+      '--logging-dir "$LOGGING_DIR"',
+      `--development-service ${config.testMode ? "1" : "0"}`,
+      "--submit-samples",
     ];
 
+    if (config.submitReads) {
+      commandParts.push("--submit-reads");
+    }
+    if (config.submitAssembly) {
+      commandParts.push("--submit-assembly");
+    }
     if (config.submitBins && entry.hasBins) {
-      commandParts.push("--submit_bins");
+      commandParts.push("--submit-bins");
     }
     if (config.skipChecks) {
-      commandParts.push("--skip_checks");
+      commandParts.push("--skip-checks");
     }
 
     lines.push(`${commandParts.join(" ")} > "$OUTPUT_FILE" 2> "$ERROR_FILE"`);
@@ -1087,6 +1105,8 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   }
 
   const skipChecks = toBoolean(options.config.skipChecks, false);
+  const submitReads = toBoolean(options.config.submitReads, true);
+  const submitAssembly = toBoolean(options.config.submitAssembly, true);
   const submitBins = toBoolean(options.config.submitBins, true);
   const condaEnv = toString(options.config.condaEnv, "submg");
   const assemblySoftware = toString(options.config.assemblySoftware, "MEGAHIT");
@@ -1481,8 +1501,11 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     executionSettings: options.executionSettings,
     config: {
       skipChecks,
+      submitReads,
+      submitAssembly,
       submitBins,
       condaEnv,
+      testMode: siteSettings.enaTestMode !== false,
     },
     credentials: {
       username: siteSettings.enaUsername,
@@ -1635,9 +1658,16 @@ export async function processSubmgRunResults(runId: string): Promise<SubmgProces
 
     const readReports = await findFilesRecursive(
       loggingDir.path,
-      (filePath) =>
-        path.basename(filePath) === "webin-cli.report" &&
-        filePath.includes(`${path.sep}reads${path.sep}`)
+      (filePath) => {
+        if (path.basename(filePath) !== "webin-cli.report") return false;
+        // submg >=1.0 writes each read set's report under `reads_<NAME>/`; older
+        // submg used `reads/<n>/`. Accept either by matching a path segment that is
+        // exactly `reads` or begins with `reads_`.
+        return path
+          .dirname(filePath)
+          .split(path.sep)
+          .some((segment) => segment === "reads" || segment.startsWith("reads_"));
+      }
     );
 
     for (const readReportPath of readReports) {
