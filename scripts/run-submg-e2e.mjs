@@ -435,11 +435,15 @@ async function main() {
     });
 
     // ---- Start the submg run (study-scoped, one sample, local execution) ----
+    // The runner activates the conda env named by config.condaEnv (default "submg").
+    // CI provisions a uniquely-named env, so pass its name through explicitly.
+    const condaEnv = process.env.SEQDESK_SUBMG_E2E_CONDA_ENV;
     const config = {
       skipChecks: true,
       submitReads,
       submitAssembly,
       submitBins: false,
+      ...(condaEnv ? { condaEnv } : {}),
     };
     const createPayload = await requestJson(
       client,

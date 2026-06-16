@@ -264,6 +264,7 @@ jobs:
           SEQDESK_SUBMG_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
+          SEQDESK_SUBMG_E2E_CONDA_ENV: ${{ env.SUBMG_CONDA_ENV }}
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
