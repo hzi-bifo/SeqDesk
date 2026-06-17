@@ -920,15 +920,18 @@ jobs:
             if [ -n "$SUBSAMPLE" ]; then
               echo "::group::SHORT run — subsampling Gemma reads to fraction $SUBSAMPLE"
               n=0
+              # The Gemma reads are UNCOMPRESSED .fastq (under reads/fastq_pass/barcodeNN/), not
+              # .gz — so match both, and decompress/recompress only for .gz (cat for plain .fastq).
               while IFS= read -r fq; do
-                if zcat "$fq" 2>/dev/null | awk -v f="$SUBSAMPLE" 'BEGIN{srand(7)} NR%4==1{k=(rand()<f)} k' | gzip > "$fq.sub" 2>/dev/null; then
-                  mv -f "$fq.sub" "$fq" 2>/dev/null && n=$((n+1)) || true
-                else
-                  rm -f "$fq.sub" 2>/dev/null || true
-                fi
-              done < <(find "$PROFILE_DATA_DIR" -path '*gemma-nanopore-metaxpath*' \( -name '*.fastq.gz' -o -name '*.fq.gz' \) -type f 2>/dev/null)
+                ok=0
+                case "$fq" in
+                  *.gz) zcat "$fq" 2>/dev/null | awk -v f="$SUBSAMPLE" 'BEGIN{srand(7)} NR%4==1{k=(rand()<f)} k' | gzip > "$fq.sub" 2>/dev/null && ok=1 || true ;;
+                  *)    awk -v f="$SUBSAMPLE" 'BEGIN{srand(7)} NR%4==1{k=(rand()<f)} k' "$fq" > "$fq.sub" 2>/dev/null && ok=1 || true ;;
+                esac
+                if [ "$ok" = 1 ]; then mv -f "$fq.sub" "$fq" 2>/dev/null && n=$((n+1)) || true; else rm -f "$fq.sub" 2>/dev/null || true; fi
+              done < <(find "$PROFILE_DATA_DIR" -path '*gemma-nanopore-metaxpath*' \( -name '*.fastq.gz' -o -name '*.fq.gz' -o -name '*.fastq' -o -name '*.fq' \) -type f 2>/dev/null)
               echo "subsampled $n Gemma FASTQ file(s) to fraction $SUBSAMPLE"
-              if [ "$n" -eq 0 ]; then echo "WARN: no gzipped Gemma reads found to subsample — metaxpath runs on full data."; fi
+              if [ "$n" -eq 0 ]; then echo "WARN: no Gemma reads found to subsample — metaxpath runs on full data."; fi
               echo "::endgroup::"
             fi
             # fastq-checksum round-trips md5(file) vs the seeded checksum, which subsampling breaks,
