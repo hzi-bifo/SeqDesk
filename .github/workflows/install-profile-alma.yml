@@ -104,14 +104,33 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Free disk space on the runner /home (setup-miniconda needs ~1 GB there)
+      - name: Redirect caches to /net + free /home (the runner /home is a small shared NFS)
         run: |
           set +e
-          # The runner's /home is small and runs ~98% full, so conda-incubator/setup-miniconda@v3
-          # aborts with "Not enough free disk space" before any pipeline runs. Reclaim the cache
-          # dirs that accumulate on /home across runs — all re-created on demand, and the WARM
-          # pipeline conda *environments* live on /net/broker, so they are left untouched.
-          echo "free /home before Setup Miniconda — before:"; df -h "$HOME" 2>/dev/null | tail -1
+          # /home is a small, shared NFS that runs ~98% full, so conda-incubator/setup-miniconda@v3
+          # aborts with "Not enough free disk space" and the conda/npm/nextflow caches that pile up
+          # there bite recurringly. Two-part durable fix:
+          #  (1) REDIRECT the caches that land on /home onto /net (the big shared FS where the heavy
+          #      work already lives) for the rest of this job — so /home stops filling at the source;
+          #  (2) reclaim what is already on /home as a backstop.
+          # All of this is re-created on demand; the warm pipeline conda ENVS live on /net, untouched.
+          RC_NET=""
+          for cand in /net/broker/autotest/seqdesk-ci /net/broker /net/runner; do
+            if mkdir -p "$cand/seqdesk-runner-cache" 2>/dev/null; then RC_NET="$cand/seqdesk-runner-cache"; break; fi
+          done
+          if [ -n "$RC_NET" ]; then
+            mkdir -p "$RC_NET/conda-pkgs" "$RC_NET/nextflow-home" "$RC_NET/npm" "$RC_NET/xdg-cache" 2>/dev/null
+            {
+              echo "CONDA_PKGS_DIRS=$RC_NET/conda-pkgs"
+              echo "NXF_HOME=$RC_NET/nextflow-home"
+              echo "npm_config_cache=$RC_NET/npm"
+              echo "XDG_CACHE_HOME=$RC_NET/xdg-cache"
+            } >> "$GITHUB_ENV"
+            echo "Runner caches redirected to $RC_NET (off the shared NFS /home)"
+          else
+            echo "No writable /net root found — caches stay on /home; the cleanup below is the only mitigation."
+          fi
+          echo "free /home — before:"; df -h "$HOME" 2>/dev/null | tail -1
           rm -rf "$HOME/.cache"/* "$HOME/.npm/_cacache" 2>/dev/null
           rm -rf "$HOME/conda_pkgs_dir"/* "$HOME/.conda/pkgs"/* 2>/dev/null
           echo "after:"; df -h "$HOME" 2>/dev/null | tail -1
@@ -484,14 +503,33 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Free disk space on the runner /home (setup-miniconda needs ~1 GB there)
+      - name: Redirect caches to /net + free /home (the runner /home is a small shared NFS)
         run: |
           set +e
-          # The runner's /home is small and runs ~98% full, so conda-incubator/setup-miniconda@v3
-          # aborts with "Not enough free disk space" before any pipeline runs. Reclaim the cache
-          # dirs that accumulate on /home across runs — all re-created on demand, and the WARM
-          # pipeline conda *environments* live on /net/broker, so they are left untouched.
-          echo "free /home before Setup Miniconda — before:"; df -h "$HOME" 2>/dev/null | tail -1
+          # /home is a small, shared NFS that runs ~98% full, so conda-incubator/setup-miniconda@v3
+          # aborts with "Not enough free disk space" and the conda/npm/nextflow caches that pile up
+          # there bite recurringly. Two-part durable fix:
+          #  (1) REDIRECT the caches that land on /home onto /net (the big shared FS where the heavy
+          #      work already lives) for the rest of this job — so /home stops filling at the source;
+          #  (2) reclaim what is already on /home as a backstop.
+          # All of this is re-created on demand; the warm pipeline conda ENVS live on /net, untouched.
+          RC_NET=""
+          for cand in /net/broker/autotest/seqdesk-ci /net/broker /net/runner; do
+            if mkdir -p "$cand/seqdesk-runner-cache" 2>/dev/null; then RC_NET="$cand/seqdesk-runner-cache"; break; fi
+          done
+          if [ -n "$RC_NET" ]; then
+            mkdir -p "$RC_NET/conda-pkgs" "$RC_NET/nextflow-home" "$RC_NET/npm" "$RC_NET/xdg-cache" 2>/dev/null
+            {
+              echo "CONDA_PKGS_DIRS=$RC_NET/conda-pkgs"
+              echo "NXF_HOME=$RC_NET/nextflow-home"
+              echo "npm_config_cache=$RC_NET/npm"
+              echo "XDG_CACHE_HOME=$RC_NET/xdg-cache"
+            } >> "$GITHUB_ENV"
+            echo "Runner caches redirected to $RC_NET (off the shared NFS /home)"
+          else
+            echo "No writable /net root found — caches stay on /home; the cleanup below is the only mitigation."
+          fi
+          echo "free /home — before:"; df -h "$HOME" 2>/dev/null | tail -1
           rm -rf "$HOME/.cache"/* "$HOME/.npm/_cacache" 2>/dev/null
           rm -rf "$HOME/conda_pkgs_dir"/* "$HOME/.conda/pkgs"/* 2>/dev/null
           echo "after:"; df -h "$HOME" 2>/dev/null | tail -1

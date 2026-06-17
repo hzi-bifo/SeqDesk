@@ -127,7 +127,7 @@ describe("getReadCleaningPathIssues", () => {
     ).toEqual({ issues: [], warnings: [] });
   });
 
-  it("accepts a complete local Kraken2 database directory", () => {
+  it("rejects a kraken2 DB directory — detaxizer needs a .tar archive", () => {
     const dbDir = join(tmp, "k2db");
     mkdirSync(dbDir);
     for (const file of ["hash.k2d", "opts.k2d", "taxo.k2d"]) {
@@ -137,6 +137,25 @@ describe("getReadCleaningPathIssues", () => {
     const result = getReadCleaningPathIssues(
       READ_CLEANING_PIPELINE_ID,
       { classificationKraken2: true, kraken2Db: dbDir },
+      "local",
+    );
+
+    // detaxizer's KRAKEN2PREPARATION untars --kraken2db, so a directory cannot be used; the
+    // validator rejects it with a pack-command hint (accepting a directory was the bug).
+    expect(result.issues).toEqual([
+      `Kraken2 database for read-cleaning must be a .tar/.tar.gz archive, not a directory ` +
+        `(detaxizer untars --kraken2db): ${dbDir}. Pack it with: tar -cf kraken2_db.tar -C ${dbDir} .`,
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("accepts a local Kraken2 .tar.gz archive", () => {
+    const dbTar = join(tmp, "k2db.tar.gz");
+    writeFileSync(dbTar, "x");
+
+    const result = getReadCleaningPathIssues(
+      READ_CLEANING_PIPELINE_ID,
+      { classificationKraken2: true, kraken2Db: dbTar },
       "local",
     );
 
@@ -158,7 +177,7 @@ describe("getReadCleaningPathIssues", () => {
     ]);
   });
 
-  it("flags a local Kraken2 directory missing the expected index files", () => {
+  it("rejects a directory and notes any missing index files", () => {
     const dbDir = join(tmp, "k2db-partial");
     mkdirSync(dbDir);
     writeFileSync(join(dbDir, "hash.k2d"), "x");
@@ -170,7 +189,8 @@ describe("getReadCleaningPathIssues", () => {
     );
 
     expect(result.issues).toEqual([
-      `Kraken2 database at ${dbDir} is missing expected files: opts.k2d, taxo.k2d`,
+      `Kraken2 database for read-cleaning must be a .tar/.tar.gz archive, not a directory ` +
+        `(detaxizer untars --kraken2db): ${dbDir}. (it is also missing opts.k2d, taxo.k2d)`,
     ]);
   });
 
