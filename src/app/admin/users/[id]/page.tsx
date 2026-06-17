@@ -175,7 +175,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-2xl font-semibold">{user._count.orders}</p>
-              <p className="text-xs text-muted-foreground">Orders</p>
+              <p className="text-xs text-muted-foreground">Sequencing Orders</p>
             </div>
             <div>
               <p className="text-2xl font-semibold">{user._count.studies}</p>
@@ -194,7 +194,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
       {/* Recent Orders */}
       <div className="bg-white rounded-lg overflow-hidden mb-6">
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
-          <h2 className="text-sm font-medium">Recent Orders</h2>
+          <h2 className="text-sm font-medium">Recent Sequencing Orders</h2>
           {user._count.orders > 10 && (
             <Link href={`/orders?user=${user.id}`} className="text-xs text-primary hover:underline">
               View all
@@ -204,7 +204,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
 
         {user.orders.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            No orders yet
+            No sequencing orders yet
           </div>
         ) : (
           <div className="divide-y divide-stone-100">

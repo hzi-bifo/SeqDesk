@@ -90,7 +90,7 @@ Your sequencing order has been received and is now being processed.
 ### Next Steps
 
 1. **Prepare your samples** according to the guidelines provided
-2. **Label each sample** with the Sample ID shown in your order
+2. **Label each sample** with the Sample ID shown in your sequencing order
 3. **Ship samples to:**
 
    Sequencing Facility
@@ -98,7 +98,7 @@ Your sequencing order has been received and is now being processed.
    Lab Building, Room 456
    City, State 12345
 
-4. **Include a printed copy** of your order summary in the package
+4. **Include a printed copy** of your sequencing order summary in the package
 
 ### Important Notes
 
@@ -386,7 +386,7 @@ export default function FormBuilderPage() {
 
   const handleResetToDefaults = async () => {
     const confirmed = await confirm({
-      title: "Reset the order form fields to SeqDesk defaults?",
+      title: "Reset the sequencing order form fields to SeqDesk defaults?",
       description:
         "Export the current configuration first if you want a backup.",
       confirmLabel: "Reset to defaults",
@@ -582,12 +582,12 @@ export default function FormBuilderPage() {
     }
 
     if (fieldAdminOnly && !canCurrentFieldBeFacilityOnly) {
-      setError("This field type must remain visible in the main order flow");
+      setError("This field type must remain visible in the main sequencing order flow");
       return;
     }
 
     if (isCurrentTypeOrderOnly && fieldPerSample) {
-      setError(`${FIELD_TYPE_LABELS[fieldType]} fields can only be used as order-level fields`);
+      setError(`${FIELD_TYPE_LABELS[fieldType]} fields can only be used as sequencing order-level fields`);
       return;
     }
 
@@ -833,7 +833,7 @@ export default function FormBuilderPage() {
         if (manual) {
           setJustSaved(true);
           setTimeout(() => setJustSaved(false), 2000);
-          toast.success("Order form configuration saved");
+          toast.success("Sequencing Order form configuration saved");
         }
 
         return true;
@@ -1079,7 +1079,7 @@ export default function FormBuilderPage() {
 
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          const message = data.error || "Failed to import order settings";
+          const message = data.error || "Failed to import sequencing order settings";
           setError(message);
           toast.error(message);
           return;
@@ -1102,10 +1102,10 @@ export default function FormBuilderPage() {
       setImportDialogOpen(false);
       setPendingImport(null);
       setAutoSaveStatus("dirty");
-      toast.success("Order form configuration imported");
+      toast.success("Sequencing Order form configuration imported");
     } catch {
-      setError("Failed to import order settings");
-      toast.error("Failed to import order settings");
+      setError("Failed to import sequencing order settings");
+      toast.error("Failed to import sequencing order settings");
     } finally {
       setImportSaving(false);
     }
@@ -1156,7 +1156,7 @@ export default function FormBuilderPage() {
               value="fields"
               className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
             >
-              Per-Order Fields
+              Per-Sequencing Order Fields
             </TabsTrigger>
             <TabsTrigger
               value="per-sample"
@@ -1234,7 +1234,7 @@ export default function FormBuilderPage() {
 
     <PageContainer>
       <div className="mb-4 mt-6">
-        <h1 className="text-xl font-semibold">Order Configuration</h1>
+        <h1 className="text-xl font-semibold">Sequencing Order Configuration</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Define what information users provide when creating sequencing orders
         </p>
@@ -1279,15 +1279,15 @@ export default function FormBuilderPage() {
 
       {/* ===== Tab: Per-Order Fields ===== */}
       <TabsContent value="fields">
-      <HelpBox title="What are per-order fields?">
-        Per-order fields are filled once per order. They capture information that applies to the entire sequencing request,
+      <HelpBox title="What are per-sequencing order fields?">
+        Per-sequencing order fields are filled once per sequencing order. They capture information that applies to the entire sequencing request,
         such as the project name, sequencing parameters, or billing details. Internal facility-only fields are managed
         separately in the Facility Fields tab.
       </HelpBox>
 
       <GlassCard className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold">User-Facing Per-Order Fields</h2>
+          <h2 className="text-base font-semibold">User-Facing Per-Sequencing Order Fields</h2>
           <Button
             onClick={() => handleAddField(false)}
             variant="outline"
@@ -1418,7 +1418,7 @@ export default function FormBuilderPage() {
           )})}
           {userOrderFields.length === 0 && (
             <div className="text-center py-6 text-muted-foreground border border-dashed rounded-lg">
-              No user-facing order fields defined yet.
+              No user-facing sequencing order fields defined yet.
             </div>
           )}
         </div>
@@ -1428,7 +1428,7 @@ export default function FormBuilderPage() {
       {generalTemplates.length > 0 && (
         <GlassCard className="p-6 mt-4">
           <div className="mb-4">
-            <h3 className="text-sm font-medium">Suggested Order Fields</h3>
+            <h3 className="text-sm font-medium">Suggested Sequencing Order Fields</h3>
             <p className="text-sm text-muted-foreground">
               Common fields for sequencing orders. Click to add.
             </p>
@@ -2235,17 +2235,17 @@ export default function FormBuilderPage() {
       {/* ===== Tab: Facility Fields ===== */}
       <TabsContent value="facility">
       <HelpBox title="What are facility fields?">
-        Facility fields are internal annotations used by the sequencing team after an order is submitted.
-        They stay hidden from the customer and can be defined separately for the full order or for each sample.
+        Facility fields are internal annotations used by the sequencing team after a sequencing order is submitted.
+        They stay hidden from the customer and can be defined separately for the full sequencing order or for each sample.
       </HelpBox>
 
       <div className="space-y-4">
         <GlassCard className="p-6">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-semibold">Order-Level Facility Fields</h2>
+              <h2 className="text-base font-semibold">Sequencing Order-Level Facility Fields</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Internal order metadata such as intake notes, QC summaries, or delivery annotations.
+                Internal sequencing order metadata such as intake notes, QC summaries, or delivery annotations.
               </p>
             </div>
             <Button
@@ -2255,7 +2255,7 @@ export default function FormBuilderPage() {
               className="bg-white"
             >
               <Plus className="mr-2 h-4 w-4" />
-              Add Internal Order Field
+              Add Internal Sequencing Order Field
             </Button>
           </div>
 
@@ -2295,7 +2295,7 @@ export default function FormBuilderPage() {
                         Hidden from users
                       </span>
                       <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                        Order-level
+                        Sequencing Order-level
                       </span>
                       {field.isSystem && (
                         <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
@@ -2355,7 +2355,7 @@ export default function FormBuilderPage() {
             })}
             {facilityOrderFields.length === 0 && (
               <div className="rounded-lg border border-dashed py-6 text-center text-muted-foreground">
-                No internal order-level fields defined yet.
+                No internal sequencing order-level fields defined yet.
               </div>
             )}
           </div>
@@ -2486,7 +2486,7 @@ export default function FormBuilderPage() {
           <h2 className="text-base font-semibold">Advanced Settings</h2>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
-          Configure post-submission behavior and data handling policies for orders.
+          Configure post-submission behavior and data handling policies for sequencing orders.
         </p>
 
         <div className="space-y-4">
@@ -2499,7 +2499,7 @@ export default function FormBuilderPage() {
               <div>
                 <h3 className="text-sm font-medium">Post-Submission Instructions</h3>
                 <p className="text-sm text-muted-foreground">
-                  Instructions shown to users after they submit an order
+                  Instructions shown to users after they submit a sequencing order
                 </p>
               </div>
             </div>
@@ -2509,12 +2509,12 @@ export default function FormBuilderPage() {
                 <RichMarkdownEditor
                   value={postSubmissionInstructions}
                   onChange={setPostSubmissionInstructions}
-                  placeholder="Enter instructions shown to users after order submission..."
+                  placeholder="Enter instructions shown to users after sequencing order submission..."
                   disabled={instructionsSaving}
                   minHeightClassName="min-h-[240px]"
                 />
                 <p className="text-xs text-muted-foreground mt-2">
-                  Formatting is saved as Markdown and shown after order submission.
+                  Formatting is saved as Markdown and shown after sequencing order submission.
                 </p>
               </div>
 
@@ -2549,11 +2549,11 @@ export default function FormBuilderPage() {
                   <div className="flex items-center justify-between">
                     <div className="space-y-1">
                       <Label htmlFor="allow-delete-submitted" className="text-sm font-medium flex items-center gap-2">
-                        Allow Deletion of Submitted Orders
+                        Allow Deletion of Submitted Sequencing Orders
                         <AlertTriangle className="h-4 w-4 text-amber-500" />
                       </Label>
                       <p className="text-sm text-muted-foreground">
-                        When enabled, facility admins can delete orders even after they have been submitted.
+                        When enabled, facility admins can delete sequencing orders even after they have been submitted.
                         This is useful for testing but should be disabled in production to prevent data loss.
                       </p>
                     </div>
@@ -2634,7 +2634,7 @@ export default function FormBuilderPage() {
           <GlassCard className="mt-4 p-6">
             <h3 className="text-sm font-medium mb-2">Reset to Defaults</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Restore SeqDesk&apos;s built-in order fields and fixed sections. This does not change post-submission instructions or data handling settings.
+              Restore SeqDesk&apos;s built-in sequencing order fields and fixed sections. This does not change post-submission instructions or data handling settings.
             </p>
             <Button onClick={handleResetToDefaults} variant="outline" size="sm">
               Reset to Defaults
@@ -2804,7 +2804,7 @@ export default function FormBuilderPage() {
                     <p className="text-xs text-muted-foreground">
                       {automaticFieldSectionLabel
                         ? "This field is placed automatically based on its scope."
-                        : "Choose which fixed section users see this field under during order entry."}
+                        : "Choose which fixed section users see this field under during sequencing order entry."}
                     </p>
                   </div>
                 </div>
@@ -2836,7 +2836,7 @@ export default function FormBuilderPage() {
                       title={
                         canCurrentFieldBeFacilityOnly || fieldAdminOnly
                           ? "Only visible to facility admins"
-                          : "System and module-managed fields must stay visible in the main order flow"
+                          : "System and module-managed fields must stay visible in the main sequencing order flow"
                       }
                     >
                       <input
@@ -2872,7 +2872,7 @@ export default function FormBuilderPage() {
                               : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        Order-level
+                        Sequencing Order-level
                       </button>
                       <button
                         type="button"
@@ -2905,12 +2905,12 @@ export default function FormBuilderPage() {
                 )}
                 {!fieldPerSample && (
                   <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
-                    <strong>Order Field:</strong> This field will be filled once when creating the order and shown in its selected fixed section.
+                    <strong>Sequencing Order Field:</strong> This field will be filled once when creating the sequencing order and shown in its selected fixed section.
                   </div>
                 )}
                 {isCurrentTypeOrderOnly && (
                   <div className="p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
-                    <strong>Scope locked:</strong> {FIELD_TYPE_LABELS[fieldType]} fields are rendered in the main order flow, so they are always order-level.
+                    <strong>Scope locked:</strong> {FIELD_TYPE_LABELS[fieldType]} fields are rendered in the main sequencing order flow, so they are always sequencing order-level.
                   </div>
                 )}
 
@@ -2921,7 +2921,7 @@ export default function FormBuilderPage() {
                 )}
                 {!canCurrentFieldBeFacilityOnly && (
                   <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
-                    <strong>Main Flow Field:</strong> System and module-managed fields must stay visible in the user-facing order flow.
+                    <strong>Main Flow Field:</strong> System and module-managed fields must stay visible in the user-facing sequencing order flow.
                   </div>
                 )}
 

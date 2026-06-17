@@ -45,7 +45,7 @@ export async function PUT(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    if (error instanceof Error && error.message === "Order not found") {
+    if (error instanceof Error && error.message === "Sequencing Order not found") {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
@@ -140,7 +140,7 @@ export async function PATCH(
     }
     if (
       error instanceof Error &&
-      (error.message === "Order not found" ||
+      (error.message === "Sequencing Order not found" ||
         error.message === "Sample not found" ||
         error.message === "Read record not found")
     ) {

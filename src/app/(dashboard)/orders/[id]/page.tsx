@@ -414,9 +414,9 @@ export default function OrderDetailPage({
           } catch {
             // Ignore fallback lookup errors and show default order error.
           }
-          setError("Order not found");
+          setError("Sequencing Order not found");
         } else if (res.status === 403) {
-          setError("You don't have permission to view this order");
+          setError("You don't have permission to view this sequencing order");
         } else {
           throw new Error("Failed to fetch order");
         }
@@ -425,7 +425,7 @@ export default function OrderDetailPage({
       const data = await res.json();
       setOrder(data);
     } catch {
-      setError("Failed to load order");
+      setError("Failed to load sequencing order");
     } finally {
       if (!options?.silent) {
         setLoading(false);
@@ -576,7 +576,7 @@ export default function OrderDetailPage({
     const isSubmitted = order.status !== "DRAFT";
 
     if (isSubmitted && deleteConfirmText !== "DELETE") {
-      setError("You must type DELETE to confirm deletion of a submitted order.");
+      setError("You must type DELETE to confirm deletion of a submitted sequencing order.");
       return;
     }
 
@@ -589,13 +589,13 @@ export default function OrderDetailPage({
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to delete order");
+        setError(data.error || "Failed to delete sequencing order");
         return;
       }
 
       router.push("/orders");
     } catch {
-      setError("Failed to delete order");
+      setError("Failed to delete sequencing order");
     } finally {
       setUpdating(false);
     }
@@ -847,7 +847,7 @@ export default function OrderDetailPage({
         <Button variant="ghost" size="sm" asChild className="mb-4">
           <Link href="/orders">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Orders
+            Back to Sequencing Orders
           </Link>
         </Button>
         <div className="bg-card rounded-lg border p-8 text-center">
@@ -1026,7 +1026,7 @@ export default function OrderDetailPage({
     <>
       <PageContainer>
         {error && (
-          <PageNotice variant="error" title="Order action failed" className="mb-6 rounded-xl border">
+          <PageNotice variant="error" title="Sequencing Order action failed" className="mb-6 rounded-xl border">
             {renderOrderDeleteError(error)}
           </PageNotice>
         )}
@@ -1047,9 +1047,9 @@ export default function OrderDetailPage({
 
             return (
               <div className="mb-4 rounded-lg border bg-card p-5">
-                <h3 className="mb-4 text-base font-semibold">Order Process</h3>
+                <h3 className="mb-4 text-base font-semibold">Sequencing Order Process</h3>
                 <div className="space-y-3">
-                  {/* Step 1: Order Submitted */}
+                  {/* Step 1: Sequencing Order Submitted */}
                   <div className="rounded-lg border bg-background p-3">
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -1061,7 +1061,7 @@ export default function OrderDetailPage({
                         >
                           1
                         </span>
-                        <span className="text-sm font-medium">Order Submitted</span>
+                        <span className="text-sm font-medium">Sequencing Order Submitted</span>
                       </div>
                       <span className="text-xs text-muted-foreground">{isSubmitted ? "Done" : "Pending"}</span>
                     </div>
@@ -1103,7 +1103,7 @@ export default function OrderDetailPage({
                       </div>
                     </div>
                     {!isSubmitted ? (
-                      <p className="text-xs text-muted-foreground">Submit order first to unlock shipping instructions</p>
+                      <p className="text-xs text-muted-foreground">Submit sequencing order first to unlock shipping instructions</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {samplesSentNote ? (
@@ -1160,7 +1160,7 @@ export default function OrderDetailPage({
                     ) : isSubmitted ? (
                       <p className="text-xs text-muted-foreground">Waiting for sequencing files from the institution</p>
                     ) : (
-                      <p className="text-xs text-muted-foreground">Submit order first</p>
+                      <p className="text-xs text-muted-foreground">Submit sequencing order first</p>
                     )}
                   </div>
                 </div>
@@ -1174,7 +1174,7 @@ export default function OrderDetailPage({
                 <div>
                   <h2 className="text-sm font-semibold">Analysis results</h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Pipeline outputs released by the facility for this order.
+                    Pipeline outputs released by the facility for this sequencing order.
                   </p>
                 </div>
                 {publishedRunsLoading && (
@@ -1294,7 +1294,7 @@ export default function OrderDetailPage({
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <HardDrive className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">
-                            {group.sampleCode ?? "Order reads"}
+                            {group.sampleCode ?? "Sequencing Order reads"}
                           </span>
                           {group.sampleTitle ? (
                             <span className="text-sm text-muted-foreground">
@@ -1369,7 +1369,7 @@ export default function OrderDetailPage({
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant="outline">
-                                    {file.sampleCode ?? "Order"}
+                                    {file.sampleCode ?? "Sequencing Order"}
                                   </Badge>
                                   <span className="truncate text-sm font-medium">
                                     {file.label}
@@ -1535,7 +1535,7 @@ export default function OrderDetailPage({
                     </div>
                   ) : (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
-                      No MIxS checklist selected for this order.
+                      No MIxS checklist selected for this sequencing order.
                     </div>
                   )}
                 </div>
@@ -1639,7 +1639,7 @@ export default function OrderDetailPage({
                   id={getFacilityFieldSubsectionAnchorId("order-fields")}
                   className="bg-card rounded-lg border overflow-hidden mb-4 scroll-mt-20"
                 >
-                  {renderStepHeader("Order Fields", "_facility", {
+                  {renderStepHeader("Sequencing Order Fields", "_facility", {
                     href: `/orders/${order.id}/edit?step=_facility&scope=facility`,
                   })}
                   {facilityOverviewRows.length > 0 || fallbackAdminRows.length > 0 ? (
@@ -1665,7 +1665,7 @@ export default function OrderDetailPage({
                     </div>
                   ) : (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
-                      No internal order-level fields are configured yet.
+                      No internal sequencing-order-level fields are configured yet.
                     </div>
                   )}
                 </div>
@@ -1681,7 +1681,7 @@ export default function OrderDetailPage({
                   })}
                   {order.samples.length === 0 ? (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
-                      No samples have been added to this order yet.
+                      No samples have been added to this sequencing order yet.
                     </div>
                   ) : visibleAdminSampleFields.length === 0 ? (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
@@ -1736,15 +1736,15 @@ export default function OrderDetailPage({
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold">Order Information</h2>
+                  <h2 className="text-sm font-semibold">Sequencing Order Information</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Update the order details, contact, or metadata fields.
+                    Update the sequencing order details, contact, or metadata fields.
                   </p>
                 </div>
                 <Button size="sm" variant="outline" asChild>
                   <Link href={`/orders/${order.id}/edit`}>
                     <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                    Change Order Information
+                    Change Sequencing Order Information
                   </Link>
                 </Button>
               </div>
@@ -1888,14 +1888,14 @@ export default function OrderDetailPage({
           </div>
           )}
 
-          {/* Delete Order */}
+          {/* Delete Sequencing Order */}
           {activeSection === "overview" && (isOwner || isFacilityAdmin) && (order.status === "DRAFT" || isFacilityAdmin) && (
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold">Delete Order</h2>
+                  <h2 className="text-sm font-semibold">Delete Sequencing Order</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Permanently remove this order and all its data.
+                    Permanently remove this sequencing order and all its data.
                   </p>
                 </div>
                 <Button
@@ -2028,12 +2028,12 @@ export default function OrderDetailPage({
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Delete Order</DialogTitle>
+            <DialogTitle className="text-destructive">Delete Sequencing Order</DialogTitle>
             <DialogDescription>
               {order?.status !== "DRAFT" ? (
                 <>
                   <p className="mb-2">
-                    <strong>Warning:</strong> This order has been submitted (status: {order?.status}).
+                    <strong>Warning:</strong> This sequencing order has been submitted (status: {order?.status}).
                   </p>
                   <p className="mb-2">Deleting will permanently remove:</p>
                   <ul className="list-disc list-inside mb-4 text-sm">
@@ -2052,7 +2052,7 @@ export default function OrderDetailPage({
                   />
                 </>
               ) : (
-                <p>Are you sure you want to delete this order? This cannot be undone.</p>
+                <p>Are you sure you want to delete this sequencing order? This cannot be undone.</p>
               )}
             </DialogDescription>
           </DialogHeader>
@@ -2065,7 +2065,7 @@ export default function OrderDetailPage({
               onClick={handleDeleteConfirm}
               disabled={order?.status !== "DRAFT" && deleteConfirmText !== "DELETE"}
             >
-              Delete Order
+              Delete Sequencing Order
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -50,14 +50,14 @@ describe("GET /api/orders/[id]/sequencing/delivery", () => {
   it("returns access errors from the delivery gate", async () => {
     mocks.assertSequencingDeliveryAccess.mockResolvedValue({
       status: 403,
-      body: { error: "Sequencing files are not available for this order" },
+      body: { error: "Sequencing files are not available for this sequencing order" },
     });
 
     const response = await GET(new Request("http://localhost"), routeContext);
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "Sequencing files are not available for this order",
+      error: "Sequencing files are not available for this sequencing order",
     });
     expect(mocks.buildOrderSequencingDeliverySummary).not.toHaveBeenCalled();
   });

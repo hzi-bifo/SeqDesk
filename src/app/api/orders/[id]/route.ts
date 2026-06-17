@@ -227,7 +227,7 @@ export async function GET(
     const order = await getOrderWithResolvedRelations(id, { isFacilityAdmin });
 
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     // Check permission: must be owner or facility admin
@@ -267,7 +267,7 @@ export async function PUT(
     });
 
     if (!existing) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     const {
@@ -485,7 +485,7 @@ export async function DELETE(
     });
 
     if (!existing) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     // Only owner or facility admin can delete

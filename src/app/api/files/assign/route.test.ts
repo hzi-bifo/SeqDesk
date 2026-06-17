@@ -293,7 +293,7 @@ describe("POST /api/files/assign", () => {
     );
     expect(statusError.status).toBe(400);
     expect(await statusError.json()).toEqual({
-      error: "Order status 'DRAFT' does not allow file assignment",
+      error: "Sequencing Order status 'DRAFT' does not allow file assignment",
     });
 
     mocks.fs.access.mockRejectedValueOnce(new Error("missing"));

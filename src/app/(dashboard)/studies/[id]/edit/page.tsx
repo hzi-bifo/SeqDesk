@@ -946,7 +946,9 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const res = await fetch("/api/study-form-schema");
+        const res = await fetch(
+          `/api/study-form-schema${activeStudyId ? `?studyId=${encodeURIComponent(activeStudyId)}` : ""}`
+        );
         if (res.ok) {
           const data = await res.json();
           setFormConfig(data);
@@ -960,7 +962,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
       }
     };
     fetchConfig();
-  }, []);
+  }, [activeStudyId]);
 
   // Fetch MIxS template when checklist type changes
   useEffect(() => {

@@ -1103,7 +1103,7 @@ export function OrderWizardPage({
       try {
         const res = await fetch(`/api/orders/${editOrderId}`);
         if (!res.ok) {
-          setError("Failed to load order for editing");
+          setError("Failed to load sequencing order for editing");
           setLoadingOrder(false);
           return;
         }
@@ -1212,7 +1212,7 @@ export function OrderWizardPage({
         }
       } catch (err) {
         console.error("Failed to load order:", err);
-        setError("Failed to load order for editing");
+        setError("Failed to load sequencing order for editing");
       } finally {
         setLoadingOrder(false);
       }
@@ -1350,8 +1350,8 @@ export function OrderWizardPage({
       ? [
           {
             id: "_facility",
-            title: "Order Fields",
-            description: "Internal order-level facility fields",
+            title: "Sequencing Order Fields",
+            description: "Internal sequencing-order-level facility fields",
             icon: ClipboardPen,
           },
         ]
@@ -1926,7 +1926,7 @@ export function OrderWizardPage({
 
         if (!res.ok) {
           const data = await res.json();
-          setError(data.error || "Failed to update order");
+          setError(data.error || "Failed to update sequencing order");
           return;
         }
 
@@ -1990,7 +1990,7 @@ export function OrderWizardPage({
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to create order");
+        setError(data.error || "Failed to create sequencing order");
         return;
       }
 
@@ -2048,14 +2048,14 @@ export function OrderWizardPage({
         }
       } catch {
         // Use default if fetch fails
-        setSubmissionInstructions("Your order has been submitted successfully. Please prepare and ship your samples according to the facility guidelines.");
+        setSubmissionInstructions("Your sequencing order has been submitted successfully. Please prepare and ship your samples according to the facility guidelines.");
       }
 
       // Show success dialog instead of redirecting
       setCreatedOrderId(order.id);
       setSubmissionDialogOpen(true);
     } catch {
-      setError("Failed to create order");
+      setError("Failed to create sequencing order");
     } finally {
       setSaving(false);
     }
@@ -3401,7 +3401,7 @@ export function OrderWizardPage({
                     </div>
                   </div>
                   <p className="mt-2 text-xs text-emerald-600">
-                    These metadata fields will be collected when adding samples to this order.
+                    These metadata fields will be collected when adding samples to this sequencing order.
                   </p>
                 </div>
               </div>
@@ -3488,8 +3488,8 @@ export function OrderWizardPage({
                   </p>
                   <p className="mt-1 text-sm text-green-600 dark:text-green-500">
                     {isEditMode
-                      ? `Your changes to this order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} are ready to be saved.`
-                      : `Your order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} is ready. After submitting, you can edit samples and track progress from the order page.`}
+                      ? `Your changes to this sequencing order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} are ready to be saved.`
+                      : `Your sequencing order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} is ready. After submitting, you can edit samples and track progress from the sequencing order page.`}
                   </p>
                 </div>
               )}
@@ -3587,10 +3587,10 @@ export function OrderWizardPage({
   const showSubmittedOrderNotice =
     isEditMode && editOrderStatus !== null && editOrderStatus !== "DRAFT";
   const submittedOrderNoticeTitle =
-    editOrderStatus === "COMPLETED" ? "Completed order" : "Submitted order";
+    editOrderStatus === "COMPLETED" ? "Completed sequencing order" : "Submitted sequencing order";
   const submittedOrderNoticeText = isFacilityScopedEdit
     ? "Core sample metadata is read-only. Facility fields can still be updated here."
-    : "Sample rows are read-only. Order fields can still be updated.";
+    : "Sample rows are read-only. Sequencing order fields can still be updated.";
 
   return (
     <div className="p-8">
@@ -3611,7 +3611,7 @@ export function OrderWizardPage({
             {isFacilityScopedEdit
               ? "Edit Facility Fields"
               : isEditMode
-                ? "Edit Order"
+                ? "Edit Sequencing Order"
                 : "New Sequencing Order"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -3641,7 +3641,7 @@ export function OrderWizardPage({
                 setError("");
                 navigateToStepId(step.id);
               }}
-              ariaLabel="Order form progress"
+              ariaLabel="Sequencing Order form progress"
             />
           </div>
         )}
@@ -3741,7 +3741,7 @@ export function OrderWizardPage({
                   {isFacilityScopedEdit
                     ? "Save Facility Fields"
                     : isEditMode
-                      ? "Update Order"
+                      ? "Update Sequencing Order"
                       : "Submit for Sequencing"}
                 </Button>
               );
@@ -3773,7 +3773,7 @@ export function OrderWizardPage({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <CheckCircle2 className="h-6 w-6 text-green-500" />
-              Order Submitted
+              Sequencing Order Submitted
             </DialogTitle>
           </DialogHeader>
 
@@ -3804,7 +3804,7 @@ export function OrderWizardPage({
                 }
               }}
             >
-              View Order
+              View Sequencing Order
             </Button>
             <Button
               onClick={() => {

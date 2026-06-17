@@ -142,13 +142,13 @@ describe("GET /api/orders/[id]/files", () => {
     expect(await forbidden.json()).toEqual({ error: "Forbidden" });
 
     mocks.requireFacilityAdminSequencingSession.mockResolvedValue(undefined);
-    mocks.getOrderSequencingSummary.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.getOrderSequencingSummary.mockRejectedValueOnce(new Error("Sequencing Order not found"));
 
     const missing = await GET(new Request("http://localhost"), {
       params: Promise.resolve({ id: "order-1" }),
     });
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
   });
 });
 

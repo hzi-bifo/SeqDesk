@@ -19,7 +19,7 @@ export async function GET(
       select: { id: true },
     });
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") ?? "";

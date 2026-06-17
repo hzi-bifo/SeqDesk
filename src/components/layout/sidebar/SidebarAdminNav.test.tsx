@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ModuleProvider } from "@/lib/modules";
 
 const fetchMock = vi.fn();
 
@@ -70,6 +71,50 @@ describe("SidebarAdminNav", () => {
     vi.unstubAllGlobals();
   });
 
+  it("links to Study Forms by default (dynamic-studies module off)", () => {
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Study Forms" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Define Studies" })).toBeNull();
+  });
+
+  it("links to Define Studies when the dynamic-studies module is enabled", async () => {
+    // ModuleProvider fetches /api/modules; the nav also fetches readiness.
+    fetchMock.mockImplementation((url: string | URL) =>
+      Promise.resolve(
+        String(url).includes("/api/modules")
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                modules: { "dynamic-studies": true },
+                globalDisabled: false,
+              }),
+            }
+          : readinessResponse({
+              ready: true,
+              requiredMissing: [],
+              recommendedMissing: [],
+              firstMissingHref: "/admin/data-compute",
+              missingItems: [],
+            })
+      )
+    );
+
+    render(
+      <ModuleProvider>
+        <SidebarAdminNav collapsed={false} unreadMessages={0} />
+      </ModuleProvider>
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Define Studies" })).toBeTruthy()
+    );
+    expect(screen.queryByRole("link", { name: "Study Forms" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Define Studies" }).getAttribute("href")
+    ).toBe("/admin/study-definitions");
+  });
+
   it("renders the expanded admin nav with the MIxS Checklists link and settings items", async () => {
     render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
 
@@ -86,7 +131,7 @@ describe("SidebarAdminNav", () => {
     expect(screen.getByRole("link", { name: "Researchers" }).getAttribute("href")).toBe(
       "/admin/users"
     );
-    expect(screen.getByRole("link", { name: "Order Form" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "Sequencing Order Form" }).getAttribute("href")).toBe(
       "/admin/form-builder"
     );
     expect(screen.getByRole("link", { name: "Sequencers" }).getAttribute("href")).toBe(
@@ -97,7 +142,7 @@ describe("SidebarAdminNav", () => {
     );
 
     // The settings section is active because the path is a config page.
-    expect(screen.getByRole("link", { name: "Order Form" }).className).toContain("bg-secondary");
+    expect(screen.getByRole("link", { name: "Sequencing Order Form" }).className).toContain("bg-secondary");
   });
 
   it("shows the unread support badge and toggles the accounts section", () => {

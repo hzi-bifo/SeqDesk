@@ -905,7 +905,7 @@ export default function SamplesPage({
         const orderRes = await fetch(`/api/orders/${resolvedParams.id}`);
         if (!orderRes.ok) {
           if (orderRes.status === 404) {
-            setError("Order not found");
+            setError("Sequencing Order not found");
           } else {
             throw new Error("Failed to fetch order");
           }
@@ -1418,7 +1418,7 @@ export default function SamplesPage({
         <Button variant="ghost" size="sm" asChild className="mb-4">
           <Link href="/orders">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Orders
+            Back to Sequencing Orders
           </Link>
         </Button>
         <GlassCard className="p-8 text-center">
@@ -1557,7 +1557,7 @@ export default function SamplesPage({
           )}
           {!isEditable && (
             <PageNotice variant="warning" title="Read-only samples" className={isFullscreen ? "px-4" : "px-8"}>
-              This order has been submitted. Sample rows cannot be edited from this view.
+              This sequencing order has been submitted. Sample rows cannot be edited from this view.
             </PageNotice>
           )}
         </div>
@@ -1727,7 +1727,7 @@ export default function SamplesPage({
             <Button variant="outline" asChild>
               <Link href={`/orders/${resolvedParams.id}`}>
                 <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Order
+                Back to Sequencing Order
               </Link>
             </Button>
           )}

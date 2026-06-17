@@ -153,7 +153,7 @@ export async function GET(
     });
 
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     if (!isFacilityAdmin && order.userId !== session.user.id) {
@@ -208,7 +208,7 @@ export async function POST(
     });
 
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     if (!isFacilityAdmin && order.userId !== session.user.id) {

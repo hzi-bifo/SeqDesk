@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, use, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useModuleEnabled } from "@/lib/modules";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -378,6 +379,7 @@ export default function StudyDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
   const searchParams = useSearchParams();
   const { data: session } = useSession();
   const [study, setStudy] = useState<Study | null>(null);
@@ -497,7 +499,7 @@ export default function StudyDetailPage({
   }, [fetchStudy]);
 
   useEffect(() => {
-    fetch("/api/study-form-schema")
+    fetch(`/api/study-form-schema?studyId=${encodeURIComponent(id)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: StudyFormSchemaResponse | null) => {
         const schemaStudyFields = (data?.studyFields ?? data?.fields ?? [])
@@ -520,7 +522,7 @@ export default function StudyDetailPage({
         setStudyModules({});
         setStudySchemaLoaded(true);
       });
-  }, []);
+  }, [id]);
 
   // ENA credentials check - runs when user visits the ENA registration page
   useEffect(() => {
@@ -2399,14 +2401,20 @@ export default function StudyDetailPage({
           <DialogHeader>
             <DialogTitle>Delete Study</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this study? Samples will be unassigned but not deleted. This action cannot be undone.
+              {dynamicStudiesEnabled && (study?.samples?.length ?? 0) > 0
+                ? `This study has ${study?.samples?.length} assigned sample${(study?.samples?.length ?? 0) === 1 ? "" : "s"}. With per-study questionnaires enabled, reassign or remove its samples (from each sequencing order's Studies tab) before deleting it.`
+                : "Are you sure you want to delete this study? Samples will be unassigned but not deleted. This action cannot be undone."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteStudy} disabled={deleting}>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteStudy}
+              disabled={deleting || (dynamicStudiesEnabled && (study?.samples?.length ?? 0) > 0)}
+            >
               {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Delete Study
             </Button>

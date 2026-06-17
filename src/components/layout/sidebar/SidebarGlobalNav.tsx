@@ -49,7 +49,7 @@ export function SidebarGlobalNav({
   const items = [
     {
       href: "/orders",
-      label: "Orders",
+      label: "Sequencing Orders",
       icon: FileText,
       count: counts.orders,
       show: true,

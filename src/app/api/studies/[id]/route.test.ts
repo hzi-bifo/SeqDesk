@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   loadStudyFormSchema: vi.fn(),
+  parseStudyModulesConfig: vi.fn(),
+  isStudyModuleEnabled: vi.fn(),
   db: {
     study: {
       findUnique: vi.fn(),
@@ -14,6 +16,10 @@ const mocks = vi.hoisted(() => ({
     sample: {
       findMany: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
+    },
+    siteSettings: {
+      findUnique: vi.fn(),
     },
     assembly: {
       findMany: vi.fn(),
@@ -38,6 +44,8 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/studies/schema", () => ({
   loadStudyFormSchema: mocks.loadStudyFormSchema,
+  parseStudyModulesConfig: mocks.parseStudyModulesConfig,
+  isStudyModuleEnabled: mocks.isStudyModuleEnabled,
 }));
 
 import { GET, PUT, DELETE } from "./route";
@@ -250,6 +258,10 @@ describe("DELETE /api/studies/[id]", () => {
     mocks.db.study.findFirst.mockResolvedValue(null);
     mocks.db.sample.updateMany.mockResolvedValue({ count: 0 });
     mocks.db.study.delete.mockResolvedValue({ id: "study-1" });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
+    mocks.parseStudyModulesConfig.mockReturnValue({ modules: {}, globalDisabled: false });
+    mocks.isStudyModuleEnabled.mockReturnValue(false);
+    mocks.db.sample.count.mockResolvedValue(0);
     setupFindUniqueMock();
   });
 
@@ -301,6 +313,36 @@ describe("DELETE /api/studies/[id]", () => {
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     setupFindUniqueMock({ userId: "user-1" });
+
+    const req = new NextRequest(BASE_URL, { method: "DELETE" });
+    const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.db.study.delete).toHaveBeenCalled();
+  });
+
+  it("blocks deletion when dynamic-studies is enabled and the study has samples", async () => {
+    mocks.isStudyModuleEnabled.mockReturnValue(true);
+    mocks.db.sample.count.mockResolvedValue(3);
+
+    const req = new NextRequest(BASE_URL, { method: "DELETE" });
+    const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(409);
+    expect(mocks.db.study.delete).not.toHaveBeenCalled();
+  });
+
+  it("allows deletion when dynamic-studies is enabled but the study has no samples", async () => {
+    mocks.isStudyModuleEnabled.mockReturnValue(true);
+    mocks.db.sample.count.mockResolvedValue(0);
+
+    const req = new NextRequest(BASE_URL, { method: "DELETE" });
+    const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.db.study.delete).toHaveBeenCalled();
+  });
+
+  it("does not block deletion of a study with samples when dynamic-studies is off", async () => {
+    mocks.isStudyModuleEnabled.mockReturnValue(false);
+    mocks.db.sample.count.mockResolvedValue(3); // would block if the flag were on
 
     const req = new NextRequest(BASE_URL, { method: "DELETE" });
     const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });

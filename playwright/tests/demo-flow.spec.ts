@@ -7,7 +7,7 @@ async function openDemo(page: Page, path = "/demo") {
   await page.goto(path);
   await expect(page).toHaveURL(/\/orders$/);
   await expect(
-    page.getByRole("heading", { name: /^(My Orders|All Orders)$/ })
+    page.getByRole("heading", { name: /^(My|All|Department) Sequencing Orders$/ })
   ).toBeVisible();
   await expect(page.getByTestId("demo-reset-button")).toBeVisible();
 }
@@ -58,7 +58,7 @@ test("public demo boots with seeded researcher data and hides infra-backed tabs"
 
   const seededOrderId = await fetchOrderIdByName(page, "Gut recovery metagenome cohort");
   await page.goto(`/orders/${seededOrderId}`);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByText("Projects")).toBeVisible();
   await expect(page.getByRole("tab", { name: /Read Files/i })).toHaveCount(0);
   await expect(page.getByText("Manage Files")).toHaveCount(0);
@@ -79,7 +79,7 @@ test("demo changes persist in one browser session and disappear after reset", as
   const { orderPath } = await createDraftOrder(page, orderName, 1);
 
   await page.goto(orderPath);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
 
   await expectOrderInApi(page, orderName, true);
 
@@ -88,7 +88,7 @@ test("demo changes persist in one browser session and disappear after reset", as
 
   await page.getByTestId("demo-reset-button").click();
   await expect(page).toHaveURL(/\/orders$/);
-  await expect(page.getByRole("heading", { name: /^(My Orders|All Orders)$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^(My|All|Department) Sequencing Orders$/ })).toBeVisible();
 
   await expectOrderInApi(page, orderName, false);
 });

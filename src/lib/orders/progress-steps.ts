@@ -96,7 +96,7 @@ export function buildOrderProgressSteps({
     steps.push({
       id: "_ungrouped",
       label: "Additional Details",
-      description: "Other order information",
+      description: "Other sequencing order information",
       icon: "ClipboardList",
       kind: "ungrouped",
     });
@@ -118,7 +118,7 @@ export function buildOrderProgressSteps({
   steps.push({
     id: "samples",
     label: "Samples",
-    description: "Add your samples to this order",
+    description: "Add your samples to this sequencing order",
     icon: "Table",
     kind: "samples",
   });
@@ -136,7 +136,7 @@ export function buildOrderProgressSteps({
   steps.push({
     id: "review",
     label: "Review",
-    description: "Review and submit your order",
+    description: "Review and submit your sequencing order",
     icon: "CheckCircle2",
     kind: "review",
   });

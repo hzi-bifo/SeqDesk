@@ -47,7 +47,7 @@ export function SidebarEntitySwitcher({
 
   if (collapsed) {
     const ActiveIcon = activeTab === "orders" ? Inbox : BookOpen;
-    const activeLabel = activeTab === "orders" ? "Orders" : "Studies";
+    const activeLabel = activeTab === "orders" ? "Sequencing Orders" : "Studies";
 
     return (
       <>
@@ -100,7 +100,7 @@ export function SidebarEntitySwitcher({
             )}
           >
             <Inbox className="h-3.5 w-3.5" />
-            Orders
+            Sequencing Orders
           </button>
           <button
             onClick={() => handleTabClick("studies")}

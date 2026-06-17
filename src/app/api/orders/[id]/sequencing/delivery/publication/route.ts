@@ -49,7 +49,7 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    if (error instanceof Error && error.message === "Order not found") {
+    if (error instanceof Error && error.message === "Sequencing Order not found") {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
@@ -93,7 +93,7 @@ export async function DELETE(
     }
 
     if (error instanceof Error && error.message.includes("Record to update not found")) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     console.error("[Order Sequencing Delivery] publication DELETE error:", error);

@@ -54,13 +54,13 @@ describe("GET /api/orders/[id]/sequencing", () => {
 
   it("returns 404 when order not found", async () => {
     mocks.getOrderSequencingSummary.mockRejectedValue(
-      new Error("Order not found")
+      new Error("Sequencing Order not found")
     );
 
     const response = await GET(makeRequest(), routeContext);
     expect(response.status).toBe(404);
     const data = await response.json();
-    expect(data.error).toBe("Order not found");
+    expect(data.error).toBe("Sequencing Order not found");
   });
 
   it("returns summary on success", async () => {

@@ -88,7 +88,7 @@ export function useSidebarEntity(): SidebarEntityContext {
         let parsed: SidebarEntityData;
         if (entityType === "order") {
           parsed = {
-            label: data.name || data.orderNumber || "Order",
+            label: data.name || data.orderNumber || "Sequencing Order",
             sublabel: data.orderNumber || "",
             status: data.status || "DRAFT",
           };

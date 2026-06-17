@@ -213,7 +213,7 @@ export default function UsersPage() {
       <HelpBox title="What are researchers?">
         Researchers are user accounts that submit sequencing orders, create
         studies, and provide metadata. Use this page to find a researcher, review
-        their department and role, and open their order and study history.
+        their department and role, and open their sequencing order and study history.
       </HelpBox>
 
       {error && (
@@ -322,7 +322,7 @@ export default function UsersPage() {
               className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "orders" && <ArrowUpDown className="h-3 w-3" />}
-              Orders
+              Sequencing Orders
             </button>
             <button
               onClick={() => handleSort("studies")}

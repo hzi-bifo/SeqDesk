@@ -441,7 +441,7 @@ export function SequencingStreamView({
       <div>
         <h1 className="text-xl font-semibold">Stream</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Ingest reads from a running MinION (or other MinKNOW-driven sequencer) directly into this order
+          Ingest reads from a running MinION (or other MinKNOW-driven sequencer) directly into this sequencing order
         </p>
       </div>
 
@@ -463,7 +463,7 @@ export function SequencingStreamView({
               Live sequencer stream
             </CardTitle>
             <CardDescription>
-              Watch a MinKNOW output directory and ingest reads into this order as they appear.
+              Watch a MinKNOW output directory and ingest reads into this sequencing order as they appear.
             </CardDescription>
           </div>
           {activeRun ? (
@@ -516,7 +516,7 @@ export function SequencingStreamView({
                 </Button>
                 <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
                   <Info className="h-3 w-3" />
-                  Stopping the stream detaches the watcher but keeps every ingested Read row and event in this order.
+                  Stopping the stream detaches the watcher but keeps every ingested Read row and event in this sequencing order.
                 </span>
               </div>
             ) : null}
@@ -524,9 +524,9 @@ export function SequencingStreamView({
         ) : (
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              No active stream for this order. Use the form below to point SeqDesk at a MinKNOW run directory
+              No active stream for this sequencing order. Use the form below to point SeqDesk at a MinKNOW run directory
               (the folder MinKNOW creates when you click <em>Start sequencing</em>) and map each barcode to one
-              of this order&apos;s samples. As soon as MinKNOW writes its first FASTQ, it will appear here.
+              of this sequencing order&apos;s samples. As soon as MinKNOW writes its first FASTQ, it will appear here.
             </p>
           </CardContent>
         )}
@@ -842,7 +842,7 @@ export function SequencingStreamView({
             <CardContent className="space-y-2">
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                 <span><span className="font-mono text-green-600">FILE_INGESTED</span> &mdash; a new FASTQ was picked up</span>
-                <span><span className="font-mono">RUN_STARTED</span> &mdash; the stream was attached to this order</span>
+                <span><span className="font-mono">RUN_STARTED</span> &mdash; the stream was attached to this sequencing order</span>
                 <span><span className="font-mono">RUN_STOPPED</span> &mdash; the watcher was detached</span>
                 <span><span className="font-mono text-red-500">ERROR</span> &mdash; ingest failed; check the payload</span>
               </div>

@@ -24,9 +24,9 @@ test("wizard blocks progress when order name is missing", async ({ page }) => {
 
   await page.getByTestId("next-step-button").click();
 
-  await expect(page.getByText("Order Name is required").first()).toBeVisible();
+  await expect(page.getByText("Sequencing Order Name is required").first()).toBeVisible();
   await expect(inlineHelp).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByText(/Step 1 of/i)).toBeVisible();
 });
 
@@ -36,7 +36,7 @@ test("researcher can create and submit an order", async ({ page }) => {
     { volume: "50", concentration: "25" },
   ]);
   await expect(page.getByText(orderName, { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "50", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "25", exact: true })).toBeVisible();
 });
@@ -64,16 +64,16 @@ test("researcher can delete a draft order from the detail page", async ({ page }
   const { orderPath } = await createDraftOrder(page, orderName, 1);
 
   await page.goto(orderPath);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByText(orderName).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (0)" })).toBeVisible();
 
   await deleteCurrentOrder(page);
 
   await expect(page).toHaveURL("/orders");
-  const searchInput = page.getByPlaceholder("Search orders...");
+  const searchInput = page.getByPlaceholder("Search sequencing orders...");
   await searchInput.fill(orderName);
-  await expect(page.getByText("No orders match your filters")).toBeVisible();
+  await expect(page.getByText("No sequencing orders match your filters")).toBeVisible();
 });
 
 test("researcher can edit submitted order information", async ({ page }) => {
@@ -85,24 +85,24 @@ test("researcher can edit submitted order information", async ({ page }) => {
   ]);
 
   const changeOrderInformationLink = page.getByRole("link", {
-    name: /change order information/i,
+    name: /change sequencing order information/i,
   });
   await expect(changeOrderInformationLink).toBeVisible();
   await Promise.all([
     page.waitForURL(/\/orders\/.+\/edit(?:\?.*)?$/, { timeout: 15000 }),
     changeOrderInformationLink.click(),
   ]);
-  await expect(page.getByRole("heading", { name: "Edit Order" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit Sequencing Order" })).toBeVisible();
   await expect(page.getByTestId("order-field-name")).toHaveValue(originalName);
 
   await page.getByTestId("order-field-name").fill(updatedName);
   await continueToReviewFromDetailPage(page);
 
   await expect(page.getByTestId("submit-order-button")).toBeVisible();
-  await page.getByRole("button", { name: /update order|update anyway/i }).click();
+  await page.getByRole("button", { name: /update sequencing order|update anyway/i }).click();
 
   await expect(page).toHaveURL(/\/orders\/[^/]+$/, { timeout: 15000 });
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByText(updatedName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Samples (1)" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "55", exact: true })).toBeVisible();
@@ -119,7 +119,7 @@ test("submitted order appears on the orders list with sample count", async ({ pa
   await page.goto("/orders");
   await expect(page.getByRole("heading", { name: /orders/i })).toBeVisible();
 
-  const searchInput = page.getByPlaceholder("Search orders...");
+  const searchInput = page.getByPlaceholder("Search sequencing orders...");
   await searchInput.fill(orderName);
 
   const orderLink = page.locator(`a[href="${orderPath}"]:visible`).first();
@@ -141,7 +141,7 @@ test("submitted order can be marked as sent", async ({ page }) => {
   ]);
 
   const orderProcessSection = page.locator("div").filter({
-    has: page.getByRole("heading", { name: "Order Process" }),
+    has: page.getByRole("heading", { name: "Sequencing Order Process" }),
   }).first();
 
   await expect(orderProcessSection.getByText("Send Samples to Institutions")).toBeVisible();

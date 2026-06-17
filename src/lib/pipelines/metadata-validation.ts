@@ -450,7 +450,7 @@ export async function validatePipelineMetadata(
 
   if (isOrderTarget(target) && !order) {
     return buildMetadataValidationResult({
-      issues: [{ field: 'order', message: 'Order not found', severity: 'error' }],
+      issues: [{ field: 'order', message: 'Sequencing Order not found', severity: 'error' }],
       metadata,
     });
   }

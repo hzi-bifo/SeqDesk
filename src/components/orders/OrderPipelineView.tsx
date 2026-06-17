@@ -445,7 +445,7 @@ function getReadOriginBadgeClassName(origin?: ReadOrigin | null) {
 
 function getOrderPipelineHelpText(pipeline: AdminPipeline): string {
   if (pipeline.pipelineId === SIMULATE_READS_PIPELINE_ID) {
-    return "Simulate Reads generates test FASTQ files and links them back to the order samples. Use it to verify the SeqDesk to pipeline to sequencing-data flow without real sequencer output; real production reads should normally be linked from Associate.";
+    return "Simulate Reads generates test FASTQ files and links them back to the sequencing order samples. Use it to verify the SeqDesk to pipeline to sequencing-data flow without real sequencer output; real production reads should normally be linked from Associate.";
   }
 
   if (pipeline.pipelineId === "fastq-checksum") {
@@ -461,10 +461,10 @@ function getOrderPipelineHelpText(pipeline: AdminPipeline): string {
   }
 
   if (pipeline.input.perSample.reads) {
-    return "This order pipeline runs on linked sequencing reads. Samples become ready when the required input files are associated with the sample and available on disk.";
+    return "This sequencing order pipeline runs on linked sequencing reads. Samples become ready when the required input files are associated with the sample and available on disk.";
   }
 
-  return "This order pipeline runs against the samples in this order and writes results back into SeqDesk when the run completes.";
+  return "This sequencing order pipeline runs against the samples in this sequencing order and writes results back into SeqDesk when the run completes.";
 }
 
 function getSampleRunActionCopy({
@@ -681,7 +681,7 @@ function PendingWritebackReviewPanel({
           </span>
           <p className="mt-1 text-sm text-muted-foreground">
             {review?.description ??
-              "Select staged read candidates that should become active reads for this order. Existing raw or unknown reads are preserved."}
+              "Select staged read candidates that should become active reads for this sequencing order. Existing raw or unknown reads are preserved."}
           </p>
         </div>
         <Badge variant="outline" className="text-xs">
@@ -1928,7 +1928,7 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
-      <HelpBox title="What is this order pipeline?">
+      <HelpBox title="What is this sequencing order pipeline?">
         {getOrderPipelineHelpText(pipeline)}
       </HelpBox>
 
@@ -2421,7 +2421,7 @@ export function OrderPipelineView({
                   colSpan={columnCount}
                   className="px-4 py-8 text-center text-muted-foreground"
                 >
-                  No samples in this order.
+                  No samples in this sequencing order.
                 </td>
               </tr>
             )}

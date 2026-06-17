@@ -293,8 +293,8 @@ export async function notifyOrderCreatedInApp(
     await createNotifications(recipients, {
       eventType: "order.created",
       severity: "info",
-      title: `New order ${order.orderNumber}`,
-      body: `${actorName(actor)} created ${order.name || "a new order"} for ${recipientName(order.user)}.`,
+      title: `New sequencing order ${order.orderNumber}`,
+      body: `${actorName(actor)} created ${order.name || "a new sequencing order"} for ${recipientName(order.user)}.`,
       linkPath: `/orders/${order.id}`,
       sourceType: "order",
       sourceId: order.id,
@@ -328,10 +328,10 @@ export async function notifyOrderUpdatedInApp(
     await createNotifications(recipients, {
       eventType: "order.updated",
       severity: "info",
-      title: `Order ${order.orderNumber} updated`,
+      title: `Sequencing Order ${order.orderNumber} updated`,
       body:
         summary ||
-        `${actorName(actor)} updated ${order.name || "this order"}. Current status: ${order.status}.`,
+        `${actorName(actor)} updated ${order.name || "this sequencing order"}. Current status: ${order.status}.`,
       linkPath: `/orders/${order.id}`,
       sourceType: "order",
       sourceId: order.id,

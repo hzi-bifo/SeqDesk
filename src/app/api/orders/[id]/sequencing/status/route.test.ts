@@ -110,7 +110,7 @@ describe("PUT /api/orders/[id]/sequencing/status", () => {
   });
 
   it("returns 404 when order is not found", async () => {
-    mocks.setOrderSequencingStatuses.mockRejectedValue(new Error("Order not found"));
+    mocks.setOrderSequencingStatuses.mockRejectedValue(new Error("Sequencing Order not found"));
 
     const response = await PUT(
       makeRequest({ updates: [{ sampleId: "s1", facilityStatus: "DONE" }] }),

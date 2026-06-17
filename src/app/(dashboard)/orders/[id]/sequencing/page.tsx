@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { HelpBox } from "@/components/ui/help-box";
+import { useModuleEnabled } from "@/lib/modules";
 import {
   Card,
   CardContent,
@@ -457,6 +458,7 @@ export default function OrderSequencingPage({
 
   const orderId = resolvedParams.id;
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const sampleOptions = useMemo(() => data?.samples ?? [], [data?.samples]);
   const visibleOrderPipelines = useMemo(
@@ -798,7 +800,7 @@ export default function OrderSequencingPage({
 
   const getBarcodeSourceLabel = (source?: SequencingSampleRow["plannedBarcodeSource"]) => {
     if (source === "run-plan") return "Run plan";
-    if (source === "sample-barcode") return "Order barcode";
+    if (source === "sample-barcode") return "Sequencing Order barcode";
     return null;
   };
 
@@ -1625,7 +1627,7 @@ export default function OrderSequencingPage({
           <div>
             <h1 className="text-xl font-semibold">Analysis</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Pipeline overview for this order
+              Pipeline overview for this sequencing order
             </p>
           </div>
 
@@ -1716,7 +1718,7 @@ export default function OrderSequencingPage({
               {visibleOrderPipelines.length === 0 && (
                 <Card>
                   <CardContent className="py-8 text-center text-muted-foreground">
-                    No pipelines configured for this order.
+                    No pipelines configured for this sequencing order.
                   </CardContent>
                 </Card>
               )}
@@ -1754,7 +1756,7 @@ export default function OrderSequencingPage({
             <div>
               <h1 className="text-xl font-semibold">Sequencing Data</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                {sampleOptions.length} sample{sampleOptions.length !== 1 ? "s" : ""} in this order
+                {sampleOptions.length} sample{sampleOptions.length !== 1 ? "s" : ""} in this sequencing order
               </p>
               {data.sequencingTechSelection?.label ? (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -1810,7 +1812,7 @@ export default function OrderSequencingPage({
                     Delivery to user
                   </CardTitle>
                   <CardDescription>
-                    Publish cleaned active reads and customer-facing sequencing reports to the order owner.
+                    Publish cleaned active reads and customer-facing sequencing reports to the sequencing order owner.
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1942,9 +1944,9 @@ export default function OrderSequencingPage({
           {!isDemo && !canManage && (
             <Card className="border-slate-200 bg-slate-50/70">
               <CardHeader>
-                <CardTitle className="text-base">Order Not Ready For Sequencing Data</CardTitle>
+                <CardTitle className="text-base">Sequencing Order Not Ready For Sequencing Data</CardTitle>
                 <CardDescription>
-                  Sequencing data actions are enabled once the order is submitted or completed.
+                  Sequencing data actions are enabled once the sequencing order is submitted or completed.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -1954,6 +1956,22 @@ export default function OrderSequencingPage({
             <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
+          ) : null}
+
+          {dynamicStudiesEnabled ? (
+            <Card className="rounded-xl border border-primary/30 bg-primary/5 shadow-none">
+              <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm">
+                  <p className="font-medium">Assign samples to studies</p>
+                  <p className="text-muted-foreground">
+                    Per-study questionnaires are enabled — assign each sample in this run to a study so its metadata is collected against that study&apos;s form.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/orders/${orderId}/studies`}>Assign studies</Link>
+                </Button>
+              </CardContent>
+            </Card>
           ) : null}
 
 	          <Card className="rounded-xl border bg-card shadow-none">
@@ -1994,7 +2012,7 @@ export default function OrderSequencingPage({
 	            </CardHeader>
 	            <CardContent className="space-y-4">
 	              <HelpBox title="What is a run plan?">
-	                A run plan maps each order sample to the sequencing run barcode or lane label expected
+	                A run plan maps each sequencing order sample to the sequencing run barcode or lane label expected
 	                from the facility. SeqDesk uses it to match barcode-folder outputs such as
 	                barcode01 FASTQs before read files or reports arrive, while still allowing later
 	                corrections from facility imports.
@@ -2701,7 +2719,7 @@ export default function OrderSequencingPage({
                   <p>
                     {hasActiveFilters
                       ? "No samples match your filters."
-                      : "No samples are available in this order yet."}
+                      : "No samples are available in this sequencing order yet."}
                   </p>
                   {hasActiveFilters ? (
                     <button
@@ -2720,9 +2738,9 @@ export default function OrderSequencingPage({
           <Card>
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <CardTitle className="text-base">Customer Order Files</CardTitle>
+                <CardTitle className="text-base">Customer Sequencing Order Files</CardTitle>
                 <CardDescription>
-                  Files that belong to this customer order, such as delivery notes or combined QC summaries.
+                  Files that belong to this customer sequencing order, such as delivery notes or combined QC summaries.
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
@@ -2747,15 +2765,15 @@ export default function OrderSequencingPage({
               </div>
 	            </CardHeader>
 	            <CardContent className="space-y-4">
-	              <HelpBox title="What are customer order files?">
-	                Customer order files are order-level documents such as delivery notes, combined QC
-	                summaries, or shared reports. They belong to the whole order rather than one sample
+	              <HelpBox title="What are customer sequencing order files?">
+	                Customer sequencing order files are sequencing order-level documents such as delivery notes, combined QC
+	                summaries, or shared reports. They belong to the whole sequencing order rather than one sample
 	                and are kept separate from sample FASTQs and sample-specific QC artifacts.
 	              </HelpBox>
 
 	              {data.orderArtifacts.length === 0 ? (
                 <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-                  No customer order files linked yet.
+                  No customer sequencing order files linked yet.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2817,7 +2835,7 @@ export default function OrderSequencingPage({
           <DialogHeader>
             <DialogTitle>Make sequencing files downloadable?</DialogTitle>
             <DialogDescription>
-              The order owner will be able to inspect cleaned reads and download the listed files.
+              The sequencing order owner will be able to inspect cleaned reads and download the listed files.
             </DialogDescription>
           </DialogHeader>
 
@@ -3398,7 +3416,7 @@ export default function OrderSequencingPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {pickerMode === "artifact" ? <SelectItem value="order">Whole Order</SelectItem> : null}
+                  {pickerMode === "artifact" ? <SelectItem value="order">Whole Sequencing Order</SelectItem> : null}
                   {sampleOptions.map((sample) => (
                     <SelectItem key={sample.id} value={sample.id}>
                       {sample.sampleId}
@@ -3574,7 +3592,7 @@ export default function OrderSequencingPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {uploadMode === "artifact" ? <SelectItem value="order">Whole Order</SelectItem> : null}
+                  {uploadMode === "artifact" ? <SelectItem value="order">Whole Sequencing Order</SelectItem> : null}
                   {sampleOptions.map((sample) => (
                     <SelectItem key={sample.id} value={sample.id}>
                       {sample.sampleId}

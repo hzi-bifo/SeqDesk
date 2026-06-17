@@ -687,7 +687,7 @@ export default function SettingsPage() {
           throw new Error(payload?.error || "Failed to save workspace settings");
         }
 
-        toast.success(`Order notes ${enabled ? "enabled" : "disabled"}`);
+        toast.success(`Sequencing Order notes ${enabled ? "enabled" : "disabled"}`);
       } catch (error) {
         console.error("Failed to save workspace settings:", error);
         setOrderNotesEnabled(previousValue);
@@ -1559,7 +1559,7 @@ export default function SettingsPage() {
                   major version, and heartbeat timestamps.
                 </p>
                 <p className="mt-2 max-w-3xl text-sm text-emerald-950/80">
-                  It does not send user accounts, researcher names, order or sample data, uploaded
+                  It does not send user accounts, researcher names, sequencing order or sample data, uploaded
                   files, pipeline inputs or outputs, file paths, secrets, ENA credentials, or facility
                   contact details. The public receiver stores the UUID and heartbeat fields only; IP
                   addresses are not stored as telemetry application data.
@@ -1675,7 +1675,7 @@ export default function SettingsPage() {
               <Link href="/admin/form-builder?tab=import-export">
                 <span className="inline-flex items-center gap-2">
                   <FileText className="h-4 w-4" />
-                  Order Form
+                  Sequencing Order Form
                 </span>
                 <ArrowRight className="h-4 w-4" />
               </Link>
@@ -1734,13 +1734,13 @@ export default function SettingsPage() {
             <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-foreground">Order notes</p>
+                  <p className="text-sm font-medium text-foreground">Sequencing Order notes</p>
                   {savingOrderNotesSetting && (
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                   )}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Shows the shared markdown notepad on order pages and disables the notes API when turned off.
+                  Shows the shared markdown notepad on sequencing order pages and disables the notes API when turned off.
                 </p>
               </div>
 
@@ -1752,7 +1752,7 @@ export default function SettingsPage() {
                   checked={orderNotesEnabled}
                   onCheckedChange={(checked) => void updateOrderNotesSetting(checked)}
                   disabled={loadingAccessSettings || savingOrderNotesSetting}
-                  aria-label="Enable order notes"
+                  aria-label="Enable sequencing order notes"
                 />
               </div>
             </div>
@@ -1824,7 +1824,7 @@ export default function SettingsPage() {
             <h2 className="text-base font-semibold">Demo data</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
               Populate this installation with one realistic seeded study and two
-              orders (one submitted with synthetic FASTQ files on disk, one draft)
+              sequencing orders (one submitted with synthetic FASTQ files on disk, one draft)
               owned by your admin profile. Useful for demos, screenshots, and
               smoke tests. The platform/instrument is picked from your configured
               sequencer devices.
@@ -1905,12 +1905,12 @@ export default function SettingsPage() {
                     : gemmaSeedStatus === null
                     ? "Checking current state..."
                     : gemmaSeedStatus.fixtureState === "applied"
-                      ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples loaded in order ${gemmaSeedStatus.orderNumber}.`
+                      ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples loaded in sequencing order ${gemmaSeedStatus.orderNumber}.`
                       : gemmaSeedStatus.fixtureState === "changed"
                         ? gemmaSeedStatus.orderId
-                          ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples found in order ${gemmaSeedStatus.orderNumber}.`
-                          : "Gemma fixture records are partially present, but the order is missing."
-                      : "Downloads the verified 580 MB hosted bundle and creates the linked study, submitted order, samples, and cleaned FASTQ read links for MetaxPath."}
+                          ? `${gemmaSeedStatus.samplesCount} ONT MinION Mk1D samples found in sequencing order ${gemmaSeedStatus.orderNumber}.`
+                          : "Gemma fixture records are partially present, but the sequencing order is missing."
+                      : "Downloads the verified 580 MB hosted bundle and creates the linked study, submitted sequencing order, samples, and cleaned FASTQ read links for MetaxPath."}
                 </p>
                 {gemmaSeedStatus?.fixtureState === "changed" && (
                   <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
@@ -1936,7 +1936,7 @@ export default function SettingsPage() {
                     href={`/orders/${gemmaSeedStatus.orderId}/sequencing?view=analysis`}
                     className="mt-2 inline-block text-xs font-medium text-primary hover:underline"
                   >
-                    Open order analysis
+                    Open sequencing order analysis
                   </Link>
                 )}
               </div>
@@ -2672,7 +2672,7 @@ export default function SettingsPage() {
                 {currentInstallProfile?.id || "this installation"}
               </span>{" "}
               and reapplies profile-managed settings, form presets, and pipeline
-              enablement. Existing orders, samples, users, and sequencing files are not
+              enablement. Existing sequencing orders, samples, users, and sequencing files are not
               deleted.
             </DialogDescription>
           </DialogHeader>
@@ -2758,9 +2758,9 @@ export default function SettingsPage() {
             <DialogTitle>Wipe seeded dummy data?</DialogTitle>
             <DialogDescription>
               This permanently removes the {seedStatus?.ordersCount ?? 0} seeded
-              order{seedStatus?.ordersCount === 1 ? "" : "s"}, the seeded study,
+              sequencing order{seedStatus?.ordersCount === 1 ? "" : "s"}, the seeded study,
               all linked samples and reads, and the on-disk FASTQ folder created
-              for your admin profile. Other orders, studies, and files are not
+              for your admin profile. Other sequencing orders, studies, and files are not
               touched.
             </DialogDescription>
           </DialogHeader>

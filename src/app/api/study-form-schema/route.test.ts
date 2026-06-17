@@ -102,7 +102,9 @@ describe("GET /api/study-form-schema", () => {
 
   it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/study-form-schema")
+    );
     expect(response.status).toBe(401);
   });
 
@@ -111,7 +113,9 @@ describe("GET /api/study-form-schema", () => {
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/study-form-schema")
+    );
     expect(response.status).toBe(200);
     const body = await response.json();
 
@@ -147,7 +151,9 @@ describe("GET /api/study-form-schema", () => {
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
 
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/study-form-schema")
+    );
     expect(response.status).toBe(200);
     const body = await response.json();
 
@@ -173,7 +179,9 @@ describe("GET /api/study-form-schema", () => {
     });
     mocks.db.siteSettings.findUnique.mockRejectedValue(new Error("db error"));
 
-    const response = await GET();
+    const response = await GET(
+      new Request("http://localhost/api/study-form-schema")
+    );
     expect(response.status).toBe(500);
   });
 });

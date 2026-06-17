@@ -44,13 +44,13 @@ type NotificationSettings = {
 const EVENT_ROWS = [
   {
     key: "order.submitted",
-    label: "Order submitted",
-    description: "Confirm submissions to users and alert admins about new submitted orders.",
+    label: "Sequencing Order submitted",
+    description: "Confirm submissions to users and alert admins about new submitted sequencing orders.",
   },
   {
     key: "order.statusChanged",
-    label: "Order status changed",
-    description: "Notify users when a facility admin changes an order status.",
+    label: "Sequencing Order status changed",
+    description: "Notify users when a facility admin changes a sequencing order status.",
   },
   {
     key: "order.samplesSent",
@@ -439,8 +439,8 @@ export default function AdminNotificationSettingsPage() {
               </p>
               <div className="mt-5 divide-y divide-border/60">
                 <PreferenceRow
-                  label="Order email notifications"
-                  description="Default opt-in for order submission and order status emails."
+                  label="Sequencing Order email notifications"
+                  description="Default opt-in for sequencing order submission and sequencing order status emails."
                   checked={settings.email.userDefaults.orders}
                   onCheckedChange={(checked) => setEmailDefault("orders", checked)}
                 />

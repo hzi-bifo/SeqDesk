@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useModuleEnabled } from "@/lib/modules";
 
 interface SidebarAdminNavProps {
   collapsed: boolean;
@@ -20,6 +21,7 @@ interface SidebarAdminNavProps {
 export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -233,10 +235,15 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
             )}
           >
             <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-              Order Form
+              Sequencing Order Form
             </Link>
-            <Link href="/admin/study-form-builder" className={adminSubItemClass("/admin/study-form-builder")}>
-              Study Forms
+            <Link
+              href={dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"}
+              className={adminSubItemClass(
+                dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"
+              )}
+            >
+              {dynamicStudiesEnabled ? "Define Studies" : "Study Forms"}
             </Link>
             <Link href="/admin/mixs-checklists" className={adminSubItemClass("/admin/mixs-checklists")}>
               MIxS Checklists

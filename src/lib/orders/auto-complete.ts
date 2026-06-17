@@ -52,7 +52,7 @@ export async function checkAndCompleteOrder(orderId: string): Promise<boolean> {
   await notifyOrderUpdatedInApp(
     orderId,
     null,
-    "SeqDesk automatically completed the order because all samples have sequencing files."
+    "SeqDesk automatically completed the sequencing order because all samples have sequencing files."
   );
 
   return true;

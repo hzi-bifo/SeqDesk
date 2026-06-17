@@ -124,7 +124,7 @@ describe("metadata-validation", () => {
     expect(result.issues).toEqual([
       {
         field: "order",
-        message: "Order not found",
+        message: "Sequencing Order not found",
         severity: "error",
       },
     ]);

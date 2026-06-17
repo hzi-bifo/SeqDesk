@@ -342,7 +342,7 @@ describe("sequencing run plan helpers", () => {
         runId: "RUN-1",
       })
     ).rejects.toThrow(
-      "Sequencing run plans can only be managed on submitted or completed orders"
+      "Sequencing run plans can only be managed on submitted or completed sequencing orders"
     );
     expect(mocks.db.sequencingRun.create).not.toHaveBeenCalled();
   });
@@ -360,7 +360,7 @@ describe("sequencing run plan helpers", () => {
         assignments: [{ sampleId: "sample-1", barcode: "BC1" }],
       })
     ).rejects.toThrow(
-      "Sequencing run plans can only be managed on submitted or completed orders"
+      "Sequencing run plans can only be managed on submitted or completed sequencing orders"
     );
     expect(mocks.db.sequencingRunSample.upsert).not.toHaveBeenCalled();
   });
@@ -525,7 +525,7 @@ describe("sequencing run plan helpers", () => {
 
     await expect(
       createSequencingRunForOrder({ orderId: "order-1", runId: "RUN-1" })
-    ).rejects.toThrow("Order not found");
+    ).rejects.toThrow("Sequencing Order not found");
     expect(mocks.db.sequencingRun.create).not.toHaveBeenCalled();
   });
 

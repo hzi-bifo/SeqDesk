@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     // Check order status allows file assignment
     if (!FILES_ASSIGNABLE_STATUSES.includes(sample.order.status)) {
       return NextResponse.json(
-        { error: `Order status '${sample.order.status}' does not allow file assignment` },
+        { error: `Sequencing Order status '${sample.order.status}' does not allow file assignment` },
         { status: 400 }
       );
     }

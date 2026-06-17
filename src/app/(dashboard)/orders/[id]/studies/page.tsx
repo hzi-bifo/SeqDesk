@@ -2,6 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
+import { useModuleEnabled } from "@/lib/modules";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -97,6 +98,7 @@ export default function OrderStudiesPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const [order, setOrder] = useState<Order | null>(null);
   const [studies, setStudies] = useState<Study[]>([]);
@@ -126,7 +128,7 @@ export default function OrderStudiesPage({
         fetch("/api/studies"),
       ]);
 
-      if (!orderRes.ok) throw new Error("Failed to fetch order");
+      if (!orderRes.ok) throw new Error("Failed to fetch sequencing order");
 
       const orderData = await orderRes.json();
       setOrder(orderData);
@@ -287,11 +289,11 @@ export default function OrderStudiesPage({
       <PageContainer>
         <div className="text-center py-12">
           <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-          <h2 className="text-xl font-semibold mb-2">Order Not Found</h2>
+          <h2 className="text-xl font-semibold mb-2">Sequencing Order Not Found</h2>
           <Button asChild variant="outline">
             <Link href="/orders">
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Orders
+              Back to Sequencing Orders
             </Link>
           </Button>
         </div>
@@ -306,7 +308,7 @@ export default function OrderStudiesPage({
         <Button variant="ghost" size="sm" asChild className="mb-4">
           <Link href={`/orders/${id}`}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Order
+            Back to Sequencing Order
           </Link>
         </Button>
 
@@ -359,17 +361,22 @@ export default function OrderStudiesPage({
                 <SelectContent>
                   {studies.filter(s => !s.submitted).map(study => {
                     const hasChecklist = !!study.checklistType;
+                    // With per-study questionnaires, a study's own form drives its
+                    // fields, so it's assignable even without a global checklist.
+                    const assignable = hasChecklist || dynamicStudiesEnabled;
                     return (
                       <SelectItem
                         key={study.id}
                         value={study.id}
-                        disabled={!hasChecklist}
+                        disabled={!assignable}
                       >
-                        <span className={!hasChecklist ? "text-muted-foreground" : ""}>
+                        <span className={!assignable ? "text-muted-foreground" : ""}>
                           {study.title}
                           {hasChecklist
                             ? ` (${getChecklistName(study.checklistType)})`
-                            : " - No checklist set"
+                            : assignable
+                              ? ""
+                              : " - No checklist set"
                           }
                         </span>
                       </SelectItem>

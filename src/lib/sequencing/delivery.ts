@@ -317,7 +317,7 @@ export async function buildOrderSequencingDeliverySummary(
   ]);
 
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   const readFiles: SequencingDeliveryFileSummary[] = [];
@@ -405,7 +405,7 @@ export async function assertSequencingDeliveryAccess(
   });
 
   if (!order) {
-    return { status: 404 as const, body: { error: "Order not found" } };
+    return { status: 404 as const, body: { error: "Sequencing Order not found" } };
   }
 
   if (isFacilityAdmin(user)) return null;
@@ -417,7 +417,7 @@ export async function assertSequencingDeliveryAccess(
   if (!order.sequencingFilesPublishedAt) {
     return {
       status: 403 as const,
-      body: { error: "Sequencing files are not available for this order" },
+      body: { error: "Sequencing files are not available for this sequencing order" },
     };
   }
 

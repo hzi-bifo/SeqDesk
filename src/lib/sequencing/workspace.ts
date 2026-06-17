@@ -498,7 +498,7 @@ function toReadSummary(
 
 function assertManageableOrderStatus(status: string): void {
   if (!FILES_ASSIGNABLE_STATUSES.includes(status as (typeof FILES_ASSIGNABLE_STATUSES)[number])) {
-    throw new Error("Sequencing data can only be managed on submitted or completed orders");
+    throw new Error("Sequencing data can only be managed on submitted or completed sequencing orders");
   }
 }
 
@@ -645,7 +645,7 @@ export async function getOrderSequencingSummary(
   ]);
 
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   // Aggregate stream-ingested files per sample so the response can advertise
@@ -832,7 +832,7 @@ export async function setOrderSequencingStatuses(
 ) {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -883,7 +883,7 @@ export async function discoverOrderSequencingFiles(
 }> {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -1159,7 +1159,7 @@ export async function assignOrderSequencingReads(
 ) {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -1275,7 +1275,7 @@ export async function classifyOrderSequencingRead(
 ) {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -1333,7 +1333,7 @@ export async function linkOrderSequencingArtifact(
 ) {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -1379,7 +1379,7 @@ export async function createSequencingUploadSession(
 ) {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);
@@ -1541,7 +1541,7 @@ export async function completeSequencingUpload(
 
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   const { dataBasePath } = await requireDataBasePath();
@@ -1685,7 +1685,7 @@ export async function computeOrderSequencingChecksums(
 ): Promise<SequencingChecksumSummary> {
   const order = await loadOrderWithSequencing(orderId);
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
 
   assertManageableOrderStatus(order.status);

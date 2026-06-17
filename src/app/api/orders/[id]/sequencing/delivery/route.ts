@@ -26,7 +26,7 @@ export async function GET(
     const delivery = await buildOrderSequencingDeliverySummary(id);
     return NextResponse.json({ delivery });
   } catch (error) {
-    if (error instanceof Error && error.message === "Order not found") {
+    if (error instanceof Error && error.message === "Sequencing Order not found") {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 

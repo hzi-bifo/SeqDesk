@@ -20,7 +20,7 @@ const RUN_ASSIGNMENT_DEFAULTS_VERSION_KEY = "sequencingRunSampleFormDefaultsVers
 
 function assertRunPlanManageableOrderStatus(status: string): void {
   if (!FILES_ASSIGNABLE_STATUSES.includes(status as (typeof FILES_ASSIGNABLE_STATUSES)[number])) {
-    throw new Error("Sequencing run plans can only be managed on submitted or completed orders");
+    throw new Error("Sequencing run plans can only be managed on submitted or completed sequencing orders");
   }
 }
 
@@ -795,7 +795,7 @@ export async function createSequencingRunForOrder(input: {
     select: { id: true, status: true },
   });
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("Sequencing Order not found");
   }
   assertRunPlanManageableOrderStatus(order.status);
   const runId = input.runId.trim();

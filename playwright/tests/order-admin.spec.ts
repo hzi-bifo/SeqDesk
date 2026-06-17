@@ -19,7 +19,7 @@ test("admin can create and submit an order", async ({ page }) => {
   ]);
 
   await expect(page.getByText(orderName, { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "70", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "28", exact: true })).toBeVisible();
 });
@@ -89,9 +89,9 @@ test("admin can see researcher orders in all orders list", async ({ browser, pag
   await researcherContext.close();
 
   await page.goto("/orders");
-  await expect(page.getByRole("heading", { name: /all orders/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /all sequencing orders/i })).toBeVisible();
 
-  const searchInput = page.getByPlaceholder("Search orders...");
+  const searchInput = page.getByPlaceholder("Search sequencing orders...");
   await searchInput.fill(orderName);
 
   const orderLink = page.locator(`a[href="${orderPath}"]:visible`).first();
@@ -122,7 +122,7 @@ test("admin cannot delete submitted orders when Data Handling disables it", asyn
       page.getByRole("link", { name: /settings > data handling/i }),
     ).toBeVisible();
     await expect(page).toHaveURL(/\/orders\/.+/);
-    await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
     await expect(page.getByText(orderName).first()).toBeVisible();
   });
 });
@@ -144,9 +144,9 @@ test("admin can delete submitted orders when Data Handling enables it", async ({
         .poll(() => new URL(page.url()).pathname, { timeout: 15000 })
         .toBe("/orders");
 
-      const searchInput = page.getByPlaceholder("Search orders...");
+      const searchInput = page.getByPlaceholder("Search sequencing orders...");
       await searchInput.fill(orderName);
-      await expect(page.getByText("No orders match your filters")).toBeVisible();
+      await expect(page.getByText("No sequencing orders match your filters")).toBeVisible();
     } finally {
       await setAllowDeleteSubmittedOrders(page, false);
     }

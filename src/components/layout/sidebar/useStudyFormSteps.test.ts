@@ -86,7 +86,7 @@ describe("useStudyFormSteps", () => {
       expect(result.current.overviewSections).toHaveLength(1);
     });
 
-    expect(mocks.fetch).toHaveBeenNthCalledWith(1, "/api/study-form-schema");
+    expect(mocks.fetch).toHaveBeenNthCalledWith(1, "/api/study-form-schema?studyId=study-1");
     expect(mocks.fetch).toHaveBeenNthCalledWith(2, "/api/studies/study-1");
     expect(mocks.buildStudyOverviewFlowSections).toHaveBeenCalledWith({
       fields: [{ name: "title" }],

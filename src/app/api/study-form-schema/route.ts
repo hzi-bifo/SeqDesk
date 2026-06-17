@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { loadStudyFormSchema } from "@/lib/studies/schema";
 
 // GET study form schema (public to authenticated users)
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions);
 
@@ -12,10 +12,16 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // When the dynamic-studies module is enabled, a `?studyId=` scopes the
+    // schema to that study's own questionnaire; otherwise the global form.
+    const studyId =
+      new URL(request.url).searchParams.get("studyId") ?? undefined;
+
     const schema = await loadStudyFormSchema({
       isFacilityAdmin: session.user.role === "FACILITY_ADMIN",
       applyRoleFilter: true,
       applyModuleFilter: true,
+      studyId,
     });
 
     // Return configuration

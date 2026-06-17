@@ -509,11 +509,11 @@ describe("admin settings and modules coverage quick wins", () => {
 
   it("covers study form configuration routes", async () => {
     mocks.getServerSession.mockResolvedValueOnce(null);
-    const unauthorized = await getStudyFormConfig();
+    const unauthorized = await getStudyFormConfig(new Request("http://localhost/api/admin/study-form-config") as never);
     expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
-    const success = await getStudyFormConfig();
+    const success = await getStudyFormConfig(new Request("http://localhost/api/admin/study-form-config") as never);
     expect(success.status).toBe(200);
     expect(mocks.loadStudyFormSchema).toHaveBeenCalledWith({
       isFacilityAdmin: true,
@@ -526,7 +526,7 @@ describe("admin settings and modules coverage quick wins", () => {
     });
 
     mocks.loadStudyFormSchema.mockRejectedValueOnce(new Error("load failed"));
-    const fallback = await getStudyFormConfig();
+    const fallback = await getStudyFormConfig(new Request("http://localhost/api/admin/study-form-config") as never);
     expect(fallback.status).toBe(200);
     expect(await fallback.json()).toEqual({
       fields: [],

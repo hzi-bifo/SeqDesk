@@ -9,8 +9,8 @@ import type {
 export const FACILITY_FIELD_SUBSECTIONS = [
   {
     id: "order-fields",
-    label: "Order Fields",
-    description: "Internal order-level facility data",
+    label: "Sequencing Order Fields",
+    description: "Internal sequencing order-level facility data",
   },
   {
     id: "sample-fields",

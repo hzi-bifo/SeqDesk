@@ -146,7 +146,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "Forbidden" });
 
-    mocks.createSequencingUploadSession.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.createSequencingUploadSession.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await createUpload(
       new Request("http://localhost/api/orders/order-1/sequencing/uploads", {
         method: "POST",
@@ -155,7 +155,7 @@ describe("sequencing upload and artifact route quick wins", () => {
       orderParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.createSequencingUploadSession.mockRejectedValueOnce(
       new Error("Order is configured as submitted or completed")
@@ -408,7 +408,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "Forbidden" });
 
-    mocks.linkOrderSequencingArtifact.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.linkOrderSequencingArtifact.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await linkArtifact(
       new Request("http://localhost/api/orders/order-1/sequencing/artifacts/link", {
         method: "POST",
@@ -417,7 +417,7 @@ describe("sequencing upload and artifact route quick wins", () => {
       orderParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.linkOrderSequencingArtifact.mockRejectedValueOnce(
       new Error("required metadata missing")
