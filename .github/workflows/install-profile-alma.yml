@@ -956,8 +956,27 @@ jobs:
             RC_KRAKEN2_DB="${SLURM_SHARED_KRAKEN2_DB:-/net/broker/checkm_refdata/kraken2_db}"
             if [ -e "$RC_KRAKEN2_DB" ]; then
               echo "read-cleaning: kraken2 DB present at $RC_KRAKEN2_DB — running detaxizer on the mag-smoke RAW reads."
+              # detaxizer's KRAKEN2PREPARATION untars --kraken2db (`tar -xf "$db"` then finds *.k2d
+              # recursively), so it needs a tar archive, NOT a directory — a dir gives
+              # "tar: <db>: Is a directory" -> KRAKEN2PREPARATION exit 2. Facilities stage the DB as
+              # a directory, so pack it into a cached .tar once (NO gzip: kraken2 .k2d hash tables are
+              # incompressible, so gzip only burns time) on the shared-FS cache and point kraken2Db
+              # at the .tar. detaxizer finds the .k2d at any depth, so the archive layout is flexible.
+              RC_KRAKEN2_INPUT="$RC_KRAKEN2_DB"
+              if [ -d "$RC_KRAKEN2_DB" ]; then
+                RC_K2_CACHE="${CONDA_CACHE_DIR:+$(dirname "$CONDA_CACHE_DIR")/seqdesk-kraken2-cache}"
+                [ -z "$RC_K2_CACHE" ] && RC_K2_CACHE="$PROFILE_RUN_DIR/../seqdesk-kraken2-cache"
+                mkdir -p "$RC_K2_CACHE" 2>/dev/null || true
+                RC_KRAKEN2_INPUT="$RC_K2_CACHE/$(basename "$RC_KRAKEN2_DB").tar"
+                echo "read-cleaning: --kraken2db is a directory ($(du -sh "$RC_KRAKEN2_DB" 2>/dev/null | cut -f1 || echo '?')); detaxizer untars it, so packing -> $RC_KRAKEN2_INPUT (cached)."
+                if [ ! -s "$RC_KRAKEN2_INPUT" ]; then
+                  tar -cf "$RC_KRAKEN2_INPUT" -C "$(dirname "$RC_KRAKEN2_DB")" "$(basename "$RC_KRAKEN2_DB")" \
+                    || { echo "WARN: kraken2 DB tar failed — falling back to the directory (detaxizer will reject it)."; RC_KRAKEN2_INPUT="$RC_KRAKEN2_DB"; }
+                fi
+                echo "read-cleaning: kraken2Db -> $RC_KRAKEN2_INPUT ($(du -sh "$RC_KRAKEN2_INPUT" 2>/dev/null | cut -f1 || echo '?'))"
+              fi
               run_gemma_warn read-cleaning 2400 --order-number DEV-MAG-ILMN-001 \
-                --config-json "{\"kraken2Db\":\"$RC_KRAKEN2_DB\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
+                --config-json "{\"kraken2Db\":\"$RC_KRAKEN2_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
               ( set +e +o pipefail
                 echo "::group::read-cleaning run-folder forensics"
                 rcdir="$(find "$PROFILE_RUN_DIR" -maxdepth 1 -type d -name 'READ-CLEANING-*' | head -1)"
