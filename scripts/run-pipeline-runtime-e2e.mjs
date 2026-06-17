@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -855,7 +856,106 @@ async function assertReadCleaningIntegration({ client, runId }) {
     `read-cleaning integration OK: ${candidates.length} cleaned-read candidate(s) ingested ` +
       `via the cleaned-reads API (the admin review surface)`,
   );
-  return { checked: true, candidates: candidates.length };
+
+  // On the SPIKED dataset (DEV-RC-SPIKE-001: 30 human-mt + 30 E. coli reads/sample),
+  // go beyond "the integration ran" and prove the contamination was actually REMOVED:
+  // count reads in the cleaned candidate FASTQ vs the raw source, on disk. Enabled via
+  // SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK so the non-spiked read-cleaning runs are unaffected.
+  let spike = null;
+  if (envFlag(process.env.SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK)) {
+    spike = await assertReadCleaningSpikeRemoval({ client, runId, candidates });
+  }
+  return { checked: true, candidates: candidates.length, ...(spike ? { spike } : {}) };
+}
+
+// Count FASTQ records in a (optionally gzipped) file on disk: 4 lines per record.
+function countFastqReads(filePath) {
+  let buf = fs.readFileSync(filePath);
+  if (filePath.endsWith(".gz")) buf = zlib.gunzipSync(buf);
+  const lines = buf.toString("utf8").split(/\r?\n/).filter((line) => line.length > 0);
+  return Math.floor(lines.length / 4);
+}
+
+// Deterministic contamination-removal proof for the spiked dataset. Each sample's RAW
+// input has 30 human-mt (host contaminant, expected removed by detaxizer+kraken2) + 30
+// E. coli reads (retained). Count the cleaned candidate FASTQ vs the raw source and
+// require: host reads were removed (raw > cleaned by a real margin) AND microbial reads
+// were retained (cleaned stays positive). Bounds are generous so kraken2 edge calls /
+// the staged DB's exact human coverage don't make it brittle, while still proving the
+// behavior. If the data dir / files aren't readable here, WARN+skip (the >=1-candidate
+// integration check above still held) rather than red the suite on a path issue.
+async function assertReadCleaningSpikeRemoval({ client, runId, candidates }) {
+  const HUMAN_SPIKE = 30; // expected removed
+  const MICROBE_SPIKE = 30; // expected retained
+  const MIN_REMOVED = 10; // at least this many host reads must be cut (of 30)
+  const MIN_RETAINED = 10; // at least this many microbial reads must survive (of 30)
+
+  let dataBasePath = null;
+  try {
+    const settings = await requestJson(
+      client,
+      "/api/admin/settings/sequencing-files",
+      {},
+      "Fetch sequencing-files settings",
+    );
+    dataBasePath = typeof settings?.dataBasePath === "string" ? settings.dataBasePath : null;
+  } catch {
+    /* fall through to warn */
+  }
+  const resolveOnDisk = (file) => {
+    if (typeof file !== "string" || !file) return null;
+    const candidatesPaths = [];
+    if (path.isAbsolute(file)) candidatesPaths.push(file);
+    if (dataBasePath) candidatesPaths.push(path.resolve(dataBasePath, file));
+    candidatesPaths.push(path.resolve(file));
+    return candidatesPaths.find((p) => fs.existsSync(p)) || null;
+  };
+
+  const perSample = [];
+  for (const cand of candidates) {
+    const cleanedPath = resolveOnDisk(cand?.file1);
+    const rawPath = resolveOnDisk(cand?.currentRead?.file1);
+    if (!cleanedPath || !rawPath) {
+      console.warn(
+        `WARN read-cleaning spike: candidate ${cand?.sampleCode} files not readable here ` +
+          `(cleaned=${cand?.file1}, raw=${cand?.currentRead?.file1}, base=${dataBasePath ?? "<unknown>"}) — skipping count`,
+      );
+      continue;
+    }
+    const raw = countFastqReads(rawPath);
+    const cleaned = countFastqReads(cleanedPath);
+    const removed = raw - cleaned;
+    perSample.push({ sample: cand?.sampleCode, raw, cleaned, removed });
+
+    if (!(cleaned >= MIN_RETAINED)) {
+      fail(
+        `read-cleaning spike: sample ${cand?.sampleCode} retained only ${cleaned} read(s) after cleaning ` +
+          `(expected ≈${MICROBE_SPIKE} microbial; >= ${MIN_RETAINED}) — over-aggressive removal`,
+        JSON.stringify({ runId, raw, cleaned, removed }, null, 2),
+      );
+    }
+    if (!(removed >= MIN_REMOVED)) {
+      fail(
+        `read-cleaning spike: sample ${cand?.sampleCode} removed only ${removed} read(s) ` +
+          `(raw=${raw}, cleaned=${cleaned}; expected ≈${HUMAN_SPIKE} human removed, >= ${MIN_REMOVED}) — ` +
+          `host contamination was NOT removed (check the kraken2 DB covers human)`,
+        JSON.stringify({ runId, raw, cleaned, removed }, null, 2),
+      );
+    }
+  }
+
+  if (perSample.length === 0) {
+    console.warn(
+      `WARN read-cleaning spike: no candidate FASTQs were readable to count for run ${runId} — ` +
+        `count proof skipped (the cleaned-reads integration check still passed)`,
+    );
+    return { checked: false, reason: "files-unreadable" };
+  }
+  console.log(
+    `read-cleaning spike OK: host contamination removed + microbes retained per sample — ` +
+      JSON.stringify(perSample),
+  );
+  return { checked: true, samples: perSample };
 }
 
 // statusSource + step-level progress. statusSource records which path finalized the
