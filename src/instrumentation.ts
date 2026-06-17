@@ -28,7 +28,9 @@ export async function register() {
   if (process.env.SEQDESK_DISABLE_WORKER_AUTOSTART === "1") return;
 
   try {
-    const { ensureWorkerStarted } = await import("@/lib/workers/process");
+    const { ensureWorkerStarted, wireMonitorLifecycle } = await import(
+      "@/lib/workers/process"
+    );
     const result = await ensureWorkerStarted("pipeline-monitor");
     const detail = [
       result.pid ? `pid=${result.pid}` : null,
@@ -41,25 +43,11 @@ export async function register() {
     );
 
     // Tie the monitor WE started to this server's lifecycle: stop it on a clean
-    // shutdown so it does not outlive the app and pin the release dir.
+    // shutdown so it does not outlive the app and pin the release dir. The signal
+    // wiring lives in the worker module (Node-only, dynamically imported) so the
+    // Edge-runtime compile of this hook stays free of direct `process.*` calls.
     if (result.action === "started" && typeof result.pid === "number") {
-      const monitorPid = result.pid;
-      const stopOnSignal = (signal: NodeJS.Signals) => {
-        try {
-          process.kill(monitorPid, "SIGTERM");
-        } catch {
-          // Already gone — nothing to stop.
-        }
-        // Re-raise so default termination still happens (the listener is `once`,
-        // so the second delivery hits Node's default handler and exits).
-        try {
-          process.kill(process.pid, signal);
-        } catch {
-          // Best-effort.
-        }
-      };
-      process.once("SIGTERM", stopOnSignal);
-      process.once("SIGINT", stopOnSignal);
+      wireMonitorLifecycle(result.pid);
     }
   } catch (error) {
     // Best-effort: never let a worker-start failure break server boot. An admin

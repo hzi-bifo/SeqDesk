@@ -197,6 +197,32 @@ export async function ensureWorkerStarted(
 }
 
 /**
+ * Tie a worker WE started to this server process's lifecycle: stop it on a clean
+ * shutdown so it does not outlive the app and pin the release dir. Lives here
+ * (Node-only module) rather than inline in instrumentation.ts so the Edge-runtime
+ * compile of the instrumentation hook never sees direct `process.*` calls and
+ * stays warning-free.
+ */
+export function wireMonitorLifecycle(monitorPid: number): void {
+  const stopOnSignal = (signal: NodeJS.Signals) => {
+    try {
+      process.kill(monitorPid, "SIGTERM");
+    } catch {
+      // Already gone — nothing to stop.
+    }
+    // Re-raise so default termination still happens (the listener is `once`,
+    // so the second delivery hits Node's default handler and exits).
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      // Best-effort.
+    }
+  };
+  process.once("SIGTERM", stopOnSignal);
+  process.once("SIGINT", stopOnSignal);
+}
+
+/**
  * Send SIGTERM, then SIGKILL after a grace period. Returns when the process is
  * no longer alive or the deadline elapses. Updates the DB row to STOPPING then
  * STOPPED on success.
