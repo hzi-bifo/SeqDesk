@@ -104,6 +104,19 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Free disk space on the runner /home (setup-miniconda needs ~1 GB there)
+        run: |
+          set +e
+          # The runner's /home is small and runs ~98% full, so conda-incubator/setup-miniconda@v3
+          # aborts with "Not enough free disk space" before any pipeline runs. Reclaim the cache
+          # dirs that accumulate on /home across runs — all re-created on demand, and the WARM
+          # pipeline conda *environments* live on /net/broker, so they are left untouched.
+          echo "free /home before Setup Miniconda — before:"; df -h "$HOME" 2>/dev/null | tail -1
+          rm -rf "$HOME/.cache"/* "$HOME/.npm/_cacache" 2>/dev/null
+          rm -rf "$HOME/conda_pkgs_dir"/* "$HOME/.conda/pkgs"/* 2>/dev/null
+          echo "after:"; df -h "$HOME" 2>/dev/null | tail -1
+          true
+
       - name: Setup Miniconda for PostgreSQL tools
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -470,6 +483,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Free disk space on the runner /home (setup-miniconda needs ~1 GB there)
+        run: |
+          set +e
+          # The runner's /home is small and runs ~98% full, so conda-incubator/setup-miniconda@v3
+          # aborts with "Not enough free disk space" before any pipeline runs. Reclaim the cache
+          # dirs that accumulate on /home across runs — all re-created on demand, and the WARM
+          # pipeline conda *environments* live on /net/broker, so they are left untouched.
+          echo "free /home before Setup Miniconda — before:"; df -h "$HOME" 2>/dev/null | tail -1
+          rm -rf "$HOME/.cache"/* "$HOME/.npm/_cacache" 2>/dev/null
+          rm -rf "$HOME/conda_pkgs_dir"/* "$HOME/.conda/pkgs"/* 2>/dev/null
+          echo "after:"; df -h "$HOME" 2>/dev/null | tail -1
+          true
 
       - name: Setup Miniconda for PostgreSQL tools
         uses: conda-incubator/setup-miniconda@v3
