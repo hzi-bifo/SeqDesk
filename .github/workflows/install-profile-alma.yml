@@ -378,6 +378,9 @@ jobs:
             mkdir -p "$CONDA_CACHE_DIR" 2>/dev/null || true
           fi
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
+          # Optional override for where the read-cleaning spiked example bundle is hosted
+          # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
+          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -805,6 +808,9 @@ jobs:
             mkdir -p "$CONDA_CACHE_DIR" 2>/dev/null || true
           fi
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
+          # Optional override for where the read-cleaning spiked example bundle is hosted
+          # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
+          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -1080,6 +1086,20 @@ jobs:
                 [ -n "$rcdir" ] && [ -f "$rcdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$rcdir/logs/pipeline.out" 2>/dev/null | head -12
                 echo "::endgroup::"
               ) || true
+
+              # SPIKED dataset — deterministic contamination-removal COUNT (not just ">=1
+              # candidate"). Seed the hosted spiked bundle (30 human-mt + 30 E. coli reads per
+              # sample) via the read-cleaning-spike example route, run read-cleaning on its raw
+              # reads, then assert (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK) that host reads were
+              # REMOVED + microbes RETAINED by counting the cleaned vs raw FASTQs. Warn-only;
+              # same kraken2 DB. The bundle URL is the seed module's default
+              # (https://seqdesk.com/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz);
+              # host the tar.gz there, or set the READ_CLEANING_SPIKE_URL var (plumbed to the
+              # app as SEQDESK_READ_CLEANING_SPIKE_URL at boot). Seeds cleanly only if reachable.
+              SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK=1 \
+                run_gemma_warn read-cleaning 2400 --order-number DEV-RC-SPIKE-001 \
+                  --seed-example-dataset read-cleaning-spike \
+                  --config-json "{\"kraken2Db\":\"$RC_KRAKEN2_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
             else
               echo "read-cleaning: kraken2 DB absent at '$RC_KRAKEN2_DB' — SKIPPING (stays gated on a staged kraken2 DB; set SLURM_SHARED_KRAKEN2_DB or place the DB at the default path)."
             fi
