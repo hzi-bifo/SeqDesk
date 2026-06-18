@@ -15,6 +15,10 @@ on:
         description: "Hosted profile registry URL"
         required: true
         default: "https://seqdesk.org/api/install-profiles"
+      subsample_reads:
+        description: "SHORT run: subsample the Gemma reads to this fraction (e.g. 0.1) so metaxpath finishes in ~30-60min. Empty = full run (the canonical validation)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -907,7 +911,32 @@ jobs:
             # mag-smoke RAW minigut reads instead. reads-qc surfaced a local-run
             # completed->running flip that needs its own investigation (a follow-up in
             # PIPELINE_E2E_COVERAGE.md).
-            run_gemma fastq-checksum    900  --order-number DEV-GEMMA-ONT-001
+            #
+            # SHORT run (manual dispatch with -f subsample_reads=0.1): subsample the Gemma reads so
+            # metaxpath classifies a fraction and the matrix finishes in ~30-60min instead of ~3h.
+            # An ITERATION smoke, NOT the canonical validation — the scheduled full run stays the
+            # source of truth. Empty input (scheduled / default) = full run.
+            SUBSAMPLE="${{ github.event.inputs.subsample_reads }}"
+            if [ -n "$SUBSAMPLE" ]; then
+              echo "::group::SHORT run — subsampling Gemma reads to fraction $SUBSAMPLE"
+              n=0
+              # The Gemma reads are UNCOMPRESSED .fastq (under reads/fastq_pass/barcodeNN/), not
+              # .gz — so match both, and decompress/recompress only for .gz (cat for plain .fastq).
+              while IFS= read -r fq; do
+                ok=0
+                case "$fq" in
+                  *.gz) zcat "$fq" 2>/dev/null | awk -v f="$SUBSAMPLE" 'BEGIN{srand(7)} NR%4==1{k=(rand()<f)} k' | gzip > "$fq.sub" 2>/dev/null && ok=1 || true ;;
+                  *)    awk -v f="$SUBSAMPLE" 'BEGIN{srand(7)} NR%4==1{k=(rand()<f)} k' "$fq" > "$fq.sub" 2>/dev/null && ok=1 || true ;;
+                esac
+                if [ "$ok" = 1 ]; then mv -f "$fq.sub" "$fq" 2>/dev/null && n=$((n+1)) || true; else rm -f "$fq.sub" 2>/dev/null || true; fi
+              done < <(find "$PROFILE_DATA_DIR" -path '*gemma-nanopore-metaxpath*' \( -name '*.fastq.gz' -o -name '*.fq.gz' -o -name '*.fastq' -o -name '*.fq' \) -type f 2>/dev/null)
+              echo "subsampled $n Gemma FASTQ file(s) to fraction $SUBSAMPLE"
+              if [ "$n" -eq 0 ]; then echo "WARN: no Gemma reads found to subsample — metaxpath runs on full data."; fi
+              echo "::endgroup::"
+            fi
+            # fastq-checksum round-trips md5(file) vs the seeded checksum, which subsampling breaks,
+            # so skip it in a SHORT run (it adds nothing to a metaxpath-iteration smoke).
+            [ -n "$SUBSAMPLE" ] || run_gemma fastq-checksum 900 --order-number DEV-GEMMA-ONT-001
             run_gemma study-demo-report 900  --study-alias gemma-nanopore-metaxpath
             run_gemma fastqc            900  --order-number DEV-GEMMA-ONT-001
             # metaxpath (private add-on, STUDY target — the app rejects order targets).
@@ -1065,13 +1094,14 @@ jobs:
               # candidate"). Seed the hosted spiked bundle (30 human-mt + 30 E. coli reads per
               # sample) via the read-cleaning-spike example route, run read-cleaning on its raw
               # reads, then assert (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK) that host reads were
-              # REMOVED + microbes RETAINED by counting the cleaned vs raw FASTQs. Warn-only;
-              # same kraken2 DB. The bundle URL is the seed module's default
+              # REMOVED + microbes RETAINED by counting the cleaned vs raw FASTQs. HARD gate (the count
+              # check still warns+skips if the data isn't readable, so only a real regression reds).
+              # Same kraken2 DB. The bundle URL is the seed module's default
               # (https://seqdesk.com/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz);
               # host the tar.gz there, or set the READ_CLEANING_SPIKE_URL var (plumbed to the
               # app as SEQDESK_READ_CLEANING_SPIKE_URL at boot). Seeds cleanly only if reachable.
               SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK=1 \
-                run_gemma_warn read-cleaning 2400 --order-number DEV-RC-SPIKE-001 \
+                run_gemma read-cleaning 2400 --order-number DEV-RC-SPIKE-001 \
                   --seed-example-dataset read-cleaning-spike \
                   --config-json "{\"kraken2Db\":\"$RC_KRAKEN2_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
             else
