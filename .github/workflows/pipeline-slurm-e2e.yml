@@ -177,6 +177,13 @@ jobs:
               "$CONDA_BIN" create -y -p "$ENV_PREFIX" \
                 --override-channels -c conda-forge -c bioconda $PIPELINE_PKGS
             fi
+            # Short-term band-aid: nf-core/detaxizer's RENAME_FASTQ_HEADERS step imports the
+            # `dnaio` Python module, but on this cluster the env that step lands in lacks it (it
+            # works on the install runner, so it's an env-assembly gap, not a true missing dep).
+            # Ensure it's present (idempotent — no-op if already there). LONG-TERM fix is
+            # Singularity containers, where every step ships its own complete software.
+            "$CONDA_BIN" install -y -p "$ENV_PREFIX" --override-channels -c conda-forge -c bioconda dnaio \
+              || echo "WARN: could not install dnaio into $ENV_PREFIX (read-cleaning may fail on the rename step)"
           else
             conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
@@ -921,10 +928,10 @@ jobs:
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
             ${{ runner.temp }}/slurm-diag
-            # Per-process conda envs (built at runtime for pipelines like fastqc) are a
-            # large tree of symlinks that breaks the upload — and they're not useful as
-            # artifacts. The per-process logs are already echoed by the diagnostics step.
-            !${{ env.SEQDESK_RUN_DIR }}/**/work/conda/**
+            # Nextflow work dirs are intermediates, not useful as artifacts — and they get
+            # huge (read-cleaning's detaxizer un-tars a ~20 GB kraken2 DB into one, which made
+            # the upload hang ~1h). The per-process logs are echoed by the diagnostics step.
+            !${{ env.SEQDESK_RUN_DIR }}/**/work/**
           if-no-files-found: warn
           retention-days: 14
 
