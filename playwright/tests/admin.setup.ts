@@ -12,7 +12,7 @@ test("authenticate seeded admin", async ({ page }) => {
   await page.getByRole("button", { name: /sign in/i }).click();
 
   await page.waitForURL(/\/orders$/);
-  await expect(page.getByRole("heading", { name: /all orders/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /all sequencing orders/i })).toBeVisible();
 
   const runtimeRoot = path.join(os.tmpdir(), "seqdesk-playwright-runtime");
   const dataBasePath = path.join(runtimeRoot, "sequencing-data");

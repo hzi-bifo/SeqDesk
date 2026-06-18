@@ -229,7 +229,7 @@ export async function createAndSubmitOrder(
   await expect(page.getByRole("dialog")).toContainText("Order Submitted", {
     timeout: 20000,
   });
-  await page.getByRole("button", { name: /view order/i }).click();
+  await page.getByRole("button", { name: /view sequencing order/i }).click();
 
   await expect
     .poll(() => new URL(page.url()).pathname)
@@ -317,14 +317,14 @@ export async function withAllowDeleteSubmittedOrdersLock<T>(
 
 export async function deleteCurrentOrder(page: Page) {
   await page.getByRole("button", { name: "Delete", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Delete Order");
+  await expect(page.getByRole("dialog")).toContainText("Delete Sequencing Order");
 
   const confirmInput = page.getByPlaceholder("Type DELETE to confirm");
   if (await confirmInput.isVisible()) {
     await confirmInput.fill("DELETE");
   }
 
-  await page.getByRole("button", { name: "Delete Order", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Sequencing Order", exact: true }).click();
 }
 
 export async function getOrderSampleIds(page: Page): Promise<string[]> {

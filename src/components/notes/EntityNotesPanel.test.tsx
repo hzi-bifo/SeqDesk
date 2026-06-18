@@ -604,7 +604,12 @@ describe("EntityNotesPanel", () => {
     const showButton = await screen.findByLabelText("Show order notepad");
     expect(showButton).toBeTruthy();
     // Notes exist ("Initial **note**") so the content indicator dot is rendered.
-    expect(showButton.querySelector(".bg-primary")).toBeTruthy();
+    // The dot only appears once the notes fetch resolves, which can lag the
+    // button's initial render under coverage-instrumented CI parallelism — wait
+    // for it rather than asserting synchronously (this raced and flaked on CI).
+    await waitFor(() => {
+      expect(showButton.querySelector(".bg-primary")).toBeTruthy();
+    });
     // The editor is not rendered while collapsed.
     expect(screen.queryByLabelText("notes editor")).toBeNull();
   });
