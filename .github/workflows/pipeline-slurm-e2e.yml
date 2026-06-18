@@ -517,52 +517,49 @@ jobs:
           export SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT="60"
           export SEQDESK_RUNTIME_E2E_SLURM_CORES="2"
           echo "read-cleaning SLURM request: mem=${REQ_MB}M cores=2 time=60m"
-          # Heal a poisoned conda cache: Nextflow reuses ANY cached env dir without validating it,
-          # so a detaxizer env left INCOMPLETE by a prior interrupted/timed-out build (it has
-          # python+numpy but is missing dnaio) makes the rename step fail "No module named 'dnaio'"
-          # forever on reuse. Drop such partial envs so the warm-up below rebuilds them complete.
-          # Derive the shared conda cache from SEQDESK_DATA_DIR (which IS in this step's env via
-          # $GITHUB_ENV — SLURM_SHARED_RUN_ROOT is NOT, so the old derivation pointed at a bogus
-          # path and the heal silently never ran). data dir = <base>/pipeline-runs/seqdesk-data-*,
-          # and the cache is <base>/conda-cache = two levels up + /conda-cache.
+          # Shared conda cache (derive from SEQDESK_DATA_DIR, which IS in this step's env).
           CACHE_DIR="$(dirname "$(dirname "$SEQDESK_DATA_DIR")")/conda-cache"
           echo "conda cache dir: $CACHE_DIR ($([ -d "$CACHE_DIR" ] && echo exists || echo MISSING))"
-          if [ -d "$CACHE_DIR" ]; then
-            # detaxizer's RENAME_FASTQ_HEADERS env (python=3.12 numpy dnaio). A prior interrupted
-            # build can leave it a STUB (python only — no dnaio, no numpy, history doesn't even
-            # record the request), which the content heuristics below can't detect — so target it
-            # by its Nextflow env hash. Removing it forces the warm-up to rebuild it complete; once
-            # complete the `import dnaio` check passes and it's left alone (idempotent).
-            RENAME_ENV="$CACHE_DIR/env-233255fe9efd9760f9ee230cc961a7e4"
-            if [ -d "$RENAME_ENV" ] && ! "$RENAME_ENV/bin/python" -c "import dnaio" >/dev/null 2>&1; then
-              echo "heal: removing known-broken detaxizer rename env: $RENAME_ENV"; rm -rf "$RENAME_ENV"
-            fi
-            # General: any other env whose build REQUESTED dnaio (per history) but can't import it.
-            for e in "$CACHE_DIR"/env-*; do
-              [ -x "$e/bin/python" ] || continue
-              if grep -qiE 'dnaio' "$e"/conda-meta/history 2>/dev/null && ! "$e/bin/python" -c "import dnaio" >/dev/null 2>&1; then
-                echo "heal: removing broken detaxizer env (dnaio requested, not importable): $e"; rm -rf "$e"
+          RC_JSON="{\"kraken2Db\":\"$RC_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
+          # The SLURM run uses the INLINE executor (processes run via Nextflow's local executor on an
+          # OFFLINE compute node that can only REUSE cached conda envs, never BUILD them). So build
+          # detaxizer's per-process envs on the ONLINE head node first via a --skip-slurm warm-up;
+          # the --skip-local SLURM pass then reuses them by hash.
+          #
+          # Pitfall: Nextflow reuses ANY cached env dir WITHOUT validating it, so an env left a STUB
+          # by a prior interrupted build (e.g. python with no dnaio) is reused forever and the rename
+          # step fails "No module named 'dnaio'". Env hashes change with conda config so we can't
+          # hardcode them — instead: run the warm-up; if it fails, find the broken env from the
+          # FAILED task's own .command.run, delete it, and retry so Nextflow rebuilds it complete.
+          rc_warmup() {
+            npm run pipeline:e2e:runtime -- \
+              --set-data-base-path "$SEQDESK_DATA_DIR" --seed-example-dataset read-cleaning-spike \
+              --pipeline-id read-cleaning --order-number DEV-RC-SPIKE-001 \
+              --config-json "$RC_JSON" --timeout 2400 --skip-slurm \
+              2>&1 | tee "$RUNNER_TEMP/read-cleaning-local-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+            return "${PIPESTATUS[0]}"
+          }
+          rc_heal_broken_envs() {
+            local rcdir ec run env
+            rcdir="$(find "$SEQDESK_RUN_DIR" -maxdepth 1 -type d -name 'READ-CLEANING-*' 2>/dev/null | tail -1)"
+            if [ -z "$rcdir" ]; then echo "heal: no read-cleaning run dir found"; return 0; fi
+            for ec in "$rcdir"/work/*/*/.exitcode; do
+              if [ -f "$ec" ] && [ "$(cat "$ec" 2>/dev/null)" != "0" ]; then
+                run="$(dirname "$ec")/.command.run"
+                env="$(grep -oE "$CACHE_DIR/env-[a-f0-9]+" "$run" 2>/dev/null | head -1)"
+                if [ -n "$env" ] && [ -d "$env" ] && ! "$env/bin/python" -c "import dnaio" >/dev/null 2>&1; then
+                  echo "heal: removing broken dnaio env $env"; rm -rf "$env"
+                fi
               fi
             done
-          fi
-          # The SLURM run uses the INLINE executor (one sbatch, processes run via Nextflow's local
-          # executor INSIDE that allocation on an OFFLINE compute node). That node can only REUSE
-          # conda envs already in the shared cacheDir — it can't BUILD them (no network). So we must
-          # build detaxizer's per-process envs (python/numpy/dnaio/...) on the ONLINE head node
-          # FIRST, in a dedicated --skip-slurm pass, then the --skip-local SLURM pass reuses them by
-          # hash. Doing both in one invocation was unreliable (the rename step landed in a bare env
-          # → "No module named 'dnaio'"); splitting guarantees the head-node build completes first.
-          RC_JSON="{\"kraken2Db\":\"$RC_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}"
+            return 0
+          }
           echo "::group::read-cleaning LOCAL warm-up — builds detaxizer's conda envs on the head node"
-          npm run pipeline:e2e:runtime -- \
-            --set-data-base-path "$SEQDESK_DATA_DIR" \
-            --seed-example-dataset read-cleaning-spike \
-            --pipeline-id read-cleaning \
-            --order-number DEV-RC-SPIKE-001 \
-            --config-json "$RC_JSON" \
-            --timeout 2400 \
-            --skip-slurm \
-            2>&1 | tee "$RUNNER_TEMP/read-cleaning-local-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          if ! rc_warmup; then
+            echo "warm-up failed — healing broken dnaio env(s) from the failed tasks, then retrying"
+            rc_heal_broken_envs
+            rc_warmup || echo "warm-up still failing after heal+retry (see log)"
+          fi
           echo "::endgroup::"
           # SLURM pass — reuses the now-cached envs on the compute node; asserts host removal.
           npm run pipeline:e2e:runtime -- \
