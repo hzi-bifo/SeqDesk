@@ -147,6 +147,20 @@ jobs:
       - name: Create pipeline Conda environment
         run: |
           set -euo pipefail
+          # Anaconda's default channels are blocked here (org security/licensing, and conda's
+          # Terms-of-Service check pings repo.anaconda.com). Pin a global condarc to ONLY
+          # conda-forge + bioconda AND redirect default_channels away from Anaconda, so NO conda
+          # operation — including Nextflow's per-process env builds on the offline compute node —
+          # resolves a package (numpy, dnaio, ...) from Anaconda. Exported via $GITHUB_ENV so
+          # every later step, the app, and the SLURM tasks (sbatch --export=ALL) inherit it; the
+          # file lives on the shared FS so the compute nodes can read it.
+          CONDARC_FILE="${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}/seqdesk-condarc"
+          mkdir -p "$(dirname "$CONDARC_FILE")"
+          printf 'channels:\n  - conda-forge\n  - bioconda\ndefault_channels:\n  - https://conda.anaconda.org/conda-forge\n  - https://conda.anaconda.org/bioconda\nchannel_priority: strict\n' > "$CONDARC_FILE"
+          export CONDARC="$CONDARC_FILE"
+          echo "CONDARC=$CONDARC_FILE" >> "$GITHUB_ENV"
+          echo "conda pinned to conda-forge/bioconda (no Anaconda defaults) -> $CONDARC_FILE"
+          cat "$CONDARC_FILE"
           if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
             # SLURM cluster: the compute nodes cannot see the runner's conda, so the env
             # must live on the shared filesystem. It is referenced by FULL PREFIX PATH,
