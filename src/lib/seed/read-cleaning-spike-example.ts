@@ -27,7 +27,7 @@ const READ_CLEANING_SPIKE_READ_PREFIX = `fixtures/${READ_CLEANING_SPIKE_PROFILE_
 const READ_CLEANING_SPIKE_BUNDLE = {
   url:
     process.env.SEQDESK_READ_CLEANING_SPIKE_URL ||
-    "https://seqdesk.com/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz",
+    "https://seqdesk.org/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz",
   sha256:
     process.env.SEQDESK_READ_CLEANING_SPIKE_SHA256 ||
     "602e404a4db708d4deb7a6c134db85fcb941435e05616fa5338377be25895fd9",

@@ -1067,7 +1067,7 @@ jobs:
               # reads, then assert (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK) that host reads were
               # REMOVED + microbes RETAINED by counting the cleaned vs raw FASTQs. Warn-only;
               # same kraken2 DB. The bundle URL is the seed module's default
-              # (https://seqdesk.com/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz);
+              # (https://seqdesk.org/example-datasets/read-cleaning-spiked-ont-3sample.tar.gz);
               # host the tar.gz there, or set the READ_CLEANING_SPIKE_URL var (plumbed to the
               # app as SEQDESK_READ_CLEANING_SPIKE_URL at boot). Seeds cleanly only if reachable.
               SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK=1 \
