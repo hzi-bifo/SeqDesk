@@ -119,14 +119,13 @@ test("admin can create a blank study with its own questionnaire", async ({
   ).toBeVisible();
   await expect(page.getByText(title, { exact: true }).first()).toBeVisible();
 
-  // Each study renders as a bordered row holding its title and an
-  // "Edit questionnaire" link; scope to the row that contains this study.
-  const studyRow = page
-    .locator("div.rounded-lg.border")
-    .filter({ has: page.getByText(title, { exact: true }) })
-    .filter({ has: page.getByRole("link", { name: /Edit questionnaire/i }) })
-    .first();
-  await studyRow.getByRole("link", { name: /Edit questionnaire/i }).click();
+  // Each study row links to its own questionnaire builder with the study's id in
+  // the href. Match that unique href directly: the list's Card wrapper and the
+  // individual row both carry `rounded-lg border`, so a class-based row locator is
+  // ambiguous (strict-mode violation) and only gets worse as studies accumulate.
+  await page
+    .locator(`a[href*="study-form-builder?studyId=${study.id}"]`)
+    .click();
 
   // The builder loads this study's own questionnaire (note the studyId query).
   await page.waitForURL(
