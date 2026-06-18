@@ -521,7 +521,12 @@ jobs:
           # so a detaxizer env left INCOMPLETE by a prior interrupted/timed-out build (it has
           # python+numpy but is missing dnaio) makes the rename step fail "No module named 'dnaio'"
           # forever on reuse. Drop such partial envs so the warm-up below rebuilds them complete.
-          CACHE_DIR="$(dirname "${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}")/conda-cache"
+          # Derive the shared conda cache from SEQDESK_DATA_DIR (which IS in this step's env via
+          # $GITHUB_ENV — SLURM_SHARED_RUN_ROOT is NOT, so the old derivation pointed at a bogus
+          # path and the heal silently never ran). data dir = <base>/pipeline-runs/seqdesk-data-*,
+          # and the cache is <base>/conda-cache = two levels up + /conda-cache.
+          CACHE_DIR="$(dirname "$(dirname "$SEQDESK_DATA_DIR")")/conda-cache"
+          echo "conda cache dir: $CACHE_DIR ($([ -d "$CACHE_DIR" ] && echo exists || echo MISSING))"
           if [ -d "$CACHE_DIR" ]; then
             # detaxizer's RENAME_FASTQ_HEADERS env (python=3.12 numpy dnaio). A prior interrupted
             # build can leave it a STUB (python only — no dnaio, no numpy, history doesn't even
