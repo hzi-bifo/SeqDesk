@@ -1904,6 +1904,23 @@ async function main() {
   const client = createClient(baseUrl);
   const session = await loginAdmin({ client, baseUrl, email, password });
 
+  // Persist the sequencing data base path before any seed. Fixture extractors (mag-smoke,
+  // read-cleaning-spike) read the RAW stored SiteSettings.dataBasePath — NOT the config/env
+  // resolved value — so a source-boot app (no install profile) must set it explicitly, else the
+  // extract 500s ("requires site.dataBasePath to extract FASTQ files"). Only runs with the flag.
+  const setDataBasePath = toOptionalString(args["set-data-base-path"]);
+  if (setDataBasePath) {
+    const res = await client.request("/api/admin/settings/sequencing-files", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataBasePath: setDataBasePath }),
+    });
+    if (!res.ok) {
+      fail(`Failed to set dataBasePath='${setDataBasePath}' (${res.status})`, summarizeBody(await res.text()));
+    }
+    console.log(`Set sequencing dataBasePath = ${setDataBasePath}`);
+  }
+
   // Optionally provision an example dataset (real order/study/samples/reads) before the run, e.g.
   // mag needs paired short reads the Gemma ONT data can't provide. POSTs the admin seed route and
   // waits for it (synchronous), so the dataset exists before we look up the order/study below.

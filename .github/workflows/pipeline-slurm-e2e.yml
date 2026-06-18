@@ -499,6 +499,7 @@ jobs:
           # No --skip: runs LOCAL (warms detaxizer's conda env into the shared cache) then SLURM
           # (reuses it). Seeds the spiked raw dataset; the spike check asserts host removal.
           npm run pipeline:e2e:runtime -- \
+            --set-data-base-path "$SEQDESK_DATA_DIR" \
             --seed-example-dataset read-cleaning-spike \
             --pipeline-id read-cleaning \
             --order-number DEV-RC-SPIKE-001 \
