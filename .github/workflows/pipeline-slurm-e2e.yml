@@ -523,11 +523,18 @@ jobs:
           # forever on reuse. Drop such partial envs so the warm-up below rebuilds them complete.
           CACHE_DIR="$(dirname "${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}")/conda-cache"
           if [ -d "$CACHE_DIR" ]; then
+            # detaxizer's RENAME_FASTQ_HEADERS env (python=3.12 numpy dnaio). A prior interrupted
+            # build can leave it a STUB (python only — no dnaio, no numpy, history doesn't even
+            # record the request), which the content heuristics below can't detect — so target it
+            # by its Nextflow env hash. Removing it forces the warm-up to rebuild it complete; once
+            # complete the `import dnaio` check passes and it's left alone (idempotent).
+            RENAME_ENV="$CACHE_DIR/env-233255fe9efd9760f9ee230cc961a7e4"
+            if [ -d "$RENAME_ENV" ] && ! "$RENAME_ENV/bin/python" -c "import dnaio" >/dev/null 2>&1; then
+              echo "heal: removing known-broken detaxizer rename env: $RENAME_ENV"; rm -rf "$RENAME_ENV"
+            fi
+            # General: any other env whose build REQUESTED dnaio (per history) but can't import it.
             for e in "$CACHE_DIR"/env-*; do
               [ -x "$e/bin/python" ] || continue
-              # An env whose build REQUESTED dnaio (recorded in conda-meta/history) but whose python
-              # can't import it is a broken/interrupted build — remove it so the warm-up rebuilds it
-              # complete. (history matches regardless of how far the interrupted install got.)
               if grep -qiE 'dnaio' "$e"/conda-meta/history 2>/dev/null && ! "$e/bin/python" -c "import dnaio" >/dev/null 2>&1; then
                 echo "heal: removing broken detaxizer env (dnaio requested, not importable): $e"; rm -rf "$e"
               fi
