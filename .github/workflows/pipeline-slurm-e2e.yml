@@ -532,6 +532,7 @@ jobs:
             --pipeline-id read-cleaning \
             --order-number DEV-RC-SPIKE-001 \
             --config-json "$RC_JSON" \
+            --timeout 2400 \
             --skip-slurm \
             2>&1 | tee "$RUNNER_TEMP/read-cleaning-local-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
           echo "::endgroup::"
@@ -542,6 +543,7 @@ jobs:
             --pipeline-id read-cleaning \
             --order-number DEV-RC-SPIKE-001 \
             --config-json "$RC_JSON" \
+            --timeout 2400 \
             --skip-local \
             2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
