@@ -613,6 +613,7 @@ export function OrderWizardPage({
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
   const { enabled: billingModuleEnabled } = useModule("billing-info");
   const { enabled: sequencingTechModuleEnabled } = useModule("sequencing-tech");
+  const { enabled: dynamicStudiesEnabled } = useModule("dynamic-studies");
 
   // Edit mode - if edit param is present, we're editing an existing order
   const editOrderId = forcedEditOrderId ?? searchParams.get("edit");
@@ -627,6 +628,13 @@ export function OrderWizardPage({
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(true);
+
+  // Optional "associate this order with a study" first step (dynamic-studies).
+  const [studyChoice, setStudyChoice] = useState<"all" | "later" | null>(null);
+  const [primaryStudyId, setPrimaryStudyId] = useState<string | null>(null);
+  const [availableStudies, setAvailableStudies] = useState<
+    Array<{ id: string; title: string; checklistType: string | null }>
+  >([]);
 
   // Tech data for barcode resolution
   const [techKits, setTechKits] = useState<SequencingKit[]>([]);
@@ -1074,6 +1082,21 @@ export function OrderWizardPage({
     fetchSchema();
   }, []);
 
+  // Studies for the optional "associate to a study" first step.
+  useEffect(() => {
+    if (!dynamicStudiesEnabled || isEditMode) return;
+    let cancelled = false;
+    fetch("/api/studies")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setAvailableStudies(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [dynamicStudiesEnabled, isEditMode]);
+
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
     if (!sequencingTechModuleEnabled) return;
@@ -1332,17 +1355,30 @@ export function OrderWizardPage({
     (f) => !f.groupId && f.type !== "mixs"
   );
 
-  const steps = buildOrderProgressSteps({
-    fields: [...visibleFields, ...adminOnlyFields],
-    groups,
-    enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
-    includeFacilityFields: isFacilityAdmin,
-  }).map((step) => ({
-    id: step.id,
-    title: step.label,
-    description: step.description,
-    icon: iconMap[step.icon] || FileText,
-  }));
+  const steps = [
+    ...((dynamicStudiesEnabled && !isEditMode)
+      ? [
+          {
+            id: "_study",
+            title: "Study",
+            description:
+              "Associate this sequencing order with a study (optional)",
+            icon: FileText,
+          },
+        ]
+      : []),
+    ...buildOrderProgressSteps({
+      fields: [...visibleFields, ...adminOnlyFields],
+      groups,
+      enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
+      includeFacilityFields: isFacilityAdmin,
+    }).map((step) => ({
+      id: step.id,
+      title: step.label,
+      description: step.description,
+      icon: iconMap[step.icon] || FileText,
+    })),
+  ];
   const currentStepParam = searchParams.get("step");
   const editScope = searchParams.get("scope");
   const facilityEditSteps = [
@@ -2025,6 +2061,29 @@ export function OrderWizardPage({
         if (!samplesRes.ok) {
           // Order was created but samples failed - go to order detail anyway
           console.error("Failed to save samples");
+        } else if (dynamicStudiesEnabled && primaryStudyId) {
+          // Associate the whole order's samples with the chosen primary study.
+          try {
+            const samplesData = await samplesRes.json();
+            const createdSampleIds = (samplesData?.samples ?? [])
+              .map((s: { id: string }) => s.id)
+              .filter(Boolean);
+            if (createdSampleIds.length > 0) {
+              const assignRes = await fetch(
+                `/api/studies/${primaryStudyId}/samples`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ sampleIds: createdSampleIds }),
+                }
+              );
+              if (!assignRes.ok) {
+                console.error("Failed to associate samples with study");
+              }
+            }
+          } catch {
+            console.error("Failed to associate samples with study");
+          }
         }
       }
 
@@ -2080,6 +2139,19 @@ export function OrderWizardPage({
         input?.focus();
       }, 100);
     };
+
+    // Optional study-association step (dynamic-studies)
+    if (stepId === "_study") {
+      if (studyChoice === "all" && !primaryStudyId) {
+        setError("Select a study, or choose to assign samples per study later");
+        return false;
+      }
+      if (studyChoice === null) {
+        setError("Choose whether all samples belong to one study");
+        return false;
+      }
+      return true;
+    }
 
     // MIxS step - no required validation (checklist selection is optional)
     if (stepId === "mixs") {
@@ -3211,6 +3283,123 @@ export function OrderWizardPage({
   const renderStepContent = () => {
     const stepId = currentStepId;
     if (!stepId) return null;
+
+    // Optional study-association step (dynamic-studies)
+    if (stepId === "_study") {
+      return (
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              Do all samples in this sequencing order belong to one study?
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setStudyChoice("all")}
+                className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                  studyChoice === "all"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40 hover:bg-muted/30"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    studyChoice === "all"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <FlaskConical className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    Yes — one study for the whole order
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    All samples are associated with the study you pick, and its
+                    questionnaire applies.
+                  </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStudyChoice("later");
+                  setPrimaryStudyId(null);
+                }}
+                className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                  studyChoice === "later"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40 hover:bg-muted/30"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    studyChoice === "later"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <ClipboardPen className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    No — assign per sample later
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Samples can belong to different studies; assign them from the
+                    order&apos;s Studies tab.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {studyChoice === "all" && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Select the study</p>
+              {availableStudies.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  No studies yet. Create one in the Studies area first, then come
+                  back — or choose &quot;assign per sample later&quot;.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {availableStudies.map((s) => {
+                    const selected = primaryStudyId === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setPrimaryStudyId(s.id)}
+                        className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/40 hover:bg-muted/30"
+                        }`}
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <FlaskConical className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{s.title}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {s.checklistType || "No checklist set"}
+                          </p>
+                        </div>
+                        {selected && (
+                          <Check className="h-4 w-4 shrink-0 text-primary" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
 
     // MIxS step
     if (stepId === "mixs") {
