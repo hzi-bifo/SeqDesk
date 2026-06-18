@@ -453,13 +453,57 @@ jobs:
             --pipeline-id reads-qc \
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
-      # read-cleaning coverage moved to the "Install SeqDesk + run a SLURM pipeline on the
-      # installed app" step below. Its kraken2 DB is now MANAGED via the install profile
-      # (one key: PipelineConfig.kraken2Db), the realistic facility flow — not a per-run
-      # --config-json override, which production HIDES once the DB is server-managed
-      # (hideWhenServerConfigured). That step already proves the managed DB is applied on the
-      # installed app; the full read-cleaning RUN there is still gated on a hosted raw/spiked
-      # dataset (see PIPELINE_E2E_COVERAGE.md).
+      # read-cleaning UNDER SLURM (source-boot, local + SLURM). The LOCAL run builds detaxizer's
+      # conda env into the shared cache on the networked head node; the SLURM run reuses it by
+      # hash on the network-less compute node (the fastqc mechanism above). Heavy: detaxizer
+      # loads a ~20 GB kraken2 DB into RAM, so this step right-sizes the SLURM request (the
+      # job-wide 1G/10min is for the light smokes) and packs the staged DB dir into a cached
+      # .tar (detaxizer untars --kraken2db). Seeds the spiked raw dataset (30 human-mt + 30
+      # E. coli reads/sample) and asserts host reads are removed + microbes retained
+      # (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK). WARN-ONLY while brought up on SLURM — promote to a
+      # hard gate + flip the PIPELINE_E2E_COVERAGE.md source-boot SLURM mark to ✅ once green.
+      - name: Run read-cleaning E2E (local + SLURM, contamination removal) — warn-only
+        if: always()
+        continue-on-error: true
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+          SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK: "1"
+          SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+        run: |
+          set -euo pipefail
+          DB="$SLURM_SHARED_KRAKEN2_DB"
+          if [ ! -e "$DB" ]; then echo "kraken2 DB absent at '$DB' — skipping read-cleaning SLURM (warn)."; exit 0; fi
+          # detaxizer untars --kraken2db, so pack the staged DB dir into a cached .tar on the
+          # shared FS (the compute node reads it). Idempotent across runs.
+          RC_INPUT="$DB"
+          if [ -d "$DB" ]; then
+            CACHE="$(dirname "$SEQDESK_DATA_DIR")/seqdesk-kraken2-cache"; mkdir -p "$CACHE"
+            RC_INPUT="$CACHE/$(basename "$DB").tar"
+            [ -s "$RC_INPUT" ] || tar -cf "$RC_INPUT" -C "$(dirname "$DB")" "$(basename "$DB")"
+            echo "read-cleaning: kraken2Db dir -> $RC_INPUT ($(du -sh "$RC_INPUT" 2>/dev/null | cut -f1 || echo '?'))"
+          fi
+          # Right-size the SLURM request to what the cpu partition actually offers (the 20 GB DB
+          # loads into RAM). Skip cleanly if the nodes are too small or sinfo is unavailable.
+          MAXMEM_MB=$(sinfo -h -p cpu -o "%m" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1 || true)
+          echo "cpu partition max node memory: ${MAXMEM_MB:-unknown} MB"
+          if [ -z "${MAXMEM_MB:-}" ] || [ "$MAXMEM_MB" -lt 24000 ]; then
+            echo "read-cleaning SLURM: nodes <24 GB or sinfo unavailable — skipping (warn)."; exit 0
+          fi
+          if [ "$MAXMEM_MB" -gt 36000 ]; then REQ_MB=32000; else REQ_MB=$((MAXMEM_MB - 4000)); fi
+          export SEQDESK_RUNTIME_E2E_SLURM_MEMORY="${REQ_MB}M"
+          export SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT="60"
+          export SEQDESK_RUNTIME_E2E_SLURM_CORES="2"
+          echo "read-cleaning SLURM request: mem=${REQ_MB}M cores=2 time=60m"
+          # No --skip: runs LOCAL (warms detaxizer's conda env into the shared cache) then SLURM
+          # (reuses it). Seeds the spiked raw dataset; the spike check asserts host removal.
+          npm run pipeline:e2e:runtime -- \
+            --seed-example-dataset read-cleaning-spike \
+            --pipeline-id read-cleaning \
+            --order-number DEV-RC-SPIKE-001 \
+            --config-json "{\"kraken2Db\":\"$RC_INPUT\",\"classificationKraken2\":true,\"tax2filter\":\"Homo sapiens\"}" \
+            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
       - name: Run SLURM-only pipeline smoke through the app
         env:
