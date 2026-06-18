@@ -177,7 +177,14 @@ export default function StudyFormBuilderPage() {
   const searchParams = useSearchParams();
   const { enabled: mixsModuleEnabled } = useModule("mixs-metadata");
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
+  // When editing a specific study's questionnaire (dynamic-studies), scope all
+  // load/save to that study; otherwise this is the global study form.
+  const studyId = searchParams.get("studyId");
+  const studyFormConfigUrl = studyId
+    ? `/api/admin/study-form-config?studyId=${encodeURIComponent(studyId)}`
+    : "/api/admin/study-form-config";
 
+  const [studyTitle, setStudyTitle] = useState<string | null>(null);
   const [fields, setFields] = useState<FormFieldDefinition[]>([]);
   const [groups, setGroups] = useState<FormFieldGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -247,7 +254,7 @@ export default function StudyFormBuilderPage() {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const res = await fetch("/api/admin/study-form-config");
+        const res = await fetch(studyFormConfigUrl);
         if (res.ok) {
           const data = await res.json();
           let loadedFields = data.fields || [];
@@ -273,7 +280,25 @@ export default function StudyFormBuilderPage() {
       }
     };
     fetchConfig();
-  }, []);
+  }, [studyFormConfigUrl]);
+
+  // When editing a specific study's questionnaire, surface which study in the header.
+  useEffect(() => {
+    if (!studyId) {
+      setStudyTitle(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/studies/${studyId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled) setStudyTitle(data?.title ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId]);
 
   // Generate field name from label
   const generateFieldName = (label: string) => {
@@ -527,7 +552,7 @@ export default function StudyFormBuilderPage() {
       setAutoSaveStatus("saving");
 
       try {
-        const res = await fetch("/api/admin/study-form-config", {
+        const res = await fetch(studyFormConfigUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: snapshot,
@@ -563,7 +588,7 @@ export default function StudyFormBuilderPage() {
         setSaving(false);
       }
     },
-    [fields, groups]
+    [fields, groups, studyFormConfigUrl]
   );
 
   // Save configuration manually
@@ -878,7 +903,9 @@ export default function StudyFormBuilderPage() {
       <div className="mb-4 mt-6">
         <h1 className="text-xl font-semibold">Study Configuration</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Define what information users provide when creating studies and preparing submissions
+          {studyId
+            ? `Editing this study's own questionnaire${studyTitle ? ` — ${studyTitle}` : ""}. Changes apply only to this study.`
+            : "Define what information users provide when creating studies and preparing submissions"}
         </p>
       </div>
 

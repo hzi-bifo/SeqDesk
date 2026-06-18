@@ -211,7 +211,7 @@ describe("admin settings seed status", () => {
     });
     expect(
       screen.getByText(
-        "5 ONT MinION Mk1D samples loaded in order DEV-GEMMA-ONT-001."
+        "5 ONT MinION Mk1D samples loaded in sequencing order DEV-GEMMA-ONT-001."
       )
     ).toBeTruthy();
     expect(screen.getByText("Re-seed")).toBeTruthy();

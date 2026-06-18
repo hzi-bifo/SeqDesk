@@ -54,7 +54,7 @@ export function Navbar({ user }: NavbarProps) {
               href="/orders"
               className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
-              Orders
+              Sequencing Orders
             </Link>
             <Link
               href="/studies"

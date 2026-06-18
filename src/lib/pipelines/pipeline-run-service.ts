@@ -550,7 +550,7 @@ export async function createPipelineRunForOperator({
   }
 
   if (target.type === 'order' && !order) {
-    return jsonResponse({ error: 'Order not found' }, 404);
+    return jsonResponse({ error: 'Sequencing Order not found' }, 404);
   }
 
   if (requestedSampleIds && requestedSampleIds.length > 0) {

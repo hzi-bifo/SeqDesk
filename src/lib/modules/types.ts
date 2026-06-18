@@ -19,7 +19,7 @@ export interface ModuleDefinition {
 export const MODULE_CATEGORIES: Record<ModuleCategory, { label: string; description: string }> = {
   "order-form": {
     label: "Form Modules",
-    description: "Add specialized field types to your order and study forms",
+    description: "Add specialized field types to your sequencing order and study forms",
   },
   validation: {
     label: "Validation",
@@ -73,9 +73,9 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   {
     id: "billing-info",
     name: "Cost Center & PSP",
-    description: "Internal billing and cost allocation for orders. Collect Cost Center codes and PSP Elements (SAP project structure plan) with configurable format validation (e.g., 1-1234567-99). For institutions with SAP systems, direct API integration is available.",
+    description: "Internal billing and cost allocation for sequencing orders. Collect Cost Center codes and PSP Elements (SAP project structure plan) with configurable format validation (e.g., 1-1234567-99). For institutions with SAP systems, direct API integration is available.",
     category: "order-form",
-    featureLocation: "Configuration > Order Forms",
+    featureLocation: "Configuration > Sequencing Order Forms",
     hasSettings: true,
   },
   {
@@ -83,23 +83,30 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     name: "ENA Sample Fields",
     description: "Essential per-sample fields required for ENA (European Nucleotide Archive) submission. Includes Organism field with NCBI taxonomy lookup, Sample Title, and Sample Alias. Strongly recommended if you plan to submit sequencing data to public repositories.",
     category: "order-form",
-    featureLocation: "Configuration > Order Forms",
+    featureLocation: "Configuration > Sequencing Order Forms",
   },
   {
     id: "sequencing-tech",
     name: "Sequencing Technology",
     description: "Sequencing technology, kit registry, barcode-aware sample fields, and sequencing run-assignment configuration for instrument-specific workflows.",
     category: "order-form",
-    featureLocation: "Configuration > Order Forms / Sequencing Run Forms",
+    featureLocation: "Configuration > Sequencing Order Forms / Sequencing Run Forms",
     hasSettings: true,
+  },
+  {
+    id: "dynamic-studies",
+    name: "Dynamic Study Definitions",
+    description: "Define multiple studies, each with its own questionnaire (per-sample and per-study fields) and MIxS checklist selection, instead of a single global study form. When enabled, facility admins define studies in the admin area and assign samples to studies during the sequencing run workflow.",
+    category: "order-form",
+    featureLocation: "Configuration > Studies",
   },
   // Validation
   {
     id: "ai-validation",
     name: "AI Field Validation",
-    description: "Enables AI-powered validation for form fields. When users fill in fields, AI checks if the input looks correct and provides helpful feedback. Configure per-field in Order Configuration.",
+    description: "Enables AI-powered validation for form fields. When users fill in fields, AI checks if the input looks correct and provides helpful feedback. Configure per-field in Sequencing Order Configuration.",
     category: "validation",
-    featureLocation: "Configuration > Order Forms > Field Settings",
+    featureLocation: "Configuration > Sequencing Order Forms > Field Settings",
     contactEmail: "hello@seqdesk.org",
   },
   // Access Control
@@ -114,7 +121,7 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   {
     id: "notifications",
     name: "Email Notifications",
-    description: "Send hosted email notifications for order updates and support messages through the SeqDesk notification relay. In-app notifications are controlled separately in settings.",
+    description: "Send hosted email notifications for sequencing order updates and support messages through the SeqDesk notification relay. In-app notifications are controlled separately in settings.",
     category: "communication",
     featureLocation: "Settings > Notifications",
     hasSettings: true,
@@ -129,6 +136,7 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "funding-info": false,
   "billing-info": false,
   "ena-sample-fields": true, // Enabled by default - essential for ENA submission
+  "dynamic-studies": false, // Off by default - single global study form unless enabled
   "notifications": false,
 };
 

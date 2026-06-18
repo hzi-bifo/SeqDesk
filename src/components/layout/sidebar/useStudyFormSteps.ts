@@ -72,7 +72,7 @@ export function useStudyFormSteps(
     const fetchSchema = async () => {
       try {
         const [schemaRes, studyRes] = await Promise.all([
-          fetch("/api/study-form-schema"),
+          fetch(`/api/study-form-schema?studyId=${encodeURIComponent(studyId)}`),
           fetch(`/api/studies/${studyId}`),
         ]);
         if (!schemaRes.ok) throw new Error("Failed to fetch study form schema");

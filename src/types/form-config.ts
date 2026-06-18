@@ -51,8 +51,8 @@ export interface FormFieldGroup {
 export const DEFAULT_GROUPS: FormFieldGroup[] = [
   {
     id: "group_details",
-    name: "Order Details",
-    description: "Basic information about your order",
+    name: "Sequencing Order Details",
+    description: "Basic information about your sequencing order",
     icon: "FileText",
     order: 0,
   },
@@ -193,12 +193,12 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
   {
     id: "system_name",
     type: "text",
-    label: "Order Name",
+    label: "Sequencing Order Name",
     name: "name",
     required: false,
     visible: true,
     placeholder: "e.g., Soil microbiome study - Batch 1",
-    helpText: "Optional descriptive name (Order ID is auto-generated)",
+    helpText: "Optional descriptive name (Sequencing Order ID is auto-generated)",
     order: 0,
     groupId: "group_details",
     isSystem: true,
@@ -297,7 +297,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     name: "facility_qc_status",
     required: false,
     visible: true,
-    helpText: "Facility-only QC checkpoint for tracking internal review on this order.",
+    helpText: "Facility-only QC checkpoint for tracking internal review on this sequencing order.",
     options: FACILITY_QC_STATUS_OPTIONS,
     order: 6,
     adminOnly: true,
@@ -309,7 +309,7 @@ export const DEFAULT_SYSTEM_FIELDS: FormFieldDefinition[] = [
     name: "facility_internal_notes",
     required: false,
     visible: true,
-    helpText: "Facility-only notes about intake, coordination, or follow-up for this order.",
+    helpText: "Facility-only notes about intake, coordination, or follow-up for this sequencing order.",
     placeholder: "Internal notes for the sequencing team...",
     order: 7,
     adminOnly: true,
@@ -430,7 +430,7 @@ export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
 
 // Core field labels for UI
 export const CORE_FIELD_LABELS: Record<keyof CoreFieldConfig, string> = {
-  name: "Order Name",
+  name: "Sequencing Order Name",
   platform: "Sequencing Platform",
   instrumentModel: "Instrument Model",
   libraryStrategy: "Library Strategy",

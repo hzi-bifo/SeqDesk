@@ -116,7 +116,7 @@ export default function OrdersPage() {
         setOrders(data.orders || data);
         setSharingMode(data.sharingMode || "personal");
       } catch {
-        setError("Failed to load orders");
+        setError("Failed to load sequencing orders");
       } finally {
         setLoading(false);
       }
@@ -291,7 +291,7 @@ export default function OrdersPage() {
 
     const isSubmitted = targetOrders.some((order) => order.status !== "DRAFT");
     if (isSubmitted && deleteConfirmText !== "DELETE") {
-      setError("You must type DELETE to confirm deletion of submitted orders.");
+      setError("You must type DELETE to confirm deletion of submitted sequencing orders.");
       return;
     }
 
@@ -331,7 +331,7 @@ export default function OrdersPage() {
       }
 
       if (failed.length > 0) {
-        setError(failed[0].error || "Failed to delete some orders");
+        setError(failed[0].error || "Failed to delete some sequencing orders");
         return;
       }
 
@@ -339,7 +339,7 @@ export default function OrdersPage() {
       setOrderToDelete(null);
       setDeleteConfirmText("");
     } catch {
-      setError("Failed to delete order");
+      setError("Failed to delete sequencing order");
     } finally {
       setDeletingOrder(false);
     }
@@ -399,10 +399,10 @@ export default function OrdersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">
-            {isFacilityAdmin ? "All Orders" : sharingMode === "department" ? "Department Orders" : "My Orders"}
+            {isFacilityAdmin ? "All Sequencing Orders" : sharingMode === "department" ? "Department Sequencing Orders" : "My Sequencing Orders"}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {orders.length} order{orders.length !== 1 ? "s" : ""}
+            {orders.length} sequencing order{orders.length !== 1 ? "s" : ""}
             {isResearcher && sharingMode === "department" && " from your department"}
           </p>
         </div>
@@ -421,15 +421,15 @@ export default function OrdersPage() {
             )}
             <Button size="sm" variant="outline" asChild>
               <Link href="/orders/new">
-                New Order
+                New Sequencing Order
               </Link>
             </Button>
           </div>
         )}
       </div>
 
-      <HelpBox title="What are orders?">
-        An order represents a sequencing request submitted to the facility.
+      <HelpBox title="What are sequencing orders?">
+        A sequencing order represents a sequencing request submitted to the facility.
         It contains sample information, sequencing parameters, and tracks the progress from submission through to data delivery.
       </HelpBox>
 
@@ -437,16 +437,16 @@ export default function OrdersPage() {
 
       {orders.length === 0 ? (
         <div className="bg-card rounded-xl p-12 text-center border border-border">
-          <h2 className="text-lg font-medium mb-2">No orders yet</h2>
+          <h2 className="text-lg font-medium mb-2">No sequencing orders yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             {isResearcher
-              ? "Orders contain your samples for sequencing. Create an order, add samples, then mark it as ready for the sequencing facility."
-              : "Orders contain samples for sequencing. Create an order, add samples, then mark it as ready when preparation is complete."}
+              ? "Sequencing orders contain your samples for sequencing. Create a sequencing order, add samples, then mark it as ready for the sequencing facility."
+              : "Sequencing orders contain samples for sequencing. Create a sequencing order, add samples, then mark it as ready when preparation is complete."}
           </p>
           {canCreateOrder && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/orders/new">
-                New Order
+                New Sequencing Order
               </Link>
             </Button>
           )}
@@ -456,7 +456,7 @@ export default function OrdersPage() {
           {isFacilityAdmin && bulkEditMode && selectedOrders.length > 0 && (
             <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3">
               <p className="text-sm text-muted-foreground">
-                {selectedOrders.length} order{selectedOrders.length !== 1 ? "s" : ""} selected
+                {selectedOrders.length} sequencing order{selectedOrders.length !== 1 ? "s" : ""} selected
               </p>
               <Button size="sm" variant="destructive" onClick={handleBulkDeleteClick}>
                 Delete Selected
@@ -472,7 +472,7 @@ export default function OrdersPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search orders..."
+                  placeholder="Search sequencing orders..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -552,7 +552,7 @@ export default function OrdersPage() {
               onClick={() => handleSort("name")}
               className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
-              Order
+              Sequencing Order
               {sortField === "name" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
@@ -681,7 +681,7 @@ export default function OrdersPage() {
                                 onClick={() => handleDeleteClick(order)}
                               >
                                 <Trash2 className="h-4 w-4" />
-                                Delete order
+                                Delete sequencing order
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -773,7 +773,7 @@ export default function OrdersPage() {
                                 onClick={() => handleDeleteClick(order)}
                               >
                                 <Trash2 className="h-4 w-4" />
-                                Delete order
+                                Delete sequencing order
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -796,7 +796,7 @@ export default function OrdersPage() {
 
           {filteredOrders.length === 0 && hasActiveFilters && (
             <div className="py-12 text-center text-muted-foreground">
-              <p className="text-sm">No orders match your filters</p>
+              <p className="text-sm">No sequencing orders match your filters</p>
               <button
                 onClick={clearFilters}
                 className="mt-2 text-sm text-primary hover:underline"
@@ -820,15 +820,15 @@ export default function OrdersPage() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Delete Order</DialogTitle>
+            <DialogTitle className="text-destructive">Delete Sequencing Order</DialogTitle>
             <DialogDescription asChild>
               <div>
                 {(orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) ? (
                   <>
                     <p className="mb-2">
                       <strong>Warning:</strong> {orderToDelete
-                        ? `This order has been submitted (status: ${orderToDelete.status}).`
-                        : "One or more selected orders have already been submitted."}
+                        ? `This sequencing order has been submitted (status: ${orderToDelete.status}).`
+                        : "One or more selected sequencing orders have already been submitted."}
                     </p>
                     <p className="mb-2">Deleting will permanently remove:</p>
                     <ul className="mb-4 list-inside list-disc text-sm">
@@ -854,7 +854,7 @@ export default function OrdersPage() {
                 ) : (
                   <p>
                     Are you sure you want to delete{" "}
-                    {orderToDelete ? "this order" : `${selectedOrders.length} selected orders`}?
+                    {orderToDelete ? "this sequencing order" : `${selectedOrders.length} selected sequencing orders`}?
                     This cannot be undone.
                   </p>
                 )}
@@ -879,7 +879,7 @@ export default function OrdersPage() {
               disabled={deletingOrder || ((orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) && deleteConfirmText !== "DELETE")}
             >
               {deletingOrder ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Delete Order
+              Delete Sequencing Order
             </Button>
           </DialogFooter>
         </DialogContent>

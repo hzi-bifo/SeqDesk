@@ -130,7 +130,7 @@ export async function GET(
     ]);
 
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     if (!canAccessOrder(session, order.userId)) {
@@ -188,7 +188,7 @@ export async function PUT(
     const { order, notesSupported } = await resolveOrderWithNotesState(id);
 
     if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
     if (!canAccessOrder(session, order.userId)) {

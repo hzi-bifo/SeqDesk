@@ -33,6 +33,10 @@ interface LoadStudyFormSchemaOptions {
   isFacilityAdmin?: boolean;
   applyRoleFilter?: boolean;
   applyModuleFilter?: boolean;
+  // When provided and the `dynamic-studies` module is enabled, the study's own
+  // questionnaire (StudyFormConfig) is used; otherwise we fall back to the
+  // global study form. Omit it to always get the global form (flag-OFF path).
+  studyId?: string;
 }
 
 export const parseStudyModulesConfig = parseModulesConfig;
@@ -65,6 +69,7 @@ export async function loadStudyFormSchema(
     isFacilityAdmin = false,
     applyRoleFilter = true,
     applyModuleFilter = true,
+    studyId,
   } = options;
 
   const settings = await db.siteSettings.findUnique({
@@ -77,8 +82,37 @@ export async function loadStudyFormSchema(
   let fields: FormFieldDefinition[] = [];
   let groups: FormFieldGroup[] = fixedGroups;
   let studyFormDefaultsVersion = 0;
+  let loadedPerStudy = false;
 
-  if (settings?.extraSettings) {
+  // Per-study questionnaire: only when the dynamic-studies module is enabled and
+  // this study has its own StudyFormConfig. Otherwise we fall back to the global
+  // study form below, so flag-OFF behavior (and not-yet-materialized studies)
+  // stays identical to today.
+  if (studyId && isStudyModuleEnabled(modulesConfig, "dynamic-studies")) {
+    const perStudy = await db.studyFormConfig.findUnique({
+      where: { studyId },
+      select: { fields: true, groups: true, defaultsVersion: true },
+    });
+    if (perStudy) {
+      try {
+        const parsedFields = JSON.parse(perStudy.fields);
+        const parsedGroups = JSON.parse(perStudy.groups);
+        fields = Array.isArray(parsedFields) ? parsedFields : [];
+        groups =
+          Array.isArray(parsedGroups) && parsedGroups.length > 0
+            ? parsedGroups
+            : fixedGroups;
+        studyFormDefaultsVersion = perStudy.defaultsVersion;
+        loadedPerStudy = true;
+      } catch {
+        fields = [];
+        groups = fixedGroups;
+        loadedPerStudy = false;
+      }
+    }
+  }
+
+  if (!loadedPerStudy && settings?.extraSettings) {
     try {
       const extra = JSON.parse(settings.extraSettings);
       fields = extra.studyFormFields || [];

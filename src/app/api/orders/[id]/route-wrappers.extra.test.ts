@@ -166,13 +166,13 @@ describe("order route coverage quick wins", () => {
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "Forbidden" });
 
-    mocks.getOrderSequencingSummary.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.getOrderSequencingSummary.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await getSequencingSummary(
       new Request("http://localhost/api/orders/order-1/sequencing"),
       routeParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.getOrderSequencingSummary.mockRejectedValueOnce(new Error("boom"));
     const failed = await getSequencingSummary(
@@ -235,7 +235,7 @@ describe("order route coverage quick wins", () => {
       routeParams()
     );
     expect(missingOrder.status).toBe(404);
-    expect(await missingOrder.json()).toEqual({ error: "Order not found" });
+    expect(await missingOrder.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.getSequencingFilesConfig.mockResolvedValueOnce({
       dataBasePath: null,
@@ -376,7 +376,7 @@ describe("order route coverage quick wins", () => {
   });
 
   it("maps discover route validation failures", async () => {
-    mocks.discoverOrderSequencingFiles.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.discoverOrderSequencingFiles.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await discoverSequencing(
       new Request("http://localhost/api/orders/order-1/sequencing/discover", {
         method: "POST",
@@ -385,7 +385,7 @@ describe("order route coverage quick wins", () => {
       routeParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.discoverOrderSequencingFiles.mockRejectedValueOnce(
       new Error("Order is configured as submitted or completed")
@@ -455,7 +455,7 @@ describe("order route coverage quick wins", () => {
       error: "Invalid assignments data",
     });
 
-    mocks.assignOrderSequencingReads.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.assignOrderSequencingReads.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await updateSequencingReads(
       new Request("http://localhost/api/orders/order-1/sequencing/reads", {
         method: "PUT",
@@ -464,7 +464,7 @@ describe("order route coverage quick wins", () => {
       routeParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.assignOrderSequencingReads.mockRejectedValueOnce(
       new Error("Sequencing files not configured")
@@ -621,7 +621,7 @@ describe("order route coverage quick wins", () => {
       error: "No status updates provided",
     });
 
-    mocks.setOrderSequencingStatuses.mockRejectedValueOnce(new Error("Order not found"));
+    mocks.setOrderSequencingStatuses.mockRejectedValueOnce(new Error("Sequencing Order not found"));
     const missing = await updateSequencingStatuses(
       new Request("http://localhost/api/orders/order-1/sequencing/status", {
         method: "PUT",
@@ -630,7 +630,7 @@ describe("order route coverage quick wins", () => {
       routeParams()
     );
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Order not found" });
+    expect(await missing.json()).toEqual({ error: "Sequencing Order not found" });
 
     mocks.setOrderSequencingStatuses.mockRejectedValueOnce(
       new Error("Order is configured as submitted or completed")

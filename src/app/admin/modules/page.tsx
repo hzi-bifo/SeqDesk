@@ -43,13 +43,13 @@ import {
 const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }>> = {
   "mixs-metadata": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
   "funding-info": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
-  "billing-info": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "billing-info": [{ href: "/admin/form-builder", label: "Sequencing Order Form Builder" }],
   "sequencing-tech": [
-    { href: "/admin/form-builder", label: "Order Form Builder" },
+    { href: "/admin/form-builder", label: "Sequencing Order Form Builder" },
     { href: "/admin/sequencing-run-form-builder", label: "Run Assignment Form Builder" },
   ],
-  "ena-sample-fields": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
-  "ai-validation": [{ href: "/admin/form-builder", label: "Order Form Builder" }],
+  "ena-sample-fields": [{ href: "/admin/form-builder", label: "Sequencing Order Form Builder" }],
+  "ai-validation": [{ href: "/admin/form-builder", label: "Sequencing Order Form Builder" }],
 };
 
 interface OrderFormConfigState {
@@ -190,7 +190,7 @@ export default function ModulesPage() {
 
   const persistOrderFormConfig = async (fields: FormFieldDefinition[]) => {
     if (!orderFormConfig) {
-      throw new Error("Order form configuration not loaded");
+      throw new Error("Sequencing Order form configuration not loaded");
     }
 
     const res = await fetch("/api/admin/form-config", {
@@ -204,7 +204,7 @@ export default function ModulesPage() {
     });
 
     if (!res.ok) {
-      throw new Error("Failed to save order form configuration");
+      throw new Error("Failed to save sequencing order form configuration");
     }
 
     const data = await res.json();
@@ -314,7 +314,7 @@ export default function ModulesPage() {
     if (!orderFormConfig) return;
     if (orderFormConfig.fields.some((f) => f.type === "sequencing-tech")) {
       toast.info(
-        "Sequencing Technology field is already added to Order Form Builder"
+        "Sequencing Technology field is already added to Sequencing Order Form Builder"
       );
       return;
     }
@@ -333,7 +333,7 @@ export default function ModulesPage() {
     };
 
     await persistOrderFormConfig([...orderFormConfig.fields, newField]);
-    toast.success("Added Sequencing Technology field to Order Form Builder");
+    toast.success("Added Sequencing Technology field to Sequencing Order Form Builder");
   };
 
   const addBarcodeField = async () => {
@@ -351,7 +351,7 @@ export default function ModulesPage() {
         (f) => f.type === "barcode" || f.name === "_barcode"
       )
     ) {
-      toast.info("Barcode field is already added to Order Form Builder");
+      toast.info("Barcode field is already added to Sequencing Order Form Builder");
       return;
     }
 
@@ -370,7 +370,7 @@ export default function ModulesPage() {
     };
 
     await persistOrderFormConfig([...orderFormConfig.fields, newField]);
-    toast.success("Added Barcode field to Order Form Builder");
+    toast.success("Added Barcode field to Sequencing Order Form Builder");
   };
 
   const applyOntRunPlanPreset = async () => {
@@ -391,7 +391,7 @@ export default function ModulesPage() {
 
     await fetchFormConfigs();
     toast.success(
-      `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
+      `ONT run plan preset applied (${payload?.orderFieldsAdded ?? 0} sequencing-order/sample fields, ${payload?.runAssignmentFieldsAdded ?? 0} run-assignment fields added)`
     );
   };
 
@@ -402,7 +402,7 @@ export default function ModulesPage() {
         (f) => f.type === "organism" || f.name === "_organism"
       )
     ) {
-      toast.info("ENA sample fields are already added to Order Form Builder");
+      toast.info("ENA sample fields are already added to Sequencing Order Form Builder");
       return;
     }
 
@@ -454,7 +454,7 @@ export default function ModulesPage() {
     ];
 
     await persistOrderFormConfig([...orderFormConfig.fields, ...newFields]);
-    toast.success("Added ENA sample fields to Order Form Builder");
+    toast.success("Added ENA sample fields to Sequencing Order Form Builder");
   };
 
   const hasStudyMixsField = studyFormConfig?.fields.some(
@@ -629,7 +629,7 @@ export default function ModulesPage() {
                     const hasConfiguredFormField =
                       hasOrderModuleField || hasStudyModuleField;
                     const formTargets = formIntegration?.targets
-                      .map((target) => target === "order" ? "Order Form" : "Study Form")
+                      .map((target) => target === "order" ? "Sequencing Order Form" : "Study Form")
                       .join(", ");
                     const fieldTypeList = formIntegration?.fieldTypes
                       .map((fieldType) => fieldType)
@@ -774,7 +774,7 @@ export default function ModulesPage() {
                                   key: "add-sequencing-tech",
                                   label: hasSequencingTechField
                                     ? "Sequencing tech already added"
-                                    : "Add Sequencing Tech to Order Form",
+                                    : "Add Sequencing Tech to Sequencing Order Form",
                                   disabled:
                                     hasSequencingTechField || !orderFormConfig,
                                   onClick: addSequencingTechField,
@@ -783,7 +783,7 @@ export default function ModulesPage() {
                                   key: "add-barcode",
                                   label: hasBarcodeField
                                     ? "Barcode already added"
-                                    : "Add Barcode to Order Form",
+                                    : "Add Barcode to Sequencing Order Form",
                                   disabled:
                                     hasBarcodeField ||
                                     !orderFormConfig ||
@@ -803,7 +803,7 @@ export default function ModulesPage() {
                                   key: "add-ena-fields",
                                   label: hasEnaFields
                                     ? "ENA fields already added"
-                                    : "Add ENA Fields to Order Form",
+                                    : "Add ENA Fields to Sequencing Order Form",
                                   disabled: hasEnaFields || !orderFormConfig,
                                   onClick: addEnaSampleFields,
                                 });

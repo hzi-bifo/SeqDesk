@@ -32,6 +32,6 @@ test("researcher is redirected away from the admin users page", async ({ page })
 
   // The admin layout (src/app/admin/layout.tsx) redirects non-admins to /orders.
   await page.waitForURL(/\/orders$/);
-  await expect(page.getByRole("heading", { name: "My Orders" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "My Sequencing Orders" })).toBeVisible();
   await expect(page).not.toHaveURL(/\/admin\/users/);
 });

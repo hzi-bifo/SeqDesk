@@ -17,24 +17,24 @@ import { Button } from "@/components/ui/button";
 const primaryWorkflow = [
   {
     step: "1",
-    title: "Create an order",
+    title: "Create a sequencing order",
     desc: "Enter the sequencing request, project details, and sample list.",
     href: "/orders/new",
-    cta: "New Order",
+    cta: "New Sequencing Order",
   },
   {
     step: "2",
     title: "Submit samples",
-    desc: "Submit the order and follow your facility's sample delivery instructions.",
+    desc: "Submit the sequencing order and follow your facility's sample delivery instructions.",
     href: "/orders",
-    cta: "Orders",
+    cta: "Sequencing Orders",
   },
   {
     step: "3",
     title: "Track sequencing",
     desc: "Follow facility review and sequencing progress after samples are received.",
     href: "/orders",
-    cta: "Order Status",
+    cta: "Sequencing Order Status",
   },
   {
     step: "4",
@@ -54,10 +54,10 @@ const primaryWorkflow = [
 
 const workspaceCards = [
   {
-    title: "Orders",
+    title: "Sequencing Orders",
     icon: FileText,
     href: "/orders",
-    desc: "Use orders for sequencing requests, sample intake, facility review, and sequencing data tracking.",
+    desc: "Use sequencing orders for sequencing requests, sample intake, facility review, and sequencing data tracking.",
     items: [
       "Create or update request details",
       "Maintain the sample list and facility fields",
@@ -70,7 +70,7 @@ const workspaceCards = [
     href: "/studies",
     desc: "Use studies to organize samples for scientific metadata, analysis, and publishing.",
     items: [
-      "Select samples from one or more orders",
+      "Select samples from one or more sequencing orders",
       "Complete study and per-sample metadata",
       "Mark studies ready and manage publishing",
     ],
@@ -79,7 +79,7 @@ const workspaceCards = [
     title: "Analysis",
     icon: FlaskConical,
     href: "/analysis",
-    desc: "Facility admins usually run and review pipelines across orders and studies.",
+    desc: "Facility admins usually run and review pipelines across sequencing orders and studies.",
     items: [
       "Start enabled workflows when inputs are ready",
       "Follow queued, running, completed, and failed runs",
@@ -100,18 +100,18 @@ const workspaceCards = [
 ];
 
 const taskRows = [
-  ["Request sequencing", "Orders -> New Order"],
-  ["Check order progress", "Orders -> Order overview"],
-  ["Review or attach read files", "Order -> Sequencing Data"],
+  ["Request sequencing", "Sequencing Orders -> New Sequencing Order"],
+  ["Check sequencing order progress", "Sequencing Orders -> Sequencing order overview"],
+  ["Review or attach read files", "Sequencing Order -> Sequencing Data"],
   ["Create a scientific sample grouping", "Studies -> New Study"],
   ["Complete metadata", "Study -> Overview and Sequencing Data"],
-  ["Run order or study workflows", "Order/Study -> Analysis"],
+  ["Run sequencing order or study workflows", "Sequencing Order/Study -> Analysis"],
   ["Prepare ENA submission", "Study -> Publishing"],
   ["Ask for help", "Support -> Support"],
 ];
 
 const adminRows = [
-  ["Customize order intake", "Settings -> Order Form"],
+  ["Customize sequencing order intake", "Settings -> Sequencing Order Form"],
   ["Customize study metadata", "Settings -> Study Forms"],
   ["Configure sequencers and run fields", "Settings -> Sequencers"],
   ["Set storage and compute paths", "Settings -> Infrastructure"],
@@ -122,11 +122,11 @@ const adminRows = [
 const roleRows = [
   [
     "Researcher",
-    "Create orders, provide sample details, build studies, complete scientific metadata, and respond to facility questions.",
+    "Create sequencing orders, provide sample details, build studies, complete scientific metadata, and respond to facility questions.",
   ],
   [
     "Facility admin",
-    "Review submitted orders, manage facility-only fields, attach sequencing data, run pipelines, and handle publishing.",
+    "Review submitted sequencing orders, manage facility-only fields, attach sequencing data, run pipelines, and handle publishing.",
   ],
   [
     "Shared",
@@ -156,7 +156,7 @@ export default function HelpPage() {
       <section className="mb-8">
         <h2 className="text-lg font-semibold">Typical Workflow</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Most work starts with a researcher order. After submission, the facility team usually handles
+          Most work starts with a researcher sequencing order. After submission, the facility team usually handles
           sequencing data, analysis, and publishing while researchers complete study metadata and answer questions.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-5">
@@ -294,7 +294,7 @@ export default function HelpPage() {
           <h2 className="text-base font-semibold">Status Basics</h2>
           <div className="mt-3 grid gap-4 md:grid-cols-3">
             <div>
-              <p className="text-sm font-medium">Orders</p>
+              <p className="text-sm font-medium">Sequencing Orders</p>
               <p className="mt-1 text-sm text-muted-foreground">Draft to Submitted to Completed</p>
             </div>
             <div>
@@ -316,8 +316,8 @@ export default function HelpPage() {
             <h2 className="text-base font-semibold">Notes</h2>
           </div>
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-            <li>Order and study forms are configured by your facility, so fields can differ between installations.</li>
-            <li>Researchers usually create orders, build studies, and complete metadata. Facility admins usually manage sequencing data, analysis pipelines, ENA settings, and publication.</li>
+            <li>Sequencing order and study forms are configured by your facility, so fields can differ between installations.</li>
+            <li>Researchers usually create sequencing orders, build studies, and complete metadata. Facility admins usually manage sequencing data, analysis pipelines, ENA settings, and publication.</li>
             <li>Read files, pipeline outputs, and publishing actions depend on facility setup. If something is missing or unclear, use Support to contact the facility team.</li>
           </ul>
         </div>

@@ -261,7 +261,7 @@ function getFormConfigWarnings(config: unknown): string[] {
   }
 
   return [
-    "Order and study form settings were detected but were not imported here. Use the Order Form or Study Form Import / Export tabs for full form definitions; installer-only form preset paths are ignored by this in-app infrastructure import.",
+    "Sequencing Order and study form settings were detected but were not imported here. Use the Sequencing Order Form or Study Form Import / Export tabs for full form definitions; installer-only form preset paths are ignored by this in-app infrastructure import.",
   ];
 }
 

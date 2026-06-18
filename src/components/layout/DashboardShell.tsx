@@ -43,15 +43,15 @@ function derivePageTitle(pathname: string, section: string | null): string | nul
 
   // Orders
   if (pathname === "/orders") return null; // list page, no title needed
-  if (pathname.match(/^\/orders\/new/)) return "New Order";
+  if (pathname.match(/^\/orders\/new/)) return "New Sequencing Order";
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
   if (orderMatch) {
     const subview = orderMatch[3];
     if (subview === "files" || subview === "sequencing") return "Sequencing Data";
     if (subview === "studies") return "Studies";
-    if (subview === "edit") return "Edit Order";
+    if (subview === "edit") return "Edit Sequencing Order";
     if (section === "reads") return "Sequencing Data";
-    return "Order Details";
+    return "Sequencing Order Details";
   }
 
   // Studies

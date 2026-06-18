@@ -165,6 +165,54 @@ describe("POST /api/studies/[id]/samples", () => {
     });
   });
 
+  it("preserves an allowed per-sample field omitted from the submission (no destructive wipe) and passes studyId to the loader", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([
+      {
+        id: "sample-1",
+        checklistData: JSON.stringify({
+          collection_date: "2024-01-01",
+          geo_loc: "Germany",
+        }),
+        order: { userId: "user-1" },
+      },
+    ]);
+    mocks.loadStudyFormSchema.mockResolvedValue({
+      studyFields: [],
+      perSampleFields: [
+        { id: "f1", name: "collection_date", label: "Collection Date", type: "text", order: 0, perSample: true },
+        { id: "f2", name: "geo_loc", label: "Geo", type: "text", order: 1, perSample: true },
+      ],
+      fields: [],
+      groups: [],
+      modules: {},
+    });
+
+    // Submission includes only collection_date; geo_loc (also an allowed field)
+    // is omitted and MUST be preserved (the old code deleted it).
+    const req = new NextRequest(BASE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sampleIds: ["sample-1"],
+        perSampleData: { "sample-1": { collection_date: "2024-02-02" } },
+      }),
+    });
+    const response = await POST(req, { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.loadStudyFormSchema).toHaveBeenCalledWith(
+      expect.objectContaining({ studyId: "study-1" })
+    );
+    expect(mocks.db.sample.update).toHaveBeenCalledWith({
+      where: { id: "sample-1" },
+      data: {
+        checklistData: JSON.stringify({
+          collection_date: "2024-02-02",
+          geo_loc: "Germany",
+        }),
+      },
+    });
+  });
+
   it("returns 500 when db throws an error", async () => {
     mocks.db.sample.updateMany.mockRejectedValue(new Error("DB failure"));
 

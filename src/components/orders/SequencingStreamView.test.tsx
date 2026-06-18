@@ -187,7 +187,7 @@ describe("SequencingStreamView", () => {
 
     // After the first refreshRuns resolves we see the idle status + start form.
     expect(await screen.findByText("Idle")).toBeTruthy();
-    expect(screen.getByText(/No active stream for this order/)).toBeTruthy();
+    expect(screen.getByText(/No active stream for this sequencing order/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start receiving" })).toBeTruthy();
 
     // Dev seeding fills the output directory once.

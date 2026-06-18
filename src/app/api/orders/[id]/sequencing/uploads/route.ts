@@ -55,7 +55,7 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    if (error instanceof Error && error.message === "Order not found") {
+    if (error instanceof Error && error.message === "Sequencing Order not found") {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 

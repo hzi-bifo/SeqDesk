@@ -5,7 +5,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MODULE_STATES } from "./types";
 import { ModuleGate, useModuleGate } from "./ModuleGate";
-import { ModuleProvider, useModules } from "./ModuleContext";
+import { ModuleProvider, useModules, useModuleEnabled } from "./ModuleContext";
 
 const fetchMock = vi.fn();
 
@@ -189,5 +189,12 @@ describe("module UI helpers", () => {
     expect(screen.getByText("This feature is not currently available.")).toBeTruthy();
     expect(screen.getByTestId("hook-probe").getAttribute("data-enabled")).toBe("true");
     expect(screen.getByTestId("hook-probe").textContent).toBe("ai-validation");
+  });
+});
+
+describe("useModuleEnabled", () => {
+  it("returns false when rendered outside a ModuleProvider (no throw)", () => {
+    const { result } = renderHook(() => useModuleEnabled("dynamic-studies"));
+    expect(result.current).toBe(false);
   });
 });

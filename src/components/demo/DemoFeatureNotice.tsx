@@ -26,7 +26,7 @@ export function DemoFeatureNotice({
         </p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <Button asChild>
-            <Link href="/orders">Back to Orders</Link>
+            <Link href="/orders">Back to Sequencing Orders</Link>
           </Button>
         </div>
       </div>

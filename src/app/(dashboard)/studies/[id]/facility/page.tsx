@@ -162,7 +162,7 @@ export default function StudyFacilityFieldsPage({
   }, [fetchStudy]);
 
   useEffect(() => {
-    fetch("/api/study-form-schema")
+    fetch(`/api/study-form-schema?studyId=${encodeURIComponent(resolvedParams.id)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: StudyFormSchemaResponse | null) => {
         const schemaStudyFields = (data?.studyFields ?? data?.fields ?? [])
@@ -178,7 +178,7 @@ export default function StudyFacilityFieldsPage({
         setStudyPerSampleFields([]);
         setSchemaLoading(false);
       });
-  }, []);
+  }, [resolvedParams.id]);
 
   const visibleFacilityStudyFields = useMemo(
     () =>

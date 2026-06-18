@@ -92,7 +92,7 @@ describe("POST /api/orders/[id]/sequencing/discover", () => {
 
   it("returns 404 when order is not found", async () => {
     mocks.discoverOrderSequencingFiles.mockRejectedValueOnce(
-      new Error("Order not found")
+      new Error("Sequencing Order not found")
     );
 
     const response = await POST(
@@ -104,7 +104,7 @@ describe("POST /api/orders/[id]/sequencing/discover", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Order not found" });
+    expect(await response.json()).toEqual({ error: "Sequencing Order not found" });
   });
 
   it("returns 400 for order configuration errors", async () => {

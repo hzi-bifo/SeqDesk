@@ -120,7 +120,7 @@ export function useOrderFormSteps(
         // On error, fall back to default steps so sidebar always shows something
         if (!cancelled) {
           const fallback: OrderFormStep[] = [
-            { id: "group_details", label: "Order Details", icon: "FileText", status: "empty" },
+            { id: "group_details", label: "Sequencing Order Details", icon: "FileText", status: "empty" },
             { id: "group_sequencing", label: "Sequencing Information", icon: "Settings", status: "empty" },
             { id: "samples", label: "Samples", icon: "Table", status: "empty" },
             { id: "review", label: "Review", icon: "CheckCircle2", status: "empty" },

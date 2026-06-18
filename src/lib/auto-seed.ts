@@ -331,7 +331,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
         {
           id: "system_name",
           type: "text",
-          label: "Order Name",
+          label: "Sequencing Order Name",
           name: "name",
           required: true,
           visible: true,
@@ -408,7 +408,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
           name: "facility_qc_status",
           required: false,
           visible: true,
-          helpText: "Facility-only QC checkpoint for tracking internal review on this order.",
+          helpText: "Facility-only QC checkpoint for tracking internal review on this sequencing order.",
           options: [
             { value: "pending", label: "Pending" },
             { value: "in_review", label: "In Review" },
@@ -426,7 +426,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
           name: "facility_internal_notes",
           required: false,
           visible: true,
-          helpText: "Facility-only notes about intake, coordination, or follow-up for this order.",
+          helpText: "Facility-only notes about intake, coordination, or follow-up for this sequencing order.",
           placeholder: "Internal notes for the sequencing team...",
           order: 5,
           adminOnly: true,
@@ -555,7 +555,7 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
       groups: [
         {
           id: "group_details",
-          name: "Order Details",
+          name: "Sequencing Order Details",
           description: "Basic information about your sequencing order",
           icon: "FileText",
           order: 0,

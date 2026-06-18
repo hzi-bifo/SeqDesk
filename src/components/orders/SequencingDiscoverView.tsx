@@ -113,7 +113,7 @@ function getBarcodeSourceLabel(
   source?: SequencingSampleRow["plannedBarcodeSource"]
 ): string | null {
   if (source === "run-plan") return "Run plan";
-  if (source === "sample-barcode") return "Order barcode";
+  if (source === "sample-barcode") return "Sequencing Order barcode";
   return null;
 }
 
@@ -121,7 +121,7 @@ function getMatchSourceLabel(
   matchedBy?: SequencingDiscoveryResult["suggestion"]["matchedBy"]
 ): string | null {
   if (matchedBy === "run-plan-barcode") return "matched by run-plan barcode";
-  if (matchedBy === "sample-barcode") return "matched by order barcode";
+  if (matchedBy === "sample-barcode") return "matched by sequencing order barcode";
   if (matchedBy === "sample-id") return "matched by sample ID or alias";
   return null;
 }
@@ -316,7 +316,7 @@ function FileTreeLeaf({
       )}
       {isOtherOrder && (
         <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 text-muted-foreground">
-          {apiAssignment.role} → {apiAssignment.sampleId} ({apiAssignment.orderName || "other order"})
+          {apiAssignment.role} → {apiAssignment.sampleId} ({apiAssignment.orderName || "other sequencing order"})
         </Badge>
       )}
       <span className="ml-auto shrink-0 text-muted-foreground">
@@ -855,7 +855,7 @@ export function SequencingDiscoverView({
       </div>
 
       <HelpBox title="What is file association?">
-        Association links FASTQ files from sequencing storage to the correct samples in this order.
+        Association links FASTQ files from sequencing storage to the correct samples in this sequencing order.
         Auto-discover suggests matches from file names, and manual association lets the facility
         assign read files when names are incomplete or ambiguous.
       </HelpBox>

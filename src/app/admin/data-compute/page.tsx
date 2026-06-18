@@ -271,14 +271,14 @@ export default function InfrastructureOverviewPage() {
                   Not included
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-amber-900">
-                  Order and study form definitions are managed separately. Installer preset
+                  Sequencing order and study form definitions are managed separately. Installer preset
                   paths like <code>orderFormSettings</code> are bootstrap inputs and are ignored
                   by this in-app import.
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button asChild variant="outline" size="sm" className="h-8 bg-white">
                     <Link href="/admin/form-builder?tab=import-export">
-                      Order Form Import / Export
+                      Sequencing Order Form Import / Export
                       <ExternalLink className="ml-1 h-3.5 w-3.5" />
                     </Link>
                   </Button>

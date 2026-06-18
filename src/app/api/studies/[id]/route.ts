@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { loadStudyFormSchema } from "@/lib/studies/schema";
+import {
+  isStudyModuleEnabled,
+  loadStudyFormSchema,
+  parseStudyModulesConfig,
+} from "@/lib/studies/schema";
 
 function isMissingColumnError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -469,17 +473,18 @@ export async function PUT(
           isFacilityAdmin: false,
           applyRoleFilter: true,
           applyModuleFilter: true,
+          studyId: resolvedStudyId,
         });
         const allowedFieldNames = new Set(schema.studyFields.map((field) => field.name));
         const currentMetadata = parseJsonObject(existing.studyMetadata);
         const submittedMetadata = parseJsonObject(studyMetadata);
         const mergedMetadata = { ...currentMetadata };
 
+        // Preserve answers for fields absent from this submission (don't wipe
+        // captured study metadata on a partial post or shrunk questionnaire).
         for (const fieldName of allowedFieldNames) {
           if (fieldName in submittedMetadata) {
             mergedMetadata[fieldName] = submittedMetadata[fieldName];
-          } else {
-            delete mergedMetadata[fieldName];
           }
         }
 
@@ -585,6 +590,33 @@ export async function DELETE(
         { error: "Cannot delete a submitted study" },
         { status: 400 }
       );
+    }
+
+    // With per-study questionnaires (dynamic-studies), deleting a study would
+    // orphan its samples' study answers — require reassigning them first.
+    const settings = await db.siteSettings.findUnique({
+      where: { id: "singleton" },
+      select: { modulesConfig: true },
+    });
+    if (
+      isStudyModuleEnabled(
+        parseStudyModulesConfig(settings?.modulesConfig ?? null),
+        "dynamic-studies"
+      )
+    ) {
+      const sampleCount = await db.sample.count({
+        where: { studyId: resolvedStudyId },
+      });
+      if (sampleCount > 0) {
+        return NextResponse.json(
+          {
+            error: `Reassign or remove this study's ${sampleCount} sample${
+              sampleCount === 1 ? "" : "s"
+            } before deleting it.`,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Unassign all samples from this study (set studyId to null)

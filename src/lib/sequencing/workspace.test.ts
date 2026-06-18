@@ -450,7 +450,7 @@ describe("assignOrderSequencingReads", () => {
   it("throws when the order does not exist", async () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
 
-    await expect(assignOrderSequencingReads("order-1", [])).rejects.toThrow("Order not found");
+    await expect(assignOrderSequencingReads("order-1", [])).rejects.toThrow("Sequencing Order not found");
   });
 });
 
@@ -1286,7 +1286,7 @@ describe("cancelSequencingUpload", () => {
 describe("getOrderSequencingSummary", () => {
   it("throws when order is not found", async () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
-    await expect(getOrderSequencingSummary("missing")).rejects.toThrow("Order not found");
+    await expect(getOrderSequencingSummary("missing")).rejects.toThrow("Sequencing Order not found");
   });
 
   it("handles samples with no reads gracefully", async () => {
@@ -1328,7 +1328,7 @@ describe("assignOrderSequencingReads additional branches", () => {
 
     await expect(
       assignOrderSequencingReads("order-1", [])
-    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed sequencing orders");
   });
 
   it("returns error when read2 file is not found on disk", async () => {
@@ -1395,7 +1395,7 @@ describe("setOrderSequencingStatuses additional branches", () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
     await expect(
       setOrderSequencingStatuses("missing", [])
-    ).rejects.toThrow("Order not found");
+    ).rejects.toThrow("Sequencing Order not found");
   });
 
   it("throws when order status is not manageable", async () => {
@@ -1406,7 +1406,7 @@ describe("setOrderSequencingStatuses additional branches", () => {
       setOrderSequencingStatuses("order-1", [
         { sampleId: "s1", facilityStatus: "READY" },
       ])
-    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed sequencing orders");
   });
 });
 
@@ -1415,7 +1415,7 @@ describe("discoverOrderSequencingFiles additional branches", () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
     await expect(
       discoverOrderSequencingFiles("missing")
-    ).rejects.toThrow("Order not found");
+    ).rejects.toThrow("Sequencing Order not found");
   });
 
   it("throws when order status is not manageable", async () => {
@@ -1424,7 +1424,7 @@ describe("discoverOrderSequencingFiles additional branches", () => {
     );
     await expect(
       discoverOrderSequencingFiles("order-1")
-    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed orders");
+    ).rejects.toThrow("Sequencing data can only be managed on submitted or completed sequencing orders");
   });
 
   it("reports no-match for samples with no matching files", async () => {
@@ -1524,7 +1524,7 @@ describe("linkOrderSequencingArtifact additional branches", () => {
         artifactType: "qc_report",
         path: "/data/sequencing/report.html",
       })
-    ).rejects.toThrow("Order not found");
+    ).rejects.toThrow("Sequencing Order not found");
   });
 
   it("links an order-level artifact when sampleId is null", async () => {
@@ -1684,7 +1684,7 @@ describe("computeOrderSequencingChecksums", () => {
 
   it("throws when order is not found", async () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
-    await expect(computeOrderSequencingChecksums("missing")).rejects.toThrow("Order not found");
+    await expect(computeOrderSequencingChecksums("missing")).rejects.toThrow("Sequencing Order not found");
   });
 
   it("skips reads and artifacts that already have checksums", async () => {
@@ -2073,7 +2073,7 @@ describe("classifyOrderSequencingRead", () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
     await expect(
       classifyOrderSequencingRead("missing", { sampleId: "s1", dataClass: "raw" })
-    ).rejects.toThrow("Order not found");
+    ).rejects.toThrow("Sequencing Order not found");
   });
 
   it("throws when the sample is not found", async () => {

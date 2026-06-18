@@ -270,8 +270,8 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-4">
           <NotificationPreferenceRow
-            label="Orders"
-            description="Order submissions and facility status updates"
+            label="Sequencing Orders"
+            description="Sequencing order submissions and facility status updates"
             checked={notificationPreferences.orders}
             disabled={!notificationsAvailable || savingNotifications}
             onCheckedChange={(checked) => updateNotificationPreference("orders", checked)}

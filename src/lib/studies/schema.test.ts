@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
     siteSettings: {
       findUnique: vi.fn(),
     },
+    studyFormConfig: {
+      findUnique: vi.fn(),
+    },
   },
   getFixedStudySections: vi.fn(),
   normalizeStudyFormSchema: vi.fn(),
@@ -460,5 +463,122 @@ describe("loadStudyFormSchema", () => {
 
     const result = await loadStudyFormSchema();
     expect(result.modules.funding).toBe(true);
+  });
+});
+
+describe("loadStudyFormSchema — per-study (dynamic-studies)", () => {
+  const fixedGroups: FormFieldGroup[] = [
+    { id: "group_study_info", name: "Study Information", order: 0 },
+  ];
+  const globalFields = [makeField({ name: "global_field", order: 0 })];
+  const perStudyFields = [makeField({ name: "per_study_field", order: 0 })];
+  const perStudyGroups: FormFieldGroup[] = [{ id: "g_ps", name: "Per Study", order: 0 }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getFixedStudySections.mockReturnValue(fixedGroups);
+    mocks.ensureStudyModuleDefaultFields.mockImplementation(
+      (fields: FormFieldDefinition[]) => fields
+    );
+    mocks.db.studyFormConfig.findUnique.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockSettings(dynamicEnabled: boolean) {
+    mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
+      extraSettings: JSON.stringify({
+        studyFormFields: globalFields,
+        studyFormDefaultsVersion: 1,
+      }),
+      modulesConfig: JSON.stringify({
+        modules: { "dynamic-studies": dynamicEnabled },
+      }),
+    });
+  }
+
+  it("uses the study's own StudyFormConfig when dynamic-studies is enabled and a row exists", async () => {
+    mockSettings(true);
+    mocks.db.studyFormConfig.findUnique.mockResolvedValueOnce({
+      fields: JSON.stringify(perStudyFields),
+      groups: JSON.stringify(perStudyGroups),
+      defaultsVersion: 1,
+    });
+    mocks.normalizeStudyFormSchema.mockReturnValueOnce({
+      fields: perStudyFields,
+      groups: perStudyGroups,
+    });
+
+    const result = await loadStudyFormSchema({ studyId: "study-1" });
+
+    expect(mocks.db.studyFormConfig.findUnique).toHaveBeenCalledWith({
+      where: { studyId: "study-1" },
+      select: { fields: true, groups: true, defaultsVersion: true },
+    });
+    expect(mocks.normalizeStudyFormSchema).toHaveBeenCalledWith({
+      fields: perStudyFields,
+      groups: perStudyGroups,
+    });
+    expect(result.fields.map((f) => f.name)).toEqual(["per_study_field"]);
+  });
+
+  it("falls back to the global study form when the study has no StudyFormConfig row", async () => {
+    mockSettings(true);
+    mocks.db.studyFormConfig.findUnique.mockResolvedValueOnce(null);
+    mocks.normalizeStudyFormSchema.mockReturnValueOnce({
+      fields: globalFields,
+      groups: fixedGroups,
+    });
+
+    const result = await loadStudyFormSchema({ studyId: "study-1" });
+
+    expect(mocks.normalizeStudyFormSchema).toHaveBeenCalledWith({
+      fields: globalFields,
+      groups: fixedGroups,
+    });
+    expect(result.fields.map((f) => f.name)).toEqual(["global_field"]);
+  });
+
+  it("ignores per-study config and uses the global form when dynamic-studies is disabled (flag-OFF parity)", async () => {
+    mockSettings(false);
+    mocks.normalizeStudyFormSchema.mockReturnValueOnce({
+      fields: globalFields,
+      groups: fixedGroups,
+    });
+
+    const result = await loadStudyFormSchema({ studyId: "study-1" });
+
+    expect(mocks.db.studyFormConfig.findUnique).not.toHaveBeenCalled();
+    expect(result.fields.map((f) => f.name)).toEqual(["global_field"]);
+  });
+
+  it("does not query per-study config when no studyId is provided", async () => {
+    mockSettings(true);
+    mocks.normalizeStudyFormSchema.mockReturnValueOnce({
+      fields: globalFields,
+      groups: fixedGroups,
+    });
+
+    await loadStudyFormSchema();
+
+    expect(mocks.db.studyFormConfig.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("falls back to global when the stored per-study JSON is invalid", async () => {
+    mockSettings(true);
+    mocks.db.studyFormConfig.findUnique.mockResolvedValueOnce({
+      fields: "not json",
+      groups: "also not json",
+      defaultsVersion: 1,
+    });
+    mocks.normalizeStudyFormSchema.mockReturnValueOnce({
+      fields: globalFields,
+      groups: fixedGroups,
+    });
+
+    const result = await loadStudyFormSchema({ studyId: "study-1" });
+    expect(result.fields.map((f) => f.name)).toEqual(["global_field"]);
   });
 });

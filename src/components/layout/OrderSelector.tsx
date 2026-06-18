@@ -101,7 +101,7 @@ export function OrderSelector({
     router.push(getOrderHref(orderId, pathname, searchParams));
   };
 
-  const displayLabel = currentOrderName || "All Orders";
+  const displayLabel = currentOrderName || "All Sequencing Orders";
   const hasOrder = !!currentOrderId;
   const isSidebar = variant === "sidebar";
   const isCollapsedSidebar = isSidebar && collapsed;
@@ -175,12 +175,12 @@ export function OrderSelector({
               onKeyDown={(e) => {
                 if (e.key === "Escape") setOpen(false);
               }}
-              placeholder="Search orders..."
+              placeholder="Search sequencing orders..."
               className="h-8 rounded-md border-0 bg-secondary/50 pl-8 text-sm shadow-none focus-visible:bg-background"
             />
           </div>
 
-          {/* "All Orders" + "New Order" */}
+          {/* "All Sequencing Orders" + "New Sequencing Order" */}
           <div className="mt-1.5 space-y-0.5">
             <button
               type="button"
@@ -193,7 +193,7 @@ export function OrderSelector({
               )}
             >
               <Layers className="h-3.5 w-3.5 shrink-0" />
-              All Orders
+              All Sequencing Orders
             </button>
             <button
               type="button"
@@ -204,7 +204,7 @@ export function OrderSelector({
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
             >
               <Plus className="h-3.5 w-3.5 shrink-0" />
-              New Order
+              New Sequencing Order
             </button>
           </div>
 
@@ -219,7 +219,7 @@ export function OrderSelector({
               </p>
             ) : filtered.length === 0 ? (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                {search ? "No orders found." : "No orders yet."}
+                {search ? "No sequencing orders found." : "No sequencing orders yet."}
               </p>
             ) : (
               <div className="space-y-0.5">

@@ -150,3 +150,11 @@ export function useModule(moduleId: string) {
     module: getModule(moduleId),
   };
 }
+
+// Non-throwing single-module gate. Returns false when rendered outside a
+// ModuleProvider (e.g. isolated component tests), so callers that only need a
+// boolean don't require the provider to be present.
+export function useModuleEnabled(moduleId: string): boolean {
+  const context = useContext(ModuleContext);
+  return context ? context.isModuleEnabled(moduleId) : false;
+}

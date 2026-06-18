@@ -613,6 +613,7 @@ export function OrderWizardPage({
   const { enabled: fundingModuleEnabled } = useModule("funding-info");
   const { enabled: billingModuleEnabled } = useModule("billing-info");
   const { enabled: sequencingTechModuleEnabled } = useModule("sequencing-tech");
+  const { enabled: dynamicStudiesEnabled } = useModule("dynamic-studies");
 
   // Edit mode - if edit param is present, we're editing an existing order
   const editOrderId = forcedEditOrderId ?? searchParams.get("edit");
@@ -627,6 +628,13 @@ export function OrderWizardPage({
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(true);
+
+  // Optional "associate this order with a study" first step (dynamic-studies).
+  const [studyChoice, setStudyChoice] = useState<"all" | "later" | null>(null);
+  const [primaryStudyId, setPrimaryStudyId] = useState<string | null>(null);
+  const [availableStudies, setAvailableStudies] = useState<
+    Array<{ id: string; title: string; checklistType: string | null }>
+  >([]);
 
   // Tech data for barcode resolution
   const [techKits, setTechKits] = useState<SequencingKit[]>([]);
@@ -1074,6 +1082,21 @@ export function OrderWizardPage({
     fetchSchema();
   }, []);
 
+  // Studies for the optional "associate to a study" first step.
+  useEffect(() => {
+    if (!dynamicStudiesEnabled || isEditMode) return;
+    let cancelled = false;
+    fetch("/api/studies")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setAvailableStudies(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [dynamicStudiesEnabled, isEditMode]);
+
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
     if (!sequencingTechModuleEnabled) return;
@@ -1103,7 +1126,7 @@ export function OrderWizardPage({
       try {
         const res = await fetch(`/api/orders/${editOrderId}`);
         if (!res.ok) {
-          setError("Failed to load order for editing");
+          setError("Failed to load sequencing order for editing");
           setLoadingOrder(false);
           return;
         }
@@ -1212,7 +1235,7 @@ export function OrderWizardPage({
         }
       } catch (err) {
         console.error("Failed to load order:", err);
-        setError("Failed to load order for editing");
+        setError("Failed to load sequencing order for editing");
       } finally {
         setLoadingOrder(false);
       }
@@ -1332,17 +1355,30 @@ export function OrderWizardPage({
     (f) => !f.groupId && f.type !== "mixs"
   );
 
-  const steps = buildOrderProgressSteps({
-    fields: [...visibleFields, ...adminOnlyFields],
-    groups,
-    enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
-    includeFacilityFields: isFacilityAdmin,
-  }).map((step) => ({
-    id: step.id,
-    title: step.label,
-    description: step.description,
-    icon: iconMap[step.icon] || FileText,
-  }));
+  const steps = [
+    ...((dynamicStudiesEnabled && !isEditMode)
+      ? [
+          {
+            id: "_study",
+            title: "Study",
+            description:
+              "Associate this sequencing order with a study (optional)",
+            icon: FileText,
+          },
+        ]
+      : []),
+    ...buildOrderProgressSteps({
+      fields: [...visibleFields, ...adminOnlyFields],
+      groups,
+      enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
+      includeFacilityFields: isFacilityAdmin,
+    }).map((step) => ({
+      id: step.id,
+      title: step.label,
+      description: step.description,
+      icon: iconMap[step.icon] || FileText,
+    })),
+  ];
   const currentStepParam = searchParams.get("step");
   const editScope = searchParams.get("scope");
   const facilityEditSteps = [
@@ -1350,8 +1386,8 @@ export function OrderWizardPage({
       ? [
           {
             id: "_facility",
-            title: "Order Fields",
-            description: "Internal order-level facility fields",
+            title: "Sequencing Order Fields",
+            description: "Internal sequencing-order-level facility fields",
             icon: ClipboardPen,
           },
         ]
@@ -1926,7 +1962,7 @@ export function OrderWizardPage({
 
         if (!res.ok) {
           const data = await res.json();
-          setError(data.error || "Failed to update order");
+          setError(data.error || "Failed to update sequencing order");
           return;
         }
 
@@ -1990,7 +2026,7 @@ export function OrderWizardPage({
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to create order");
+        setError(data.error || "Failed to create sequencing order");
         return;
       }
 
@@ -2025,6 +2061,29 @@ export function OrderWizardPage({
         if (!samplesRes.ok) {
           // Order was created but samples failed - go to order detail anyway
           console.error("Failed to save samples");
+        } else if (dynamicStudiesEnabled && primaryStudyId) {
+          // Associate the whole order's samples with the chosen primary study.
+          try {
+            const samplesData = await samplesRes.json();
+            const createdSampleIds = (samplesData?.samples ?? [])
+              .map((s: { id: string }) => s.id)
+              .filter(Boolean);
+            if (createdSampleIds.length > 0) {
+              const assignRes = await fetch(
+                `/api/studies/${primaryStudyId}/samples`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ sampleIds: createdSampleIds }),
+                }
+              );
+              if (!assignRes.ok) {
+                console.error("Failed to associate samples with study");
+              }
+            }
+          } catch {
+            console.error("Failed to associate samples with study");
+          }
         }
       }
 
@@ -2048,14 +2107,14 @@ export function OrderWizardPage({
         }
       } catch {
         // Use default if fetch fails
-        setSubmissionInstructions("Your order has been submitted successfully. Please prepare and ship your samples according to the facility guidelines.");
+        setSubmissionInstructions("Your sequencing order has been submitted successfully. Please prepare and ship your samples according to the facility guidelines.");
       }
 
       // Show success dialog instead of redirecting
       setCreatedOrderId(order.id);
       setSubmissionDialogOpen(true);
     } catch {
-      setError("Failed to create order");
+      setError("Failed to create sequencing order");
     } finally {
       setSaving(false);
     }
@@ -2080,6 +2139,19 @@ export function OrderWizardPage({
         input?.focus();
       }, 100);
     };
+
+    // Optional study-association step (dynamic-studies)
+    if (stepId === "_study") {
+      if (studyChoice === "all" && !primaryStudyId) {
+        setError("Select a study, or choose to assign samples per study later");
+        return false;
+      }
+      if (studyChoice === null) {
+        setError("Choose whether all samples belong to one study");
+        return false;
+      }
+      return true;
+    }
 
     // MIxS step - no required validation (checklist selection is optional)
     if (stepId === "mixs") {
@@ -3212,6 +3284,123 @@ export function OrderWizardPage({
     const stepId = currentStepId;
     if (!stepId) return null;
 
+    // Optional study-association step (dynamic-studies)
+    if (stepId === "_study") {
+      return (
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              Do all samples in this sequencing order belong to one study?
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setStudyChoice("all")}
+                className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                  studyChoice === "all"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40 hover:bg-muted/30"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    studyChoice === "all"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <FlaskConical className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    Yes — one study for the whole order
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    All samples are associated with the study you pick, and its
+                    questionnaire applies.
+                  </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStudyChoice("later");
+                  setPrimaryStudyId(null);
+                }}
+                className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                  studyChoice === "later"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40 hover:bg-muted/30"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    studyChoice === "later"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <ClipboardPen className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    No — assign per sample later
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Samples can belong to different studies; assign them from the
+                    order&apos;s Studies tab.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {studyChoice === "all" && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Select the study</p>
+              {availableStudies.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  No studies yet. Create one in the Studies area first, then come
+                  back — or choose &quot;assign per sample later&quot;.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {availableStudies.map((s) => {
+                    const selected = primaryStudyId === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setPrimaryStudyId(s.id)}
+                        className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/40 hover:bg-muted/30"
+                        }`}
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <FlaskConical className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{s.title}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {s.checklistType || "No checklist set"}
+                          </p>
+                        </div>
+                        {selected && (
+                          <Check className="h-4 w-4 shrink-0 text-primary" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // MIxS step
     if (stepId === "mixs") {
       const mixsField = visibleFields.find(f => f.type === "mixs");
@@ -3401,7 +3590,7 @@ export function OrderWizardPage({
                     </div>
                   </div>
                   <p className="mt-2 text-xs text-emerald-600">
-                    These metadata fields will be collected when adding samples to this order.
+                    These metadata fields will be collected when adding samples to this sequencing order.
                   </p>
                 </div>
               </div>
@@ -3488,8 +3677,8 @@ export function OrderWizardPage({
                   </p>
                   <p className="mt-1 text-sm text-green-600 dark:text-green-500">
                     {isEditMode
-                      ? `Your changes to this order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} are ready to be saved.`
-                      : `Your order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} is ready. After submitting, you can edit samples and track progress from the order page.`}
+                      ? `Your changes to this sequencing order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} are ready to be saved.`
+                      : `Your sequencing order with ${samples.length} sample${samples.length !== 1 ? "s" : ""} is ready. After submitting, you can edit samples and track progress from the sequencing order page.`}
                   </p>
                 </div>
               )}
@@ -3587,10 +3776,10 @@ export function OrderWizardPage({
   const showSubmittedOrderNotice =
     isEditMode && editOrderStatus !== null && editOrderStatus !== "DRAFT";
   const submittedOrderNoticeTitle =
-    editOrderStatus === "COMPLETED" ? "Completed order" : "Submitted order";
+    editOrderStatus === "COMPLETED" ? "Completed sequencing order" : "Submitted sequencing order";
   const submittedOrderNoticeText = isFacilityScopedEdit
     ? "Core sample metadata is read-only. Facility fields can still be updated here."
-    : "Sample rows are read-only. Order fields can still be updated.";
+    : "Sample rows are read-only. Sequencing order fields can still be updated.";
 
   return (
     <div className="p-8">
@@ -3611,7 +3800,7 @@ export function OrderWizardPage({
             {isFacilityScopedEdit
               ? "Edit Facility Fields"
               : isEditMode
-                ? "Edit Order"
+                ? "Edit Sequencing Order"
                 : "New Sequencing Order"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -3641,7 +3830,7 @@ export function OrderWizardPage({
                 setError("");
                 navigateToStepId(step.id);
               }}
-              ariaLabel="Order form progress"
+              ariaLabel="Sequencing Order form progress"
             />
           </div>
         )}
@@ -3741,7 +3930,7 @@ export function OrderWizardPage({
                   {isFacilityScopedEdit
                     ? "Save Facility Fields"
                     : isEditMode
-                      ? "Update Order"
+                      ? "Update Sequencing Order"
                       : "Submit for Sequencing"}
                 </Button>
               );
@@ -3773,7 +3962,7 @@ export function OrderWizardPage({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <CheckCircle2 className="h-6 w-6 text-green-500" />
-              Order Submitted
+              Sequencing Order Submitted
             </DialogTitle>
           </DialogHeader>
 
@@ -3804,7 +3993,7 @@ export function OrderWizardPage({
                 }
               }}
             >
-              View Order
+              View Sequencing Order
             </Button>
             <Button
               onClick={() => {

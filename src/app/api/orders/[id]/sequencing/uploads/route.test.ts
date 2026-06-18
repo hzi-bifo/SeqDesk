@@ -97,13 +97,13 @@ describe("POST /api/orders/[id]/sequencing/uploads", () => {
 
   it("returns 404 when order not found", async () => {
     mocks.createSequencingUploadSession.mockRejectedValue(
-      new Error("Order not found")
+      new Error("Sequencing Order not found")
     );
 
     const response = await POST(makeRequest(validBody), routeContext);
     expect(response.status).toBe(404);
     const data = await response.json();
-    expect(data.error).toBe("Order not found");
+    expect(data.error).toBe("Sequencing Order not found");
   });
 
   it("returns 400 for configured/submitted error", async () => {

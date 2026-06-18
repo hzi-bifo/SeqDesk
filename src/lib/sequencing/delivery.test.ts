@@ -249,7 +249,7 @@ describe("sequencing delivery", () => {
     mocks.db.order.findUnique.mockResolvedValue(null);
 
     await expect(buildOrderSequencingDeliverySummary("missing")).rejects.toThrow(
-      "Order not found"
+      "Sequencing Order not found"
     );
   });
 
@@ -257,7 +257,7 @@ describe("sequencing delivery", () => {
     mocks.db.order.findUnique.mockResolvedValueOnce(null);
     await expect(
       assertSequencingDeliveryAccess("missing", { id: "owner-1", role: "RESEARCHER" })
-    ).resolves.toEqual({ status: 404, body: { error: "Order not found" } });
+    ).resolves.toEqual({ status: 404, body: { error: "Sequencing Order not found" } });
 
     mocks.db.order.findUnique.mockResolvedValueOnce({
       id: "order-1",
@@ -268,7 +268,7 @@ describe("sequencing delivery", () => {
       assertSequencingDeliveryAccess("order-1", { id: "owner-1", role: "RESEARCHER" })
     ).resolves.toEqual({
       status: 403,
-      body: { error: "Sequencing files are not available for this order" },
+      body: { error: "Sequencing files are not available for this sequencing order" },
     });
 
     mocks.db.order.findUnique.mockResolvedValueOnce({

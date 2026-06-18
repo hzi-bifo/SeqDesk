@@ -16,7 +16,7 @@
     "db:migrate:deploy": "node scripts/run-prisma.mjs migrate deploy",
     "db:reset": "node scripts/run-prisma.mjs migrate reset --force",
     "db:seed": "node prisma/seed.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run db:migrate:deploy && playwright test",
     "test:e2e:demo": "playwright test -c playwright.demo.config.ts",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",

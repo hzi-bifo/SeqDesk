@@ -94,7 +94,7 @@ export async function notifyOrderSubmitted(orderId: string, actor: Actor): Promi
     const order = await loadOrderForNotification(orderId);
     if (!order) return;
     const context = orderContext(order, {
-      snippet: "The order was submitted and is ready for facility review.",
+      snippet: "The sequencing order was submitted and is ready for facility review.",
     });
 
     await Promise.all([
@@ -110,7 +110,7 @@ export async function notifyOrderSubmitted(orderId: string, actor: Actor): Promi
         context: {
           ...context,
           actorName: actorName(actor),
-          snippet: "A researcher submitted a new order.",
+          snippet: "A researcher submitted a new sequencing order.",
         },
         replyTo: order.user.email,
       }),
@@ -136,7 +136,7 @@ export async function notifyOrderStatusChanged(
         statusFrom,
         statusTo,
         actorName: actorName(actor),
-        snippet: "The facility updated your order status.",
+        snippet: "The facility updated your sequencing order status.",
       }),
       replyTo: await getFacilityReplyTo(),
     });

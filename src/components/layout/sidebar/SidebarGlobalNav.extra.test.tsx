@@ -96,7 +96,7 @@ describe("SidebarGlobalNav", () => {
     expect(links).toHaveLength(1);
     expect(links[0].getAttribute("href")).toBe("/analysis");
     expect(links[0].getAttribute("title")).toBe("Analysis");
-    expect(screen.queryByText("Orders")).toBeNull();
+    expect(screen.queryByText("Sequencing Orders")).toBeNull();
     expect(screen.queryByText("Studies")).toBeNull();
   });
 });

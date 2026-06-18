@@ -107,6 +107,7 @@ export async function POST(
         isFacilityAdmin,
         applyRoleFilter: true,
         applyModuleFilter: true,
+        studyId,
       });
       const allowedFieldNames = new Set(schema.perSampleFields.map((field) => field.name));
       const checklistDataBySampleId = new Map(
@@ -130,11 +131,13 @@ export async function POST(
           ...parseJsonObject(checklistDataBySampleId.get(sampleId)),
         };
 
+        // Preserve answers for fields absent from this submission: a partial
+        // post or a shrunk per-study questionnaire must not wipe previously
+        // captured metadata. Clearing a field is expressed as an empty value
+        // (present in `submitted`), not by omission.
         for (const fieldName of allowedFieldNames) {
           if (fieldName in submitted) {
             merged[fieldName] = submitted[fieldName];
-          } else {
-            delete merged[fieldName];
           }
         }
 
@@ -252,6 +255,7 @@ export async function PUT(
         isFacilityAdmin,
         applyRoleFilter: true,
         applyModuleFilter: true,
+        studyId,
       });
       const allowedFieldNames = new Set(schema.perSampleFields.map((field) => field.name));
       const metadataSamples = await db.sample.findMany({
@@ -282,11 +286,13 @@ export async function PUT(
           ...parseJsonObject(checklistDataBySampleId.get(sampleId)),
         };
 
+        // Preserve answers for fields absent from this submission: a partial
+        // post or a shrunk per-study questionnaire must not wipe previously
+        // captured metadata. Clearing a field is expressed as an empty value
+        // (present in `submitted`), not by omission.
         for (const fieldName of allowedFieldNames) {
           if (fieldName in submitted) {
             merged[fieldName] = submitted[fieldName];
-          } else {
-            delete merged[fieldName];
           }
         }
 

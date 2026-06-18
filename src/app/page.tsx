@@ -134,7 +134,7 @@ export default function HomePage() {
               <ul className="space-y-2">
                 {[
                   "Create sequencing orders with sample metadata",
-                  "Track order status from submission to delivery",
+                  "Track sequencing order status from submission to delivery",
                   "Download sequencing files, final assemblies, and archive accession numbers",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
@@ -153,8 +153,8 @@ export default function HomePage() {
               </h2>
               <ul className="space-y-2">
                 {[
-                  "Receive and manage incoming orders",
-                  "Update order status throughout the workflow",
+                  "Receive and manage incoming sequencing orders",
+                  "Update sequencing order status throughout the workflow",
                   "Run pipelines, publish final assemblies, and manage archive submissions",
                 ].map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
@@ -169,7 +169,7 @@ export default function HomePage() {
                 { title: "MIxS Standards", subtitle: "17 environmental checklists" },
                 { title: "Archive Submissions", subtitle: "ENA-ready upload workflow" },
                 { title: "Assemblies", subtitle: "Final assembly downloads" },
-                { title: "Order Tracking", subtitle: "Real-time status updates" },
+                { title: "Sequencing Order Tracking", subtitle: "Real-time status updates" },
               ].map((feature, i) => (
                 <div key={i}>
                   <h3 className="font-medium text-sm" style={{ color: '#171717' }}>

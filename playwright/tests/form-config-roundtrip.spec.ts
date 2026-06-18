@@ -130,7 +130,7 @@ async function addField(
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Order Configuration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing Order Configuration" })).toBeVisible();
   baselineConfig = await readFormConfig(page);
 });
 
@@ -153,7 +153,7 @@ test("admin form-builder changes appear for researchers and enforce required val
 }) => {
   const originalConfig = await readFormConfig(page);
   const groupName =
-    originalConfig.groups.find((group) => group.name === "Order Details")?.name
+    originalConfig.groups.find((group) => group.name === "Sequencing Order Details")?.name
       ?? originalConfig.groups[0]?.name;
 
   expect(groupName).toBeTruthy();
@@ -165,7 +165,7 @@ test("admin form-builder changes appear for researchers and enforce required val
   try {
     await addField(page, {
       addButtonTestId: "form-builder-order-add-field-button",
-      tabName: "Per-Order Fields",
+      tabName: "Per-Sequencing Order Fields",
       fieldLabel,
       fieldName,
       groupName,
@@ -183,7 +183,7 @@ test("admin form-builder changes appear for researchers and enforce required val
       await researcherPage.getByTestId("next-step-button").click();
 
       await expect(researcherPage.getByText(`${fieldLabel} is required`).first()).toBeVisible();
-      await expect(researcherPage.getByRole("heading", { name: "Order Details" })).toBeVisible();
+      await expect(researcherPage.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
 
       await researcherPage.getByTestId(`order-field-${fieldName}`).fill("REQ-001");
       await researcherPage.getByTestId("next-step-button").click();
@@ -204,7 +204,7 @@ test("facility-only order fields stay hidden from researchers and appear for adm
 }) => {
   const originalConfig = await readFormConfig(page);
   const groupName =
-    originalConfig.groups.find((group) => group.name === "Order Details")?.name
+    originalConfig.groups.find((group) => group.name === "Sequencing Order Details")?.name
       ?? originalConfig.groups[0]?.name;
 
   expect(groupName).toBeTruthy();
@@ -216,7 +216,7 @@ test("facility-only order fields stay hidden from researchers and appear for adm
   try {
     await addField(page, {
       addButtonTestId: "form-builder-order-add-field-button",
-      tabName: "Per-Order Fields",
+      tabName: "Per-Sequencing Order Fields",
       fieldLabel,
       fieldName,
       groupName,
@@ -302,9 +302,9 @@ test("facility fields added in admin form-builder appear on existing order facil
   try {
     // Go to Facility Fields tab and add an internal order field
     await page.getByRole("tab", { name: "Facility Fields" }).click();
-    await expect(page.getByRole("heading", { name: "Order-Level Facility Fields" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sequencing Order-Level Facility Fields" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Add Internal Order Field" }).click();
+    await page.getByRole("button", { name: "Add Internal Sequencing Order Field" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("Add New Field");
 

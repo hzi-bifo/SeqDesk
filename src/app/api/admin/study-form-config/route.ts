@@ -9,9 +9,15 @@ import {
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
 import { loadStudyFormSchema } from "@/lib/studies/schema";
+import {
+  buildDefaultStudyForm,
+  loadStudyFormConfigRow,
+  saveStudyFormConfig,
+} from "@/lib/studies/per-study-config";
 
-// GET - retrieve study form configuration
-export async function GET() {
+// GET - retrieve study form configuration (global, or a study's own form when
+// `?studyId=` is provided and the dynamic-studies module is in use)
+export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
 
   if (!session || session.user.role !== "FACILITY_ADMIN") {
@@ -19,6 +25,17 @@ export async function GET() {
   }
 
   try {
+    const studyId =
+      new URL(request.url).searchParams.get("studyId") ?? undefined;
+
+    // Per-study questionnaire: return the stored row, or a default starting
+    // point that the builder will persist on first save.
+    if (studyId) {
+      const form =
+        (await loadStudyFormConfigRow(studyId)) ?? buildDefaultStudyForm();
+      return NextResponse.json({ fields: form.fields, groups: form.groups });
+    }
+
     const schema = await loadStudyFormSchema({
       isFacilityAdmin: true,
       applyRoleFilter: false,
@@ -42,11 +59,22 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
+    const studyId =
+      new URL(request.url).searchParams.get("studyId") ?? undefined;
     const body = await request.json();
     const { fields, groups } = body as {
       fields: FormFieldDefinition[];
       groups: FormFieldGroup[];
     };
+
+    // Per-study questionnaire (dynamic-studies): save into StudyFormConfig.
+    if (studyId) {
+      await saveStudyFormConfig(studyId, {
+        fields: fields || [],
+        groups: groups || getFixedStudySections(),
+      });
+      return NextResponse.json({ success: true });
+    }
 
     // Get current settings
     const settings = await db.siteSettings.findUnique({
