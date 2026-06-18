@@ -517,6 +517,19 @@ jobs:
           export SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT="60"
           export SEQDESK_RUNTIME_E2E_SLURM_CORES="2"
           echo "read-cleaning SLURM request: mem=${REQ_MB}M cores=2 time=60m"
+          # Heal a poisoned conda cache: Nextflow reuses ANY cached env dir without validating it,
+          # so a detaxizer env left INCOMPLETE by a prior interrupted/timed-out build (it has
+          # python+numpy but is missing dnaio) makes the rename step fail "No module named 'dnaio'"
+          # forever on reuse. Drop such partial envs so the warm-up below rebuilds them complete.
+          CACHE_DIR="$(dirname "${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}")/conda-cache"
+          if [ -d "$CACHE_DIR" ]; then
+            for e in "$CACHE_DIR"/env-*; do
+              [ -x "$e/bin/python" ] || continue
+              if "$e/bin/python" -c "import numpy" >/dev/null 2>&1 && ! "$e/bin/python" -c "import dnaio" >/dev/null 2>&1; then
+                echo "heal: removing partial detaxizer env (numpy ok, dnaio missing): $e"; rm -rf "$e"
+              fi
+            done
+          fi
           # The SLURM run uses the INLINE executor (one sbatch, processes run via Nextflow's local
           # executor INSIDE that allocation on an OFFLINE compute node). That node can only REUSE
           # conda envs already in the shared cacheDir — it can't BUILD them (no network). So we must
