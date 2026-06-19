@@ -318,6 +318,7 @@ export default function StudyTablePage({
   const [bulkValue, setBulkValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   const hiddenKey = `seqdesk:study-table:${id}:hidden`;
   const densityKey = `seqdesk:study-table:${id}:density`;
@@ -618,12 +619,70 @@ export default function StudyTablePage({
   const cellPad = density === "compact" ? "px-2 py-0.5" : "px-3 py-1.5";
   const headPad = density === "compact" ? "px-2 py-1" : "px-3 py-2";
 
+  // Client-side CSV of exactly what's on screen: visible columns (minus the "+"
+  // sentinel), in display order, for the filtered + sorted rows.
+  const exportColumns = renderColumns.filter((c) => c.key !== ADD_MIXS_KEY);
+  const downloadCurrentViewCsv = () => {
+    const esc = (value: string) =>
+      /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    const header = exportColumns.map((c) => esc(c.label)).join(",");
+    const body = displayRows
+      .map((row) => exportColumns.map((c) => esc(row.cells[c.key] ?? "")).join(","))
+      .join("\r\n");
+    // Prepend a BOM so Excel reads UTF-8 correctly.
+    const blob = new Blob([`﻿${header}\r\n${body}`], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${(study.alias || study.title || "study").replace(
+      /[^a-z0-9_-]+/gi,
+      "_"
+    )}-table-view.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const exportButton = (
-    <Button asChild disabled={rows.length === 0}>
-      <a href={`/api/studies/${id}/table/export`}>
-        <Download className="mr-2 h-4 w-4" /> Export to XLSX
-      </a>
-    </Button>
+    <Popover open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+      <PopoverTrigger asChild>
+        <Button disabled={rows.length === 0}>
+          <Download className="mr-2 h-4 w-4" /> Export
+          <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 p-1">
+        <a
+          href={`/api/studies/${id}/table/export`}
+          onClick={() => setExportMenuOpen(false)}
+          className="block rounded px-2 py-1.5 hover:bg-muted"
+        >
+          <div className="text-sm font-medium">Full table (XLSX)</div>
+          <div className="text-xs text-muted-foreground">
+            Every column and row, plus the study info sheet
+          </div>
+        </a>
+        <button
+          type="button"
+          disabled={displayRows.length === 0}
+          onClick={() => {
+            downloadCurrentViewCsv();
+            setExportMenuOpen(false);
+          }}
+          className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50"
+        >
+          <div className="text-sm font-medium">Current view (CSV)</div>
+          <div className="text-xs text-muted-foreground">
+            {exportColumns.length} column{exportColumns.length === 1 ? "" : "s"} ×{" "}
+            {displayRows.length} row{displayRows.length === 1 ? "" : "s"} — matches
+            your filters, hidden columns &amp; sort
+          </div>
+        </button>
+      </PopoverContent>
+    </Popover>
   );
 
   const legends = (
