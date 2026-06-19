@@ -177,6 +177,26 @@ if (sessionPayload?.user?.role !== "FACILITY_ADMIN") {
   fail("Telemetry test requires a facility admin session", JSON.stringify(sessionPayload, null, 2));
 }
 
+// Optional: set the telemetry endpoint (a DB-backed SiteSettings value) before testing. CI uses this
+// when the install profile pins an endpoint that is unreachable (e.g. seqdesk.com is down) — point it
+// at the live seqdesk.org receiver so the heartbeat below still meaningfully exercises the app's
+// telemetry path. This does NOT relax the test: the heartbeat must still succeed.
+const setEndpoint = args["set-endpoint"];
+if (setEndpoint) {
+  const putResponse = await request("/api/admin/settings/telemetry", {
+    method: "PUT",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ enabled: true, endpoint: setEndpoint }),
+  });
+  if (!putResponse.ok) {
+    fail(
+      `Failed to set telemetry endpoint to ${setEndpoint} (${putResponse.status})`,
+      summarizeBody(await putResponse.text())
+    );
+  }
+  console.log(`telemetry endpoint set to ${setEndpoint}`);
+}
+
 const telemetryResponse = await request("/api/admin/settings/telemetry/test", {
   method: "POST",
   headers: {

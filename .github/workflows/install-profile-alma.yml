@@ -522,12 +522,6 @@ jobs:
       # into ONE sbatch on an offline compute node that can only REUSE cached conda envs. Inherited
       # by the booted app; unused by local runs, so harmless when no SLURM leg runs.
       SEQDESK_SLURM_INLINE_EXECUTOR: "1"
-      # Point the installed app's telemetry heartbeat at seqdesk.org (the app default is already .org;
-      # the ci-runner profile overrides it to www.seqdesk.com, which is down → the telemetry e2e
-      # heart-beats and reds the startup step before the Gemma/metaxpath runs). This env override
-      # (config/loader maps SEQDESK_TELEMETRY_ENDPOINT → telemetry.endpoint) wins over the profile;
-      # assert-install-profile-applied already accepts .org. Production should update the profile too.
-      SEQDESK_TELEMETRY_ENDPOINT: "https://seqdesk.org/api/telemetry/heartbeat"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -897,10 +891,15 @@ jobs:
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
+          # The ci-runner profile pins telemetry.endpoint to www.seqdesk.com, which is down (404) —
+          # set it to the live seqdesk.org receiver before the heartbeat so the test exercises the
+          # app's telemetry path instead of reding on a dead marketing host. Stays strict (the
+          # heartbeat must still succeed). Production should update the profile endpoint to .org too.
           node "$GITHUB_WORKSPACE/scripts/run-telemetry-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
+            --set-endpoint "https://seqdesk.org/api/telemetry/heartbeat" \
             --output "$TELEMETRY_JSON"
           if [ "$PROFILE_ID" = "ci-runner" ]; then
             node "$GITHUB_WORKSPACE/scripts/run-install-profile-pipeline-smoke.mjs" \
