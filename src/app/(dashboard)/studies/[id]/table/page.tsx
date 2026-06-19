@@ -1,6 +1,13 @@
 "use client";
 
-import { use, useEffect, useState, type ChangeEvent } from "react";
+import {
+  use,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -140,33 +147,60 @@ const COLUMN_GROUP_ORDER: StudyTableColumnGroup[] = [
 
 type TableDensity = "comfortable" | "compact";
 
-// A single inline-editable metadata cell. Click to edit; Enter/blur saves (PATCH
-// merges into the real Sample, so the change shows everywhere), Esc cancels.
+// A single inline-editable metadata cell, controlled by the table for spreadsheet-
+// style keyboard use: click or Enter to edit, Enter saves + moves down, Tab saves +
+// moves across, Esc cancels, arrows move between editable cells when not editing.
+// Saving PATCHes the real Sample, so the change shows everywhere.
 function EditableCell({
   studyId,
   sampleId,
   column,
   value,
   onSaved,
+  active,
+  editing,
+  onActivate,
+  onStartEdit,
+  onStopEdit,
+  onMove,
 }: {
   studyId: string;
   sampleId: string;
   column: StudyTableColumn;
   value: string;
   onSaved: (next: string) => void;
+  active: boolean;
+  editing: boolean;
+  onActivate: () => void;
+  onStartEdit: () => void;
+  onStopEdit: () => void;
+  onMove: (dRow: number, dCol: number, startEditing: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // True between an Enter/Tab commit and the resulting blur, so the blur that fires
+  // as focus leaves doesn't PATCH the same value a second time.
+  const skipBlur = useRef(false);
 
   useEffect(() => {
     setDraft(value);
   }, [value]);
 
-  const commit = async () => {
-    setEditing(false);
-    if (draft === value) return;
+  // Pull focus to the trigger when this becomes the active, non-editing cell, so
+  // arrow navigation always lands on something focusable.
+  useEffect(() => {
+    if (active && !editing) triggerRef.current?.focus();
+  }, [active, editing]);
+
+  // Each fresh edit session starts with the blur guard cleared.
+  useEffect(() => {
+    if (editing) skipBlur.current = false;
+  }, [editing]);
+
+  const commit = async (): Promise<boolean> => {
+    if (draft === value) return true;
     setSaving(true);
     setFailed(false);
     try {
@@ -177,27 +211,48 @@ function EditableCell({
       });
       if (!res.ok) throw new Error("save failed");
       onSaved(draft);
+      return true;
     } catch {
       setFailed(true);
       setDraft(value);
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const cancel = () => {
-    setDraft(value);
-    setEditing(false);
-  };
-
   if (!editing) {
     return (
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setEditing(true)}
-        title="Click to edit"
+        onClick={() => {
+          onActivate();
+          onStartEdit();
+        }}
+        onFocus={onActivate}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === "F2") {
+            event.preventDefault();
+            onStartEdit();
+          } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            onMove(1, 0, false);
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            onMove(-1, 0, false);
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            onMove(0, 1, false);
+          } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            onMove(0, -1, false);
+          }
+        }}
+        title="Click or press Enter to edit"
         className={cn(
-          "-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-primary/5",
+          "-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-primary/5 focus:outline-none",
+          active && "bg-primary/5 ring-1 ring-inset ring-primary/50",
           failed && "text-destructive"
         )}
       >
@@ -217,16 +272,48 @@ function EditableCell({
   const editorClass =
     "w-full min-w-[8rem] rounded border border-primary/40 bg-background px-1 py-0.5 text-sm outline-none ring-1 ring-primary/30";
 
+  const onBlur = () => {
+    if (skipBlur.current) {
+      skipBlur.current = false;
+      return;
+    }
+    commit();
+  };
+
+  // Enter saves + moves down (newline in a textarea instead); Tab/Shift+Tab saves +
+  // moves across; Esc cancels back to the focused (non-editing) cell.
+  const onEditorKeyDown = async (
+    event: ReactKeyboardEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDraft(value);
+      onStopEdit();
+    } else if (event.key === "Enter" && column.fieldType !== "textarea") {
+      event.preventDefault();
+      skipBlur.current = true;
+      const ok = await commit();
+      if (ok) onMove(1, 0, true);
+      else skipBlur.current = false;
+    } else if (event.key === "Tab") {
+      event.preventDefault();
+      skipBlur.current = true;
+      const ok = await commit();
+      if (ok) onMove(0, event.shiftKey ? -1 : 1, true);
+      else skipBlur.current = false;
+    }
+  };
+
   if (column.fieldType === "select" && column.options) {
     return (
       <select
         autoFocus
         value={draft}
         onChange={onChange}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") cancel();
-        }}
+        onBlur={onBlur}
+        onKeyDown={onEditorKeyDown}
         className={editorClass}
       >
         <option value="">—</option>
@@ -246,10 +333,8 @@ function EditableCell({
         rows={2}
         value={draft}
         onChange={onChange}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") cancel();
-        }}
+        onBlur={onBlur}
+        onKeyDown={onEditorKeyDown}
         className={editorClass}
       />
     );
@@ -272,14 +357,8 @@ function EditableCell({
       type={inputType}
       value={draft}
       onChange={onChange}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          commit();
-        }
-        if (event.key === "Escape") cancel();
-      }}
+      onBlur={onBlur}
+      onKeyDown={onEditorKeyDown}
       className={editorClass}
     />
   );
@@ -319,6 +398,12 @@ export default function StudyTablePage({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  // Spreadsheet keyboard navigation: which cell is focused, and whether it's editing.
+  const [activeCell, setActiveCell] = useState<{
+    rowId: string;
+    colKey: string;
+  } | null>(null);
+  const [cellEditing, setCellEditing] = useState(false);
 
   const hiddenKey = `seqdesk:study-table:${id}:hidden`;
   const densityKey = `seqdesk:study-table:${id}:density`;
@@ -619,6 +704,33 @@ export default function StudyTablePage({
   const cellPad = density === "compact" ? "px-2 py-0.5" : "px-3 py-1.5";
   const headPad = density === "compact" ? "px-2 py-1" : "px-3 py-2";
 
+  // Keyboard navigation grid: editable cells addressed by (rowId, colKey) over the
+  // rows + columns currently on screen (so it follows filters, sort, and hiding).
+  const navRowIds = displayRows.map((row) => row.id);
+  const navColKeys = renderColumns
+    .filter((column) => column.editable && column.key !== ADD_MIXS_KEY)
+    .map((column) => column.key);
+  const isActiveCell = (rowId: string, colKey: string) =>
+    activeCell?.rowId === rowId && activeCell?.colKey === colKey;
+  const focusCell = (rowId: string, colKey: string) =>
+    setActiveCell((prev) =>
+      prev && prev.rowId === rowId && prev.colKey === colKey
+        ? prev
+        : { rowId, colKey }
+    );
+  const moveActiveCell = (dRow: number, dCol: number, startEditing: boolean) => {
+    setActiveCell((prev) => {
+      if (!prev) return prev;
+      const r = navRowIds.indexOf(prev.rowId);
+      const c = navColKeys.indexOf(prev.colKey);
+      if (r < 0 || c < 0) return prev;
+      const nr = Math.min(Math.max(r + dRow, 0), navRowIds.length - 1);
+      const nc = Math.min(Math.max(c + dCol, 0), navColKeys.length - 1);
+      return { rowId: navRowIds[nr], colKey: navColKeys[nc] };
+    });
+    setCellEditing(startEditing);
+  };
+
   // Client-side CSV of exactly what's on screen: visible columns (minus the "+"
   // sentinel), in display order, for the filtered + sorted rows.
   const exportColumns = renderColumns.filter((c) => c.key !== ADD_MIXS_KEY);
@@ -716,7 +828,8 @@ export default function StudyTablePage({
         ))}
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3" /> hover a header for what it captures ·
-          click a metadata cell to edit
+          click a cell to edit · Enter saves &amp; moves down, Tab moves across,
+          arrows navigate
         </span>
       </div>
     </div>
@@ -1181,6 +1294,17 @@ export default function StudyTablePage({
                           column={column}
                           value={row.cells[column.key] ?? ""}
                           onSaved={(next) => updateCell(row.id, column.key, next)}
+                          active={isActiveCell(row.id, column.key)}
+                          editing={
+                            cellEditing && isActiveCell(row.id, column.key)
+                          }
+                          onActivate={() => focusCell(row.id, column.key)}
+                          onStartEdit={() => {
+                            focusCell(row.id, column.key);
+                            setCellEditing(true);
+                          }}
+                          onStopEdit={() => setCellEditing(false)}
+                          onMove={moveActiveCell}
                         />
                       ) : row.cells[column.key] ? (
                         row.cells[column.key]
