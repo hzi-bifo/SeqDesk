@@ -41,6 +41,16 @@ Confirm `manifest.inputs` / `registry.input` reflect this.
 - Platform families: ``
 - Notes: ``
 
+## Settings & reference data
+
+Tunable settings are declared in `registry.json` `configSchema` and mapped to
+Nextflow flags via `manifest.paramMap`. Reference databases are settings of the
+same kind (a config key mapped to a flag) that a facility provides centrally via
+admin pipeline settings / the install (config) profile.
+
+- Settings exposed (config keys): ``
+- [ ] Any reference-database requirement is declared as a `configSchema` key + `paramMap` flag, and the README documents what the facility must provide
+
 ## Outputs and writeback
 
 List `manifest.outputs` and where each is written (`destination` + `scope`).
@@ -62,21 +72,30 @@ This is the writeback policy applied to SeqDesk after a successful run.
 - License notes (links, attribution, restrictions): ``
 - [ ] A `LICENSE` (or equivalent) is declared for the pipeline package
 
+## Citation
+
+How should this pipeline be cited when used, so facilities and downstream users
+credit the original work?
+
+- **Authors / maintainers**: ``
+- **Paper(s) / DOI(s) to cite**: ``
+- [ ] Citation details are also recorded in the package `README.md`
+
 ## Test-data fixture (required)
 
-Contributed pipelines must ship a minimal dummy fixture so CI can run them on
-dummy data.
+Contributed pipelines must ship a minimal dummy fixture. The PR check validates
+the package **descriptor**; the maintainers run the pipeline on this fixture
+during integration and wire it into the automated test suite.
 
 - [ ] A minimal `test-data/` fixture is included in the package
 - [ ] The fixture is small (tiny/truncated inputs, no real/sensitive data)
-- [ ] CI can run the pipeline end-to-end against this fixture
 
 ## Validation
 
 - [ ] `npm run pipeline:validate pipelines/<id>` passes locally
 - [ ] Folder name matches `manifest.package.id`; all referenced files exist
 - [ ] Ran the pipeline **locally** on the bundled test-data fixture
-- [ ] Ran the pipeline on a **Slurm** cluster
+- [ ] _(optional)_ Ran the pipeline on a **Slurm** cluster — otherwise the maintainers verify Slurm/AlmaLinux execution on the private mirror during integration
 
 ## Checklist
 
