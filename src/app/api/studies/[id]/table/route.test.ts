@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     },
     sample: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
     siteSettings: {
       findUnique: vi.fn(),
@@ -35,7 +37,7 @@ vi.mock("@/lib/orders/order-form", () => ({
   loadOrderFormSchema: mocks.loadOrderFormSchema,
 }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
 const params = Promise.resolve({ id: "study-1" });
 const req = () => new Request("http://localhost/api/studies/study-1/table");
@@ -111,6 +113,12 @@ beforeEach(() => {
   ]);
   mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: null });
   mocks.db.studyFormConfig.findUnique.mockResolvedValue(null);
+  mocks.db.sample.findFirst.mockResolvedValue({
+    id: "s1",
+    checklistData: JSON.stringify({ collection_date: "old", keep: "x" }),
+    customFields: JSON.stringify({ sample_volume: "1" }),
+  });
+  mocks.db.sample.update.mockResolvedValue({});
   mocks.parseStudyModulesConfig.mockReturnValue({});
   mocks.isStudyModuleEnabled.mockReturnValue(false);
   mocks.loadOrderFormSchema.mockResolvedValue({
@@ -227,5 +235,101 @@ describe("GET /api/studies/[id]/table", () => {
     expect(mocks.loadStudyFormSchema).toHaveBeenCalledWith(
       expect.objectContaining({ studyId: "study-1" })
     );
+  });
+});
+
+function patchReq(payload: unknown) {
+  return new Request("http://localhost/api/studies/study-1/table", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+describe("PATCH /api/studies/[id]/table", () => {
+  it("returns 401 when not authenticated", async () => {
+    mocks.getServerSession.mockResolvedValueOnce(null);
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "checklist:collection_date", value: "x" }),
+      { params }
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 when sampleId or columnKey is missing", async () => {
+    const res = await PATCH(patchReq({ value: "x" }), { params });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 403 for a non-admin editing someone else's study", async () => {
+    mocks.getServerSession.mockResolvedValueOnce(researcherSession("other-user"));
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "checklist:collection_date", value: "x" }),
+      { params }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 when the sample is not in the study", async () => {
+    mocks.db.sample.findFirst.mockResolvedValueOnce(null);
+    const res = await PATCH(
+      patchReq({ sampleId: "nope", columnKey: "checklist:collection_date", value: "x" }),
+      { params }
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("merges an editable study field into checklistData", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "checklist:collection_date", value: "2025-05-05" }),
+      { params }
+    );
+    expect(res.status).toBe(200);
+    const arg = mocks.db.sample.update.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: "s1" });
+    expect(JSON.parse(arg.data.checklistData)).toEqual({
+      keep: "x", // preserved
+      collection_date: "2025-05-05",
+    });
+  });
+
+  it("merges an editable order field into customFields", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "custom:sample_volume", value: "9" }),
+      { params }
+    );
+    expect(res.status).toBe(200);
+    const arg = mocks.db.sample.update.mock.calls[0][0];
+    expect(JSON.parse(arg.data.customFields)).toEqual({ sample_volume: "9" });
+  });
+
+  it("updates a whitelisted core sample column", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "core:sampleTitle", value: "New title" }),
+      { params }
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.db.sample.update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: { sampleTitle: "New title" },
+    });
+  });
+
+  it("rejects a non-editable field type (organism)", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "checklist:scientific_name", value: "x" }),
+      { params }
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.db.sample.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-whitelisted core column", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "core:scientificName", value: "x" }),
+      { params }
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.db.sample.update).not.toHaveBeenCalled();
   });
 });

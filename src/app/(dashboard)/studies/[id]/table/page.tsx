@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ interface StudyTableColumn {
   fieldType?: string;
   helpText?: string;
   required?: boolean;
+  editable?: boolean;
+  options?: Array<{ value: string; label: string }>;
 }
 
 interface StudyTableRow {
@@ -87,6 +89,151 @@ const GROUP_LEGEND: Array<{ group: StudyTableColumnGroup; label: string }> = [
   { group: "order", label: "Sequencing Order fields" },
   { group: "study", label: "Study metadata" },
 ];
+
+// A single inline-editable metadata cell. Click to edit; Enter/blur saves (PATCH
+// merges into the real Sample, so the change shows everywhere), Esc cancels.
+function EditableCell({
+  studyId,
+  sampleId,
+  column,
+  value,
+  onSaved,
+}: {
+  studyId: string;
+  sampleId: string;
+  column: StudyTableColumn;
+  value: string;
+  onSaved: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = async () => {
+    setEditing(false);
+    if (draft === value) return;
+    setSaving(true);
+    setFailed(false);
+    try {
+      const res = await fetch(`/api/studies/${studyId}/table`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sampleId, columnKey: column.key, value: draft }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      onSaved(draft);
+    } catch {
+      setFailed(true);
+      setDraft(value);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancel = () => {
+    setDraft(value);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to edit"
+        className={cn(
+          "-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-primary/5",
+          failed && "text-destructive"
+        )}
+      >
+        <span className="truncate">
+          {value || <span className="text-muted-foreground/40">—</span>}
+        </span>
+        {saving && (
+          <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-muted-foreground" />
+        )}
+      </button>
+    );
+  }
+
+  const onChange = (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => setDraft(event.target.value);
+  const editorClass =
+    "w-full min-w-[8rem] rounded border border-primary/40 bg-background px-1 py-0.5 text-sm outline-none ring-1 ring-primary/30";
+
+  if (column.fieldType === "select" && column.options) {
+    return (
+      <select
+        autoFocus
+        value={draft}
+        onChange={onChange}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") cancel();
+        }}
+        className={editorClass}
+      >
+        <option value="">—</option>
+        {column.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (column.fieldType === "textarea") {
+    return (
+      <textarea
+        autoFocus
+        rows={2}
+        value={draft}
+        onChange={onChange}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") cancel();
+        }}
+        className={editorClass}
+      />
+    );
+  }
+
+  const inputType =
+    column.fieldType === "number"
+      ? "number"
+      : column.fieldType === "date"
+        ? "date"
+        : column.fieldType === "email"
+          ? "email"
+          : column.fieldType === "url"
+            ? "url"
+            : "text";
+
+  return (
+    <input
+      autoFocus
+      type={inputType}
+      value={draft}
+      onChange={onChange}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        }
+        if (event.key === "Escape") cancel();
+      }}
+      className={editorClass}
+    />
+  );
+}
 
 export default function StudyTablePage({
   params,
@@ -164,6 +311,22 @@ export default function StudyTablePage({
 
   const { study, columns, rows, info, perStudy } = data;
 
+  // Reflect a saved edit in local state so the cell updates without a refetch.
+  const updateCell = (rowId: string, key: string, next: string) => {
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            rows: prev.rows.map((row) =>
+              row.id === rowId
+                ? { ...row, cells: { ...row.cells, [key]: next } }
+                : row
+            ),
+          }
+        : prev
+    );
+  };
+
   const exportButton = (
     <Button asChild disabled={rows.length === 0}>
       <a href={`/api/studies/${id}/table/export`}>
@@ -202,7 +365,8 @@ export default function StudyTablePage({
           </span>
         ))}
         <span className="inline-flex items-center gap-1.5">
-          <Info className="h-3 w-3" /> hover a header for what it captures
+          <Info className="h-3 w-3" /> hover a header for what it captures ·
+          click a metadata cell to edit
         </span>
       </div>
     </div>
@@ -281,6 +445,14 @@ export default function StudyTablePage({
                         >
                           {row.statusLabel}
                         </span>
+                      ) : column.editable ? (
+                        <EditableCell
+                          studyId={id}
+                          sampleId={row.id}
+                          column={column}
+                          value={row.cells[column.key] ?? ""}
+                          onSaved={(next) => updateCell(row.id, column.key, next)}
+                        />
                       ) : row.cells[column.key] ? (
                         row.cells[column.key]
                       ) : (

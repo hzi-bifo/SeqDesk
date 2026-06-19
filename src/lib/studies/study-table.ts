@@ -28,7 +28,31 @@ export interface StudyTableColumn {
   /** Per-column help text (from the form field, or a description for fixed columns). */
   helpText?: string;
   required?: boolean;
+  /** Whether this column's cells can be edited inline (PATCH …/table). */
+  editable?: boolean;
+  /** Choices for a `select` editor. */
+  options?: Array<{ value: string; label: string }>;
 }
+
+// Per-sample field types we render an inline editor for. Special types
+// (organism, barcode, mixs, funding, …) keep their own surfaces and stay read-only.
+export const EDITABLE_FIELD_TYPES = new Set([
+  "text",
+  "textarea",
+  "number",
+  "date",
+  "email",
+  "url",
+  "tel",
+  "select",
+]);
+
+// Core Sample columns that are safe to edit as plain text from the table.
+export const EDITABLE_CORE_COLUMNS = new Set([
+  "sampleTitle",
+  "sampleAlias",
+  "sampleDescription",
+]);
 
 export interface StudyTableRow {
   /** Sample.id (the database id), used as a stable React key. */
@@ -268,6 +292,9 @@ export async function buildStudyTableData(
         : `${source === "order" ? "custom" : "checklist"}:${field.name}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      const editable = coreColumn
+        ? EDITABLE_CORE_COLUMNS.has(coreColumn)
+        : EDITABLE_FIELD_TYPES.has(field.type);
       columns.push({
         key,
         label: field.label,
@@ -276,6 +303,14 @@ export async function buildStudyTableData(
         fieldType: field.type,
         helpText: field.helpText,
         required: field.required,
+        editable,
+        options:
+          field.type === "select" && Array.isArray(field.options)
+            ? field.options.map((option) => ({
+                value: String(option.value ?? option.label ?? ""),
+                label: String(option.label ?? option.value ?? ""),
+              }))
+            : undefined,
       });
       fieldColumns.push({ key, source, fieldName: field.name, coreColumn });
     }
