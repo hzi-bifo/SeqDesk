@@ -1097,6 +1097,17 @@ export function OrderWizardPage({
     };
   }, [dynamicStudiesEnabled, isEditMode]);
 
+  // Preselect a study when arriving from a study's "Add samples" (?study=<id>),
+  // so the new order is associated with that study by default.
+  useEffect(() => {
+    if (isEditMode || studyChoice !== null) return;
+    const studyParam = searchParams.get("study");
+    if (studyParam && availableStudies.some((s) => s.id === studyParam)) {
+      setStudyChoice("all");
+      setPrimaryStudyId(studyParam);
+    }
+  }, [searchParams, availableStudies, isEditMode, studyChoice]);
+
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
     if (!sequencingTechModuleEnabled) return;

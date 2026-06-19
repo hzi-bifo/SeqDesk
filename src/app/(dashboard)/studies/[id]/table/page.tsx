@@ -12,7 +12,9 @@ import {
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ChevronDown,
   ChevronRight,
   Download,
@@ -21,6 +23,7 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  Search,
   Table2,
   X,
 } from "lucide-react";
@@ -268,6 +271,10 @@ export default function StudyTablePage({
   const [mixsPickerOpen, setMixsPickerOpen] = useState(false);
   const [mixsSearch, setMixsSearch] = useState("");
   const [mixsBusy, setMixsBusy] = useState(false);
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(
+    null
+  );
+  const [filterQuery, setFilterQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -332,6 +339,42 @@ export default function StudyTablePage({
   }
 
   const { study, columns, rows, info, perStudy } = data;
+
+  const toggleSort = (key: string) =>
+    setSort((prev) =>
+      prev?.key === key
+        ? prev.dir === "asc"
+          ? { key, dir: "desc" }
+          : null
+        : { key, dir: "asc" }
+    );
+
+  // Filter + sort are derived (cheap for a study's worth of rows); cell editing
+  // still targets rows by id, so order/visibility changes don't affect saves.
+  const filterText = filterQuery.trim().toLowerCase();
+  const displayRows = (() => {
+    let result = filterText
+      ? rows.filter((row) =>
+          Object.values(row.cells).some((value) =>
+            String(value).toLowerCase().includes(filterText)
+          )
+        )
+      : rows;
+    if (sort) {
+      const { key, dir } = sort;
+      result = [...result].sort((a, b) => {
+        const av = a.cells[key] ?? "";
+        const bv = b.cells[key] ?? "";
+        const an = Number(av.replace(/,/g, ""));
+        const bn = Number(bv.replace(/,/g, ""));
+        const numeric =
+          av !== "" && bv !== "" && !Number.isNaN(an) && !Number.isNaN(bn);
+        const cmp = numeric ? an - bn : av.localeCompare(bv);
+        return dir === "asc" ? cmp : -cmp;
+      });
+    }
+    return result;
+  })();
 
   const refetch = async () => {
     try {
@@ -510,7 +553,20 @@ export default function StudyTablePage({
                 )}
               >
                 <span className="inline-flex items-center gap-1">
-                  {column.label}
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(column.key)}
+                    title="Sort by this column"
+                    className="inline-flex items-center gap-1 hover:text-foreground"
+                  >
+                    {column.label}
+                    {sort?.key === column.key &&
+                      (sort.dir === "asc" ? (
+                        <ArrowUp className="h-3 w-3" />
+                      ) : (
+                        <ArrowDown className="h-3 w-3" />
+                      ))}
+                  </button>
                   {column.required && (
                     <span className="text-muted-foreground/60">*</span>
                   )}
@@ -547,24 +603,32 @@ export default function StudyTablePage({
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 ? (
+          {displayRows.length === 0 ? (
             <tr>
               <td
                 colSpan={columns.length}
                 className="px-4 py-16 text-center text-muted-foreground"
               >
                 <Table2 className="mx-auto h-6 w-6" />
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  No samples in this study yet
-                </p>
-                <p className="mt-1 text-sm">
-                  Assign samples to this study to see them here. The columns
-                  above show what will be captured for each sample.
-                </p>
+                {rows.length === 0 ? (
+                  <>
+                    <p className="mt-2 text-sm font-medium text-foreground">
+                      No samples in this study yet
+                    </p>
+                    <p className="mt-1 text-sm">
+                      Assign samples to this study to see them here. The columns
+                      above show what will be captured for each sample.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm">
+                    No rows match “{filterQuery}”.
+                  </p>
+                )}
               </td>
             </tr>
           ) : (
-            rows.map((row) => {
+            displayRows.map((row) => {
               const tint = STATUS_ROW_TINT[row.status];
               return (
                 <tr key={row.id} className={cn("border-b", tint)}>
@@ -697,9 +761,43 @@ export default function StudyTablePage({
             </div>
           )}
 
-          {legends}
+          {/* Toolbar: filter + add row */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={filterQuery}
+                  onChange={(event) => setFilterQuery(event.target.value)}
+                  placeholder="Filter rows…"
+                  className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
+                />
+              </div>
+              {filterText && (
+                <span className="text-xs text-muted-foreground">
+                  {displayRows.length} of {rows.length}
+                </span>
+              )}
+              {sort && (
+                <button
+                  type="button"
+                  onClick={() => setSort(null)}
+                  className="text-xs text-muted-foreground underline hover:text-foreground"
+                >
+                  clear sort
+                </button>
+              )}
+            </div>
+            <Button variant="outline" asChild>
+              <Link href={`/orders/new?study=${id}`}>
+                <Plus className="mr-2 h-4 w-4" /> Add samples
+              </Link>
+            </Button>
+          </div>
 
-          {grid("calc(100vh - 320px)")}
+          {grid("calc(100vh - 360px)")}
+
+          {legends}
         </div>
       </PageContainer>
 

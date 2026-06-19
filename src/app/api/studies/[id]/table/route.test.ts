@@ -209,6 +209,8 @@ describe("GET /api/studies/[id]/table", () => {
       ["BioSample", "output"],
       ["ENA Run", "output"],
       ["Assembly", "output"],
+      ["Created", "identity"], // lifecycle dates come last
+      ["Last edited", "identity"],
     ]);
   });
 

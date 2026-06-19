@@ -201,6 +201,33 @@ const OUTPUT_COLUMNS: StudyTableColumn[] = [
   },
 ];
 
+// Read-only lifecycle columns (when the sample was created / last changed).
+const META_COLUMNS: StudyTableColumn[] = [
+  {
+    key: "_created",
+    label: "Created",
+    kind: "identity",
+    group: "identity",
+    helpText: "When the sample was first created.",
+  },
+  {
+    key: "_updated",
+    label: "Last edited",
+    kind: "identity",
+    group: "identity",
+    helpText: "When the sample was last changed.",
+  },
+];
+
+function formatDateTime(value: Date | null | undefined): string {
+  if (!value) return "";
+  try {
+    return new Date(value).toISOString().slice(0, 16).replace("T", " ");
+  } catch {
+    return "";
+  }
+}
+
 const studyTableSelect = {
   id: true,
   title: true,
@@ -305,6 +332,8 @@ export async function buildStudyTableData(
         customFields: true,
         facilityStatus: true,
         biosampleNumber: true,
+        createdAt: true,
+        updatedAt: true,
         reads: {
           where: { isActive: true },
           orderBy: { id: "desc" },
@@ -554,8 +583,8 @@ export async function buildStudyTableData(
     .filter((field) => !seen.has(`checklist:${field.name}`))
     .map((field) => ({ name: field.name, label: field.label }));
 
-  // Pipeline outputs (read-only) come last.
-  columns.push(...OUTPUT_COLUMNS);
+  // Pipeline outputs + lifecycle dates (read-only) come last.
+  columns.push(...OUTPUT_COLUMNS, ...META_COLUMNS);
 
   const rows: StudyTableRow[] = samples.map((sample, index) => {
     const { custom, checklist } = parsedSamples[index];
@@ -614,6 +643,8 @@ export async function buildStudyTableData(
     cells["out:biosample"] = sample.biosampleNumber ?? "";
     cells["out:runAccession"] = read?.runAccessionNumber ?? "";
     cells["out:assembly"] = assemblyNames.join(", ");
+    cells["_created"] = formatDateTime(sample.createdAt);
+    cells["_updated"] = formatDateTime(sample.updatedAt);
 
     return {
       id: sample.id,
