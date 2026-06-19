@@ -99,6 +99,8 @@ jobs:
       DB_USER: seqdesk
       FALLBACK_DB_PORT: 55433
       NEXT_TELEMETRY_DISABLED: 1
+      # Hoisted out of the run block so the block carries no ${{ }} (see the with-profile job).
+      RC_SPIKE_URL: ${{ vars.READ_CLEANING_SPIKE_URL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -392,7 +394,7 @@ jobs:
             export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
             echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
           fi
-          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
+          SEQDESK_READ_CLEANING_SPIKE_URL="${RC_SPIKE_URL:-}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -510,6 +512,12 @@ jobs:
       # Unset → the app installs local-only and the metaxpath SLURM leg skips cleanly.
       SLURM_SHARED_CONDA_BASE: ${{ vars.SLURM_SHARED_CONDA_BASE }}
       SLURM_SHARED_CONDA_ENV: ${{ vars.SLURM_SHARED_CONDA_ENV }}
+      # Hoisted out of the big "Verify installed app startup" run block. That block also drives every
+      # Gemma run, so it's near GitHub's per-block expression-template limit (~21000 chars per
+      # templated scalar) — workflow_dispatch rejects the file if the block carries inline ${{ }}.
+      # Referencing these as $env in the block keeps the block free of expressions entirely.
+      RC_SPIKE_URL: ${{ vars.READ_CLEANING_SPIKE_URL }}
+      GEMMA_SUBSAMPLE: ${{ github.event.inputs.subsample_reads }}
       # SLURM runs (the metaxpath SLURM leg) use the INLINE executor — the whole Nextflow run wraps
       # into ONE sbatch on an offline compute node that can only REUSE cached conda envs. Inherited
       # by the booted app; unused by local runs, so harmless when no SLURM leg runs.
@@ -843,7 +851,7 @@ jobs:
             export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
             echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
           fi
-          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
+          SEQDESK_READ_CLEANING_SPIKE_URL="${RC_SPIKE_URL:-}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -949,7 +957,7 @@ jobs:
             # metaxpath classifies a fraction and the matrix finishes in ~30-60min instead of ~3h.
             # An ITERATION smoke, NOT the canonical validation — the scheduled full run stays the
             # source of truth. Empty input (scheduled / default) = full run.
-            SUBSAMPLE="${{ github.event.inputs.subsample_reads }}"
+            SUBSAMPLE="${GEMMA_SUBSAMPLE:-}"
             if [ -n "$SUBSAMPLE" ]; then
               echo "::group::SHORT run — subsampling Gemma reads to fraction $SUBSAMPLE"
               n=0
