@@ -144,6 +144,28 @@ jobs:
             exit 1
           fi
 
+      - name: Free stale SLURM jobs from prior runs (QOS submit-slot cleanup)
+        run: |
+          set -euo pipefail
+          # This cluster caps concurrent submissions per user (QOS MaxSubmitJobPerUser): a job left
+          # PENDING by an earlier failed/cancelled run holds that slot and makes EVERY submission in
+          # this run fail (QOSMaxSubmitJobPerUserLimit) — including the very first pipeline step. Runs
+          # are serialized by the `pipeline-slurm-e2e` concurrency group, so any PENDING job for this
+          # user now is a stale leftover, not live work. Cancel those (PENDING only — never touch a
+          # running job) and wait for the queue to drain so the slot is free before the first submit.
+          ME="$(whoami)"
+          stale="$(squeue -u "$ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
+          if [ -n "$stale" ]; then
+            echo "cancelling stale PENDING SLURM job(s) from prior runs: $(echo $stale | tr '\n' ' ')"
+            echo "$stale" | xargs -r scancel 2>/dev/null || true
+            for _ in $(seq 1 24); do
+              if ! squeue -u "$ME" -h -t PENDING 2>/dev/null | grep -q .; then break; fi
+              sleep 5
+            done
+          else
+            echo "no stale PENDING SLURM jobs for $ME — QOS submit slot is free"
+          fi
+
       - name: Create pipeline Conda environment
         run: |
           set -euo pipefail
