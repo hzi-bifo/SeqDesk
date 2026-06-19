@@ -2078,28 +2078,35 @@ export function OrderWizardPage({
         if (!samplesRes.ok) {
           // Order was created but samples failed - go to order detail anyway
           console.error("Failed to save samples");
-        } else if (dynamicStudiesEnabled && primaryStudyId) {
-          // Associate the whole order's samples with the chosen primary study.
-          try {
-            const samplesData = await samplesRes.json();
-            const createdSampleIds = (samplesData?.samples ?? [])
-              .map((s: { id: string }) => s.id)
-              .filter(Boolean);
-            if (createdSampleIds.length > 0) {
-              const assignRes = await fetch(
-                `/api/studies/${primaryStudyId}/samples`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ sampleIds: createdSampleIds }),
+        } else if (dynamicStudiesEnabled) {
+          // Associate the whole order's samples with the chosen study. When the
+          // wizard skipped the study step (arrived via ?study=<id>), fall back to
+          // that param so association doesn't depend on the preselect effect having
+          // populated primaryStudyId before submit.
+          const studyToAssociate =
+            primaryStudyId || (!isEditMode ? searchParams.get("study") : null);
+          if (studyToAssociate) {
+            try {
+              const samplesData = await samplesRes.json();
+              const createdSampleIds = (samplesData?.samples ?? [])
+                .map((s: { id: string }) => s.id)
+                .filter(Boolean);
+              if (createdSampleIds.length > 0) {
+                const assignRes = await fetch(
+                  `/api/studies/${studyToAssociate}/samples`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sampleIds: createdSampleIds }),
+                  }
+                );
+                if (!assignRes.ok) {
+                  console.error("Failed to associate samples with study");
                 }
-              );
-              if (!assignRes.ok) {
-                console.error("Failed to associate samples with study");
               }
+            } catch {
+              console.error("Failed to associate samples with study");
             }
-          } catch {
-            console.error("Failed to associate samples with study");
           }
         }
       }

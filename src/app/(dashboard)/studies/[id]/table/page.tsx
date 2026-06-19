@@ -444,18 +444,20 @@ export default function StudyTablePage({
   // still targets rows by id, so order/visibility changes don't affect saves.
   const filterText = filterQuery.trim().toLowerCase();
   const isFiltered = filterText !== "" || statusFilter.size > 0;
-  const displayRows = (() => {
-    let result = rows;
-    if (statusFilter.size > 0) {
-      result = result.filter((row) => statusFilter.has(row.status));
-    }
-    if (filterText) {
-      result = result.filter((row) =>
+  // Rows matching the text filter only. The Status facet counts use this so they
+  // reflect an active text filter yet stay stable as you toggle statuses.
+  const textFilteredRows = filterText
+    ? rows.filter((row) =>
         Object.values(row.cells).some((value) =>
           String(value).toLowerCase().includes(filterText)
         )
-      );
-    }
+      )
+    : rows;
+  const displayRows = (() => {
+    let result =
+      statusFilter.size > 0
+        ? textFilteredRows.filter((row) => statusFilter.has(row.status))
+        : textFilteredRows;
     if (sort) {
       const { key, dir } = sort;
       result = [...result].sort((a, b) => {
@@ -740,7 +742,9 @@ export default function StudyTablePage({
           )}
         </div>
         {FACILITY_SAMPLE_STATUSES.map((status) => {
-          const count = rows.filter((r) => r.status === status).length;
+          const count = textFilteredRows.filter(
+            (r) => r.status === status
+          ).length;
           return (
             <label
               key={status}
@@ -838,7 +842,8 @@ export default function StudyTablePage({
                     key={ADD_MIXS_KEY}
                     title="Add a MIxS metadata column"
                     className={cn(
-                      "sticky top-0 z-20 border-b px-2 py-2 text-center",
+                      "sticky top-0 z-20 border-b text-center",
+                      headPad,
                       GROUP_HEADER_TINT.mixs
                     )}
                   >
@@ -955,7 +960,7 @@ export default function StudyTablePage({
                 <tr key={row.id} className={cn("border-b", tint)}>
                   {renderColumns.map((column, index) => {
                     if (column.key === ADD_MIXS_KEY) {
-                      return <td key={ADD_MIXS_KEY} className="px-2" />;
+                      return <td key={ADD_MIXS_KEY} className={cellPad} />;
                     }
                     return (
                     <td
