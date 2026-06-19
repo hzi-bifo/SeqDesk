@@ -9,6 +9,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
@@ -440,53 +445,62 @@ export default function StudyTablePage({
     })
     .slice(0, 100);
 
-  const mixsPicker = (
-    <div className="relative">
-      <Button
-        variant="outline"
-        onClick={() => setMixsPickerOpen((open) => !open)}
-        disabled={data.availableMixsFields.length === 0}
-        title={
-          data.availableMixsFields.length === 0
-            ? "All MIxS checklist fields are already shown"
-            : "Add a MIxS metadata column"
-        }
-      >
-        <Plus className="mr-2 h-4 w-4" /> MIxS field
-      </Button>
-      {mixsPickerOpen && (
-        <div className="absolute right-0 z-40 mt-1 w-72 rounded-lg border bg-popover p-2 text-popover-foreground shadow-lg">
-          <input
-            autoFocus
-            value={mixsSearch}
-            onChange={(event) => setMixsSearch(event.target.value)}
-            placeholder="Search MIxS fields…"
-            className="mb-2 w-full rounded border bg-background px-2 py-1 text-sm outline-none"
-          />
-          <div className="max-h-72 overflow-auto">
-            {mixsMatches.length === 0 ? (
-              <p className="px-2 py-2 text-sm text-muted-foreground">
-                No matching fields
-              </p>
-            ) : (
-              mixsMatches.map((field) => (
-                <button
-                  key={field.name}
-                  type="button"
-                  disabled={mixsBusy}
-                  onClick={() => addMixsColumn(field.name)}
-                  title={field.name}
-                  className="block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-muted disabled:opacity-50"
-                >
-                  {field.label}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+  // The MIxS field picker, rendered from the "+" header column inside the table.
+  const mixsPickerContent = (
+    <>
+      <input
+        autoFocus
+        value={mixsSearch}
+        onChange={(event) => setMixsSearch(event.target.value)}
+        placeholder="Search MIxS fields…"
+        className="mb-2 w-full rounded border bg-background px-2 py-1 text-sm outline-none"
+      />
+      <div className="max-h-72 overflow-auto">
+        {mixsMatches.length === 0 ? (
+          <p className="px-2 py-2 text-sm text-muted-foreground">
+            No matching fields
+          </p>
+        ) : (
+          mixsMatches.map((field) => (
+            <button
+              key={field.name}
+              type="button"
+              disabled={mixsBusy}
+              onClick={() => addMixsColumn(field.name)}
+              title={field.name}
+              className="block w-full truncate rounded px-2 py-1 text-left text-sm font-normal hover:bg-muted disabled:opacity-50"
+            >
+              {field.label}
+            </button>
+          ))
+        )}
+      </div>
+    </>
   );
+
+  // Inject a "+" column right after the last MIxS column (falling back to after
+  // the Sequencing Order block), so adding a MIxS field feels like a table action.
+  const ADD_MIXS_KEY = "__add_mixs__";
+  const showAddMixs = data.availableMixsFields.length > 0;
+  let addMixsAfter = -1;
+  if (showAddMixs) {
+    columns.forEach((column, index) => {
+      if (column.group === "mixs") addMixsAfter = index;
+    });
+    if (addMixsAfter === -1) {
+      columns.forEach((column, index) => {
+        if (column.group === "order") addMixsAfter = index;
+      });
+    }
+  }
+  const renderColumns: StudyTableColumn[] =
+    showAddMixs && addMixsAfter >= 0
+      ? [
+          ...columns.slice(0, addMixsAfter + 1),
+          { key: ADD_MIXS_KEY, label: "", kind: "field", group: "mixs" },
+          ...columns.slice(addMixsAfter + 1),
+        ]
+      : columns;
 
   const exportButton = (
     <Button asChild disabled={rows.length === 0}>
@@ -543,7 +557,38 @@ export default function StudyTablePage({
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
-            {columns.map((column, index) => (
+            {renderColumns.map((column, index) => {
+              if (column.key === ADD_MIXS_KEY) {
+                return (
+                  <th
+                    key={ADD_MIXS_KEY}
+                    title="Add a MIxS metadata column"
+                    className={cn(
+                      "sticky top-0 z-20 border-b px-2 py-2 text-center",
+                      GROUP_HEADER_TINT.mixs
+                    )}
+                  >
+                    <Popover
+                      open={mixsPickerOpen}
+                      onOpenChange={setMixsPickerOpen}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Add MIxS field"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-72 p-2">
+                        {mixsPickerContent}
+                      </PopoverContent>
+                    </Popover>
+                  </th>
+                );
+              }
+              return (
               <th
                 key={column.key}
                 className={cn(
@@ -599,14 +644,15 @@ export default function StudyTablePage({
                   )}
                 </span>
               </th>
-            ))}
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {displayRows.length === 0 ? (
             <tr>
               <td
-                colSpan={columns.length}
+                colSpan={renderColumns.length}
                 className="px-4 py-16 text-center text-muted-foreground"
               >
                 <Table2 className="mx-auto h-6 w-6" />
@@ -632,7 +678,11 @@ export default function StudyTablePage({
               const tint = STATUS_ROW_TINT[row.status];
               return (
                 <tr key={row.id} className={cn("border-b", tint)}>
-                  {columns.map((column, index) => (
+                  {renderColumns.map((column, index) => {
+                    if (column.key === ADD_MIXS_KEY) {
+                      return <td key={ADD_MIXS_KEY} className="px-2" />;
+                    }
+                    return (
                     <td
                       key={column.key}
                       className={cn(
@@ -664,7 +714,8 @@ export default function StudyTablePage({
                         <span className="text-muted-foreground/40">—</span>
                       )}
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
               );
             })
@@ -702,7 +753,6 @@ export default function StudyTablePage({
               </p>
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
-              {mixsPicker}
               <Button variant="outline" onClick={() => setFullscreen(true)}>
                 <Maximize2 className="mr-2 h-4 w-4" /> Fullscreen
               </Button>
