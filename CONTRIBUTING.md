@@ -3,6 +3,17 @@
 This guide covers developing and testing the SeqDesk repository. End-user and operator
 documentation lives at [seqdesk.org/docs](https://seqdesk.org/docs).
 
+## Contributing a pipeline to the store
+
+To add a pipeline to the SeqDesk pipeline store, build a `pipelines/<id>/` package —
+start from the [`seqdesk-pipeline-template`](https://github.com/hzi-bifo/seqdesk-pipeline-template)
+repository (or `pipelines/_example/`), which ships the required `test-data/` fixture and a
+`LICENSE`. Validate it with `npm run pipeline:validate`, then open a PR using the pipeline
+template (append `?template=pipeline.md` to the compare URL). The full guide — package
+format, settings and reference databases, licensing, citation, and how the pipeline is
+reviewed and integrated — is at
+[seqdesk.org/docs/pipelines/adding-pipelines](https://seqdesk.org/docs/pipelines/adding-pipelines).
+
 ## Prerequisites
 
 - Node.js 18+ and a local PostgreSQL (SeqDesk is PostgreSQL-only).
