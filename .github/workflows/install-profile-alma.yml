@@ -380,6 +380,18 @@ jobs:
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
           # Optional override for where the read-cleaning spiked example bundle is hosted
           # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
+          # When a shared conda base is configured (the job that runs the metaxpath SLURM leg), point
+          # the app's pipeline-execution conda at it via env. SEQDESK_CONDA_PATH/ENV override the
+          # installed config (config/loader.ts maps them to pipelines.execution.conda.*) — the OFFLINE
+          # compute nodes can only read this shared conda. This does NOT change the app's default mode
+          # (stays local — the smoke + local Gemma runs are unaffected); only forced-SLURM runs use it,
+          # and local+SLURM then build/reuse the SAME shared env cache. No-op in the without-profile
+          # job (SLURM_SHARED_CONDA_BASE is unset there).
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            export SEQDESK_CONDA_PATH="$SLURM_SHARED_CONDA_BASE"
+            export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
+            echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
+          fi
           SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
@@ -493,6 +505,15 @@ jobs:
       # stage the DB once for both harnesses. Absent → the read-cleaning smoke skips cleanly
       # (it's gated on the DB, exactly like mag is gated on GTDB).
       SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+      # Shared conda base/env (the same repo vars the SLURM E2E uses). Lets the metaxpath SLURM leg
+      # point the installed app's SLURM executor at a conda the OFFLINE compute nodes can read.
+      # Unset → the app installs local-only and the metaxpath SLURM leg skips cleanly.
+      SLURM_SHARED_CONDA_BASE: ${{ vars.SLURM_SHARED_CONDA_BASE }}
+      SLURM_SHARED_CONDA_ENV: ${{ vars.SLURM_SHARED_CONDA_ENV }}
+      # SLURM runs (the metaxpath SLURM leg) use the INLINE executor — the whole Nextflow run wraps
+      # into ONE sbatch on an offline compute node that can only REUSE cached conda envs. Inherited
+      # by the booted app; unused by local runs, so harmless when no SLURM leg runs.
+      SEQDESK_SLURM_INLINE_EXECUTOR: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -810,6 +831,18 @@ jobs:
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
           # Optional override for where the read-cleaning spiked example bundle is hosted
           # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
+          # When a shared conda base is configured (the job that runs the metaxpath SLURM leg), point
+          # the app's pipeline-execution conda at it via env. SEQDESK_CONDA_PATH/ENV override the
+          # installed config (config/loader.ts maps them to pipelines.execution.conda.*) — the OFFLINE
+          # compute nodes can only read this shared conda. This does NOT change the app's default mode
+          # (stays local — the smoke + local Gemma runs are unaffected); only forced-SLURM runs use it,
+          # and local+SLURM then build/reuse the SAME shared env cache. No-op in the without-profile
+          # job (SLURM_SHARED_CONDA_BASE is unset there).
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            export SEQDESK_CONDA_PATH="$SLURM_SHARED_CONDA_BASE"
+            export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
+            echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
+          fi
           SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
@@ -958,6 +991,48 @@ jobs:
             # metaxpath actually classify on the test data instead of being rejected before it runs.
             run_gemma metaxpath   10800 --study-alias gemma-nanopore-metaxpath \
               --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
+            # ---- metaxpath SLURM leg (warn-only, experimental) ----
+            # The local run above already classified AND built metaxpath's per-process conda envs into
+            # the shared-FS cache; re-run metaxpath through the SLURM executor (inline: one sbatch on an
+            # offline compute node) to prove it runs on the cluster, reusing those cached envs. Gated on
+            # a SLURM-configured app (SLURM_SHARED_CONDA_BASE set at install) + sbatch on the runner.
+            if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
+              echo "::group::metaxpath SLURM leg (warn-only)"
+              MEX_ME="$(whoami)"
+              # Free the per-user QOS submit slot: cancel stale PENDING jobs left by earlier runs (this
+              # cluster caps concurrent submissions per user; a leftover PENDING job blocks new ones).
+              mex_stale="$(squeue -u "$MEX_ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
+              if [ -n "$mex_stale" ]; then
+                echo "cancelling stale PENDING SLURM job(s): $(echo $mex_stale | tr '\n' ' ')"
+                echo "$mex_stale" | xargs -r scancel 2>/dev/null || true
+                for _ in $(seq 1 24); do squeue -u "$MEX_ME" -h -t PENDING 2>/dev/null | grep -q . || break; sleep 5; done
+              fi
+              mex_before="$(squeue -u "$MEX_ME" -h -o '%i' 2>/dev/null || true)"
+              # Same memory config as the proven local run (48 GB) with a comfortably larger sbatch
+              # allocation — the 1.3 TB nodes fit it easily. Cap 240 min (first run may queue).
+              if SEQDESK_RUNTIME_E2E_SLURM_CORES=4 \
+                 SEQDESK_RUNTIME_E2E_SLURM_MEMORY=64G \
+                 SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=240 \
+                 node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
+                   --base-url "http://127.0.0.1:${PORT}" \
+                   --email "admin@example.com" --password "admin" \
+                   --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
+                   --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}' \
+                   --skip-local --skip-if-disabled --timeout 10800; then
+                echo "metaxpath SLURM leg OK"
+              else
+                echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
+              fi
+              # Free the slot: cancel only the job(s) this leg submitted (leave other jobs untouched).
+              mex_new=""
+              for j in $(squeue -u "$MEX_ME" -h -o '%i' 2>/dev/null || true); do
+                if ! echo "$mex_before" | grep -qx "$j"; then mex_new="$mex_new $j"; fi
+              done
+              if [ -n "$mex_new" ]; then echo "freeing QOS slot — cancelling metaxpath SLURM job(s):$mex_new"; scancel $mex_new 2>/dev/null || true; fi
+              echo "::endgroup::"
+            else
+              echo "metaxpath SLURM leg SKIPPED (SLURM_SHARED_CONDA_BASE unset or sbatch unavailable)."
+            fi
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
             # and copy it for download. FULLY non-fatal — set +e/+o pipefail in a subshell so a
