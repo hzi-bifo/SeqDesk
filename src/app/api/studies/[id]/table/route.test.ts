@@ -74,6 +74,20 @@ beforeEach(() => {
       checklistData: JSON.stringify({ collection_date: "2024-01-01" }),
       customFields: JSON.stringify({ sample_volume: "5", legacy_field: "x" }),
       facilityStatus: "SEQUENCED",
+      biosampleNumber: "SAMN999",
+      reads: [
+        {
+          file1: "a.fq",
+          file2: "b.fq",
+          readCount1: 1000,
+          readCount2: 1000,
+          avgQuality1: 35.5,
+          avgQuality2: null,
+          dataClass: "cleaned",
+          runAccessionNumber: "ERR123",
+        },
+      ],
+      assemblies: [{ assemblyName: "asm1", assemblyAccession: null }],
       order: {
         id: "o1",
         orderNumber: "ORD-1",
@@ -181,7 +195,29 @@ describe("GET /api/studies/[id]/table", () => {
       ["Title", "order"], // order field mapping to the sampleTitle column
       ["Collection Date", "study"], // study form per-sample field (checklistData)
       ["Legacy Field", "order"], // stray customFields key, surfaced anyway
+      ["Read type", "output"], // pipeline outputs come last
+      ["Read files", "output"],
+      ["Read count", "output"],
+      ["Avg quality", "output"],
+      ["BioSample", "output"],
+      ["ENA Run", "output"],
+      ["Assembly", "output"],
     ]);
+  });
+
+  it("fills pipeline-output cells from reads and assemblies", async () => {
+    const res = await GET(req(), { params });
+    const body = await res.json();
+    const r1 = body.rows[0];
+    expect(r1.cells["out:dataClass"]).toBe("cleaned");
+    expect(r1.cells["out:readFiles"]).toBe("2");
+    expect(r1.cells["out:readCount"]).toBe("2,000");
+    expect(r1.cells["out:avgQuality"]).toBe("35.5");
+    expect(r1.cells["out:biosample"]).toBe("SAMN999");
+    expect(r1.cells["out:runAccession"]).toBe("ERR123");
+    expect(r1.cells["out:assembly"]).toBe("asm1");
+    // a sample with no reads/assemblies → empty output cells
+    expect(body.rows[1].cells["out:readFiles"]).toBe("");
   });
 
   it("fills cells from the right source and shows which order a sample came from", async () => {

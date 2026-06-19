@@ -24,7 +24,12 @@ import {
   type FacilitySampleStatus,
 } from "@/lib/sequencing/constants";
 
-type StudyTableColumnGroup = "identity" | "status" | "order" | "study";
+type StudyTableColumnGroup =
+  | "identity"
+  | "status"
+  | "order"
+  | "study"
+  | "output";
 
 interface StudyTableColumn {
   key: string;
@@ -82,12 +87,14 @@ const GROUP_HEADER_TINT: Record<StudyTableColumnGroup, string> = {
   status: "bg-muted",
   order: "bg-amber-100/70",
   study: "bg-sky-100/70",
+  output: "bg-emerald-100/70",
 };
 
 const GROUP_LEGEND: Array<{ group: StudyTableColumnGroup; label: string }> = [
   { group: "identity", label: "Identity" },
   { group: "order", label: "Sequencing Order fields" },
   { group: "study", label: "Study metadata" },
+  { group: "output", label: "Pipeline outputs" },
 ];
 
 // A single inline-editable metadata cell. Click to edit; Enter/blur saves (PATCH
@@ -518,9 +525,6 @@ export default function StudyTablePage({
                   <ChevronRight className="h-4 w-4" />
                 )}
                 Study &amp; sequencing information
-                <span className="text-xs font-normal text-muted-foreground">
-                  (not per-sample)
-                </span>
               </button>
               {infoOpen && (
                 <div className="grid gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">

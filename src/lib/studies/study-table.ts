@@ -17,7 +17,12 @@ import type { FormFieldDefinition } from "@/types/form-config";
  * One column in the study "Table overview". `group` drives the header colour so a
  * reader can tell identity vs. Sequencing Order metadata vs. Study metadata apart.
  */
-export type StudyTableColumnGroup = "identity" | "status" | "order" | "study";
+export type StudyTableColumnGroup =
+  | "identity"
+  | "status"
+  | "order"
+  | "study"
+  | "output";
 
 export interface StudyTableColumn {
   key: string;
@@ -136,6 +141,59 @@ const IDENTITY_COLUMNS: StudyTableColumn[] = [
   },
 ];
 
+// Read-only pipeline-output columns (reads, QC, assembly, accessions).
+const OUTPUT_COLUMNS: StudyTableColumn[] = [
+  {
+    key: "out:dataClass",
+    label: "Read type",
+    kind: "field",
+    group: "output",
+    helpText: "Whether the active reads are raw or host-cleaned (read-cleaning pipeline).",
+  },
+  {
+    key: "out:readFiles",
+    label: "Read files",
+    kind: "field",
+    group: "output",
+    helpText: "Number of read files linked to the sample (R1/R2).",
+  },
+  {
+    key: "out:readCount",
+    label: "Read count",
+    kind: "field",
+    group: "output",
+    helpText: "Total reads (R1+R2) measured by FastQC / reads-QC.",
+  },
+  {
+    key: "out:avgQuality",
+    label: "Avg quality",
+    kind: "field",
+    group: "output",
+    helpText: "Mean Phred quality score from FastQC.",
+  },
+  {
+    key: "out:biosample",
+    label: "BioSample",
+    kind: "field",
+    group: "output",
+    helpText: "BioSample accession, assigned when the study is registered at ENA.",
+  },
+  {
+    key: "out:runAccession",
+    label: "ENA Run",
+    kind: "field",
+    group: "output",
+    helpText: "ENA run accession for the reads (Register at ENA).",
+  },
+  {
+    key: "out:assembly",
+    label: "Assembly",
+    kind: "field",
+    group: "output",
+    helpText: "Assembly produced by the assembly / MAG pipeline.",
+  },
+];
+
 const studyTableSelect = {
   id: true,
   title: true,
@@ -239,6 +297,24 @@ export async function buildStudyTableData(
         checklistData: true,
         customFields: true,
         facilityStatus: true,
+        biosampleNumber: true,
+        reads: {
+          where: { isActive: true },
+          orderBy: { id: "desc" },
+          select: {
+            file1: true,
+            file2: true,
+            readCount1: true,
+            readCount2: true,
+            avgQuality1: true,
+            avgQuality2: true,
+            dataClass: true,
+            runAccessionNumber: true,
+          },
+        },
+        assemblies: {
+          select: { assemblyName: true, assemblyAccession: true },
+        },
         order: {
           select: {
             id: true,
@@ -359,6 +435,9 @@ export async function buildStudyTableData(
   addExtraKeys("custom", "order");
   addExtraKeys("checklist", "study");
 
+  // Pipeline outputs (read-only) come last.
+  columns.push(...OUTPUT_COLUMNS);
+
   const rows: StudyTableRow[] = samples.map((sample, index) => {
     const { custom, checklist } = parsedSamples[index];
     const status = isFacilitySampleStatus(sample.facilityStatus)
@@ -395,6 +474,27 @@ export async function buildStudyTableData(
       }
       cells[column.key] = formatCell(raw);
     }
+
+    // ── Pipeline outputs ──
+    const reads = sample.reads ?? [];
+    const read = reads.find((r) => r.file1 || r.file2) ?? reads[0];
+    const readFiles = read
+      ? [read.file1, read.file2].filter(Boolean).length
+      : 0;
+    const readCount =
+      (read?.readCount1 ?? 0) + (read?.readCount2 ?? 0);
+    const avgQuality = read?.avgQuality1 ?? read?.avgQuality2 ?? null;
+    const assemblyNames = (sample.assemblies ?? [])
+      .map((assembly) => assembly.assemblyName || assembly.assemblyAccession || "")
+      .filter(Boolean);
+
+    cells["out:dataClass"] = read?.dataClass ?? "";
+    cells["out:readFiles"] = readFiles > 0 ? String(readFiles) : "";
+    cells["out:readCount"] = readCount > 0 ? readCount.toLocaleString("en-US") : "";
+    cells["out:avgQuality"] = avgQuality !== null ? avgQuality.toFixed(1) : "";
+    cells["out:biosample"] = sample.biosampleNumber ?? "";
+    cells["out:runAccession"] = read?.runAccessionNumber ?? "";
+    cells["out:assembly"] = assemblyNames.join(", ");
 
     return {
       id: sample.id,
