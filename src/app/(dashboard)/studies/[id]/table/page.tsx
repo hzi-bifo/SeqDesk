@@ -27,6 +27,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   Columns3,
@@ -146,6 +147,9 @@ const COLUMN_GROUP_ORDER: StudyTableColumnGroup[] = [
 ];
 
 type TableDensity = "comfortable" | "compact";
+
+// One level of a multi-level (Excel-style) sort: column key + direction.
+type SortLevel = { key: string; dir: "asc" | "desc" };
 
 // A single inline-editable metadata cell, controlled by the table for spreadsheet-
 // style keyboard use: click or Enter to edit, Enter saves + moves down, Tab saves +
@@ -405,9 +409,8 @@ export default function StudyTablePage({
   const [mixsPickerOpen, setMixsPickerOpen] = useState(false);
   const [mixsSearch, setMixsSearch] = useState("");
   const [mixsBusy, setMixsBusy] = useState(false);
-  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(
-    null
-  );
+  const [sortLevels, setSortLevels] = useState<SortLevel[]>([]);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
   // "Tame the wide table" view controls. Column visibility + density persist
   // per-study in localStorage; the status filter is transient like the text filter.
@@ -551,14 +554,15 @@ export default function StudyTablePage({
 
   const { study, columns, rows, info, perStudy } = data;
 
+  // Clicking a header is a quick single-column sort (asc → desc → off); the Sort
+  // menu builds the multi-level sort.
   const toggleSort = (key: string) =>
-    setSort((prev) =>
-      prev?.key === key
-        ? prev.dir === "asc"
-          ? { key, dir: "desc" }
-          : null
-        : { key, dir: "asc" }
-    );
+    setSortLevels((prev) => {
+      if (prev.length === 1 && prev[0].key === key) {
+        return prev[0].dir === "asc" ? [{ key, dir: "desc" }] : [];
+      }
+      return [{ key, dir: "asc" }];
+    });
 
   // Filter + sort are derived (cheap for a study's worth of rows); cell editing
   // still targets rows by id, so order/visibility changes don't affect saves.
@@ -578,17 +582,19 @@ export default function StudyTablePage({
       statusFilter.size > 0
         ? textFilteredRows.filter((row) => statusFilter.has(row.status))
         : textFilteredRows;
-    if (sort) {
-      const { key, dir } = sort;
+    if (sortLevels.length > 0) {
       result = [...result].sort((a, b) => {
-        const av = a.cells[key] ?? "";
-        const bv = b.cells[key] ?? "";
-        const an = Number(av.replace(/,/g, ""));
-        const bn = Number(bv.replace(/,/g, ""));
-        const numeric =
-          av !== "" && bv !== "" && !Number.isNaN(an) && !Number.isNaN(bn);
-        const cmp = numeric ? an - bn : av.localeCompare(bv);
-        return dir === "asc" ? cmp : -cmp;
+        for (const { key, dir } of sortLevels) {
+          const av = a.cells[key] ?? "";
+          const bv = b.cells[key] ?? "";
+          const an = Number(av.replace(/,/g, ""));
+          const bn = Number(bv.replace(/,/g, ""));
+          const numeric =
+            av !== "" && bv !== "" && !Number.isNaN(an) && !Number.isNaN(bn);
+          const cmp = numeric ? an - bn : av.localeCompare(bv);
+          if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+        }
+        return 0;
       });
     }
     return result;
@@ -999,6 +1005,101 @@ export default function StudyTablePage({
     </Popover>
   );
 
+  // Excel-style multi-level sort builder.
+  const addSortLevel = () => {
+    const used = new Set(sortLevels.map((level) => level.key));
+    const next = exportColumns.find((column) => !used.has(column.key));
+    if (next) setSortLevels([...sortLevels, { key: next.key, dir: "asc" }]);
+  };
+  const updateSortLevel = (index: number, patch: Partial<SortLevel>) =>
+    setSortLevels((prev) =>
+      prev.map((level, i) => (i === index ? { ...level, ...patch } : level))
+    );
+  const removeSortLevel = (index: number) =>
+    setSortLevels((prev) => prev.filter((_, i) => i !== index));
+
+  const sortMenu = (
+    <Popover open={sortMenuOpen} onOpenChange={setSortMenuOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <ArrowUpDown className="mr-2 h-4 w-4" /> Sort
+          {sortLevels.length > 0 && (
+            <span className="ml-1.5 rounded bg-primary/10 px-1 text-xs text-primary">
+              {sortLevels.length}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[26rem] space-y-2 p-3">
+        {sortLevels.length === 0 ? (
+          <p className="px-1 text-xs text-muted-foreground">
+            Not sorted. Add a level to sort the table by one or more columns.
+          </p>
+        ) : (
+          sortLevels.map((level, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <span className="w-12 flex-shrink-0 text-xs text-muted-foreground">
+                {index === 0 ? "Sort by" : "then by"}
+              </span>
+              <select
+                value={level.key}
+                onChange={(event) =>
+                  updateSortLevel(index, { key: event.target.value })
+                }
+                className="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-sm outline-none"
+              >
+                {exportColumns.map((column) => (
+                  <option key={column.key} value={column.key}>
+                    {column.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={level.dir}
+                onChange={(event) =>
+                  updateSortLevel(index, {
+                    dir: event.target.value as SortLevel["dir"],
+                  })
+                }
+                className="flex-shrink-0 rounded border bg-background px-2 py-1 text-sm outline-none"
+              >
+                <option value="asc">A → Z</option>
+                <option value="desc">Z → A</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => removeSortLevel(index)}
+                aria-label="Remove sort level"
+                className="flex-shrink-0 text-muted-foreground/60 hover:text-destructive"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))
+        )}
+        <div className="flex items-center justify-between border-t pt-2">
+          <button
+            type="button"
+            onClick={addSortLevel}
+            disabled={sortLevels.length >= exportColumns.length}
+            className="text-sm font-medium text-primary hover:underline disabled:opacity-40"
+          >
+            + Add sort level
+          </button>
+          {sortLevels.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSortLevels([])}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+
   const columnsMenu = (
     <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
       <PopoverTrigger asChild>
@@ -1148,6 +1249,7 @@ export default function StudyTablePage({
           className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
         />
       </div>
+      {sortMenu}
       {columnsMenu}
       {statusMenu}
       {bulkPanel}
@@ -1157,10 +1259,10 @@ export default function StudyTablePage({
           {displayRows.length} of {rows.length}
         </span>
       )}
-      {sort && (
+      {sortLevels.length > 0 && (
         <button
           type="button"
-          onClick={() => setSort(null)}
+          onClick={() => setSortLevels([])}
           className="text-xs text-muted-foreground underline hover:text-foreground"
         >
           clear sort
@@ -1229,12 +1331,26 @@ export default function StudyTablePage({
                     className="inline-flex items-center gap-1 hover:text-foreground"
                   >
                     {column.label}
-                    {sort?.key === column.key &&
-                      (sort.dir === "asc" ? (
-                        <ArrowUp className="h-3 w-3" />
-                      ) : (
-                        <ArrowDown className="h-3 w-3" />
-                      ))}
+                    {(() => {
+                      const sortIndex = sortLevels.findIndex(
+                        (level) => level.key === column.key
+                      );
+                      if (sortIndex < 0) return null;
+                      return (
+                        <span className="inline-flex items-center text-primary">
+                          {sortLevels[sortIndex].dir === "asc" ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )}
+                          {sortLevels.length > 1 && (
+                            <span className="text-[9px] font-semibold">
+                              {sortIndex + 1}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })()}
                   </button>
                   {column.required && (
                     <span className="text-muted-foreground/60">*</span>
