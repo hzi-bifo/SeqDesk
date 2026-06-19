@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  loadStudyChecklistFieldNames: vi.fn(),
   db: {
     study: {
       findUnique: vi.fn(),
@@ -14,6 +15,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
+vi.mock("@/lib/studies/study-table", () => ({
+  loadStudyChecklistFieldNames: mocks.loadStudyChecklistFieldNames,
+}));
 
 import { POST, DELETE } from "./route";
 
@@ -44,6 +48,7 @@ beforeEach(() => {
   });
   mocks.db.study.findFirst.mockResolvedValue(null);
   mocks.db.study.update.mockResolvedValue({});
+  mocks.loadStudyChecklistFieldNames.mockResolvedValue(new Set(["ph", "depth"]));
 });
 
 describe("POST/DELETE /api/studies/[id]/table/columns", () => {
@@ -84,5 +89,21 @@ describe("POST/DELETE /api/studies/[id]/table/columns", () => {
     const res = await DELETE(body({ fieldName: "ph" }), { params });
     expect(res.status).toBe(200);
     expect(savedMixsColumns()._mixsColumns).toEqual([]);
+  });
+
+  it("rejects adding a field that is not in the study's MIxS checklist", async () => {
+    // e.g. an admin-only form field name — must not be addable (then editable) here.
+    const res = await POST(body({ fieldName: "facility_sample_qc_result" }), {
+      params,
+    });
+    expect(res.status).toBe(400);
+    expect(mocks.db.study.update).not.toHaveBeenCalled();
+  });
+
+  it("still allows removing a stale field not in the checklist", async () => {
+    const res = await DELETE(body({ fieldName: "facility_sample_qc_result" }), {
+      params,
+    });
+    expect(res.status).toBe(200);
   });
 });

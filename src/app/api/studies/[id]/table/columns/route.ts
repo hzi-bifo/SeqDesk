@@ -2,30 +2,28 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { parseJsonObject } from "@/lib/json-object";
+import { loadStudyChecklistFieldNames } from "@/lib/studies/study-table";
 
-function parseJsonObject(value: string | null): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
+const studyColumnSelect = {
+  id: true,
+  userId: true,
+  studyMetadata: true,
+  checklistType: true,
+  mixsVersion: true,
+} as const;
 
 async function resolveStudy(idOrAlias: string) {
   const byId = await db.study.findUnique({
     where: { id: idOrAlias },
-    select: { id: true, userId: true, studyMetadata: true },
+    select: studyColumnSelect,
   });
   if (byId) return byId;
   try {
     return await db.study.findFirst({
       where: { alias: idOrAlias },
       orderBy: { createdAt: "desc" },
-      select: { id: true, userId: true, studyMetadata: true },
+      select: studyColumnSelect,
     });
   } catch {
     return null;
@@ -64,6 +62,18 @@ async function mutate(
   }
   if (!isFacilityAdmin && study.userId !== session.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Only real MIxS checklist fields may be added — this is what keeps an arbitrary
+  // (e.g. admin-only form) field name from being added and then edited via the table.
+  if (op === "add") {
+    const checklistFields = await loadStudyChecklistFieldNames(study);
+    if (!checklistFields.has(fieldName)) {
+      return NextResponse.json(
+        { error: "Not a MIxS checklist field for this study" },
+        { status: 400 }
+      );
+    }
   }
 
   const metadata = parseJsonObject(study.studyMetadata);

@@ -8,6 +8,7 @@ import { loadOrderFormSchema } from "@/lib/orders/order-form";
 import { getChecklistForStudy } from "@/lib/mixs/config";
 import { resolveChecklistRef } from "@/lib/mixs/checklist-aliases";
 import { FIELD_TO_COLUMN_MAP } from "@/lib/sample-fields";
+import { parseJsonObject } from "@/lib/json-object";
 import {
   FACILITY_SAMPLE_STATUS_LABELS,
   isFacilitySampleStatus,
@@ -239,18 +240,6 @@ const studyTableSelect = {
   studyMetadata: true,
 } as const;
 
-function parseJsonObject(value: string | null): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) {
@@ -293,6 +282,30 @@ interface FieldColumnSource {
   source: "order" | "study";
   fieldName: string;
   coreColumn?: string;
+}
+
+/**
+ * The set of MIxS checklist field names for a study (empty when there is no
+ * checklist or it can't be resolved). Used to validate which fields may be added
+ * as / edited through MIxS table columns, so only real checklist fields qualify.
+ */
+export async function loadStudyChecklistFieldNames(study: {
+  checklistType: string | null;
+  mixsVersion: number | null;
+}): Promise<Set<string>> {
+  if (!study.checklistType) return new Set();
+  try {
+    const ref = resolveChecklistRef(study.checklistType);
+    const checklist = await getChecklistForStudy(db, {
+      ...ref,
+      version: study.mixsVersion,
+    });
+    return checklist
+      ? new Set(checklist.fields.map((field) => field.name))
+      : new Set();
+  } catch {
+    return new Set();
+  }
 }
 
 /**
@@ -558,20 +571,30 @@ export async function buildStudyTableData(
         (entry): entry is string => typeof entry === "string"
       )
     : [];
+  // Field-name suffixes already shown (across custom:/checklist:/core:), so a MIxS
+  // field isn't shown or offered twice when an order form has the same name.
+  const shownFieldNames = new Set(
+    columns
+      .filter((column) => column.key.includes(":"))
+      .map((column) => column.key.slice(column.key.indexOf(":") + 1))
+  );
   for (const name of addedMixsColumns) {
     const columnKey = `checklist:${name}`;
-    if (seen.has(columnKey)) continue;
+    if (seen.has(columnKey) || shownFieldNames.has(name)) continue;
     seen.add(columnKey);
+    shownFieldNames.add(name);
     const def = mixsFieldByName.get(name);
-    const fieldType = def?.type || "text";
     columns.push({
       key: columnKey,
       label: def?.label || humanizeKey(name),
       kind: "field",
       group: "mixs",
-      fieldType,
-      helpText: def?.helpText,
-      editable: EDITABLE_FIELD_TYPES.has(fieldType),
+      fieldType: def?.type || "text",
+      helpText: def
+        ? def.helpText
+        : "This field is no longer part of the study's MIxS checklist.",
+      // Only editable while it still exists in the checklist (with an editable type).
+      editable: def ? EDITABLE_FIELD_TYPES.has(def.type) : false,
       options: def?.options,
       removable: true,
     });
@@ -580,7 +603,10 @@ export async function buildStudyTableData(
 
   // MIxS checklist fields not yet shown — offered by the "+ Add MIxS field" picker.
   const availableMixsFields = mixsChecklistFields
-    .filter((field) => !seen.has(`checklist:${field.name}`))
+    .filter(
+      (field) =>
+        !seen.has(`checklist:${field.name}`) && !shownFieldNames.has(field.name)
+    )
     .map((field) => ({ name: field.name, label: field.label }));
 
   // Pipeline outputs + lifecycle dates (read-only) come last.

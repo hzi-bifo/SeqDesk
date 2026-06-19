@@ -6,9 +6,11 @@ import {
   buildStudyTableData,
   EDITABLE_CORE_COLUMNS,
   EDITABLE_FIELD_TYPES,
+  loadStudyChecklistFieldNames,
 } from "@/lib/studies/study-table";
 import { loadStudyFormSchema } from "@/lib/studies/schema";
 import { loadOrderFormSchema } from "@/lib/orders/order-form";
+import { parseJsonObject } from "@/lib/json-object";
 
 // GET the read-only "Table overview" model for a study (identity + status + the
 // per-sample metadata columns, one row per assigned sample).
@@ -43,29 +45,25 @@ export async function GET(
   }
 }
 
-function parseJsonObject(value: string | null): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
+const studyEditSelect = {
+  id: true,
+  userId: true,
+  studyMetadata: true,
+  checklistType: true,
+  mixsVersion: true,
+} as const;
 
 async function resolveStudy(idOrAlias: string) {
   const byId = await db.study.findUnique({
     where: { id: idOrAlias },
-    select: { id: true, userId: true, studyMetadata: true },
+    select: studyEditSelect,
   });
   if (byId) return byId;
   try {
     return await db.study.findFirst({
       where: { alias: idOrAlias },
       orderBy: { createdAt: "desc" },
-      select: { id: true, userId: true, studyMetadata: true },
+      select: studyEditSelect,
     });
   } catch {
     return null;
@@ -146,7 +144,17 @@ export async function PATCH(
             { status: 400 }
           );
         }
-      } else if (!isAddedMixs) {
+      } else if (isAddedMixs) {
+        // An added MIxS column is only editable while it is a real, current MIxS
+        // checklist field (so it can't be used to reach role-filtered/removed fields).
+        const checklistFields = await loadStudyChecklistFieldNames(study);
+        if (!checklistFields.has(name)) {
+          return NextResponse.json(
+            { error: "Field is not editable" },
+            { status: 400 }
+          );
+        }
+      } else {
         return NextResponse.json(
           { error: "Field is not editable" },
           { status: 400 }

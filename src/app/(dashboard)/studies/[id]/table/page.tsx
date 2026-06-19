@@ -384,7 +384,9 @@ export default function StudyTablePage({
   const refetch = async () => {
     try {
       const res = await fetch(`/api/studies/${id}/table`);
-      if (res.ok) setData((await res.json()) as StudyTableData);
+      if (!res.ok) return;
+      const payload = await res.json().catch(() => null);
+      if (payload) setData(payload as StudyTableData);
     } catch {
       // keep the current view on a transient failure
     }
@@ -398,8 +400,10 @@ export default function StudyTablePage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fieldName }),
       });
+      // Always reconcile from the server so the view matches reality whether the
+      // add succeeded or not; only close the picker on success.
+      await refetch();
       if (res.ok) {
-        await refetch();
         setMixsPickerOpen(false);
         setMixsSearch("");
       }
@@ -415,6 +419,7 @@ export default function StudyTablePage({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fieldName }),
     });
+    // Reconcile from the server (a failed delete simply leaves the column shown).
     await refetch();
   };
 
