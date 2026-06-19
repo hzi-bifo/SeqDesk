@@ -29,6 +29,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  PencilLine,
   Plus,
   Search,
   Table2,
@@ -311,6 +312,12 @@ export default function StudyTablePage({
   const [density, setDensity] = useState<TableDensity>("comfortable");
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  // Bulk edit: set one editable field across all currently-shown rows.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkColumnKey, setBulkColumnKey] = useState("");
+  const [bulkValue, setBulkValue] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDone, setBulkDone] = useState(0);
 
   const hiddenKey = `seqdesk:study-table:${id}:hidden`;
   const densityKey = `seqdesk:study-table:${id}:density`;
@@ -656,6 +663,132 @@ export default function StudyTablePage({
     </div>
   );
 
+  // Bulk edit reuses the per-cell PATCH endpoint (sequential — a study's worth of
+  // rows is gentle on the API; each PATCH re-validates the field server-side).
+  const editableColumns = columns.filter((column) => column.editable);
+  const bulkColumn =
+    editableColumns.find((column) => column.key === bulkColumnKey) || null;
+
+  const applyBulkEdit = async () => {
+    if (!bulkColumn || displayRows.length === 0) return;
+    const targets = [...displayRows];
+    setBulkBusy(true);
+    setBulkDone(0);
+    try {
+      for (const row of targets) {
+        await fetch(`/api/studies/${id}/table`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sampleId: row.id,
+            columnKey: bulkColumn.key,
+            value: bulkValue,
+          }),
+        });
+        setBulkDone((done) => done + 1);
+      }
+      await refetch();
+      setBulkOpen(false);
+      setBulkColumnKey("");
+      setBulkValue("");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkPanel = (
+    <Popover
+      open={bulkOpen}
+      onOpenChange={(open) => {
+        if (!bulkBusy) setBulkOpen(open);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={editableColumns.length === 0 || rows.length === 0}
+        >
+          <PencilLine className="mr-2 h-4 w-4" /> Bulk edit
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 space-y-2 p-3">
+        <p className="text-xs text-muted-foreground">
+          Set one field on all {displayRows.length} shown row
+          {displayRows.length === 1 ? "" : "s"}. Filter the table first to target a
+          subset.
+        </p>
+        <label className="block text-xs font-medium text-muted-foreground">
+          Field
+          <select
+            value={bulkColumnKey}
+            onChange={(event) => {
+              setBulkColumnKey(event.target.value);
+              setBulkValue("");
+            }}
+            className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm font-normal text-foreground outline-none"
+          >
+            <option value="">Choose a field…</option>
+            {editableColumns.map((column) => (
+              <option key={column.key} value={column.key}>
+                {column.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {bulkColumn && (
+          <label className="block text-xs font-medium text-muted-foreground">
+            New value <span className="font-normal">(leave empty to clear)</span>
+            {bulkColumn.fieldType === "select" && bulkColumn.options ? (
+              <select
+                value={bulkValue}
+                onChange={(event) => setBulkValue(event.target.value)}
+                className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm font-normal text-foreground outline-none"
+              >
+                <option value="">—</option>
+                {bulkColumn.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type={
+                  bulkColumn.fieldType === "number"
+                    ? "number"
+                    : bulkColumn.fieldType === "date"
+                      ? "date"
+                      : "text"
+                }
+                value={bulkValue}
+                onChange={(event) => setBulkValue(event.target.value)}
+                className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm font-normal text-foreground outline-none"
+              />
+            )}
+          </label>
+        )}
+        <Button
+          size="sm"
+          className="w-full"
+          disabled={!bulkColumn || bulkBusy || displayRows.length === 0}
+          onClick={applyBulkEdit}
+        >
+          {bulkBusy ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Applying… {bulkDone}/
+              {displayRows.length}
+            </>
+          ) : (
+            `Apply to ${displayRows.length} row${
+              displayRows.length === 1 ? "" : "s"
+            }`
+          )}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+
   const columnsMenu = (
     <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
       <PopoverTrigger asChild>
@@ -807,6 +940,7 @@ export default function StudyTablePage({
       </div>
       {columnsMenu}
       {statusMenu}
+      {bulkPanel}
       {densityToggle}
       {isFiltered && (
         <span className="text-xs text-muted-foreground">
