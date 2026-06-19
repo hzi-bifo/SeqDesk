@@ -4,6 +4,11 @@ import { use, useEffect, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
@@ -395,7 +400,6 @@ export default function StudyTablePage({
             {columns.map((column, index) => (
               <th
                 key={column.key}
-                title={column.helpText}
                 className={cn(
                   "sticky top-0 z-20 whitespace-nowrap border-b px-3 py-2 text-left font-semibold text-foreground/80",
                   GROUP_HEADER_TINT[column.group],
@@ -408,7 +412,20 @@ export default function StudyTablePage({
                     <span className="text-muted-foreground/60">*</span>
                   )}
                   {column.helpText && (
-                    <Info className="h-3 w-3 text-muted-foreground/50" />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`About ${column.label}`}
+                          className="inline-flex cursor-help align-middle"
+                        >
+                          <Info className="h-3 w-3 text-muted-foreground/50 hover:text-foreground" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs font-normal">
+                        {column.helpText}
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </span>
               </th>
