@@ -19,10 +19,13 @@ import {
   type FacilitySampleStatus,
 } from "@/lib/sequencing/constants";
 
+type StudyTableColumnGroup = "identity" | "status" | "order" | "study";
+
 interface StudyTableColumn {
   key: string;
   label: string;
   kind: "identity" | "status" | "field";
+  group: StudyTableColumnGroup;
   fieldType?: string;
 }
 
@@ -57,6 +60,20 @@ const STATUS_ROW_TINT: Record<FacilitySampleStatus, string> = {
   READY: "bg-emerald-50",
   ISSUE: "bg-rose-50",
 };
+
+// Header tint by column group, so Sequencing Order vs. Study metadata read apart.
+const GROUP_HEADER_TINT: Record<StudyTableColumnGroup, string> = {
+  identity: "bg-muted",
+  status: "bg-muted",
+  order: "bg-amber-100/70",
+  study: "bg-sky-100/70",
+};
+
+const GROUP_LEGEND: Array<{ group: StudyTableColumnGroup; label: string }> = [
+  { group: "identity", label: "Identity" },
+  { group: "order", label: "Sequencing Order fields" },
+  { group: "study", label: "Study metadata" },
+];
 
 export default function StudyTablePage({
   params,
@@ -183,6 +200,22 @@ export default function StudyTablePage({
           ))}
         </div>
 
+        {/* Column-group legend */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>Column header colour = source:</span>
+          {GROUP_LEGEND.map((entry) => (
+            <span key={entry.group} className="inline-flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "inline-block h-3 w-3 rounded border",
+                  GROUP_HEADER_TINT[entry.group]
+                )}
+              />
+              {entry.label}
+            </span>
+          ))}
+        </div>
+
         {/* The table */}
         {rows.length === 0 ? (
           <div className="rounded-lg border border-dashed px-4 py-16 text-center">
@@ -204,7 +237,8 @@ export default function StudyTablePage({
                     <th
                       key={column.key}
                       className={cn(
-                        "sticky top-0 z-20 whitespace-nowrap border-b bg-muted px-3 py-2 text-left font-semibold text-muted-foreground",
+                        "sticky top-0 z-20 whitespace-nowrap border-b px-3 py-2 text-left font-semibold text-foreground/80",
+                        GROUP_HEADER_TINT[column.group],
                         index === 0 && "left-0 z-30"
                       )}
                     >
