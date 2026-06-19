@@ -32,20 +32,20 @@ fi
 
 before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
 
-# Give the SLURM job enough cores AND memory to parallelize like the head node. metaxpath runs ~3
-# tasks in parallel at 48 GB each; the previous 4-core/64 GB allocation serialized them (only ~1 big
-# task fits 64 GB) and tripled the wall-time past the timeout. 16 cores + 256 GB (a fraction of the
-# 1.3 TB nodes) lets 3 big tasks run at once. Generous sbatch time (360 min) + e2e wait (16200 s /
-# 4.5 h) as a safety net so the run completes and is detected. --skip-local forces SLURM only.
+# Speed comes from two levers: (1) data subset — driven by the dispatch's subsample_reads, so a
+# subsampled run scans far fewer reads; (2) parallelism — 16 cores + 256 GB lets metaxpath's ~3
+# big tasks (48 GB each) run at once instead of serialized as they were under the old 4-core/64 GB
+# allocation. Short cap (90 min): a subsampled dispatch should finish well within it (→ green); the
+# scheduled FULL run won't, and warns without bloating the nightly. --skip-local forces SLURM only.
 if SEQDESK_RUNTIME_E2E_SLURM_CORES=16 \
    SEQDESK_RUNTIME_E2E_SLURM_MEMORY=256G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=360 \
+   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=120 \
    node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
      --base-url "http://127.0.0.1:${PORT}" \
      --email "admin@example.com" --password "admin" \
      --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
      --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}' \
-     --skip-local --skip-if-disabled --timeout 16200; then
+     --skip-local --skip-if-disabled --timeout 5400; then
   echo "metaxpath SLURM leg OK"
 else
   echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
