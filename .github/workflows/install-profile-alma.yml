@@ -522,6 +522,12 @@ jobs:
       # into ONE sbatch on an offline compute node that can only REUSE cached conda envs. Inherited
       # by the booted app; unused by local runs, so harmless when no SLURM leg runs.
       SEQDESK_SLURM_INLINE_EXECUTOR: "1"
+      # Point the installed app's telemetry heartbeat at seqdesk.org (the app default is already .org;
+      # the ci-runner profile overrides it to www.seqdesk.com, which is down → the telemetry e2e
+      # heart-beats and reds the startup step before the Gemma/metaxpath runs). This env override
+      # (config/loader maps SEQDESK_TELEMETRY_ENDPOINT → telemetry.endpoint) wins over the profile;
+      # assert-install-profile-applied already accepts .org. Production should update the profile too.
+      SEQDESK_TELEMETRY_ENDPOINT: "https://seqdesk.org/api/telemetry/heartbeat"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
