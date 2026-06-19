@@ -27,7 +27,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
-  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   Columns3,
@@ -410,7 +409,8 @@ export default function StudyTablePage({
   const [mixsSearch, setMixsSearch] = useState("");
   const [mixsBusy, setMixsBusy] = useState(false);
   const [sortLevels, setSortLevels] = useState<SortLevel[]>([]);
-  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  // Which column's header sort dropdown is open (one at a time).
+  const [openSortCol, setOpenSortCol] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   // "Tame the wide table" view controls. Column visibility + density persist
   // per-study in localStorage; the status filter is transient like the text filter.
@@ -1005,100 +1005,99 @@ export default function StudyTablePage({
     </Popover>
   );
 
-  // Excel-style multi-level sort builder.
-  const addSortLevel = () => {
-    const used = new Set(sortLevels.map((level) => level.key));
-    const next = exportColumns.find((column) => !used.has(column.key));
-    if (next) setSortLevels([...sortLevels, { key: next.key, dir: "asc" }]);
-  };
-  const updateSortLevel = (index: number, patch: Partial<SortLevel>) =>
-    setSortLevels((prev) =>
-      prev.map((level, i) => (i === index ? { ...level, ...patch } : level))
-    );
-  const removeSortLevel = (index: number) =>
-    setSortLevels((prev) => prev.filter((_, i) => i !== index));
-
-  const sortMenu = (
-    <Popover open={sortMenuOpen} onOpenChange={setSortMenuOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm">
-          <ArrowUpDown className="mr-2 h-4 w-4" /> Sort
-          {sortLevels.length > 0 && (
-            <span className="ml-1.5 rounded bg-primary/10 px-1 text-xs text-primary">
-              {sortLevels.length}
-            </span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-[26rem] space-y-2 p-3">
-        {sortLevels.length === 0 ? (
-          <p className="px-1 text-xs text-muted-foreground">
-            Not sorted. Add a level to sort the table by one or more columns.
-          </p>
-        ) : (
-          sortLevels.map((level, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <span className="w-12 flex-shrink-0 text-xs text-muted-foreground">
-                {index === 0 ? "Sort by" : "then by"}
-              </span>
-              <select
-                value={level.key}
-                onChange={(event) =>
-                  updateSortLevel(index, { key: event.target.value })
-                }
-                className="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-sm outline-none"
-              >
-                {exportColumns.map((column) => (
-                  <option key={column.key} value={column.key}>
-                    {column.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={level.dir}
-                onChange={(event) =>
-                  updateSortLevel(index, {
-                    dir: event.target.value as SortLevel["dir"],
-                  })
-                }
-                className="flex-shrink-0 rounded border bg-background px-2 py-1 text-sm outline-none"
-              >
-                <option value="asc">A → Z</option>
-                <option value="desc">Z → A</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => removeSortLevel(index)}
-                aria-label="Remove sort level"
-                className="flex-shrink-0 text-muted-foreground/60 hover:text-destructive"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          ))
-        )}
-        <div className="flex items-center justify-between border-t pt-2">
+  // Per-column sort dropdown that lives in the header row (Excel/Sheets-style).
+  // "Add as sort level" builds the multi-level sort; one menu is open at a time.
+  const sortItemClass =
+    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted";
+  const columnSortControl = (column: StudyTableColumn) => {
+    const sortIndex = sortLevels.findIndex((l) => l.key === column.key);
+    const inSort = sortIndex >= 0;
+    return (
+      <Popover
+        open={openSortCol === column.key}
+        onOpenChange={(open) => setOpenSortCol(open ? column.key : null)}
+      >
+        <PopoverTrigger asChild>
           <button
             type="button"
-            onClick={addSortLevel}
-            disabled={sortLevels.length >= exportColumns.length}
-            className="text-sm font-medium text-primary hover:underline disabled:opacity-40"
+            aria-label={`Sort options for ${column.label}`}
+            title="Sort options"
+            className={cn(
+              "inline-flex flex-shrink-0 rounded p-0.5 hover:bg-foreground/10 hover:text-foreground",
+              inSort
+                ? "text-primary"
+                : "text-muted-foreground/40 opacity-0 focus:opacity-100 group-hover/th:opacity-100"
+            )}
           >
-            + Add sort level
+            <ChevronDown className="h-3.5 w-3.5" />
           </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-48 p-1">
+          <button
+            type="button"
+            onClick={() => {
+              setSortLevels([{ key: column.key, dir: "asc" }]);
+              setOpenSortCol(null);
+            }}
+            className={sortItemClass}
+          >
+            <ArrowUp className="h-3.5 w-3.5" /> Sort A → Z
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSortLevels([{ key: column.key, dir: "desc" }]);
+              setOpenSortCol(null);
+            }}
+            className={sortItemClass}
+          >
+            <ArrowDown className="h-3.5 w-3.5" /> Sort Z → A
+          </button>
+          {sortLevels.length > 0 && !inSort && (
+            <button
+              type="button"
+              onClick={() => {
+                setSortLevels([...sortLevels, { key: column.key, dir: "asc" }]);
+                setOpenSortCol(null);
+              }}
+              className={sortItemClass}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add as sort level
+            </button>
+          )}
+          {inSort && sortLevels.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSortLevels((prev) =>
+                  prev.filter((l) => l.key !== column.key)
+                );
+                setOpenSortCol(null);
+              }}
+              className={sortItemClass}
+            >
+              <X className="h-3.5 w-3.5" /> Remove from sort
+            </button>
+          )}
           {sortLevels.length > 0 && (
             <button
               type="button"
-              onClick={() => setSortLevels([])}
-              className="text-xs text-muted-foreground underline hover:text-foreground"
+              onClick={() => {
+                setSortLevels([]);
+                setOpenSortCol(null);
+              }}
+              className={cn(
+                sortItemClass,
+                "mt-1 border-t text-muted-foreground"
+              )}
             >
-              Clear all
+              Clear sorting
             </button>
           )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
+        </PopoverContent>
+      </Popover>
+    );
+  };
 
   const columnsMenu = (
     <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
@@ -1249,7 +1248,6 @@ export default function StudyTablePage({
           className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
         />
       </div>
-      {sortMenu}
       {columnsMenu}
       {statusMenu}
       {bulkPanel}
@@ -1317,7 +1315,7 @@ export default function StudyTablePage({
               <th
                 key={column.key}
                 className={cn(
-                  "sticky top-0 z-20 whitespace-nowrap border-b text-left font-semibold text-foreground/80",
+                  "group/th sticky top-0 z-20 whitespace-nowrap border-b text-left font-semibold text-foreground/80",
                   headPad,
                   GROUP_HEADER_TINT[column.group],
                   index === 0 && "left-0 z-30"
@@ -1382,6 +1380,7 @@ export default function StudyTablePage({
                       <X className="h-3 w-3" />
                     </button>
                   )}
+                  {columnSortControl(column)}
                 </span>
               </th>
               );
