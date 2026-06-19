@@ -9,7 +9,10 @@ import {
   AlertCircle,
   ArrowLeft,
   Download,
+  Info,
   Loader2,
+  Maximize2,
+  Minimize2,
   Table2,
 } from "lucide-react";
 import {
@@ -27,6 +30,8 @@ interface StudyTableColumn {
   kind: "identity" | "status" | "field";
   group: StudyTableColumnGroup;
   fieldType?: string;
+  helpText?: string;
+  required?: boolean;
 }
 
 interface StudyTableRow {
@@ -84,6 +89,7 @@ export default function StudyTablePage({
   const [data, setData] = useState<StudyTableData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +116,16 @@ export default function StudyTablePage({
       cancelled = true;
     };
   }, [id]);
+
+  // Esc exits fullscreen.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   if (loading) {
     return (
@@ -139,152 +155,223 @@ export default function StudyTablePage({
 
   const { study, columns, rows, studySummary, perStudy } = data;
 
+  const exportButton = (
+    <Button asChild disabled={rows.length === 0}>
+      <a href={`/api/studies/${id}/table/export`}>
+        <Download className="mr-2 h-4 w-4" /> Export to XLSX
+      </a>
+    </Button>
+  );
+
+  const legends = (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>Row colour = sequencing status:</span>
+        {FACILITY_SAMPLE_STATUSES.map((status) => (
+          <span key={status} className="inline-flex items-center gap-1.5">
+            <span
+              className={cn(
+                "inline-block h-3 w-3 rounded border",
+                STATUS_ROW_TINT[status]
+              )}
+            />
+            {FACILITY_SAMPLE_STATUS_LABELS[status]}
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>Column header colour = source:</span>
+        {GROUP_LEGEND.map((entry) => (
+          <span key={entry.group} className="inline-flex items-center gap-1.5">
+            <span
+              className={cn(
+                "inline-block h-3 w-3 rounded border",
+                GROUP_HEADER_TINT[entry.group]
+              )}
+            />
+            {entry.label}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5">
+          <Info className="h-3 w-3" /> hover a header for what it captures
+        </span>
+      </div>
+    </div>
+  );
+
+  // The grid renders headers ALWAYS (so an empty study still shows its columns +
+  // per-column help), and a spanning placeholder row when there are no samples.
+  const grid = (maxHeight: string) => (
+    <div
+      className="overflow-auto rounded-lg border bg-card"
+      style={{ maxHeight }}
+    >
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr>
+            {columns.map((column, index) => (
+              <th
+                key={column.key}
+                title={column.helpText}
+                className={cn(
+                  "sticky top-0 z-20 whitespace-nowrap border-b px-3 py-2 text-left font-semibold text-foreground/80",
+                  GROUP_HEADER_TINT[column.group],
+                  index === 0 && "left-0 z-30"
+                )}
+              >
+                <span className="inline-flex items-center gap-1">
+                  {column.label}
+                  {column.required && (
+                    <span className="text-muted-foreground/60">*</span>
+                  )}
+                  {column.helpText && (
+                    <Info className="h-3 w-3 text-muted-foreground/50" />
+                  )}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td
+                colSpan={columns.length}
+                className="px-4 py-16 text-center text-muted-foreground"
+              >
+                <Table2 className="mx-auto h-6 w-6" />
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  No samples in this study yet
+                </p>
+                <p className="mt-1 text-sm">
+                  Assign samples to this study to see them here. The columns
+                  above show what will be captured for each sample.
+                </p>
+              </td>
+            </tr>
+          ) : (
+            rows.map((row) => {
+              const tint = STATUS_ROW_TINT[row.status];
+              return (
+                <tr key={row.id} className={cn("border-b", tint)}>
+                  {columns.map((column, index) => (
+                    <td
+                      key={column.key}
+                      className={cn(
+                        "whitespace-nowrap px-3 py-1.5 align-top",
+                        index === 0 &&
+                          cn("sticky left-0 z-10 font-medium", tint)
+                      )}
+                    >
+                      {column.kind === "status" ? (
+                        <span
+                          className={cn(
+                            "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium",
+                            FACILITY_SAMPLE_STATUS_BADGE_CLASSNAMES[row.status]
+                          )}
+                        >
+                          {row.statusLabel}
+                        </span>
+                      ) : row.cells[column.key] ? (
+                        row.cells[column.key]
+                      ) : (
+                        <span className="text-muted-foreground/40">—</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
-    <PageContainer>
-      <div className="space-y-4">
-        {/* Header */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <Button variant="ghost" size="sm" asChild className="-ml-2 mb-1">
-              <Link href={`/studies/${id}`}>
-                <ArrowLeft className="mr-2 h-4 w-4" /> {study.title}
-              </Link>
-            </Button>
-            <div className="flex flex-wrap items-center gap-2">
-              <Table2 className="h-5 w-5 text-muted-foreground" />
-              <h1 className="text-xl font-semibold">Table Overview</h1>
+    <>
+      <PageContainer>
+        <div className="space-y-4">
+          {/* Header */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <Button variant="ghost" size="sm" asChild className="-ml-2 mb-1">
+                <Link href={`/studies/${id}`}>
+                  <ArrowLeft className="mr-2 h-4 w-4" /> {study.title}
+                </Link>
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Table2 className="h-5 w-5 text-muted-foreground" />
+                <h1 className="text-xl font-semibold">Table Overview</h1>
+                {perStudy && (
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    Per-study questionnaire
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                {study.sampleCount} sample{study.sampleCount === 1 ? "" : "s"}
+                {study.checklistType ? ` · ${study.checklistType}` : ""} · all
+                per-sample metadata in one sheet
+              </p>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <Button variant="outline" onClick={() => setFullscreen(true)}>
+                <Maximize2 className="mr-2 h-4 w-4" /> Fullscreen
+              </Button>
+              {exportButton}
+            </div>
+          </div>
+
+          {/* Study-level summary */}
+          {studySummary.length > 0 && (
+            <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+              {studySummary.map((entry) => (
+                <div key={entry.label} className="min-w-0">
+                  <span className="text-muted-foreground">{entry.label}: </span>
+                  <span className="font-medium">{entry.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {legends}
+
+          {grid("calc(100vh - 320px)")}
+        </div>
+      </PageContainer>
+
+      {/* Fullscreen overlay — table at the full viewport width. */}
+      {fullscreen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Table2 className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
+              <span className="truncate font-semibold">
+                Table Overview — {study.title}
+              </span>
               {perStudy && (
-                <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                <span className="hidden rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary sm:inline">
                   Per-study questionnaire
                 </span>
               )}
+              <span className="flex-shrink-0 text-sm text-muted-foreground">
+                {study.sampleCount} sample{study.sampleCount === 1 ? "" : "s"}
+              </span>
             </div>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {study.sampleCount} sample{study.sampleCount === 1 ? "" : "s"}
-              {study.checklistType ? ` · ${study.checklistType}` : ""} · all
-              per-sample metadata in one sheet
-            </p>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              {exportButton}
+              <Button variant="outline" onClick={() => setFullscreen(false)}>
+                <Minimize2 className="mr-2 h-4 w-4" /> Exit fullscreen
+              </Button>
+            </div>
           </div>
-          <Button asChild disabled={rows.length === 0}>
-            <a href={`/api/studies/${id}/table/export`}>
-              <Download className="mr-2 h-4 w-4" /> Export to XLSX
-            </a>
-          </Button>
+          <div className="border-b px-4 py-2">{legends}</div>
+          <div className="flex-1 overflow-hidden p-4">
+            {grid("calc(100vh - 180px)")}
+          </div>
         </div>
-
-        {/* Study-level summary */}
-        {studySummary.length > 0 && (
-          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
-            {studySummary.map((entry) => (
-              <div key={entry.label} className="min-w-0">
-                <span className="text-muted-foreground">{entry.label}: </span>
-                <span className="font-medium">{entry.value}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Status legend */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>Row colour = sequencing status:</span>
-          {FACILITY_SAMPLE_STATUSES.map((status) => (
-            <span key={status} className="inline-flex items-center gap-1.5">
-              <span
-                className={cn(
-                  "inline-block h-3 w-3 rounded border",
-                  STATUS_ROW_TINT[status]
-                )}
-              />
-              {FACILITY_SAMPLE_STATUS_LABELS[status]}
-            </span>
-          ))}
-        </div>
-
-        {/* Column-group legend */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>Column header colour = source:</span>
-          {GROUP_LEGEND.map((entry) => (
-            <span key={entry.group} className="inline-flex items-center gap-1.5">
-              <span
-                className={cn(
-                  "inline-block h-3 w-3 rounded border",
-                  GROUP_HEADER_TINT[entry.group]
-                )}
-              />
-              {entry.label}
-            </span>
-          ))}
-        </div>
-
-        {/* The table */}
-        {rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed px-4 py-16 text-center">
-            <Table2 className="mx-auto h-6 w-6 text-muted-foreground" />
-            <p className="mt-2 text-sm font-medium">No samples in this study yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Assign samples to this study to see them here.
-            </p>
-          </div>
-        ) : (
-          <div
-            className="overflow-auto rounded-lg border bg-card"
-            style={{ maxHeight: "calc(100vh - 300px)" }}
-          >
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  {columns.map((column, index) => (
-                    <th
-                      key={column.key}
-                      className={cn(
-                        "sticky top-0 z-20 whitespace-nowrap border-b px-3 py-2 text-left font-semibold text-foreground/80",
-                        GROUP_HEADER_TINT[column.group],
-                        index === 0 && "left-0 z-30"
-                      )}
-                    >
-                      {column.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const tint = STATUS_ROW_TINT[row.status];
-                  return (
-                    <tr key={row.id} className={cn("border-b", tint)}>
-                      {columns.map((column, index) => (
-                        <td
-                          key={column.key}
-                          className={cn(
-                            "whitespace-nowrap px-3 py-1.5 align-top",
-                            index === 0 &&
-                              cn("sticky left-0 z-10 font-medium", tint)
-                          )}
-                        >
-                          {column.kind === "status" ? (
-                            <span
-                              className={cn(
-                                "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium",
-                                FACILITY_SAMPLE_STATUS_BADGE_CLASSNAMES[row.status]
-                              )}
-                            >
-                              {row.statusLabel}
-                            </span>
-                          ) : row.cells[column.key] ? (
-                            row.cells[column.key]
-                          ) : (
-                            <span className="text-muted-foreground/40">—</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </PageContainer>
+      )}
+    </>
   );
 }

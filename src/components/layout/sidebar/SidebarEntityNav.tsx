@@ -219,8 +219,8 @@ export function SidebarEntityNav({
 
   // ── Study nav items ──
   const studyItems: NavItem[] = [
-    { key: "overview", label: "Overview", href: entityId ? `/studies/${entityId}` : undefined, icon: FileText, show: true },
     { key: "table", label: "Table Overview", href: entityId ? `/studies/${entityId}/table` : undefined, icon: Table2, show: true },
+    { key: "overview", label: "Overview", href: entityId ? `/studies/${entityId}` : undefined, icon: FileText, show: true },
     {
       key: "facility",
       label: "Facility Fields",

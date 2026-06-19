@@ -25,6 +25,9 @@ export interface StudyTableColumn {
   kind: "identity" | "status" | "field";
   group: StudyTableColumnGroup;
   fieldType?: string;
+  /** Per-column help text (from the form field, or a description for fixed columns). */
+  helpText?: string;
+  required?: boolean;
 }
 
 export interface StudyTableRow {
@@ -54,12 +57,42 @@ export interface StudyTableData {
 }
 
 const IDENTITY_COLUMNS: StudyTableColumn[] = [
-  { key: "_sampleId", label: "Sample ID", kind: "identity", group: "identity" },
-  { key: "_status", label: "Status", kind: "status", group: "status" },
-  { key: "_organism", label: "Organism", kind: "identity", group: "identity" },
-  { key: "_accession", label: "ENA Accession", kind: "identity", group: "identity" },
+  {
+    key: "_sampleId",
+    label: "Sample ID",
+    kind: "identity",
+    group: "identity",
+    helpText: "The sample's identifier within its Sequencing Order.",
+  },
+  {
+    key: "_status",
+    label: "Status",
+    kind: "status",
+    group: "status",
+    helpText: "Facility sequencing status (Waiting → Processing → Sequenced → Ready).",
+  },
+  {
+    key: "_organism",
+    label: "Organism",
+    kind: "identity",
+    group: "identity",
+    helpText: "Scientific name and NCBI taxonomy id.",
+  },
+  {
+    key: "_accession",
+    label: "ENA Accession",
+    kind: "identity",
+    group: "identity",
+    helpText: "ENA sample accession, assigned once the study is submitted.",
+  },
   // Which Sequencing Order each sample came from (studies can span several).
-  { key: "_order", label: "Sequencing Order", kind: "identity", group: "order" },
+  {
+    key: "_order",
+    label: "Sequencing Order",
+    kind: "identity",
+    group: "order",
+    helpText: "The Sequencing Order this sample was collected in.",
+  },
 ];
 
 const studyTableSelect = {
@@ -210,6 +243,8 @@ export async function buildStudyTableData(
         kind: "field",
         group: source,
         fieldType: field.type,
+        helpText: field.helpText,
+        required: field.required,
       });
       fieldColumns.push({ key, source, fieldName: field.name, coreColumn });
     }
@@ -250,6 +285,7 @@ export async function buildStudyTableData(
         label: humanizeKey(key),
         kind: "field",
         group: source,
+        helpText: "Stored on samples but not part of the current form.",
       });
       fieldColumns.push({ key: columnKey, source, fieldName: key });
     }
