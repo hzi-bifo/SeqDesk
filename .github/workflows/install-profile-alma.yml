@@ -991,45 +991,11 @@ jobs:
             # metaxpath actually classify on the test data instead of being rejected before it runs.
             run_gemma metaxpath   10800 --study-alias gemma-nanopore-metaxpath \
               --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
-            # ---- metaxpath SLURM leg (warn-only, experimental) ----
-            # The local run above already classified AND built metaxpath's per-process conda envs into
-            # the shared-FS cache; re-run metaxpath through the SLURM executor (inline: one sbatch on an
-            # offline compute node) to prove it runs on the cluster, reusing those cached envs. Gated on
-            # a SLURM-configured app (SLURM_SHARED_CONDA_BASE set at install) + sbatch on the runner.
+            # metaxpath SLURM leg (warn-only) — extracted to scripts/metaxpath-slurm-leg.sh so this
+            # large run block stays under GitHub's per-segment expression-template limit. Gated on a
+            # SLURM-configured app (shared conda) + sbatch; the script always exits 0 (warn-only).
             if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
-              echo "::group::metaxpath SLURM leg (warn-only)"
-              MEX_ME="$(whoami)"
-              # Free the per-user QOS submit slot: cancel stale PENDING jobs left by earlier runs (this
-              # cluster caps concurrent submissions per user; a leftover PENDING job blocks new ones).
-              mex_stale="$(squeue -u "$MEX_ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
-              if [ -n "$mex_stale" ]; then
-                echo "cancelling stale PENDING SLURM job(s): $(echo $mex_stale | tr '\n' ' ')"
-                echo "$mex_stale" | xargs -r scancel 2>/dev/null || true
-                for _ in $(seq 1 24); do squeue -u "$MEX_ME" -h -t PENDING 2>/dev/null | grep -q . || break; sleep 5; done
-              fi
-              mex_before="$(squeue -u "$MEX_ME" -h -o '%i' 2>/dev/null || true)"
-              # Same memory config as the proven local run (48 GB) with a comfortably larger sbatch
-              # allocation — the 1.3 TB nodes fit it easily. Cap 240 min (first run may queue).
-              if SEQDESK_RUNTIME_E2E_SLURM_CORES=4 \
-                 SEQDESK_RUNTIME_E2E_SLURM_MEMORY=64G \
-                 SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=240 \
-                 node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
-                   --base-url "http://127.0.0.1:${PORT}" \
-                   --email "admin@example.com" --password "admin" \
-                   --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
-                   --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}' \
-                   --skip-local --skip-if-disabled --timeout 10800; then
-                echo "metaxpath SLURM leg OK"
-              else
-                echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
-              fi
-              # Free the slot: cancel only the job(s) this leg submitted (leave other jobs untouched).
-              mex_new=""
-              for j in $(squeue -u "$MEX_ME" -h -o '%i' 2>/dev/null || true); do
-                if ! echo "$mex_before" | grep -qx "$j"; then mex_new="$mex_new $j"; fi
-              done
-              if [ -n "$mex_new" ]; then echo "freeing QOS slot — cancelling metaxpath SLURM job(s):$mex_new"; scancel $mex_new 2>/dev/null || true; fi
-              echo "::endgroup::"
+              bash "$GITHUB_WORKSPACE/scripts/metaxpath-slurm-leg.sh" "$PORT" || true
             else
               echo "metaxpath SLURM leg SKIPPED (SLURM_SHARED_CONDA_BASE unset or sbatch unavailable)."
             fi
